@@ -18,6 +18,7 @@ pub enum OpCode {
     Subtract,
     Multiply,
     Divide,
+    Modulo,
     Negate,
 
     DefineGlobal,
@@ -98,18 +99,19 @@ impl Chunk {
             x if x == OpCode::DefineGlobal.into() => {
                 self.constant_instruction("OP_DEFINE_GLOBAL", offset)
             }
-            x if x == OpCode::GetLocal.into() => self.byte_instruction("OP_GET_LOCAL", offset),
-            x if x == OpCode::SetGlobal.into() => self.byte_instruction("OP_SET_GLOBAL", offset),
             x if x == OpCode::GetGlobal.into() => {
                 self.constant_instruction("OP_GET_GLOBAL", offset)
             }
+            x if x == OpCode::SetGlobal.into() => self.byte_instruction("OP_SET_GLOBAL", offset),
+
+            x if x == OpCode::GetLocal.into() => self.byte_instruction("OP_GET_LOCAL", offset),
             x if x == OpCode::SetLocal.into() => self.constant_instruction("OP_SET_LOCAL", offset),
 
-            x if x == OpCode::Return.into() => self.simple_instruction("OP_RETURN", offset),
             x if x == OpCode::Add.into() => self.simple_instruction("OP_ADD", offset),
             x if x == OpCode::Subtract.into() => self.simple_instruction("OP_SUBTRACT", offset),
             x if x == OpCode::Multiply.into() => self.simple_instruction("OP_MULTIPLY", offset),
             x if x == OpCode::Divide.into() => self.simple_instruction("OP_DIVIDE", offset),
+            x if x == OpCode::Modulo.into() => self.simple_instruction("OP_MODULO", offset),
             x if x == OpCode::True.into() => self.simple_instruction("OP_TRUE", offset),
             x if x == OpCode::False.into() => self.simple_instruction("OP_FALSE", offset),
             x if x == OpCode::Not.into() => self.simple_instruction("OP_NOT", offset),
@@ -120,6 +122,7 @@ impl Chunk {
             x if x == OpCode::Negate.into() => self.simple_instruction("OP_NEGATE", offset),
             x if x == OpCode::Pop.into() => self.simple_instruction("OP_POP", offset),
             x if x == OpCode::Print.into() => self.simple_instruction("OP_PRINT", offset),
+            x if x == OpCode::Return.into() => self.simple_instruction("OP_RETURN", offset),
             #[allow(unreachable_code)]
             _ => {
                 panic!("Unknown opcode: {}", instruction);

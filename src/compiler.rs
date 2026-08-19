@@ -5,7 +5,7 @@ use crate::{
     chunk::{Chunk, OpCode},
     value::Value::{self, Boolean, Nil, Number},
 };
-#[allow(dead_code)]
+// #[allow(dead_code)]
 pub struct Local {
     pub name: String,
     pub depth: Option<usize>,
@@ -37,14 +37,14 @@ impl Display for CompileError {
         }
     }
 }
-#[allow(dead_code)]
+// #[allow(dead_code)]
 pub struct Compiler {
     pub globals: HashMap<String, u8>,
     pub chunk: Chunk,
     locals: Vec<Local>,
     scope_depth: usize,
 }
-#[allow(dead_code)]
+// #[allow(dead_code)]
 impl Compiler {
     pub fn new() -> Self {
         Self {
@@ -267,12 +267,11 @@ impl Compiler {
             Expression::Unary { operator, right } => {
                 self.compile_expression(right, line)?;
                 match operator {
-                     UnaryOp::Negate => self.emit_opcode(OpCode::Negate, line),
-                     UnaryOp::Not => self.emit_opcode(OpCode::Not, line),
+                    UnaryOp::Negate => self.emit_opcode(OpCode::Negate, line),
+                    UnaryOp::Not => self.emit_opcode(OpCode::Not, line),
                 }
             }
-            Expression::Call { callee, arguments } => todo!(),
-            Expression::Index { object, index } => todo!(),
+            _ => unreachable!(),
         }
 
         Ok(())
@@ -318,15 +317,32 @@ impl Compiler {
             BinaryOp::Divide => {
                 self.emit_opcode(OpCode::Divide, line);
             }
-            BinaryOp::Modulo => todo!(),
-            BinaryOp::Equal => todo!(),
-            BinaryOp::NotEqual => todo!(),
-            BinaryOp::Less => todo!(),
-            BinaryOp::LessEqual => todo!(),
-            BinaryOp::Greater => todo!(),
-            BinaryOp::GreaterEqual => todo!(),
-            BinaryOp::And => todo!(),
-            BinaryOp::Or => todo!(),
+            BinaryOp::Modulo => {
+                self.emit_opcode(OpCode::Modulo, line);
+            }
+            BinaryOp::Equal => {
+                self.emit_opcode(OpCode::Equal, line);
+            }
+            BinaryOp::NotEqual => {
+                self.emit_opcode(OpCode::Equal, line);
+                self.emit_opcode(OpCode::Not, line);
+            }
+            BinaryOp::Less => {
+                self.emit_opcode(OpCode::Less, line);
+            }
+            BinaryOp::LessEqual => {
+                self.emit_opcode(OpCode::Greater, line);
+                self.emit_opcode(OpCode::Not, line);
+            }
+            BinaryOp::Greater => {
+                self.emit_opcode(OpCode::Greater, line);
+            }
+            BinaryOp::GreaterEqual => {
+                self.emit_opcode(OpCode::Less, line);
+                self.emit_opcode(OpCode::Not, line);
+            }
+
+            _ => unreachable!(),
         }
     }
     #[allow(unused_variables)]

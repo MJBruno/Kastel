@@ -7,6 +7,7 @@ pub enum NumericOp {
     Subtract,
     Multiply,
     Divide,
+    Modulo,
 }
 
 #[allow(dead_code)]
@@ -61,6 +62,7 @@ impl Value {
                 }
                 Ok(Value::Number(a + b))
             }
+            NumericOp::Modulo => Ok(Value::Number(a % b)),
         }
     }
 
@@ -73,13 +75,13 @@ impl Value {
 
     pub fn compare_numeric(a: Value, b: Value, op: ComparisonOp) -> Result<Value, RuntimeError> {
         match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(Self::compare_f64(a, b, op))),
+            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(Self::compare_number(a, b, op))),
 
             _ => Err(RuntimeError::TypeError),
         }
     }
 
-    fn compare_f64(a: f64, b: f64, op: ComparisonOp) -> bool {
+    fn compare_number(a: f64, b: f64, op: ComparisonOp) -> bool {
         match op {
             ComparisonOp::Equal => a == b,
             ComparisonOp::Greater => a > b,

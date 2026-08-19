@@ -142,6 +142,12 @@ impl VirtualMachine {
                     let result = Value::binary_numeric_op(a, b, NumericOp::Divide)?;
                     self.push(result);
                 }
+                x if x == OpCode::Modulo.into() => {
+                    let b = self.pop();
+                    let a = self.pop();
+                    let result = Value::binary_numeric_op(a, b, NumericOp::Modulo)?;
+                    self.push(result);
+                }
                 x if x == OpCode::Equal.into() => {
                     let b = self.pop();
                     let a = self.pop();
