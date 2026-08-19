@@ -1,38 +1,43 @@
-use crate::token::Span;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub enum LexErrorKind {
-    UnexpectedCharacter,
-    UnterminatedString,
-    UnterminatedBlockComment,
-    InvalidNumber,
-    InvalidEscape,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LexError {
-    pub kind: LexErrorKind,
-    pub span: Span,
+pub struct ParserError {
     pub message: String,
     pub line: usize,
     pub column: usize,
 }
 
-impl LexError {
-    pub fn new(
-        kind: LexErrorKind,
-        span: Span,
-        message: impl Into<String>,
-        line: usize,
-        column: usize,
-    ) -> Self {
-        Self {
-            kind,
-            span,
-            message: message.into(),
-            line,
-            column,
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+pub enum VMError {
+    StackUnderflow,
+    InvalidConstantIndex(u16),
+    TypeError(String),
+    DivisionByZero,
+    InvalidInstruction(String),
+}
+
+impl std::fmt::Display for VMError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VMError::StackUnderflow => {
+                write!(formatter, "stack underflow")
+            }
+
+            VMError::InvalidConstantIndex(index) => {
+                write!(formatter, "invalid constant index: {index}")
+            }
+
+            VMError::TypeError(message) => {
+                write!(formatter, "type error: {message}")
+            }
+
+            VMError::DivisionByZero => {
+                write!(formatter, "division by zero")
+            }
+
+            VMError::InvalidInstruction(message) => {
+                write!(formatter, "invalid instruction: {message}")
+            }
         }
     }
 }

@@ -1,5 +1,11 @@
-use crate::lexer::Lexer;
-use std::{env, fs};
+use crate::{
+    compiler::Compiler, error_value::RuntimeError, lexer::Lexer, machine::VirtualMachine,
+    parser::Parser,
+};
+use std::{
+    env, fs,
+    io::{self, Write},
+};
 
 pub struct Application;
 
@@ -8,50 +14,41 @@ impl Application {
         let args: Vec<String> = env::args().collect();
         if args.len() > 1 {
             let src = fs::read_to_string(&args[1]).expect("Erreur de lecture du fichier");
-            let mut lexer = Lexer::new(&src);
-
-            match lexer.scan_tokens() {
-                Ok(tokens) => {
-                    for token in tokens {
-                        println!("{:>15}  |  {:?}", token.lexeme(&src), token.kind);
-                    }
-                }
-
-                Err(errors) => {
-                    for error in errors {
-                        eprintln!(
-                            "main.lang:{}:{}:{}",
-                            error.line, error.column, error.message
-                        );
-                    }
-                }
-            }
+            execute(&src);
         } else {
-            let source = r#"
-     if(value> =40){
-        return true;
-        } 
-   let value = 42 + 3.14ù123;
-    "#;
-
-            let mut lexer = Lexer::new(source);
-
-            match lexer.scan_tokens() {
-                Ok(tokens) => {
-                    for token in tokens {
-                        println!("{:>15}  |  {:?}", token.lexeme(source), token.kind);
-                    }
-                }
-
-                Err(errors) => {
-                    for error in errors {
-                        eprintln!(
-                            "main.lang:{}:{}:{}",
-                            error.line, error.column, error.message
-                        );
-                    }
-                }
+            match repl() {
+                Ok(run) => run,
+                Err(_) => todo!(),
             }
         }
+    }
+}
+
+fn execute(source: &str) {
+    let mut lexer = Lexer::new(source.to_string());
+    let tokens = lexer.scan_token();
+    let parser = Parser::new(tokens.unwrap()).parse();
+    let chunk = Compiler::new().compile(&parser.unwrap(), 0);
+    let mut vm = VirtualMachine::new(chunk);
+    match vm.run() {
+        Ok(ok) => ok,
+        Err(e) => eprintln!("{e}"),
+    }
+}
+
+//Ä 
+fn repl() -> Result<(), RuntimeError> {
+    println!("Crafted by nova.org, Madagascar: 2026 – 2027 ");
+    loop {
+        print!("[Nova]👉  ");
+        io::stdout().flush().unwrap();
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            break Ok(());
+        }
+        if input.trim().is_empty() {
+            continue;
+        }
+        execute(&input);
     }
 }
