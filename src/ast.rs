@@ -56,6 +56,12 @@ pub enum Expression {
         name: String,
         value: Box<Expression>,
     },
+
+    // Conditional {
+    //     condition: Box<Expression>,
+    //     then_branch: Box<Expression>,
+    //     else_branch: Box<Expression>,
+    // },
 }
 
 #[derive(Debug, Clone)]

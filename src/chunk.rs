@@ -28,6 +28,9 @@ pub enum OpCode {
     GetLocal,
     SetLocal,
 
+    JumpIfFalse,
+    Jump,
+
     Return,
     Pop,
     Print,
@@ -106,7 +109,7 @@ impl Chunk {
 
             x if x == OpCode::GetLocal.into() => self.byte_instruction("OP_GET_LOCAL", offset),
             x if x == OpCode::SetLocal.into() => self.constant_instruction("OP_SET_LOCAL", offset),
-
+            
             x if x == OpCode::Add.into() => self.simple_instruction("OP_ADD", offset),
             x if x == OpCode::Subtract.into() => self.simple_instruction("OP_SUBTRACT", offset),
             x if x == OpCode::Multiply.into() => self.simple_instruction("OP_MULTIPLY", offset),
@@ -120,6 +123,8 @@ impl Chunk {
             x if x == OpCode::Equal.into() => self.simple_instruction("OP_EQUAL", offset),
             x if x == OpCode::Nil.into() => self.simple_instruction("OP_NIL", offset),
             x if x == OpCode::Negate.into() => self.simple_instruction("OP_NEGATE", offset),
+            x if x == OpCode::JumpIfFalse.into() => self.byte_instruction("OP_JUMP_IF_FALSE", offset),
+            x if x == OpCode::Jump.into() => self.byte_instruction("OP_JUMP", offset),
             x if x == OpCode::Pop.into() => self.simple_instruction("OP_POP", offset),
             x if x == OpCode::Print.into() => self.simple_instruction("OP_PRINT", offset),
             x if x == OpCode::Return.into() => self.simple_instruction("OP_RETURN", offset),

@@ -33,6 +33,13 @@ impl VirtualMachine {
         byte
     }
 
+    //
+    fn read_short(&mut self) -> u16 {
+        let hight = self.read_byte() as u16;
+        let low = self.read_byte() as u16;
+        (hight << 8) | low
+    }
+
     //Empiler la constante dans le pile
     fn push(&mut self, value: Value) {
         self.stack.push(value);
@@ -170,6 +177,17 @@ impl VirtualMachine {
                     let value = self.pop();
                     let result = Value::negate_values(value).expect("Opérand must be value");
                     self.push(result);
+                }
+                x if x == OpCode::Jump.into() => {
+                    let offset = self.read_short();
+                    self.ip += offset as usize;
+                }
+                x if x == OpCode::JumpIfFalse.into() => {
+                    let offset = self.read_short();
+
+                    if !self.peek().is_truthy() {
+                        self.ip += offset as usize;
+                    }
                 }
                 x if x == OpCode::Not.into() => {
                     let value = self.pop();

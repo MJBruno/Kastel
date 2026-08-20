@@ -318,6 +318,8 @@ impl Compiler {
                 self.compile_expression(right, line)?;
                 self.compile_binary(operator.clone(), line);
             }
+
+            
             Expression::Unary { operator, right } => {
                 self.compile_expression(right, line)?;
                 match operator {
@@ -429,9 +431,76 @@ impl Compiler {
                 condition,
                 then_branch,
                 else_branch,
-            } => todo!(),
+            } => match self.compile_if(condition, then_branch, else_branch.as_ref(), line) {
+                Ok(execute_if) => execute_if,
+                Err(error) => eprintln!("{error}"),
+            },
         }
 
+        Ok(())
+    }
+
+    fn emit_jump(&mut self, opcode: OpCode, line: usize) -> usize {
+        self.emit_opcode(opcode, line);
+
+        //Deux octets réservés pour l'adresse
+        self.emit_byte(0xff, line);
+        self.emit_byte(0xff, line);
+
+        self.chunk.code.len() - 2
+    }
+
+    fn patch_jump(&mut self, offset: usize) {
+        let jump = self.chunk.code.len() - offset - 2;
+        assert!(jump <= u16::MAX as usize, "Jump trop grand");
+
+        let jump = jump as u16;
+
+        self.chunk.code[offset] = (jump >> 8) as u8;
+        self.chunk.code[offset + 1] = (jump & 0xff) as u8;
+    }
+
+    fn compile_if(
+        &mut self,
+        condition: &Expression,
+        then_branch: &[Statement],
+        else_branch: Option<&Vec<Statement>>,
+        line: usize,
+    ) -> Result<(), CompileError> {
+        //condition
+        self.compile_expression(condition, line)?;
+
+        //Saut vers ELSE ou FIN
+        let then_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+
+        for statement in then_branch {
+            self.compile_statement(statement, line)?;
+        }
+
+        //ELSE présent ?
+        if let Some(else_branch) = else_branch {
+            //Sauter le ELSE après avoir éxécuté THEN
+            let else_jump = self.emit_jump(OpCode::Jump, line);
+
+            //déstination du JumpIfFalse
+            self.patch_jump(then_jump);
+
+            //Rétiré la condition false
+            self.emit_opcode(OpCode::Pop, line);
+
+            for statement in else_branch {
+                self.compile_statement(statement, line)?;
+            }
+
+            //Déstination final
+            self.patch_jump(else_jump);
+        } else {
+            //Déstination final
+            self.patch_jump(then_jump);
+
+            //Rétire la condition false
+            self.emit_opcode(OpCode::Pop, line);
+        }
         Ok(())
     }
 }
