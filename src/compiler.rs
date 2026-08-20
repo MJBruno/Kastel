@@ -319,7 +319,6 @@ impl Compiler {
                 self.compile_binary(operator.clone(), line);
             }
 
-            
             Expression::Unary { operator, right } => {
                 self.compile_expression(right, line)?;
                 match operator {
@@ -435,9 +434,53 @@ impl Compiler {
                 Ok(execute_if) => execute_if,
                 Err(error) => eprintln!("{error}"),
             },
+
+            Statement::While { condition, body } => {
+                let loop_start = self.chunk.code.len();
+
+                //CONDITION
+                self.compile_expression(condition, line)?;
+
+                //si c'est faux -> sortie
+                let exit_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+
+                //Lacondition est vraie
+                self.emit_opcode(OpCode::Pop, line);
+
+                //BODY
+                self.begin_scope();
+
+                for statement in body {
+                    self.compile_statement(statement, line)?;
+                }
+
+                self.end_scope(line);
+
+                //Rétour au début
+                self.emit_loop(loop_start, line);
+
+                //EXIT
+                self.patch_jump(exit_jump);
+
+                //condition false
+                self.emit_opcode(OpCode::Pop, line);
+            }
         }
 
         Ok(())
+    }
+
+    fn emit_loop(&mut self, loop_start: usize, line: usize) {
+        self.emit_opcode(OpCode::Loop, line);
+
+        let offset = self.chunk.code.len() + 2 - loop_start;
+
+        assert!(offset <= u16::MAX as usize, "Loop body too large");
+
+        let offset = offset as u16;
+
+        self.emit_byte((offset >> 8) as u8, line);
+        self.emit_byte((offset & 0xff) as u8, line);
     }
 
     fn emit_jump(&mut self, opcode: OpCode, line: usize) -> usize {

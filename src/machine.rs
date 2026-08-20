@@ -189,6 +189,11 @@ impl VirtualMachine {
                         self.ip += offset as usize;
                     }
                 }
+                x if x == OpCode::Loop.into() => {
+                    let offset = self.read_short();
+
+                    self.ip -= offset as usize
+                }
                 x if x == OpCode::Not.into() => {
                     let value = self.pop();
                     self.push(Value::Boolean(!value.is_truthy()));

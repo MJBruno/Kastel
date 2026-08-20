@@ -24,6 +24,11 @@ pub enum Statement {
         then_branch: Vec<Statement>,
         else_branch: Option<Vec<Statement>>,
     },
+
+    While {
+        condition: Expression,
+        body: Vec<Statement>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -56,12 +61,6 @@ pub enum Expression {
         name: String,
         value: Box<Expression>,
     },
-
-    // Conditional {
-    //     condition: Box<Expression>,
-    //     then_branch: Box<Expression>,
-    //     else_branch: Box<Expression>,
-    // },
 }
 
 #[derive(Debug, Clone)]

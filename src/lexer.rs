@@ -93,6 +93,7 @@ impl Lexer {
                 '.' => tokens.push(self.make_token(TokenKind::Dot, ".")),
                 ':' => tokens.push(self.make_token(TokenKind::Colon, ":")),
                 ';' => tokens.push(self.make_token(TokenKind::Semicolon, ";")),
+                '?' => tokens.push(self.make_token(TokenKind::Question, "?")),
 
                 // Opérateurs
                 '+' => tokens.push(self.make_token(TokenKind::Plus, "+")),
@@ -151,9 +152,7 @@ impl Lexer {
                 _ => {
                     self.errors.push(LexerError {
                         message: format!("Caractère inattendu '{}'", c),
-
                         line: self.line,
-
                         column: self.column - 1,
                     });
                 }

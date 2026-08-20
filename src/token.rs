@@ -28,6 +28,7 @@ pub enum TokenKind {
     Star,
     Slash,
     Percent,
+    Question,
 
     Equal,
 

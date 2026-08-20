@@ -1,7 +1,6 @@
 
-let age = 18
-if (age < 18) {
-        print("Mineur")
-} else if (age == 18) {
-        print("Equal")
+let age = 0 
+while (age <200) {
+        print(age)
+        age = age + 1
 }

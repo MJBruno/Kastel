@@ -36,12 +36,12 @@ impl Precedence {
         }
     }
 }
- 
+
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
 }
- 
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Self { tokens, current: 0 }
@@ -172,8 +172,6 @@ impl Parser {
         }
     }
 
-   
-
     // --------------------------------------------------
     //                  PRECEDENCE
     // --------------------------------------------------
@@ -205,7 +203,6 @@ impl Parser {
         if self.match_token(TokenKind::Let) {
             return self.parse_let_statement();
         }
- 
 
         if self.check(&TokenKind::Identifier) && self.check_next(TokenKind::Equal) {
             return self.parse_assignment();
@@ -217,6 +214,10 @@ impl Parser {
 
         if self.match_token(TokenKind::If) {
             return self.parse_if_statement();
+        }
+
+        if self.match_token(TokenKind::While) {
+            return self.parse_while_statement();
         }
 
         if self.match_token(TokenKind::LeftBrace) {
@@ -284,6 +285,14 @@ impl Parser {
             then_branch,
             else_branch,
         })
+    }
+    fn parse_while_statement(&mut self) -> Result<Statement, String> {
+        self.consume(TokenKind::LeftParen, " ( attendu après la condition")?;
+        let condition = self.parse_expression()?;
+        self.consume(TokenKind::RightParen, " ) attendu après la condition")?;
+        self.consume(TokenKind::LeftBrace, " { attendu après la condition")?;
+        let body = self.parse_block_statement()?;
+        Ok(Statement::While { condition, body })
     }
 
     // --------------------------------------------------
