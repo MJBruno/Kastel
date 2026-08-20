@@ -29,6 +29,9 @@ pub enum Statement {
         condition: Expression,
         body: Vec<Statement>,
     },
+
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]

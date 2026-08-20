@@ -211,6 +211,12 @@ impl Parser {
         if self.match_token(TokenKind::Print) {
             return self.parse_print_statement();
         }
+        if self.match_token(TokenKind::Break) {
+            return Ok(Statement::Break);
+        }
+        if self.match_token(TokenKind::Continue) {
+            return Ok(Statement::Continue);
+        }
 
         if self.match_token(TokenKind::If) {
             return self.parse_if_statement();

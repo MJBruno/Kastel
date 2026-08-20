@@ -66,8 +66,8 @@ impl VirtualMachine {
     // #[allow(unreachable_patterns)]
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
-            self.print_stack();
-            self.chunk.disassemble_instruction(self.ip);
+            // self.print_stack();
+            // self.chunk.disassemble_instruction(self.ip);
 
             let instruction = self.read_byte();
 

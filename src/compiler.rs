@@ -106,6 +106,8 @@ pub enum CompileError {
     UndefinedVariable(String),
     TooManyConstants,
     TooManyLocals,
+    BreakOutsideLoop,
+    ContinueOutsideLoop,
 }
 
 impl Display for CompileError {
@@ -116,15 +118,21 @@ impl Display for CompileError {
             CompileError::UndefinedVariable(e) => write!(f, "Variable {e} non définie"),
             CompileError::TooManyConstants => write!(f, "Trop de constant"),
             CompileError::TooManyLocals => write!(f, "Trop de local"),
+            CompileError::BreakOutsideLoop => write!(f, "Break hors boucle"),
+            CompileError::ContinueOutsideLoop => write!(f, "Continue hors boucle"),
         }
     }
 }
-
+struct LoopContext {
+    continue_target: usize,
+    break_jumps: Vec<usize>,
+}
 pub struct Compiler {
     pub globals: HashMap<String, u8>,
     pub chunk: Chunk,
     locals: LocalTable,
     pub scope_depth: usize,
+    loops: Vec<LoopContext>,
 }
 
 #[allow(dead_code)]
@@ -135,6 +143,7 @@ impl Compiler {
             chunk: Chunk::new(),
             locals: LocalTable::new(),
             scope_depth: 0,
+            loops: Vec::new(),
         }
     }
 
@@ -436,35 +445,13 @@ impl Compiler {
             },
 
             Statement::While { condition, body } => {
-                let loop_start = self.chunk.code.len();
-
-                //CONDITION
-                self.compile_expression(condition, line)?;
-
-                //si c'est faux -> sortie
-                let exit_jump = self.emit_jump(OpCode::JumpIfFalse, line);
-
-                //Lacondition est vraie
-                self.emit_opcode(OpCode::Pop, line);
-
-                //BODY
-                self.begin_scope();
-
-                for statement in body {
-                    self.compile_statement(statement, line)?;
+                match self.compile_while(condition, body, line) {
+                    Ok(execute_while) => execute_while,
+                    Err(error) => eprintln!("{error}"),
                 }
-
-                self.end_scope(line);
-
-                //Rétour au début
-                self.emit_loop(loop_start, line);
-
-                //EXIT
-                self.patch_jump(exit_jump);
-
-                //condition false
-                self.emit_opcode(OpCode::Pop, line);
             }
+            Statement::Break => self.compile_break(line)?,
+            Statement::Continue => self.compile_continue(line)?,
         }
 
         Ok(())
@@ -472,13 +459,9 @@ impl Compiler {
 
     fn emit_loop(&mut self, loop_start: usize, line: usize) {
         self.emit_opcode(OpCode::Loop, line);
-
         let offset = self.chunk.code.len() + 2 - loop_start;
-
         assert!(offset <= u16::MAX as usize, "Loop body too large");
-
         let offset = offset as u16;
-
         self.emit_byte((offset >> 8) as u8, line);
         self.emit_byte((offset & 0xff) as u8, line);
     }
@@ -489,18 +472,96 @@ impl Compiler {
         //Deux octets réservés pour l'adresse
         self.emit_byte(0xff, line);
         self.emit_byte(0xff, line);
-
         self.chunk.code.len() - 2
     }
 
     fn patch_jump(&mut self, offset: usize) {
         let jump = self.chunk.code.len() - offset - 2;
         assert!(jump <= u16::MAX as usize, "Jump trop grand");
-
         let jump = jump as u16;
-
         self.chunk.code[offset] = (jump >> 8) as u8;
         self.chunk.code[offset + 1] = (jump & 0xff) as u8;
+    }
+
+    fn compile_while(
+        &mut self,
+        condition: &Expression,
+        body: &[Statement],
+        line: usize,
+    ) -> Result<(), CompileError> {
+        //Début de la condition
+        let loop_start = self.chunk.code.len();
+
+        //La condition est égale
+        //La destination de continue
+        let continue_target = loop_start;
+
+        //CONDITION
+        self.compile_expression(condition, line)?;
+
+        //si c'est faux -> sortie
+        let exit_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+
+        //La condition est vraie
+        self.emit_opcode(OpCode::Pop, line);
+
+        self.loops.push(LoopContext {
+            continue_target,
+            break_jumps: Vec::new(),
+        });
+
+        //BODY
+        self.begin_scope();
+
+        for statement in body {
+            self.compile_statement(statement, line)?;
+        }
+
+        self.end_scope(line);
+
+        //Rétour au début
+        self.emit_loop(loop_start, line);
+
+        //EXIT
+        self.patch_jump(exit_jump);
+
+        //condition false
+        self.emit_opcode(OpCode::Pop, line);
+
+        //Récupèrer le contexte
+        let loop_context = self.loops.pop().expect("loop stack underflow");
+
+        //Patch de tout les break
+        for break_jump in loop_context.break_jumps {
+            self.patch_jump(break_jump);
+        }
+
+        Ok(())
+    }
+
+    fn compile_break(&mut self, line: usize) -> Result<(), CompileError> {
+        if self.loops.is_empty() {
+            return Err(CompileError::BreakOutsideLoop);
+        }
+
+        let jump = self.emit_jump(OpCode::Jump, line);
+
+        self.loops.last_mut().unwrap().break_jumps.push(jump);
+
+        Ok(())
+    }
+    fn compile_continue(&mut self, line: usize) -> Result<(), CompileError> {
+        let loop_start = match self.loops.last() {
+            Some(loop_context) => loop_context.continue_target,
+
+            None => {
+                return Err(CompileError::ContinueOutsideLoop);
+            }
+        };
+
+        self.emit_loop(loop_start, line);
+
+        Ok(())
     }
 
     fn compile_if(
@@ -512,10 +573,8 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         //condition
         self.compile_expression(condition, line)?;
-
         //Saut vers ELSE ou FIN
         let then_jump = self.emit_jump(OpCode::JumpIfFalse, line);
-
         for statement in then_branch {
             self.compile_statement(statement, line)?;
         }
@@ -524,23 +583,18 @@ impl Compiler {
         if let Some(else_branch) = else_branch {
             //Sauter le ELSE après avoir éxécuté THEN
             let else_jump = self.emit_jump(OpCode::Jump, line);
-
             //déstination du JumpIfFalse
             self.patch_jump(then_jump);
-
             //Rétiré la condition false
             self.emit_opcode(OpCode::Pop, line);
-
             for statement in else_branch {
                 self.compile_statement(statement, line)?;
             }
-
             //Déstination final
             self.patch_jump(else_jump);
         } else {
             //Déstination final
             self.patch_jump(then_jump);
-
             //Rétire la condition false
             self.emit_opcode(OpCode::Pop, line);
         }
