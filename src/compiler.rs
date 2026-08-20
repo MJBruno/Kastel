@@ -29,6 +29,11 @@ impl LocalTable {
     pub fn is_empty(&self) -> bool {
         self.locals.is_empty()
     }
+
+    fn remove_last(&mut self) {
+        self.locals.pop();
+    }
+
     fn declare_local(&mut self, name: &str, depth: usize) -> Result<u8, CompileError> {
         //Empèche la rédeclaration dans la même scope
         for local in self.locals.iter().rev() {
@@ -126,6 +131,7 @@ impl Display for CompileError {
 struct LoopContext {
     continue_target: usize,
     break_jumps: Vec<usize>,
+    scope_depth: usize,
 }
 pub struct Compiler {
     pub globals: HashMap<String, u8>,
@@ -483,6 +489,22 @@ impl Compiler {
         self.chunk.code[offset + 1] = (jump & 0xff) as u8;
     }
 
+    fn emit_scope_cleanup(&mut self, target_depth: usize, line: usize) {
+        while let Some(local) = self.locals.locals.last() {
+            let depth = match local.depth {
+                Some(depth) => depth,
+                None => break,
+            };
+
+            if depth <= target_depth {
+                break;
+            }
+            self.emit_opcode(OpCode::Pop, line);
+
+            self.locals.remove_last();
+        }
+    }
+
     fn compile_while(
         &mut self,
         condition: &Expression,
@@ -508,6 +530,7 @@ impl Compiler {
         self.loops.push(LoopContext {
             continue_target,
             break_jumps: Vec::new(),
+            scope_depth: self.scope_depth,
         });
 
         //BODY
@@ -540,9 +563,15 @@ impl Compiler {
     }
 
     fn compile_break(&mut self, line: usize) -> Result<(), CompileError> {
-        if self.loops.is_empty() {
-            return Err(CompileError::BreakOutsideLoop);
-        }
+        let loop_depth = match self.loops.last() {
+            Some(loop_context) => loop_context.scope_depth,
+
+            None => {
+                return Err(CompileError::BreakOutsideLoop);
+            }
+        };
+
+        self.emit_scope_cleanup(loop_depth, line);
 
         let jump = self.emit_jump(OpCode::Jump, line);
 
@@ -551,15 +580,17 @@ impl Compiler {
         Ok(())
     }
     fn compile_continue(&mut self, line: usize) -> Result<(), CompileError> {
-        let loop_start = match self.loops.last() {
-            Some(loop_context) => loop_context.continue_target,
+        let (continue_target, loop_depth) = match self.loops.last() {
+            Some(loop_context) => (loop_context.continue_target, loop_context.scope_depth),
 
             None => {
                 return Err(CompileError::ContinueOutsideLoop);
             }
         };
 
-        self.emit_loop(loop_start, line);
+        self.emit_scope_cleanup(loop_depth, line);
+
+        self.emit_loop(continue_target, line);
 
         Ok(())
     }
