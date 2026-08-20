@@ -36,7 +36,7 @@ fn execute(source: &str) {
     }
 }
 
-//Ä 
+//Ä
 fn repl() -> Result<(), RuntimeError> {
     println!("Crafted by nova.org, Madagascar: 2026 – 2027 ");
     loop {

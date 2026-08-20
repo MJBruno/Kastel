@@ -141,9 +141,6 @@ impl Parser {
             TokenKind::And => self.binary(left, BinaryOp::And, Precedence::And),
             TokenKind::Or => self.binary(left, BinaryOp::Or, Precedence::Or),
             TokenKind::Equal => self.assignment(left),
-            TokenKind::LeftParen => self.call(left),
-            TokenKind::LeftBracket => self.index(left),
-
             _ => Err(format!("Invalid infix token {:?}", token.kind)),
         }
     }
@@ -165,7 +162,6 @@ impl Parser {
 
     fn assignment(&mut self, left: Expression) -> Result<Expression, String> {
         let value = self.parse_precedence(Precedence::Assignment)?;
-
         match left {
             Expression::Variable(name) => Ok(Expression::Assignment {
                 name,
@@ -176,37 +172,7 @@ impl Parser {
         }
     }
 
-    fn call(&mut self, callee: Expression) -> Result<Expression, String> {
-        let mut arguments = Vec::new();
-
-        if !self.check(&TokenKind::RightParen) {
-            loop {
-                arguments.push(self.parse_precedence(Precedence::Assignment)?);
-
-                if !self.match_token(TokenKind::Comma) {
-                    break;
-                }
-            }
-        }
-
-        self.consume(TokenKind::RightParen, "Expected ')' after arguments")?;
-
-        Ok(Expression::Call {
-            callee: Box::new(callee),
-            arguments,
-        })
-    }
-
-    fn index(&mut self, object: Expression) -> Result<Expression, String> {
-        let index = self.parse_precedence(Precedence::Assignment)?;
-
-        self.consume(TokenKind::RightBracket, "Expected ']' after index")?;
-
-        Ok(Expression::Index {
-            object: Box::new(object),
-            index: Box::new(index),
-        })
-    }
+   
 
     // --------------------------------------------------
     //                  PRECEDENCE

@@ -1,4 +1,6 @@
-let r = 10
-let a = 10
-let b = 15
-print(a > b)
+
+        let r = 16
+        let a = 17
+        r = 18
+        print(a > r)
+  

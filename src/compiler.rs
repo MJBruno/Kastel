@@ -3,12 +3,95 @@ use std::{collections::HashMap, fmt::Display};
 use crate::{
     ast::{BinaryOp, Expression, Literal, Statement, UnaryOp},
     chunk::{Chunk, OpCode},
-    value::Value::{self, Boolean, Nil, Number},
+    value::Value,
 };
-// #[allow(dead_code)]
+
 pub struct Local {
     pub name: String,
     pub depth: Option<usize>,
+    //Répresente directement la position du variable local dans la pile
+    pub slot: u8,
+}
+
+pub struct LocalTable {
+    locals: Vec<Local>,
+}
+#[allow(dead_code)]
+impl LocalTable {
+    pub fn new() -> Self {
+        Self { locals: Vec::new() }
+    }
+
+    pub fn len(&self) -> usize {
+        self.locals.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.locals.is_empty()
+    }
+    fn declare_local(&mut self, name: &str, depth: usize) -> Result<u8, CompileError> {
+        //Empèche la rédeclaration dans la même scope
+        for local in self.locals.iter().rev() {
+            if let Some(local_depth) = local.depth {
+                if local_depth < depth {
+                    break;
+                }
+                if local.name == name {
+                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+                }
+            }
+        }
+
+        let slot = self.locals.len();
+        if self.locals.len() >= u8::MAX as usize {
+            return Err(CompileError::TooManyLocals);
+        }
+
+        self.locals.push(Local {
+            name: name.to_string(),
+            depth: Some(depth),
+            slot: slot as u8,
+        });
+
+        Ok(slot as u8)
+    }
+
+    fn mark_initialized(&mut self, depth: usize) {
+        if let Some(local) = self.locals.last_mut() {
+            let _ = local.depth == Some(depth);
+        }
+    }
+
+    fn resolve_local(&self, name: &str) -> Result<Option<u8>, CompileError> {
+        for local in self.locals.iter().rev() {
+            if local.name != name {
+                continue;
+            }
+            if local.depth.is_none() {
+                return Err(CompileError::VariableUseInInitializer(name.to_string()));
+            }
+            return Ok(Some(local.slot));
+        }
+        Ok(None)
+    }
+
+    pub fn pop_scope(&mut self, depth: usize) -> usize {
+        let mut count = 0;
+        while let Some(local) = self.locals.last() {
+            let local_depth = match local.depth {
+                Some(depth) => depth,
+                None => break,
+            };
+
+            if local_depth <= depth {
+                break;
+            }
+
+            self.locals.pop();
+            count += 1;
+        }
+        count
+    }
 }
 
 enum VariableLocation {
@@ -17,7 +100,6 @@ enum VariableLocation {
 }
 
 #[derive(Debug)]
-// #[allow(dead_code)]
 pub enum CompileError {
     VariableAlreadyDeclared(String),
     VariableUseInInitializer(String),
@@ -32,25 +114,26 @@ impl Display for CompileError {
             CompileError::VariableAlreadyDeclared(e) => write!(f, "Variable {e} déja déclarer"),
             CompileError::VariableUseInInitializer(e) => write!(f, "Variable {e} non initialisé"),
             CompileError::UndefinedVariable(e) => write!(f, "Variable {e} non définie"),
-            CompileError::TooManyConstants => write!(f, "Trops de constant"),
-            CompileError::TooManyLocals => write!(f, "Trops de local"),
+            CompileError::TooManyConstants => write!(f, "Trop de constant"),
+            CompileError::TooManyLocals => write!(f, "Trop de local"),
         }
     }
 }
-// #[allow(dead_code)]
+
 pub struct Compiler {
     pub globals: HashMap<String, u8>,
     pub chunk: Chunk,
-    locals: Vec<Local>,
-    scope_depth: usize,
+    locals: LocalTable,
+    pub scope_depth: usize,
 }
-// #[allow(dead_code)]
+
+#[allow(dead_code)]
 impl Compiler {
     pub fn new() -> Self {
         Self {
             globals: HashMap::new(),
             chunk: Chunk::new(),
-            locals: Vec::new(),
+            locals: LocalTable::new(),
             scope_depth: 0,
         }
     }
@@ -84,7 +167,6 @@ impl Compiler {
         if index > u8::MAX as usize {
             return Err(CompileError::TooManyConstants);
         }
-
         Ok(index as u8)
     }
 
@@ -95,65 +177,58 @@ impl Compiler {
     fn end_scope(&mut self, line: usize) {
         self.scope_depth -= 1;
 
-        while let Some(local) = self.locals.last() {
-            if local.depth < Some(self.scope_depth) {
-                break;
-            }
+        let count = self.locals.pop_scope(self.scope_depth);
 
+        for _ in 0..count {
             self.emit_opcode(OpCode::Pop, line);
-
-            self.locals.pop();
         }
-    }
-
-    fn resolve_local(&self, name: &str) -> Result<Option<usize>, CompileError> {
-        for (index, local) in self.locals.iter().enumerate().rev() {
-            if local.name == name {
-                if local.depth.is_none() {
-                    return Err(CompileError::VariableUseInInitializer(name.to_string()));
-                }
-
-                return Ok(Some(index));
-            }
-        }
-        Ok(None)
     }
 
     fn resolve_variable(&self, name: &str) -> Result<VariableLocation, CompileError> {
-        if let Some(slot) = self.resolve_local(name)? {
-            return Ok(VariableLocation::Local(slot));
+        if let Some(slot) = self.locals.resolve_local(name)? {
+            return Ok(VariableLocation::Local(slot.into()));
         }
-        if let Some(global) = self.globals.get(name) {
-            return Ok(VariableLocation::Global((*global).into()));
+        if let Some(index) = self.globals.get(name) {
+            return Ok(VariableLocation::Global((*index).into()));
         }
 
         Err(CompileError::UndefinedVariable(name.to_string()))
     }
 
-    fn declare_local(&mut self, name: &str) -> Result<(), CompileError> {
-        if self.scope_depth == 0 {
-            return Ok(());
+    fn compile_var(
+        &mut self,
+        name: &str,
+        initializer: Option<&Expression>,
+        line: usize,
+    ) -> Result<(), CompileError> {
+        if self.scope_depth > 0 {
+            return self.compile_local_var(name, initializer, line);
         }
 
-        //Empèche la rédeclaration dans la même scope
-        for local in self.locals.iter().rev() {
-            if let Some(depth) = local.depth {
-                if depth < self.scope_depth {
-                    break;
-                }
-                if local.name == name {
-                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
-                }
+        self.compile_global_var(name, initializer, line)
+    }
+
+    fn identifier_constant(&mut self, name: &str) -> Result<u8, CompileError> {
+        self.make_constant(Value::String(name.to_string()))
+    }
+
+    fn compile_local_var(
+        &mut self,
+        name: &str,
+        initializer: Option<&Expression>,
+        line: usize,
+    ) -> Result<(), CompileError> {
+        let slot = self.locals.declare_local(name, self.scope_depth)?;
+
+        match initializer {
+            Some(expr) => self.compile_expression(expr, line)?,
+            None => {
+                Ok(self.emit_opcode(OpCode::Nil, line))?;
             }
         }
-        if self.locals.len() >= u8::MAX as usize {
-            return Err(CompileError::TooManyLocals);
-        }
+        self.locals.mark_initialized(self.scope_depth);
 
-        self.locals.push(Local {
-            name: name.to_string(),
-            depth: Some(self.scope_depth),
-        });
+        debug_assert_eq!(self.locals.len() - 1, slot as usize);
 
         Ok(())
     }
@@ -167,70 +242,49 @@ impl Compiler {
         if self.globals.contains_key(name) {
             return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
-
         let name_constant = self.identifier_constant(name)?;
-
         match initializer {
-            Some(expr) => {
-                self.compile_expression(expr, line)?;
-            }
-
+            Some(expr) => self.compile_expression(expr, line)?,
             None => {
-                self.emit_opcode(OpCode::Nil, line);
+                Ok(self.emit_opcode(OpCode::Nil, line))?;
             }
         }
 
         self.emit_bytes(OpCode::DefineGlobal, name_constant, line);
+
         self.globals.insert(name.to_string(), name_constant);
 
         Ok(())
     }
 
-    fn mark_initialized(&mut self) {
-        if self.scope_depth == 0 {
-            return;
-        }
-        if let Some(local) = self.locals.last_mut() {
-            let _ = local.depth == Some(self.scope_depth);
-        }
-    }
-
-    fn identifier_constant(&mut self, name: &str) -> Result<u8, CompileError> {
-        self.make_constant(Value::String(name.to_string()))
-    }
-
-    fn compile_var(
-        &mut self,
-        name: &str,
-        initializer: Option<&Expression>,
-        line: usize,
-    ) -> Result<(), CompileError> {
-        //LOCAL
-        if self.scope_depth > 0 {
-            self.declare_local(name)?;
-
-            match initializer {
-                Some(expr) => {
-                    self.compile_expression(expr, line)?;
-                }
-                None => {
-                    self.emit_opcode(OpCode::Nil, line);
-                }
+    fn compile_get(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
+        match self.resolve_variable(name)? {
+            VariableLocation::Local(slot) => {
+                self.emit_bytes(OpCode::GetLocal, slot as u8, line);
             }
-            self.mark_initialized();
-
-            return Ok(());
+            VariableLocation::Global(index) => {
+                self.emit_bytes(OpCode::GetGlobal, index as u8, line);
+            }
         }
-
-        //GLOBAL
-        self.compile_global_var(name, initializer, line)
+        Ok(())
     }
-    #[allow(unused_variables)]
+    fn compile_set(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
+        match self.resolve_variable(name)? {
+            VariableLocation::Local(slot) => {
+                self.emit_bytes(OpCode::SetLocal, slot as u8, line);
+            }
+            VariableLocation::Global(index) => {
+                self.emit_bytes(OpCode::SetGlobal, index as u8, line);
+            }
+        }
+        Ok(())
+    }
+
     fn compile_expression(&mut self, expr: &Expression, line: usize) -> Result<(), CompileError> {
         match expr {
             Expression::Literal(value) => match value {
                 Literal::Number(v) => {
-                    let constant = self.make_constant(Number(*v))?;
+                    let constant = self.make_constant(Value::Number(*v))?;
                     self.emit_bytes(OpCode::Constant, constant, line);
                 }
                 Literal::String(v) => {
@@ -238,11 +292,11 @@ impl Compiler {
                     self.emit_bytes(OpCode::Constant, constant, line);
                 }
                 Literal::Bool(v) => {
-                    let constant = self.make_constant(Boolean(*v))?;
+                    let constant = self.make_constant(Value::Boolean(*v))?;
                     self.emit_bytes(OpCode::Constant, constant, line);
                 }
                 Literal::Nil => {
-                    let constant = self.make_constant(Nil)?;
+                    let constant = self.make_constant(Value::Nil)?;
                     self.emit_bytes(OpCode::Constant, constant, line);
                 }
             },
@@ -271,7 +325,6 @@ impl Compiler {
                     UnaryOp::Not => self.emit_opcode(OpCode::Not, line),
                 }
             }
-            _ => unreachable!(),
         }
 
         Ok(())
@@ -299,11 +352,10 @@ impl Compiler {
                 self.emit_bytes(OpCode::SetGlobal, index as u8, line);
             }
         }
-
         Ok(())
     }
 
-    fn compile_binary(&mut self, operator: crate::ast::BinaryOp, line: usize) {
+    fn compile_binary(&mut self, operator: BinaryOp, line: usize) {
         match operator {
             BinaryOp::Add => {
                 self.emit_opcode(OpCode::Add, line);
@@ -383,3 +435,7 @@ impl Compiler {
         Ok(())
     }
 }
+
+// --------------------------------------------------
+//                  FONCTION
+// --------------------------------------------------

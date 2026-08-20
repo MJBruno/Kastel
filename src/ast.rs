@@ -56,16 +56,6 @@ pub enum Expression {
         name: String,
         value: Box<Expression>,
     },
-
-    Call {
-        callee: Box<Expression>,
-        arguments: Vec<Expression>,
-    },
-
-    Index {
-        object: Box<Expression>,
-        index: Box<Expression>,
-    },
 }
 
 #[derive(Debug, Clone)]
