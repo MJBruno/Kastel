@@ -1,10 +1,9 @@
-use std::{collections::HashMap, fmt::Display};
+use std::collections::HashMap;
 
-use crate::{
-    ast::{BinaryOp, Expression, Literal, Statement, UnaryOp},
-    chunk::{Chunk, OpCode},
-    value::Value,
-};
+use crate::ast::{BinaryOp, Expression, Literal, Statement, UnaryOp};
+use crate::chunk::{Chunk, OpCode};
+use crate::error::CompileError;
+use crate::value::Value;
 
 pub struct Local {
     pub name: String,
@@ -12,11 +11,14 @@ pub struct Local {
     //Répresente directement la position du variable local dans la pile
     pub slot: u8,
 }
-
+enum VariableLocation {
+    Local(usize),
+    Global(usize),
+}
 pub struct LocalTable {
     locals: Vec<Local>,
 }
-#[allow(dead_code)]
+
 impl LocalTable {
     pub fn new() -> Self {
         Self { locals: Vec::new() }
@@ -24,10 +26,6 @@ impl LocalTable {
 
     pub fn len(&self) -> usize {
         self.locals.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.locals.is_empty()
     }
 
     fn remove_last(&mut self) {
@@ -99,49 +97,21 @@ impl LocalTable {
     }
 }
 
-enum VariableLocation {
-    Local(usize),
-    Global(usize),
-}
 
-#[derive(Debug)]
-pub enum CompileError {
-    VariableAlreadyDeclared(String),
-    VariableUseInInitializer(String),
-    UndefinedVariable(String),
-    TooManyConstants,
-    TooManyLocals,
-    BreakOutsideLoop,
-    ContinueOutsideLoop,
-}
-
-impl Display for CompileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CompileError::VariableAlreadyDeclared(e) => write!(f, "Variable {e} déja déclarer"),
-            CompileError::VariableUseInInitializer(e) => write!(f, "Variable {e} non initialisé"),
-            CompileError::UndefinedVariable(e) => write!(f, "Variable {e} non définie"),
-            CompileError::TooManyConstants => write!(f, "Trop de constant"),
-            CompileError::TooManyLocals => write!(f, "Trop de local"),
-            CompileError::BreakOutsideLoop => write!(f, "Break hors boucle"),
-            CompileError::ContinueOutsideLoop => write!(f, "Continue hors boucle"),
-        }
-    }
-}
+//Pour géré la boucle avec break/continue
 struct LoopContext {
     continue_target: usize,
     break_jumps: Vec<usize>,
     scope_depth: usize,
 }
 pub struct Compiler {
-    pub globals: HashMap<String, u8>,
-    pub chunk: Chunk,
+    globals: HashMap<String, u8>,
+    chunk: Chunk,
     locals: LocalTable,
-    pub scope_depth: usize,
+    scope_depth: usize,
     loops: Vec<LoopContext>,
 }
 
-#[allow(dead_code)]
 impl Compiler {
     pub fn new() -> Self {
         Self {
@@ -206,7 +176,6 @@ impl Compiler {
         if let Some(index) = self.globals.get(name) {
             return Ok(VariableLocation::Global((*index).into()));
         }
-
         Err(CompileError::UndefinedVariable(name.to_string()))
     }
 
@@ -242,9 +211,7 @@ impl Compiler {
             }
         }
         self.locals.mark_initialized(self.scope_depth);
-
         debug_assert_eq!(self.locals.len() - 1, slot as usize);
-
         Ok(())
     }
 
@@ -272,28 +239,9 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_get(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
-        match self.resolve_variable(name)? {
-            VariableLocation::Local(slot) => {
-                self.emit_bytes(OpCode::GetLocal, slot as u8, line);
-            }
-            VariableLocation::Global(index) => {
-                self.emit_bytes(OpCode::GetGlobal, index as u8, line);
-            }
-        }
-        Ok(())
-    }
-    fn compile_set(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
-        match self.resolve_variable(name)? {
-            VariableLocation::Local(slot) => {
-                self.emit_bytes(OpCode::SetLocal, slot as u8, line);
-            }
-            VariableLocation::Global(index) => {
-                self.emit_bytes(OpCode::SetGlobal, index as u8, line);
-            }
-        }
-        Ok(())
-    }
+    // --------------------------------------------------
+    //                  COMPILER_EXPRESSION
+    // --------------------------------------------------
 
     fn compile_expression(&mut self, expr: &Expression, line: usize) -> Result<(), CompileError> {
         match expr {
@@ -371,6 +319,10 @@ impl Compiler {
         Ok(())
     }
 
+    // --------------------------------------------------
+    //                  COMPILER_BINARY
+    // --------------------------------------------------
+
     fn compile_binary(&mut self, operator: BinaryOp, line: usize) {
         match operator {
             BinaryOp::Add => {
@@ -413,7 +365,11 @@ impl Compiler {
             _ => unreachable!(),
         }
     }
-    #[allow(unused_variables)]
+
+    // --------------------------------------------------
+    //                  COMPILER_STATEMENT
+    // --------------------------------------------------
+
     pub fn compile_statement(&mut self, stmt: &Statement, line: usize) -> Result<(), CompileError> {
         match stmt {
             Statement::Expression { expression } => {
@@ -505,6 +461,10 @@ impl Compiler {
         }
     }
 
+    // --------------------------------------------------
+    //                  COMPILER_WHILE
+    // --------------------------------------------------
+
     fn compile_while(
         &mut self,
         condition: &Expression,
@@ -562,6 +522,10 @@ impl Compiler {
         Ok(())
     }
 
+    // --------------------------------------------------
+    //                  COMPILER_BREAK
+    // --------------------------------------------------
+
     fn compile_break(&mut self, line: usize) -> Result<(), CompileError> {
         let loop_depth = match self.loops.last() {
             Some(loop_context) => loop_context.scope_depth,
@@ -579,6 +543,11 @@ impl Compiler {
 
         Ok(())
     }
+
+    // --------------------------------------------------
+    //                  COMPILER_CONTINUE
+    // --------------------------------------------------
+
     fn compile_continue(&mut self, line: usize) -> Result<(), CompileError> {
         let (continue_target, loop_depth) = match self.loops.last() {
             Some(loop_context) => (loop_context.continue_target, loop_context.scope_depth),
@@ -594,6 +563,10 @@ impl Compiler {
 
         Ok(())
     }
+
+    // --------------------------------------------------
+    //                  COMPILER_IF/ELSE
+    // --------------------------------------------------
 
     fn compile_if(
         &mut self,
@@ -632,7 +605,3 @@ impl Compiler {
         Ok(())
     }
 }
-
-// --------------------------------------------------
-//                  FONCTION
-// --------------------------------------------------

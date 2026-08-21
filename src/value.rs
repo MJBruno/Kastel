@@ -1,6 +1,5 @@
 use std::fmt::Display;
-
-use crate::error_value::RuntimeError;
+use crate::error::RuntimeError;
 
 pub enum NumericOp {
     Add,
@@ -75,7 +74,9 @@ impl Value {
 
     pub fn compare_numeric(a: Value, b: Value, op: ComparisonOp) -> Result<Value, RuntimeError> {
         match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Boolean(Self::compare_number(a, b, op))),
+            (Value::Number(a), Value::Number(b)) => {
+                Ok(Value::Boolean(Self::compare_number(a, b, op)))
+            }
 
             _ => Err(RuntimeError::TypeError),
         }

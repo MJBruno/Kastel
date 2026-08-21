@@ -1,14 +1,14 @@
 let x = 0
 
-{
-        let x = 50
-        while (x < 100) {
-                x = x + 1
 
-                if (x == 60) {
-                        break
-                }
-                print(x)
+ 
+while (true) {
+        
+        if (x == 10) {
+                break
         }
+        x = x + 1
 }
+
 print(x)
+ 

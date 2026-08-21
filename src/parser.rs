@@ -4,7 +4,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-// #[allow(dead_code)]
+
 enum Precedence {
     None,
     Assignment,
@@ -18,7 +18,7 @@ enum Precedence {
     Call,
     Primary,
 }
-// #[allow(dead_code)]
+
 impl Precedence {
     fn next(self) -> Self {
         match self {

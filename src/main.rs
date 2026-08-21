@@ -9,7 +9,6 @@ mod machine;
 mod parser;
 mod token;
 mod value;
-mod error_value;
 mod compiler;
 
 fn main() {

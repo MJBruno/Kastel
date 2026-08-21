@@ -130,10 +130,10 @@ impl Chunk {
             x if x == OpCode::Pop.into() => self.simple_instruction("OP_POP", offset),
             x if x == OpCode::Print.into() => self.simple_instruction("OP_PRINT", offset),
             x if x == OpCode::Return.into() => self.simple_instruction("OP_RETURN", offset),
-            #[allow(unreachable_code)]
+ 
             _ => {
                 panic!("Unknown opcode: {}", instruction);
-                offset + 1
+                // offset + 1
             }
         }
     }

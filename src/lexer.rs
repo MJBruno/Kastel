@@ -1,12 +1,7 @@
-use crate::token::{Token, TokenKind};
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct LexerError {
-    pub message: String,
-    pub line: usize,
-    pub column: usize,
-}
+use crate::{
+    error::LexerError,
+    token::{Token, TokenKind},
+};
 
 pub struct Lexer {
     source: Vec<char>,

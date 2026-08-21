@@ -1,5 +1,4 @@
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Statement {
     Let {
         name: String,
@@ -35,7 +34,6 @@ pub enum Statement {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Literal {
     Number(f64),
     String(String),
@@ -44,7 +42,6 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Expression {
     Literal(Literal),
     Variable(String),
@@ -67,7 +64,6 @@ pub enum Expression {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum UnaryOp {
     Negate,
     Not,

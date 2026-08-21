@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use crate::chunk::Chunk;
 use crate::chunk::OpCode;
 
-use crate::error_value::RuntimeError;
+use crate::error::RuntimeError;
 use crate::value::ComparisonOp;
 use crate::value::NumericOp;
 use crate::value::Value;
 use crate::value::print_value;
-#[allow(dead_code)]
+ 
 pub struct VirtualMachine {
     pub chunk: Chunk,
     pub ip: usize,
