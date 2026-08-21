@@ -1,4 +1,5 @@
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Statement {
     Let {
         name: String,
@@ -29,6 +30,14 @@ pub enum Statement {
         body: Vec<Statement>,
     },
 
+    Function {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Statement>,
+    },
+    Return {
+        value: Option<Expression>,
+    },
     Break,
     Continue,
 }
@@ -42,6 +51,7 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Expression {
     Literal(Literal),
     Variable(String),
@@ -60,6 +70,11 @@ pub enum Expression {
     Assignment {
         name: String,
         value: Box<Expression>,
+    },
+
+    Call {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
     },
 }
 

@@ -1,5 +1,5 @@
-use std::fmt::Display;
-use crate::error::RuntimeError;
+use crate::{compiler::Function, error::RuntimeError};
+use std::{fmt::Display, rc::Rc};
 
 pub enum NumericOp {
     Add,
@@ -22,6 +22,7 @@ pub enum Value {
     Number(f64),
     Boolean(bool),
     String(String),
+    Function(Rc<Function>),
     Nil,
 }
 
@@ -32,6 +33,7 @@ impl Display for Value {
             Value::Boolean(value) => write!(f, "{value}"),
             Value::Nil => write!(f, "nil"),
             Value::String(s) => write!(f, "{s}"),
+            Value::Function(function) => write!(f,"{}",function.name),
         }
     }
 }
@@ -106,5 +108,6 @@ pub fn print_value(value: Value) {
         Value::Boolean(b) => println!("{}", b),
         Value::String(s) => println!("{}", s),
         Value::Nil => println!("nil"),
+        Value::Function(function) => println!("<func: {}>", function.name),
     }
 }

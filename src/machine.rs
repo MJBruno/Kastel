@@ -8,7 +8,7 @@ use crate::value::ComparisonOp;
 use crate::value::NumericOp;
 use crate::value::Value;
 use crate::value::print_value;
- 
+
 pub struct VirtualMachine {
     pub chunk: Chunk,
     pub ip: usize,
@@ -66,8 +66,8 @@ impl VirtualMachine {
     // #[allow(unreachable_patterns)]
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
-            // self.print_stack();
-            // self.chunk.disassemble_instruction(self.ip);
+            self.print_stack();
+            self.chunk.disassemble_instruction(self.ip);
 
             let instruction = self.read_byte();
 

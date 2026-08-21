@@ -1,14 +1,8 @@
-let x = 0
-
-
- 
-while (true) {
-        
-        if (x == 10) {
-                break
+{
+        function name(params) {
+                return params
         }
-        x = x + 1
+        function add(params) {
+                return params
+        }
 }
-
-print(x)
- 

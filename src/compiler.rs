@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::ast::{BinaryOp, Expression, Literal, Statement, UnaryOp};
 use crate::chunk::{Chunk, OpCode};
@@ -97,19 +98,23 @@ impl LocalTable {
     }
 }
 
-
 //Pour géré la boucle avec break/continue
 struct LoopContext {
     continue_target: usize,
     break_jumps: Vec<usize>,
     scope_depth: usize,
 }
+#[allow(dead_code)]
 pub struct Compiler {
     globals: HashMap<String, u8>,
     chunk: Chunk,
     locals: LocalTable,
     scope_depth: usize,
     loops: Vec<LoopContext>,
+
+    function_name: Option<String>,
+    function_arity: u8,
+    in_function: bool,
 }
 
 impl Compiler {
@@ -120,7 +125,77 @@ impl Compiler {
             locals: LocalTable::new(),
             scope_depth: 0,
             loops: Vec::new(),
+            function_name: None,
+            function_arity: 0,
+            in_function: false,
         }
+    }
+
+    pub fn new_function(name: String) -> Self {
+        Self {
+            globals: HashMap::new(),
+            chunk: Chunk::new(),
+            locals: LocalTable::new(),
+            scope_depth: 0,
+            loops: Vec::new(),
+            function_name: Some(name),
+            function_arity: 0,
+            in_function: true,
+        }
+    }
+
+    fn add_parametre(&mut self, name: &str) -> Result<(), CompileError> {
+        let slot = self.locals.declare_local(name, self.scope_depth)?;
+        self.locals.mark_initialized(self.scope_depth);
+
+        debug_assert_eq!(slot, self.function_arity);
+        
+        self.function_arity += 1;
+
+        Ok(())
+    }
+
+    fn compile_fonction_statement(
+        &mut self,
+        name: &str,
+        params: &[String],
+        body: &[Statement],
+        line: usize,
+    ) -> Result<(), CompileError> {
+        let function = self.compile_function(name, params, body, line)?;
+        let constant = self.make_constant(Value::Function(Rc::new(function)))?;
+        self.emit_bytes(OpCode::Constant, constant, line);
+
+        let name_constant = self.identifier_constant(name)?;
+        self.emit_bytes(OpCode::DefineGlobal, name_constant, line);
+        Ok(())
+    }
+
+    fn compile_function(
+        &mut self,
+        name: &str,
+        params: &[String],
+        body: &[Statement],
+        line: usize,
+    ) -> Result<Function, CompileError> {
+        let mut compiler = Compiler::new_function(name.to_string());
+
+        for param in params {
+            compiler.add_parametre(param)?;
+        }
+
+        for statement in body {
+            compiler.compile_statement(statement, line)?;
+        }
+
+        compiler.emit_opcode(OpCode::Nil, line);
+        compiler.emit_opcode(OpCode::Return, line);
+
+        Ok(Function {
+            name: name.to_string(),
+            arity: compiler.function_arity as usize,
+            chunk: compiler.chunk,
+        })
     }
 
     pub fn compile(mut self, statements: &[Statement], line: usize) -> Chunk {
@@ -242,7 +317,7 @@ impl Compiler {
     // --------------------------------------------------
     //                  COMPILER_EXPRESSION
     // --------------------------------------------------
-
+    #[allow(dead_code)]
     fn compile_expression(&mut self, expr: &Expression, line: usize) -> Result<(), CompileError> {
         match expr {
             Expression::Literal(value) => match value {
@@ -289,6 +364,8 @@ impl Compiler {
                     UnaryOp::Not => self.emit_opcode(OpCode::Not, line),
                 }
             }
+            #[allow(unused_variables)]
+            Expression::Call { callee, arguments } => todo!(),
         }
 
         Ok(())
@@ -412,8 +489,14 @@ impl Compiler {
                     Err(error) => eprintln!("{error}"),
                 }
             }
+            Statement::Function { name, params, body } => {
+                self.compile_fonction_statement(name, params, body, line)?;
+            }
             Statement::Break => self.compile_break(line)?,
             Statement::Continue => self.compile_continue(line)?,
+            Statement::Return { value } => {
+                self.compile_return(value.as_ref(), line)?;
+            }
         }
 
         Ok(())
@@ -459,6 +542,24 @@ impl Compiler {
 
             self.locals.remove_last();
         }
+    }
+
+    fn compile_return(
+        &mut self,
+        value: Option<&Expression>,
+        line: usize,
+    ) -> Result<(), CompileError> {
+        if !self.in_function {
+            return Err(CompileError::ReturnOutsidFunction);
+        }
+        match value {
+            Some(expression) => self.compile_expression(expression, line)?,
+
+            None => Ok(self.emit_opcode(OpCode::Nil, line))?,
+        }
+        self.emit_opcode(OpCode::Return, line);
+
+        Ok(())
     }
 
     // --------------------------------------------------
@@ -604,4 +705,13 @@ impl Compiler {
         }
         Ok(())
     }
+}
+
+//La fonction compilée doit posséder son propre bytecode
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct Function {
+    pub name: String,
+    pub arity: usize,
+    pub chunk: Chunk,
 }

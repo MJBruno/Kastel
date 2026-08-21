@@ -23,6 +23,7 @@ pub enum CompileError {
     TooManyLocals,
     BreakOutsideLoop,
     ContinueOutsideLoop,
+    ReturnOutsidFunction,
 }
 
 impl Display for CompileError {
@@ -35,6 +36,7 @@ impl Display for CompileError {
             CompileError::TooManyLocals => write!(f, "Trop de local"),
             CompileError::BreakOutsideLoop => write!(f, "Break hors boucle"),
             CompileError::ContinueOutsideLoop => write!(f, "Continue hors boucle"),
+            CompileError::ReturnOutsidFunction => write!(f, "Return hors fonction"),
         }
     }
 }
