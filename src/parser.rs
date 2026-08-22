@@ -301,27 +301,6 @@ impl Parser {
         Ok(expression)
     }
 
-    // fn finish_call(&mut self, callee: Expression) -> Result<Expression, ParserError> {
-    //     let mut arguments = Vec::new();
-
-    //     if !self.check(TokenKind::RightParen) {
-    //         loop {
-    //             arguments.push(self.parse_expression()?);
-
-    //             if !self.match_token(TokenKind::Comma) {
-    //                 break;
-    //             }
-    //         }
-    //     }
-
-    //     self.consume(TokenKind::RightParen, "expected ')' after arguments")?;
-
-    //     Ok(Expression::Call {
-    //         callee: Box::new(callee),
-    //         arguments,
-    //     })
-    // }
-
     fn parse_call(&mut self, callee: Expression) -> Result<Expression, ParserError> {
         let mut arguments = Vec::new();
         if !self.check(TokenKind::RightParen) {

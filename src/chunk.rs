@@ -35,6 +35,7 @@ pub enum OpCode {
     Pop,
     Print,
     Loop,
+    Call,
 }
 
 impl From<OpCode> for u8 {
@@ -128,6 +129,7 @@ impl Chunk {
             x if x == OpCode::JumpIfFalse.into() => self.byte_instruction("OP_JUMP_IF_FALSE", offset),
             x if x == OpCode::Jump.into() => self.byte_instruction("OP_JUMP", offset),
             x if x == OpCode::Pop.into() => self.simple_instruction("OP_POP", offset),
+            x if x == OpCode::Call.into() => self.byte_instruction("OP_CALL", offset),
             x if x == OpCode::Print.into() => self.simple_instruction("OP_PRINT", offset),
             x if x == OpCode::Return.into() => self.simple_instruction("OP_RETURN", offset),
  

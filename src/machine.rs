@@ -201,6 +201,9 @@ impl VirtualMachine {
                     let value = self.pop();
                     self.push(Value::Boolean(!value.is_truthy()));
                 }
+                x if x == OpCode::Call.into() => {
+                    
+                }
                 x if x == OpCode::Pop.into() => {
                     let _ = self.pop();
                 }

@@ -30,11 +30,27 @@ fn execute(source: &str) {
     let tokens = lexer.scan_token();
     let parser = Parser::new(tokens.unwrap()).parse();
     let chunk = Compiler::new().compile(&parser.unwrap(), 0);
-    let mut vm = VirtualMachine::new(chunk);
+    let mut vm = VirtualMachine::new(chunk.expect("Erreur de l'execution du Machine virtuel"));
     match vm.run() {
         Ok(ok) => ok,
         Err(e) => eprintln!("{e}"),
     }
+    //     match parser {
+    //     Ok(statements) => {
+    //         println!("{:#?}", statements);
+    //     }
+
+    //     Err(errors) => {
+    //         for error in errors {
+    //             eprintln!(
+    //                 "{}:{}: {}",
+    //                 error.line,
+    //                 error.column,
+    //                 error.message
+    //             );
+    //         }
+    //     }
+    // }
 }
 
 //Ä

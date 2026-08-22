@@ -149,7 +149,7 @@ impl Compiler {
         self.locals.mark_initialized(self.scope_depth);
 
         debug_assert_eq!(slot, self.function_arity);
-        
+
         self.function_arity += 1;
 
         Ok(())
@@ -162,12 +162,29 @@ impl Compiler {
         body: &[Statement],
         line: usize,
     ) -> Result<(), CompileError> {
+        // Vérifier la redéclaration
+        if self.globals.contains_key(name) {
+            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+        }
+
+        // Compiler la fonction
         let function = self.compile_function(name, params, body, line)?;
+
+        // Ajouter Function dans les constantes
         let constant = self.make_constant(Value::Function(Rc::new(function)))?;
+
         self.emit_bytes(OpCode::Constant, constant, line);
 
+        // Nom de la fonction
         let name_constant = self.identifier_constant(name)?;
+
+        // Créer le global
         self.emit_bytes(OpCode::DefineGlobal, name_constant, line);
+
+        // IMPORTANT :
+        // enregistrer le global dans la table du compiler
+        self.globals.insert(name.to_string(), name_constant);
+
         Ok(())
     }
 
@@ -198,15 +215,39 @@ impl Compiler {
         })
     }
 
-    pub fn compile(mut self, statements: &[Statement], line: usize) -> Chunk {
-        for statement in statements {
-            match self.compile_statement(statement, line) {
-                Ok(success) => success,
-                Err(error) => eprintln!("{}", error),
-            }
+    fn compile_call(
+        &mut self,
+        callee: &Expression,
+        arguments: &[Expression],
+        line: usize,
+    ) -> Result<(), CompileError> {
+        // compilé la fonction appllé
+        self.compile_expression(callee, line)?;
+
+        //Compile les arguments
+        for argument in arguments {
+            self.compile_expression(argument, line)?;
         }
+
+        //Vérifier la limite des arguments
+        if arguments.len() > u8::MAX as usize {
+            return Err(CompileError::TooManyConstants);
+        }
+
+        //émettre OP_CALL
+        self.emit_bytes(OpCode::Call, arguments.len() as u8, line);
+
+        Ok(())
+    }
+
+    pub fn compile(mut self, statements: &[Statement], line: usize) -> Result<Chunk, CompileError> {
+        for statement in statements {
+            self.compile_statement(statement, line)?;
+        }
+
         self.emit_opcode(OpCode::Return, line);
-        self.chunk
+
+        Ok(self.chunk)
     }
 
     fn emit_byte(&mut self, byte: u8, line: usize) {
@@ -365,7 +406,9 @@ impl Compiler {
                 }
             }
             #[allow(unused_variables)]
-            Expression::Call { callee, arguments } => todo!(),
+            Expression::Call { callee, arguments } => {
+                self.compile_call(callee, arguments, line)?;
+            }
         }
 
         Ok(())

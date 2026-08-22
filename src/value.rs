@@ -33,7 +33,7 @@ impl Display for Value {
             Value::Boolean(value) => write!(f, "{value}"),
             Value::Nil => write!(f, "nil"),
             Value::String(s) => write!(f, "{s}"),
-            Value::Function(function) => write!(f,"< function '{}' >",function.name),
+            Value::Function(function) => write!(f,"< fun '{}' >",function.name),
         }
     }
 }
