@@ -292,7 +292,7 @@ impl Parser {
 
         loop {
             if self.match_token(TokenKind::LeftParen) {
-                expression = self.finish_call(expression)?;
+                expression = self.parse_call(expression)?;
             } else {
                 break;
             }
@@ -301,9 +301,29 @@ impl Parser {
         Ok(expression)
     }
 
-    fn finish_call(&mut self, callee: Expression) -> Result<Expression, ParserError> {
-        let mut arguments = Vec::new();
+    // fn finish_call(&mut self, callee: Expression) -> Result<Expression, ParserError> {
+    //     let mut arguments = Vec::new();
 
+    //     if !self.check(TokenKind::RightParen) {
+    //         loop {
+    //             arguments.push(self.parse_expression()?);
+
+    //             if !self.match_token(TokenKind::Comma) {
+    //                 break;
+    //             }
+    //         }
+    //     }
+
+    //     self.consume(TokenKind::RightParen, "expected ')' after arguments")?;
+
+    //     Ok(Expression::Call {
+    //         callee: Box::new(callee),
+    //         arguments,
+    //     })
+    // }
+
+    fn parse_call(&mut self, callee: Expression) -> Result<Expression, ParserError> {
+        let mut arguments = Vec::new();
         if !self.check(TokenKind::RightParen) {
             loop {
                 arguments.push(self.parse_expression()?);
@@ -314,7 +334,7 @@ impl Parser {
             }
         }
 
-        self.consume(TokenKind::RightParen, "expected ')' after arguments")?;
+        self.consume(TokenKind::RightParen, "message")?;
 
         Ok(Expression::Call {
             callee: Box::new(callee),
@@ -442,26 +462,6 @@ impl Parser {
         Ok(Statement::Assignment {
             name: name.lexeme,
             value,
-        })
-    }
-
-    fn parse_call(&mut self, callee: Expression) -> Result<Expression, ParserError> {
-        let mut arguments = Vec::new();
-        if !self.check(TokenKind::RightParen) {
-            loop {
-                arguments.push(self.parse_expression()?);
-
-                if !self.match_token(TokenKind::Comma) {
-                    break;
-                }
-            }
-        }
-
-        self.consume(TokenKind::RightParen, "message")?;
-
-        Ok(Expression::Call {
-            callee: Box::new(callee),
-            arguments,
         })
     }
 

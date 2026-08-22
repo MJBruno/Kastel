@@ -1,8 +1,5 @@
-{
-        function name(params) {
-                return params
-        }
-        function add(params) {
-                return params
-        }
+
+function add(a, b) {
+        return a + b
 }
+

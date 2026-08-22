@@ -124,6 +124,9 @@ impl VirtualMachine {
                 x if x == OpCode::False.into() => {
                     self.push(Value::Boolean(false));
                 }
+                x if x == OpCode::Nil.into() => {
+                    self.push(Value::Nil);
+                }
 
                 x if x == OpCode::Add.into() => {
                     let b = self.pop();
