@@ -35,22 +35,7 @@ fn execute(source: &str) {
         Ok(ok) => ok,
         Err(e) => eprintln!("{e}"),
     }
-    //     match parser {
-    //     Ok(statements) => {
-    //         println!("{:#?}", statements);
-    //     }
-
-    //     Err(errors) => {
-    //         for error in errors {
-    //             eprintln!(
-    //                 "{}:{}: {}",
-    //                 error.line,
-    //                 error.column,
-    //                 error.message
-    //             );
-    //         }
-    //     }
-    // }
+  
 }
 
 //Ä

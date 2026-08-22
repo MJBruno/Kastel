@@ -82,6 +82,8 @@ use std::fmt::Display;
 pub enum RuntimeError {
     TypeError,
     DivisionByZero,
+    WrongArgumentCount { expected: usize, found: usize },
+    NotCallable,
 }
 
 impl Display for RuntimeError {
@@ -92,6 +94,15 @@ impl Display for RuntimeError {
             }
             RuntimeError::DivisionByZero => {
                 write!(f, "Division by zero.")
+            }
+            RuntimeError::WrongArgumentCount { expected, found } => {
+                write!(
+                    f,
+                    "Mauvais liste d'argument au lieu de {expected} or {found}."
+                )
+            }
+            RuntimeError::NotCallable => {
+                write!(f, "Cette expression ne peut pas être appeler")
             }
         }
     }

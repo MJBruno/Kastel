@@ -1,35 +1,47 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::chunk::Chunk;
 use crate::chunk::OpCode;
 
+use crate::compiler::Function;
 use crate::error::RuntimeError;
 use crate::value::ComparisonOp;
 use crate::value::NumericOp;
 use crate::value::Value;
 use crate::value::print_value;
 
-pub struct VirtualMachine {
-    pub chunk: Chunk,
+#[allow(dead_code)]
+pub struct CallFrame {
+    pub function: Rc<Function>,
     pub ip: usize,
+    pub slot_start: usize,
+}
+
+pub struct VirtualMachine {
     pub stack: Vec<Value>,
     pub globals: HashMap<String, Value>,
+    frames: Vec<CallFrame>,
+
+    //Utile pour le moment mais on va la supprimer après
+    pub chunk: Chunk,
 }
 #[allow(dead_code)]
 impl VirtualMachine {
     pub fn new(chunk: Chunk) -> Self {
         Self {
             chunk,
-            ip: 0,
             stack: Vec::new(),
             globals: HashMap::new(),
+            frames: Vec::new(),
         }
     }
 
     //Lire les instructions(bytecode) dans le chunk
     fn read_byte(&mut self) -> u8 {
-        let byte = self.chunk.code[self.ip];
-        self.ip += 1;
+        let frame = self.frames.last_mut().expect("No call frame");
+        let byte = frame.function.chunk.code[frame.ip];
+        frame.ip += 1;
         byte
     }
 
@@ -63,58 +75,107 @@ impl VirtualMachine {
         println!()
     }
 
-    // #[allow(unreachable_patterns)]
+    fn read_constant(&mut self) -> Value {
+        let index = self.read_byte() as usize;
+        let frame = self.frames.last().expect("No call frame");
+        frame.function.chunk.constants[index].clone()
+    }
+
+    fn current_ip(&self) -> usize {
+        self.frames.last().expect("Aucun CallFrame").ip
+    }
+
     pub fn run(&mut self) -> Result<(), RuntimeError> {
+        let main_function = Rc::new(Function {
+            name: "<script>".to_string(),
+            arity: 0,
+            chunk: self.chunk.clone(),
+        });
+
+        self.frames.push(CallFrame {
+            function: main_function,
+            ip: 0,
+            slot_start: 0,
+        });
         loop {
             self.print_stack();
-            self.chunk.disassemble_instruction(self.ip);
+            let ip = self.current_ip();
+
+            self.frames
+                .last()
+                .unwrap()
+                .function
+                .chunk
+                .disassemble_instruction(ip);
 
             let instruction = self.read_byte();
 
             match instruction {
                 x if x == OpCode::Constant.into() => {
-                    let index = self.read_byte() as usize;
-                    let constant = self.chunk.constants[index].clone();
+                    let constant = self.read_constant();
                     self.push(constant);
-                }
-                x if x == OpCode::Nil.into() => {
-                    self.push(Value::Nil);
                 }
 
                 x if x == OpCode::DefineGlobal.into() => {
-                    let index = self.read_byte() as usize;
-                    let name = match &self.chunk.constants[index] {
+                    let constant = self.read_constant();
+                    let name = match constant {
                         Value::String(name) => name.clone(),
                         _ => return Err(RuntimeError::TypeError),
                     };
-                    self.define_global(name);
+                    let value = self.pop();
+                    self.globals.insert(name, value);
                 }
                 x if x == OpCode::GetGlobal.into() => {
-                    let index = self.read_byte() as usize;
-                    let name = match &self.chunk.constants[index] {
-                        Value::String(name) => name.clone(),
+                    let constant = self.read_constant();
+                    let name = match constant {
+                        Value::String(name) => name,
                         _ => return Err(RuntimeError::TypeError),
                     };
-                    self.get_global(&name).expect("Value not exist");
+
+                    let value = match self.globals.get(&name) {
+                        Some(value) => value.clone(),
+                        None => {
+                            return Err(RuntimeError::TypeError);
+                        }
+                    };
+
+                    self.push(value);
                 }
 
                 x if x == OpCode::SetGlobal.into() => {
-                    let index = self.read_byte() as usize;
-                    let name = match &self.chunk.constants[index] {
+                    let constant = self.read_constant();
+                    let name = match constant {
                         Value::String(name) => name.clone(),
                         _ => return Err(RuntimeError::TypeError),
                     };
-                    self.set_global(&name).expect("Value not exist");
+
+                    if !self.globals.contains_key(&name) {
+                        return Err(RuntimeError::TypeError);
+                    }
+
+                    let value = self.peek().clone();
+                    self.globals.insert(name, value);
                 }
 
                 x if x == OpCode::GetLocal.into() => {
                     let slot = self.read_byte() as usize;
-                    self.get_local(slot);
+                    let frame = self.frames.last().expect("Aucun CallFrame");
+                    let index = frame.slot_start + 1 + slot;
+                    let value = self.stack[index].clone();
+
+                    self.push(value);
                 }
 
                 x if x == OpCode::SetLocal.into() => {
                     let slot = self.read_byte() as usize;
-                    self.set_local(slot);
+
+                    let value = self.peek().clone();
+
+                    let slot_start = self.frames.last().expect("Aucun CallFrame").slot_start;
+
+                    let index = slot_start + 1 + slot;
+
+                    self.stack[index] = value;
                 }
 
                 x if x == OpCode::True.into() => {
@@ -182,27 +243,48 @@ impl VirtualMachine {
                     self.push(result);
                 }
                 x if x == OpCode::Jump.into() => {
-                    let offset = self.read_short();
-                    self.ip += offset as usize;
+                    let offset = self.read_short() as usize;
+
+                    let frame = self.frames.last_mut().expect("Aucun CallFrame");
+
+                    frame.ip += offset;
                 }
                 x if x == OpCode::JumpIfFalse.into() => {
-                    let offset = self.read_short();
+                    let offset = self.read_short() as usize;
 
                     if !self.peek().is_truthy() {
-                        self.ip += offset as usize;
+                        let frame = self.frames.last_mut().expect("Aucun CallFrame");
+
+                        frame.ip += offset;
                     }
                 }
                 x if x == OpCode::Loop.into() => {
-                    let offset = self.read_short();
+                    let offset = self.read_short() as usize;
 
-                    self.ip -= offset as usize
+                    let frame = self.frames.last_mut().expect("Aucun CallFrame");
+
+                    frame.ip -= offset;
                 }
                 x if x == OpCode::Not.into() => {
                     let value = self.pop();
                     self.push(Value::Boolean(!value.is_truthy()));
                 }
                 x if x == OpCode::Call.into() => {
-                    
+                    let arg_count = self.read_byte() as usize;
+
+                    let callee_index = self.stack.len() - arg_count - 1;
+
+                    let callee = self.stack[callee_index].clone();
+
+                    match callee {
+                        Value::Function(function) => {
+                            self.call(function, arg_count)?;
+                        }
+
+                        _ => {
+                            return Err(RuntimeError::NotCallable);
+                        }
+                    }
                 }
                 x if x == OpCode::Pop.into() => {
                     let _ = self.pop();
@@ -213,6 +295,19 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Return.into() => {
+                    let result = self.pop();
+
+                    let frame = self.frames.pop().expect("Aucun CallFrame");
+
+                    self.stack.truncate(frame.slot_start);
+
+                    if self.frames.is_empty() {
+                        return Ok(());
+                    }
+
+                    self.push(result);
+                }
+                x if x == OpCode::Halt.into() => {
                     return Ok(());
                 }
                 _ => panic!("Unknown opcode: {instruction}"),
@@ -220,46 +315,25 @@ impl VirtualMachine {
         }
     }
 
-    //OP_DEFINE_GLOBAL
-    fn define_global(&mut self, name: String) {
-        let value = self.pop();
-        self.globals.insert(name, value);
-    }
-
-    //OP_GET_GLOBAL
-    fn get_global(&mut self, name: &str) -> Result<(), String> {
-        let value = self
-            .globals
-            .get(name)
-            .cloned()
-            .ok_or_else(|| format!("Variable '{}' non définie", name))?;
-
-        self.push(value);
-        Ok(())
-    }
-    //OP_SET_GLOBAL
-    fn set_global(&mut self, name: &str) -> Result<(), String> {
-        let value = self.peek().clone();
-
-        if !self.globals.contains_key(name) {
-            return Err(format!("Variable '{}' non définie", name));
+    //OP_CALL
+    fn call(&mut self, function: Rc<Function>, arg_count: usize) -> Result<(), RuntimeError> {
+        if arg_count != function.arity {
+            return Err(RuntimeError::WrongArgumentCount {
+                expected: function.arity,
+                found: arg_count,
+            });
         }
 
-        self.globals.insert(name.to_string(), value);
+        let callee_index = self.stack.len() - arg_count - 1;
+
+        let frame = CallFrame {
+            function,
+            ip: 0,
+            slot_start: callee_index,
+        };
+
+        self.frames.push(frame);
 
         Ok(())
-    }
-
-    //OP_GET_LOCAL
-    fn get_local(&mut self, slot: usize) {
-        let value = self.stack[slot].clone();
-
-        self.push(value);
-    }
-
-    //OP_SET_LOCAL
-    fn set_local(&mut self, slot: usize) {
-        let value = self.peek().clone();
-        self.stack[slot] = value;
     }
 }

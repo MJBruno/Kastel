@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -106,7 +107,7 @@ struct LoopContext {
 }
 #[allow(dead_code)]
 pub struct Compiler {
-    globals: HashMap<String, u8>,
+    globals: Rc<RefCell<HashMap<String, ()>>>,
     chunk: Chunk,
     locals: LocalTable,
     scope_depth: usize,
@@ -120,7 +121,7 @@ pub struct Compiler {
 impl Compiler {
     pub fn new() -> Self {
         Self {
-            globals: HashMap::new(),
+            globals: Rc::new(RefCell::new(HashMap::new())),
             chunk: Chunk::new(),
             locals: LocalTable::new(),
             scope_depth: 0,
@@ -131,9 +132,9 @@ impl Compiler {
         }
     }
 
-    pub fn new_function(name: String) -> Self {
+    pub fn new_function(name: String, globals: Rc<RefCell<HashMap<String, ()>>>) -> Self {
         Self {
-            globals: HashMap::new(),
+            globals,
             chunk: Chunk::new(),
             locals: LocalTable::new(),
             scope_depth: 0,
@@ -163,27 +164,24 @@ impl Compiler {
         line: usize,
     ) -> Result<(), CompileError> {
         // Vérifier la redéclaration
-        if self.globals.contains_key(name) {
+        if self.globals.borrow().contains_key(name) {
             return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
+
+        // Réserver le nom AVANT de compiler le corps
+        let name_constant = self.identifier_constant(name)?;
+
+        self.globals.borrow_mut().insert(name.to_string(), ());
 
         // Compiler la fonction
         let function = self.compile_function(name, params, body, line)?;
 
-        // Ajouter Function dans les constantes
-        let constant = self.make_constant(Value::Function(Rc::new(function)))?;
+        // Mettre la fonction dans les constantes
+        let function_constant = self.make_constant(Value::Function(Rc::new(function)))?;
 
-        self.emit_bytes(OpCode::Constant, constant, line);
+        self.emit_bytes(OpCode::Constant, function_constant, line);
 
-        // Nom de la fonction
-        let name_constant = self.identifier_constant(name)?;
-
-        // Créer le global
         self.emit_bytes(OpCode::DefineGlobal, name_constant, line);
-
-        // IMPORTANT :
-        // enregistrer le global dans la table du compiler
-        self.globals.insert(name.to_string(), name_constant);
 
         Ok(())
     }
@@ -195,8 +193,7 @@ impl Compiler {
         body: &[Statement],
         line: usize,
     ) -> Result<Function, CompileError> {
-        let mut compiler = Compiler::new_function(name.to_string());
-
+        let mut compiler = Compiler::new_function(name.to_string(), Rc::clone(&self.globals));
         for param in params {
             compiler.add_parametre(param)?;
         }
@@ -245,7 +242,7 @@ impl Compiler {
             self.compile_statement(statement, line)?;
         }
 
-        self.emit_opcode(OpCode::Return, line);
+        self.emit_opcode(OpCode::Halt, line);
 
         Ok(self.chunk)
     }
@@ -289,9 +286,11 @@ impl Compiler {
         if let Some(slot) = self.locals.resolve_local(name)? {
             return Ok(VariableLocation::Local(slot.into()));
         }
-        if let Some(index) = self.globals.get(name) {
-            return Ok(VariableLocation::Global((*index).into()));
+
+        if self.globals.borrow().contains_key(name) {
+            return Ok(VariableLocation::Global(0));
         }
+
         Err(CompileError::UndefinedVariable(name.to_string()))
     }
 
@@ -337,20 +336,25 @@ impl Compiler {
         initializer: Option<&Expression>,
         line: usize,
     ) -> Result<(), CompileError> {
-        if self.globals.contains_key(name) {
+        if self.globals.borrow().contains_key(name) {
             return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
+
         let name_constant = self.identifier_constant(name)?;
+
         match initializer {
-            Some(expr) => self.compile_expression(expr, line)?,
+            Some(expr) => {
+                self.compile_expression(expr, line)?;
+            }
+
             None => {
-                Ok(self.emit_opcode(OpCode::Nil, line))?;
+                self.emit_opcode(OpCode::Nil, line);
             }
         }
 
         self.emit_bytes(OpCode::DefineGlobal, name_constant, line);
 
-        self.globals.insert(name.to_string(), name_constant);
+        self.globals.borrow_mut().insert(name.to_string(), ());
 
         Ok(())
     }
