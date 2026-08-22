@@ -52,7 +52,7 @@ pub struct Chunk {
     pub constants: Vec<Value>,
     lines: Vec<usize>,
 }
-#[allow(dead_code)]
+// #[allow(dead_code)]
 impl Chunk {
     pub fn new() -> Self {
         Self {
@@ -76,19 +76,6 @@ impl Chunk {
         self.constants.len() - 1
     }
 
-    pub fn write_opcode(&mut self, opcode: OpCode, line: usize) {
-        self.write(opcode.into(), line);
-    }
-
-    pub fn disassemble(&self, name: &str) {
-        println!("== {name} ==");
-
-        let mut offset = 0;
-
-        while offset < self.code.len() {
-            offset = self.disassemble_instruction(offset);
-        }
-    }
 
     pub fn disassemble_instruction(&self, offset: usize) -> usize {
         print!("{offset:04} ");
@@ -139,7 +126,6 @@ impl Chunk {
 
             _ => {
                 panic!("Unknown opcode: {}", instruction);
-                // offset + 1
             }
         }
     }
@@ -162,7 +148,4 @@ impl Chunk {
         offset + 2
     }
 
-    fn trace_instruction(&self, offset: usize) {
-        self.disassemble_instruction(offset);
-    }
 }

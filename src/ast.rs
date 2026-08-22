@@ -1,5 +1,5 @@
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+// #[allow(dead_code)]
 pub enum Statement {
     Let {
         name: String,

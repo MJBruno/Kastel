@@ -15,7 +15,7 @@ pub struct Local {
 }
 enum VariableLocation {
     Local(usize),
-    Global(usize),
+    Global(String),
 }
 pub struct LocalTable {
     locals: Vec<Local>,
@@ -288,7 +288,7 @@ impl Compiler {
         }
 
         if self.globals.borrow().contains_key(name) {
-            return Ok(VariableLocation::Global(0));
+            return Ok(VariableLocation::Global(name.to_string()));
         }
 
         Err(CompileError::UndefinedVariable(name.to_string()))
@@ -423,8 +423,12 @@ impl Compiler {
             VariableLocation::Local(slot) => {
                 self.emit_bytes(OpCode::GetLocal, slot as u8, line);
             }
-            VariableLocation::Global(index) => {
-                self.emit_bytes(OpCode::GetGlobal, index as u8, line);
+
+            VariableLocation::Global(name) => {
+                // Créer la constante dans LE CHUNK COURANT
+                let constant = self.identifier_constant(&name)?;
+
+                self.emit_bytes(OpCode::GetGlobal, constant, line);
             }
         }
 
@@ -436,12 +440,17 @@ impl Compiler {
             VariableLocation::Local(slot) => {
                 self.emit_bytes(OpCode::SetLocal, slot as u8, line);
             }
-            VariableLocation::Global(index) => {
-                self.emit_bytes(OpCode::SetGlobal, index as u8, line);
+
+            VariableLocation::Global(name) => {
+                let constant = self.identifier_constant(&name)?;
+
+                self.emit_bytes(OpCode::SetGlobal, constant, line);
             }
         }
+
         Ok(())
     }
+ 
 
     // --------------------------------------------------
     //                  COMPILER_BINARY
@@ -756,7 +765,7 @@ impl Compiler {
 
 //La fonction compilée doit posséder son propre bytecode
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+// #[allow(dead_code)]
 pub struct Function {
     pub name: String,
     pub arity: usize,
