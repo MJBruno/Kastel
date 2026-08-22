@@ -52,7 +52,7 @@ pub struct Chunk {
     pub constants: Vec<Value>,
     lines: Vec<usize>,
 }
-// #[allow(dead_code)]
+#[allow(dead_code)]
 impl Chunk {
     pub fn new() -> Self {
         Self {

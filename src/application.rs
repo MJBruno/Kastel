@@ -4,8 +4,7 @@ use crate::{
 };
 
 use std::{
-    env, fs,
-    io::{self, Write},
+    env, fs, io::{self, Write}, rc::Rc,
 };
 
 pub struct Application;
@@ -28,14 +27,26 @@ impl Application {
 fn execute(source: &str) {
     let mut lexer = Lexer::new(source.to_string());
     let tokens = lexer.scan_token();
-    let parser = Parser::new(tokens.unwrap()).parse();
-    let chunk = Compiler::new().compile(&parser.unwrap(), 0);
-    let mut vm = VirtualMachine::new(chunk.expect("Erreur de l'execution du Machine virtuel"));
-    match vm.run() {
-        Ok(ok) => ok,
-        Err(e) => eprintln!("{e}"),
+    let statements = Parser::new(tokens.unwrap()).parse();
+    // Compiler
+    let compiler = Compiler::new();
+
+    let function = match compiler.compile(&statements.unwrap(), 1) {
+        Ok(function) => function,
+        Err(error) => {
+            eprintln!("Erreur de compilation : {}", error);
+            return;
+        }
+    };
+
+    // VM
+    let function = Rc::new(function);
+
+    let mut vm = VirtualMachine::new(function);
+
+    if let Err(error) = vm.run() {
+        eprintln!("Erreur de l'exécution du VM : {}", error);
     }
-  
 }
 
 //Ä

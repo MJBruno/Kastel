@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::ast::{BinaryOp, Expression, Literal, Statement, UnaryOp};
@@ -15,7 +15,7 @@ pub struct Local {
 }
 enum VariableLocation {
     Local(usize),
-    Global(String),
+    Global,
 }
 pub struct LocalTable {
     locals: Vec<Local>,
@@ -63,7 +63,7 @@ impl LocalTable {
 
     fn mark_initialized(&mut self, depth: usize) {
         if let Some(local) = self.locals.last_mut() {
-            let _ = local.depth == Some(depth);
+            debug_assert_eq!(local.depth, Some(depth));
         }
     }
 
@@ -107,7 +107,7 @@ struct LoopContext {
 }
 #[allow(dead_code)]
 pub struct Compiler {
-    globals: Rc<RefCell<HashMap<String, ()>>>,
+    globals: Rc<RefCell<HashSet<String>>>,
     chunk: Chunk,
     locals: LocalTable,
     scope_depth: usize,
@@ -121,7 +121,7 @@ pub struct Compiler {
 impl Compiler {
     pub fn new() -> Self {
         Self {
-            globals: Rc::new(RefCell::new(HashMap::new())),
+            globals: Rc::new(RefCell::new(HashSet::new())),
             chunk: Chunk::new(),
             locals: LocalTable::new(),
             scope_depth: 0,
@@ -132,7 +132,7 @@ impl Compiler {
         }
     }
 
-    pub fn new_function(name: String, globals: Rc<RefCell<HashMap<String, ()>>>) -> Self {
+    pub fn new_function(name: String, globals: Rc<RefCell<HashSet<String>>>) -> Self {
         Self {
             globals,
             chunk: Chunk::new(),
@@ -164,22 +164,23 @@ impl Compiler {
         line: usize,
     ) -> Result<(), CompileError> {
         // Vérifier la redéclaration
-        if self.globals.borrow().contains_key(name) {
+        if self.globals.borrow().contains(name) {
             return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
 
-        // Réserver le nom AVANT de compiler le corps
-        let name_constant = self.identifier_constant(name)?;
+        // Réserver le nom global avant de compiler le corps.
+        self.globals.borrow_mut().insert(name.to_string());
 
-        self.globals.borrow_mut().insert(name.to_string(), ());
-
-        // Compiler la fonction
+        // Compiler la fonction dans son propre chunk.
         let function = self.compile_function(name, params, body, line)?;
 
-        // Mettre la fonction dans les constantes
+        // Ajouter l'objet Function dans LE chunk courant.
         let function_constant = self.make_constant(Value::Function(Rc::new(function)))?;
 
         self.emit_bytes(OpCode::Constant, function_constant, line);
+
+        // Le nom est une constante du chunk courant.
+        let name_constant = self.identifier_constant(name)?;
 
         self.emit_bytes(OpCode::DefineGlobal, name_constant, line);
 
@@ -237,14 +238,22 @@ impl Compiler {
         Ok(())
     }
 
-    pub fn compile(mut self, statements: &[Statement], line: usize) -> Result<Chunk, CompileError> {
+    pub fn compile(
+        mut self,
+        statements: &[Statement],
+        line: usize,
+    ) -> Result<Function, CompileError> {
         for statement in statements {
             self.compile_statement(statement, line)?;
         }
 
         self.emit_opcode(OpCode::Halt, line);
 
-        Ok(self.chunk)
+        Ok(Function {
+            name: "<script>".to_string(),
+            arity: 0,
+            chunk: self.chunk,
+        })
     }
 
     fn emit_byte(&mut self, byte: u8, line: usize) {
@@ -284,11 +293,11 @@ impl Compiler {
 
     fn resolve_variable(&self, name: &str) -> Result<VariableLocation, CompileError> {
         if let Some(slot) = self.locals.resolve_local(name)? {
-            return Ok(VariableLocation::Local(slot.into()));
+            return Ok(VariableLocation::Local(slot as usize));
         }
 
-        if self.globals.borrow().contains_key(name) {
-            return Ok(VariableLocation::Global(name.to_string()));
+        if self.globals.borrow().contains(name) {
+            return Ok(VariableLocation::Global);
         }
 
         Err(CompileError::UndefinedVariable(name.to_string()))
@@ -336,7 +345,7 @@ impl Compiler {
         initializer: Option<&Expression>,
         line: usize,
     ) -> Result<(), CompileError> {
-        if self.globals.borrow().contains_key(name) {
+        if self.globals.borrow().contains(name) {
             return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
 
@@ -354,7 +363,7 @@ impl Compiler {
 
         self.emit_bytes(OpCode::DefineGlobal, name_constant, line);
 
-        self.globals.borrow_mut().insert(name.to_string(), ());
+        self.globals.borrow_mut().insert(name.to_string());
 
         Ok(())
     }
@@ -387,11 +396,7 @@ impl Compiler {
             Expression::Variable(name) => {
                 self.compile_variable_get(name, line)?;
             }
-
-            Expression::Assignment { name, value } => {
-                self.compile_expression(value, line)?;
-                self.compile_variable_set(name, line)?;
-            }
+ 
             Expression::Binary {
                 left,
                 operator,
@@ -409,7 +414,7 @@ impl Compiler {
                     UnaryOp::Not => self.emit_opcode(OpCode::Not, line),
                 }
             }
-            #[allow(unused_variables)]
+
             Expression::Call { callee, arguments } => {
                 self.compile_call(callee, arguments, line)?;
             }
@@ -424,11 +429,10 @@ impl Compiler {
                 self.emit_bytes(OpCode::GetLocal, slot as u8, line);
             }
 
-            VariableLocation::Global(name) => {
-                // Créer la constante dans LE CHUNK COURANT
-                let constant = self.identifier_constant(&name)?;
+            VariableLocation::Global => {
+                let name_constant = self.identifier_constant(name)?;
 
-                self.emit_bytes(OpCode::GetGlobal, constant, line);
+                self.emit_bytes(OpCode::GetGlobal, name_constant, line);
             }
         }
 
@@ -441,16 +445,15 @@ impl Compiler {
                 self.emit_bytes(OpCode::SetLocal, slot as u8, line);
             }
 
-            VariableLocation::Global(name) => {
-                let constant = self.identifier_constant(&name)?;
+            VariableLocation::Global => {
+                let name_constant = self.identifier_constant(name)?;
 
-                self.emit_bytes(OpCode::SetGlobal, constant, line);
+                self.emit_bytes(OpCode::SetGlobal, name_constant, line);
             }
         }
 
         Ok(())
     }
- 
 
     // --------------------------------------------------
     //                  COMPILER_BINARY

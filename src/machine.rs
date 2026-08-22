@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::chunk::Chunk;
 use crate::chunk::OpCode;
 
 use crate::compiler::Function;
@@ -22,18 +21,18 @@ pub struct VirtualMachine {
     pub stack: Vec<Value>,
     pub globals: HashMap<String, Value>,
     frames: Vec<CallFrame>,
-
-    //Utile pour le moment mais on va la supprimer après
-    pub chunk: Chunk,
 }
 #[allow(dead_code)]
 impl VirtualMachine {
-    pub fn new(chunk: Chunk) -> Self {
+    pub fn new(function: Rc<Function>) -> Self {
         Self {
-            chunk,
             stack: Vec::new(),
             globals: HashMap::new(),
-            frames: Vec::new(),
+            frames: vec![CallFrame {
+                function,
+                ip: 0,
+                slot_start: 0,
+            }],
         }
     }
 
@@ -77,8 +76,16 @@ impl VirtualMachine {
 
     fn read_constant(&mut self) -> Value {
         let index = self.read_byte() as usize;
-        let frame = self.frames.last().expect("No call frame");
+        let frame = self.current_frame();
         frame.function.chunk.constants[index].clone()
+    }
+
+    fn current_frame(&self) -> &CallFrame {
+        self.frames.last().expect("No current CallFrame")
+    }
+
+    fn current_frame_mut(&mut self) -> &mut CallFrame {
+        self.frames.last_mut().expect("No current CallFrame")
     }
 
     fn current_ip(&self) -> usize {
@@ -86,27 +93,17 @@ impl VirtualMachine {
     }
 
     pub fn run(&mut self) -> Result<(), RuntimeError> {
-        let main_function = Rc::new(Function {
-            name: "<script>".to_string(),
-            arity: 0,
-            chunk: self.chunk.clone(),
-        });
-
-        self.frames.push(CallFrame {
-            function: main_function,
-            ip: 0,
-            slot_start: 0,
-        });
         loop {
-            self.print_stack();
-            let ip = self.current_ip();
+            // self.print_stack();
+            // let _ip = self.current_ip();
 
-            self.frames
-                .last()
-                .unwrap()
-                .function
-                .chunk
-                .disassemble_instruction(ip);
+            // let (ip, chunk) = {
+            //     let frame = self.current_frame();
+
+            //     (frame.ip, frame.function.chunk.clone())
+            // };
+
+            // chunk.disassemble_instruction(ip);
 
             let instruction = self.read_byte();
 
@@ -171,7 +168,7 @@ impl VirtualMachine {
 
                     let value = self.peek().clone();
 
-                    let slot_start = self.frames.last().expect("Aucun CallFrame").slot_start;
+                    let slot_start = self.current_frame().slot_start;
 
                     let index = slot_start + 1 + slot;
 
@@ -245,7 +242,7 @@ impl VirtualMachine {
                 x if x == OpCode::Jump.into() => {
                     let offset = self.read_short() as usize;
 
-                    let frame = self.frames.last_mut().expect("Aucun CallFrame");
+                    let frame = self.current_frame_mut();
 
                     frame.ip += offset;
                 }
@@ -253,7 +250,7 @@ impl VirtualMachine {
                     let offset = self.read_short() as usize;
 
                     if !self.peek().is_truthy() {
-                        let frame = self.frames.last_mut().expect("Aucun CallFrame");
+                        let frame = self.current_frame_mut();
 
                         frame.ip += offset;
                     }
@@ -261,7 +258,7 @@ impl VirtualMachine {
                 x if x == OpCode::Loop.into() => {
                     let offset = self.read_short() as usize;
 
-                    let frame = self.frames.last_mut().expect("Aucun CallFrame");
+                    let frame = self.current_frame_mut();
 
                     frame.ip -= offset;
                 }

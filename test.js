@@ -1,11 +1,16 @@
-function double(x) {
-    return x + x
-}
+
+let name = "Bruno"
+name = "John"
 
 function test(a) {
-    return double(a) * 5
+    let b = 20
+
+    {
+        let c = 30
+        return a + b + c
+    }
 }
 
-let x = test(10)
-
-print(x)
+let result = test(10)
+print(result)
+print(name)

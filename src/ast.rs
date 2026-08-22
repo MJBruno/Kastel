@@ -1,5 +1,4 @@
 #[derive(Debug, Clone)]
-// #[allow(dead_code)]
 pub enum Statement {
     Let {
         name: String,
@@ -66,12 +65,7 @@ pub enum Expression {
         operator: BinaryOp,
         right: Box<Expression>,
     },
-
-    Assignment {
-        name: String,
-        value: Box<Expression>,
-    },
-
+ 
     Call {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
