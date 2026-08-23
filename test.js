@@ -1,16 +1,11 @@
 
-let name = "Bruno"
-name = "John"
+let age = 1, offset = 25;
 
-function test(a) {
-    let b = 20
+function affiche_age(age) {
 
-    {
-        let c = 30
-        return a + b + c
-    }
+    let result = offset + age;
+    print(result);
 }
 
-let result = test(10)
-print(result)
-print(name)
+
+affiche_age(age);

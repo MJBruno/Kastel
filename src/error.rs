@@ -26,17 +26,17 @@ pub enum CompileError {
     ReturnOutsidFunction,
 }
 
-impl Display for CompileError {
+impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CompileError::VariableAlreadyDeclared(e) => write!(f, "Variable {e} déja déclarer"),
-            CompileError::VariableUseInInitializer(e) => write!(f, "Variable {e} non initialisé"),
-            CompileError::UndefinedVariable(e) => write!(f, "Variable {e} non définie"),
-            CompileError::TooManyConstants => write!(f, "Trop de constant"),
-            CompileError::TooManyLocals => write!(f, "Trop de local"),
-            CompileError::BreakOutsideLoop => write!(f, "Break hors boucle"),
-            CompileError::ContinueOutsideLoop => write!(f, "Continue hors boucle"),
-            CompileError::ReturnOutsidFunction => write!(f, "Return hors fonction"),
+            CompileError::VariableAlreadyDeclared(e) => write!(f, "Variable {e} not declare"),
+            CompileError::VariableUseInInitializer(e) => write!(f, "Variable {e} not initialize"),
+            CompileError::UndefinedVariable(e) => write!(f, "Variable {e} not defined"),
+            CompileError::TooManyConstants => write!(f, "Too many constant"),
+            CompileError::TooManyLocals => write!(f, "Too many local"),
+            CompileError::BreakOutsideLoop => write!(f, "Break outside loop"),
+            CompileError::ContinueOutsideLoop => write!(f, "Continue outside loop"),
+            CompileError::ReturnOutsidFunction => write!(f, "Return outside function"),
         }
     }
 }
@@ -71,7 +71,7 @@ impl std::fmt::Display for VMError {
     }
 }
 
-use std::fmt::Display;
+
 
 pub enum RuntimeError {
     TypeError,
@@ -80,7 +80,7 @@ pub enum RuntimeError {
     NotCallable,
 }
 
-impl Display for RuntimeError {
+impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RuntimeError::TypeError => {

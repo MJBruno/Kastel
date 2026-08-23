@@ -33,13 +33,12 @@ impl Parser {
 
         while !self.is_at_end() {
             match self.statement() {
-                Ok(stmt) => {
-                    statements.push(stmt);
+                Ok(stmts) => {
+                    statements.extend(stmts);
                 }
 
                 Err(error) => {
                     self.errors.push(error);
-
                     self.advance();
                 }
             }
@@ -99,10 +98,6 @@ impl Parser {
     }
 
     fn check(&self, kind: TokenKind) -> bool {
-        if self.is_at_end() {
-            return false;
-        }
-
         self.peek().kind == kind
     }
 
@@ -347,62 +342,64 @@ impl Parser {
         }
     }
 
-    fn statement(&mut self) -> Result<Statement, ParserError> {
-        //Déclaration variable let
-        if self.match_token(TokenKind::Let) {
-            return self.parse_let_statement();
-        }
-        if self.match_token(TokenKind::Function) {
-            return self.parse_function_statement();
-        }
-        if self.match_token(TokenKind::Return) {
-            return self.parse_return_statement();
-        }
+    fn statement(&mut self) -> Result<Vec<Statement>, ParserError> {
+        let statements = if self.match_token(TokenKind::Let) {
+            self.parse_let_statement()?
+        } else if self.match_token(TokenKind::Function) {
+            vec![self.parse_function_statement()?]
+        } else if self.match_token(TokenKind::Return) {
+            vec![self.parse_return_statement()?]
+        } else if self.check(TokenKind::Identifier) && self.check_next(TokenKind::Equal) {
+            vec![self.parse_assignment()?]
+        } else if self.match_token(TokenKind::Print) {
+            vec![self.parse_print_statement()?]
+        } else if self.match_token(TokenKind::Break) {
+            vec![Statement::Break]
+        } else if self.match_token(TokenKind::Continue) {
+            vec![Statement::Continue]
+        } else if self.match_token(TokenKind::If) {
+            vec![self.parse_if_statement()?]
+        } else if self.match_token(TokenKind::While) {
+            vec![self.parse_while_statement()?]
+        } else if self.match_token(TokenKind::LeftBrace) {
+            vec![Statement::Block(self.parse_block_statement()?)]
+        } else {
+            let expr = self.parse_expression()?;
 
-        if self.check(TokenKind::Identifier) && self.check_next(TokenKind::Equal) {
-            return self.parse_assignment();
-        }
+            vec![Statement::Expression { expression: expr }]
+        };
 
-        if self.match_token(TokenKind::Print) {
-            return self.parse_print_statement();
-        }
-        if self.match_token(TokenKind::Break) {
-            return Ok(Statement::Break);
-        }
-        if self.match_token(TokenKind::Continue) {
-            return Ok(Statement::Continue);
-        }
+        // ; optionnel
+        self.match_token(TokenKind::Semicolon);
 
-        if self.match_token(TokenKind::If) {
-            return self.parse_if_statement();
-        }
-
-        if self.match_token(TokenKind::While) {
-            return self.parse_while_statement();
-        }
-
-        if self.match_token(TokenKind::LeftBrace) {
-            let statements = self.parse_block_statement()?;
-            return Ok(Statement::Block(statements));
-        }
-
-        let expr = self.parse_expression()?;
-
-        Ok(Statement::Expression { expression: expr })
+        Ok(statements)
     }
 
     //////////////////////////
     // HELPER DE STATEMENTS //
     /////////////////////////
 
-    fn parse_let_statement(&mut self) -> Result<Statement, ParserError> {
-        let name = self.consume(TokenKind::Identifier, "Nom de variable attendu")?;
-        self.consume(TokenKind::Equal, " '=' attendu après le nom")?;
-        let value = self.parse_expression()?;
-        Ok(Statement::Let {
-            name: name.lexeme,
-            value,
-        })
+    fn parse_let_statement(&mut self) -> Result<Vec<Statement>, ParserError> {
+        let mut declarations = Vec::new();
+
+        loop {
+            let name = self.consume(TokenKind::Identifier, "Nom de variable attendu")?;
+
+            self.consume(TokenKind::Equal, " '=' attendu après le nom")?;
+
+            let value = self.parse_expression()?;
+
+            declarations.push(Statement::Let {
+                name: name.lexeme,
+                value,
+            });
+
+            if !self.match_token(TokenKind::Comma) {
+                break;
+            }
+        }
+
+        Ok(declarations)
     }
 
     fn parse_function_statement(&mut self) -> Result<Statement, ParserError> {
@@ -429,6 +426,12 @@ impl Parser {
             body,
         })
     }
+
+    fn parse_print_statement(&mut self) -> Result<Statement, ParserError> {
+        let expr = self.parse_expression()?;
+        Ok(Statement::Print(expr))
+    }
+
     fn parse_return_statement(&mut self) -> Result<Statement, ParserError> {
         let value = self.parse_expression()?;
 
@@ -444,17 +447,21 @@ impl Parser {
         })
     }
 
+    fn consume_optional_semicolon(&mut self) {
+        self.match_token(TokenKind::Semicolon);
+    }
+
     fn parse_block_statement(&mut self) -> Result<Vec<Statement>, ParserError> {
         let mut statements = Vec::new();
+
         while !self.check(TokenKind::RightBrace) && !self.is_at_end() {
-            statements.push(self.statement()?);
+            let parsed = self.statement()?;
+            statements.extend(parsed);
         }
+
         self.consume(TokenKind::RightBrace, " } attendu après le bloc")?;
+
         Ok(statements)
-    }
-    fn parse_print_statement(&mut self) -> Result<Statement, ParserError> {
-        let expr = self.parse_expression()?;
-        Ok(Statement::Print(expr))
     }
 
     fn parse_if_statement(&mut self) -> Result<Statement, ParserError> {
