@@ -242,11 +242,21 @@ impl Compiler {
                 left,
                 operator,
                 right,
-            } => {
-                self.compile_expression(left, line)?;
-                self.compile_expression(right, line)?;
-                self.compile_binary(operator.clone(), line);
-            }
+            } => match operator {
+                BinaryOp::And => {
+                    self.compile_logical_and(left, right, line)?;
+                }
+
+                BinaryOp::Or => {
+                    self.compile_logical_or(left, right, line)?;
+                }
+
+                _ => {
+                    self.compile_expression(left, line)?;
+                    self.compile_expression(right, line)?;
+                    self.compile_binary(operator.clone(), line);
+                }
+            },
 
             Expression::Unary { operator, right } => {
                 self.compile_expression(right, line)?;
@@ -260,6 +270,63 @@ impl Compiler {
                 self.compile_call(callee, arguments, line)?;
             }
         }
+
+        Ok(())
+    }
+
+    fn compile_logical_and(
+        &mut self,
+        left: &Expression,
+        right: &Expression,
+        line: usize,
+    ) -> Result<(), CompileError> {
+        // Évaluer la partie gauche
+        self.compile_expression(left, line)?;
+
+        // Si false, on saute directement à la fin.
+        let end_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+
+        // La valeur gauche est vraie :
+        // elle ne nous sert plus.
+        self.emit_opcode(OpCode::Pop, line);
+
+        // Évaluer la partie droite.
+        self.compile_expression(right, line)?;
+
+        // Arrivée ici dans les deux cas.
+        self.patch_jump(end_jump);
+
+        Ok(())
+    }
+
+    fn compile_logical_or(
+        &mut self,
+        left: &Expression,
+        right: &Expression,
+        line: usize,
+    ) -> Result<(), CompileError> {
+        // Évaluer la partie gauche
+        self.compile_expression(left, line)?;
+
+        // Si true, on saute directement à la fin.
+        //
+        // Ton VM possède actuellement JumpIfFalse,
+        // donc on inverse la condition.
+        self.emit_opcode(OpCode::Not, line);
+
+        let end_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+
+        // Restaurer la valeur originale.
+        self.emit_opcode(OpCode::Not, line);
+
+        // La partie gauche était false :
+        // elle ne nous sert plus.
+        self.emit_opcode(OpCode::Pop, line);
+
+        // Évaluer la partie droite.
+        self.compile_expression(right, line)?;
+
+        self.patch_jump(end_jump);
 
         Ok(())
     }

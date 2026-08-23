@@ -1,11 +1,8 @@
 
-let age = 1, offset = 25;
+let age = 15, garcon = true;
 
-function affiche_age(age) {
-
-    let result = offset + age;
-    print(result);
+if (age > 18 && garcon) {
+    print("Access autorisé!");
+} else {
+    print("Access refusé!");
 }
-
-
-affiche_age(age);
