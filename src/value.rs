@@ -1,6 +1,16 @@
-use crate::{compiler::Function, error::RuntimeError};
-use std::{fmt::Display, rc::Rc};
+use crate::{compiler::Function, error::RuntimeError, machine::Closure};
+use std::{cell::RefCell, fmt::Display, println, rc::Rc};
 
+// #[derive(Debug, Clone)]
+// pub struct Closure {
+//     pub function: Rc<Function>,
+// }
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct Upvalue {
+    pub location: Rc<RefCell<Value>>,
+}
 pub enum NumericOp {
     Add,
     Subtract,
@@ -23,6 +33,7 @@ pub enum Value {
     Boolean(bool),
     String(String),
     Function(Rc<Function>),
+    Closure(Rc<RefCell<Closure>>),
     Nil,
 }
 
@@ -33,7 +44,11 @@ impl Display for Value {
             Value::Boolean(value) => write!(f, "{value}"),
             Value::Nil => write!(f, "nil"),
             Value::String(s) => write!(f, "{s}"),
-            Value::Function(function) => write!(f,"< fun '{}' >",function.name),
+            Value::Function(function) => write!(f, "<fun '{}'>", function.name),
+            Value::Closure(closure) => {
+                let closure = closure.borrow();
+                write!(f, "<closure '{}'>", closure.function.name)
+            }
         }
     }
 }
@@ -109,5 +124,9 @@ pub fn print_value(value: Value) {
         Value::String(s) => println!("{}", s),
         Value::Nil => println!("nil"),
         Value::Function(function) => println!("<func: {}>", function.name),
+        Value::Closure(closure) => {
+            let closure = closure.borrow();
+            println!("<closure '{}'>", closure.function.name)
+        }
     }
 }

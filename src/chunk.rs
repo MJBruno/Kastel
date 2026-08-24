@@ -31,6 +31,10 @@ pub enum OpCode {
     JumpIfFalse,
     Jump,
 
+    Closure,
+    GetUpvalue,
+    SetUpvalue,
+
     Pop,
     Print,
     Loop,
@@ -76,7 +80,6 @@ impl Chunk {
         self.constants.len() - 1
     }
 
-
     pub fn disassemble_instruction(&self, offset: usize) -> usize {
         print!("{offset:04} ");
         if offset > 0 && self.lines[offset] == self.lines[offset - 1] {
@@ -118,6 +121,9 @@ impl Chunk {
                 self.byte_instruction("OP_JUMP_IF_FALSE", offset)
             }
             x if x == OpCode::Jump.into() => self.byte_instruction("OP_JUMP", offset),
+            x if x == OpCode::Closure.into() => self.constant_instruction("OP_CLOSURE", offset),
+            x if x == OpCode::GetUpvalue.into() => self.byte_instruction("OP_GET_UPVALUE", offset),
+            x if x == OpCode::SetUpvalue.into() => self.byte_instruction("OP_SET_UPVALUE", offset),
             x if x == OpCode::Pop.into() => self.simple_instruction("OP_POP", offset),
             x if x == OpCode::Call.into() => self.byte_instruction("OP_CALL", offset),
             x if x == OpCode::Print.into() => self.simple_instruction("OP_PRINT", offset),
@@ -147,5 +153,4 @@ impl Chunk {
         println!("{:<16} {:4}", name, slot);
         offset + 2
     }
-
 }

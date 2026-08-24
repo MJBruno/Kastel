@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -10,9 +11,29 @@ use crate::value::NumericOp;
 use crate::value::Value;
 use crate::value::print_value;
 
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct ObjUpvalue {
+    pub slot: usize,
+    pub closed: Option<Value>,
+}
+#[allow(dead_code)]
+impl ObjUpvalue {
+    pub fn new(slot: usize) -> Self {
+        Self { slot, closed: None }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct Closure {
+    pub function: Rc<Function>,
+    pub upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
+}
+
 #[allow(dead_code)]
 pub struct CallFrame {
-    pub function: Rc<Function>,
+    pub closure: Rc<RefCell<Closure>>,
     pub ip: usize,
     pub slot_start: usize,
 }
@@ -21,26 +42,40 @@ pub struct VirtualMachine {
     pub stack: Vec<Value>,
     pub globals: HashMap<String, Value>,
     frames: Vec<CallFrame>,
+    open_upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
 }
 #[allow(dead_code)]
 impl VirtualMachine {
     pub fn new(function: Rc<Function>) -> Self {
+        let closure = Rc::new(RefCell::new(Closure {
+            function,
+            upvalues: Vec::new(),
+        }));
+
         Self {
             stack: Vec::new(),
             globals: HashMap::new(),
             frames: vec![CallFrame {
-                function,
+                closure,
                 ip: 0,
                 slot_start: 0,
             }],
+            open_upvalues: Vec::new(),
         }
     }
 
     //Lire les instructions(bytecode) dans le chunk
     fn read_byte(&mut self) -> u8 {
         let frame = self.frames.last_mut().expect("No call frame");
-        let byte = frame.function.chunk.code[frame.ip];
+
+        let byte = {
+            let closure = frame.closure.borrow();
+
+            closure.function.chunk.code[frame.ip]
+        };
+
         frame.ip += 1;
+
         byte
     }
 
@@ -74,10 +109,15 @@ impl VirtualMachine {
         println!()
     }
 
-    fn read_constant(&mut self) -> Value {
-        let index = self.read_byte() as usize;
+    fn read_constant(&self, index: u8) -> Value {
         let frame = self.current_frame();
-        frame.function.chunk.constants[index].clone()
+
+        frame.closure.borrow().function.chunk.constants[index as usize].clone()
+    }
+
+    fn read_constant_byte(&mut self) -> Value {
+        let index = self.read_byte();
+        self.read_constant(index)
     }
 
     fn current_frame(&self) -> &CallFrame {
@@ -94,27 +134,29 @@ impl VirtualMachine {
 
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
-            // self.print_stack();
-            // let _ip = self.current_ip();
+            self.print_stack();
+            let _ip = self.current_ip();
 
-            // let (ip, chunk) = {
-            //     let frame = self.current_frame();
+            let (ip, chunk) = {
+                let frame = self.current_frame();
 
-            //     (frame.ip, frame.function.chunk.clone())
-            // };
+                let closure = frame.closure.borrow();
 
-            // chunk.disassemble_instruction(ip);
+                (frame.ip, closure.function.chunk.clone())
+            };
+
+            chunk.disassemble_instruction(ip);
 
             let instruction = self.read_byte();
 
             match instruction {
                 x if x == OpCode::Constant.into() => {
-                    let constant = self.read_constant();
+                    let constant = self.read_constant_byte();
                     self.push(constant);
                 }
 
                 x if x == OpCode::DefineGlobal.into() => {
-                    let constant = self.read_constant();
+                    let constant = self.read_constant_byte();
                     let name = match constant {
                         Value::String(name) => name.clone(),
                         _ => return Err(RuntimeError::TypeError),
@@ -123,7 +165,7 @@ impl VirtualMachine {
                     self.globals.insert(name, value);
                 }
                 x if x == OpCode::GetGlobal.into() => {
-                    let constant = self.read_constant();
+                    let constant = self.read_constant_byte();
                     let name = match constant {
                         Value::String(name) => name,
                         _ => return Err(RuntimeError::TypeError),
@@ -140,7 +182,7 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::SetGlobal.into() => {
-                    let constant = self.read_constant();
+                    let constant = self.read_constant_byte();
                     let name = match constant {
                         Value::String(name) => name.clone(),
                         _ => return Err(RuntimeError::TypeError),
@@ -239,6 +281,19 @@ impl VirtualMachine {
                     let result = Value::negate_values(value).expect("Opérand must be value");
                     self.push(result);
                 }
+                x if x == OpCode::Closure.into() => {
+                    self.op_closure()?;
+                }
+                x if x == OpCode::SetUpvalue.into() => {
+                    let index = self.read_byte() as usize;
+
+                    self.set_upvalue(index)?;
+                }
+                x if x == OpCode::GetUpvalue.into() => {
+                    let index = self.read_byte() as usize;
+
+                    self.get_upvalue(index)?;
+                }
                 x if x == OpCode::Jump.into() => {
                     let offset = self.read_short() as usize;
 
@@ -274,8 +329,8 @@ impl VirtualMachine {
                     let callee = self.stack[callee_index].clone();
 
                     match callee {
-                        Value::Function(function) => {
-                            self.call(function, arg_count)?;
+                        Value::Closure(closure) => {
+                            self.call(closure, arg_count)?;
                         }
 
                         _ => {
@@ -296,6 +351,10 @@ impl VirtualMachine {
 
                     let frame = self.frames.pop().expect("Aucun CallFrame");
 
+                    // Fermer les upvalues qui appartiennent
+                    // à cette frame avant de supprimer ses locals.
+                    self.close_upvalues(frame.slot_start);
+
                     self.stack.truncate(frame.slot_start);
 
                     if self.frames.is_empty() {
@@ -312,25 +371,189 @@ impl VirtualMachine {
         }
     }
 
+    fn capture_upvalue(&mut self, slot: usize) -> Rc<RefCell<ObjUpvalue>> {
+        let absolute_slot = self.current_frame().slot_start + 1 + slot;
+
+        // Chercher un upvalue existant.
+        for upvalue in &self.open_upvalues {
+            if upvalue.borrow().slot == absolute_slot {
+                return Rc::clone(upvalue);
+            }
+        }
+
+        // Aucun upvalue existant.
+        let upvalue = Rc::new(RefCell::new(ObjUpvalue {
+            slot: absolute_slot,
+            closed: None,
+        }));
+
+        self.open_upvalues.push(Rc::clone(&upvalue));
+
+        upvalue
+    }
+
     //OP_CALL
-    fn call(&mut self, function: Rc<Function>, arg_count: usize) -> Result<(), RuntimeError> {
-        if arg_count != function.arity {
+    fn call(
+        &mut self,
+        closure: Rc<RefCell<Closure>>,
+        arg_count: usize,
+    ) -> Result<(), RuntimeError> {
+        let arity = closure.borrow().function.arity;
+
+        if arg_count != arity {
             return Err(RuntimeError::WrongArgumentCount {
-                expected: function.arity,
+                expected: arity,
                 found: arg_count,
             });
         }
 
         let callee_index = self.stack.len() - arg_count - 1;
 
-        let frame = CallFrame {
-            function,
+        self.frames.push(CallFrame {
+            closure,
             ip: 0,
             slot_start: callee_index,
-        };
-
-        self.frames.push(frame);
+        });
 
         Ok(())
+    }
+
+    fn op_closure(&mut self) -> Result<(), RuntimeError> {
+        let constant_index = self.read_byte() as usize;
+
+        let function = {
+            let frame = self.current_frame();
+            let closure = frame.closure.borrow();
+
+            match closure
+                .function
+                .chunk
+                .constants
+                .get(constant_index)
+                .cloned()
+            {
+                Some(Value::Function(function)) => function,
+
+                _ => {
+                    return Err(RuntimeError::InvalidFunction);
+                }
+            }
+        };
+
+        let mut closure = Closure {
+            function: Rc::clone(&function),
+            upvalues: Vec::with_capacity(function.upvalue_count),
+        };
+
+        for _ in 0..function.upvalue_count {
+            let is_local = self.read_byte();
+            let index = self.read_byte() as usize;
+
+            let upvalue = if is_local != 0 {
+                // Capture un local de la fonction courante.
+                self.capture_upvalue(index)
+            } else {
+                // Récupère une upvalue déjà capturée par
+                // la closure courante.
+                let frame = self.current_frame();
+
+                frame
+                    .closure
+                    .borrow()
+                    .upvalues
+                    .get(index)
+                    .cloned()
+                    .ok_or(RuntimeError::InvalidFunction)?
+            };
+
+            closure.upvalues.push(upvalue);
+        }
+
+        self.push(Value::Closure(Rc::new(RefCell::new(closure))));
+
+        Ok(())
+    }
+
+    fn get_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
+        let upvalue = {
+            let frame = self.current_frame();
+
+            frame
+                .closure
+                .borrow()
+                .upvalues
+                .get(index)
+                .cloned()
+                .ok_or(RuntimeError::InvalidFunction)?
+        };
+
+        let value = {
+            let upvalue = upvalue.borrow();
+
+            match &upvalue.closed {
+                Some(value) => value.clone(),
+
+                None => self
+                    .stack
+                    .get(upvalue.slot)
+                    .cloned()
+                    .ok_or(RuntimeError::InvalidFunction)?,
+            }
+        };
+
+        self.push(value);
+
+        Ok(())
+    }
+
+    fn set_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
+        let upvalue = {
+            let frame = self.current_frame();
+
+            frame
+                .closure
+                .borrow()
+                .upvalues
+                .get(index)
+                .cloned()
+                .ok_or(RuntimeError::InvalidFunction)?
+        };
+
+        let value = self.peek().clone();
+
+        let slot = {
+            let mut upvalue_ref = upvalue.borrow_mut();
+
+            if let Some(closed) = &mut upvalue_ref.closed {
+                *closed = value;
+                return Ok(());
+            }
+
+            upvalue_ref.slot
+        };
+
+        self.stack[slot] = value;
+
+        Ok(())
+    }
+    fn close_upvalues(&mut self, last: usize) {
+        let mut i = 0;
+
+        while i < self.open_upvalues.len() {
+            let slot = self.open_upvalues[i].borrow().slot;
+
+            if slot >= last {
+                let value = self.stack[slot].clone();
+
+                {
+                    let mut upvalue = self.open_upvalues[i].borrow_mut();
+                    upvalue.closed = Some(value);
+                }
+
+                self.open_upvalues.remove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 }

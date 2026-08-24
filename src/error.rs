@@ -24,6 +24,7 @@ pub enum CompileError {
     BreakOutsideLoop,
     ContinueOutsideLoop,
     ReturnOutsidFunction,
+    TooManyUpvalues,
 }
 
 impl std::fmt::Display for CompileError {
@@ -37,6 +38,7 @@ impl std::fmt::Display for CompileError {
             CompileError::BreakOutsideLoop => write!(f, "Break outside loop"),
             CompileError::ContinueOutsideLoop => write!(f, "Continue outside loop"),
             CompileError::ReturnOutsidFunction => write!(f, "Return outside function"),
+            CompileError::TooManyUpvalues => todo!(),
         }
     }
 }
@@ -78,6 +80,7 @@ pub enum RuntimeError {
     DivisionByZero,
     WrongArgumentCount { expected: usize, found: usize },
     NotCallable,
+    InvalidFunction,
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -98,6 +101,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::NotCallable => {
                 write!(f, "Cette expression ne peut pas être appeler")
             }
+            RuntimeError::InvalidFunction => todo!(),
         }
     }
 }

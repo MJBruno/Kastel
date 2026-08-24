@@ -1,8 +1,13 @@
 
-let age = 15, garcon = true;
+function make() {
 
-if (age > 18 && garcon) {
-    print("Access autorisé!");
-} else {
-    print("Access refusé!");
+    let x = 10;
+    function get() {
+        return x * 10;
+    }
+
+    return get;
 }
+
+let f = make();
+print(f() * 2);
