@@ -1,11 +1,6 @@
 use crate::{compiler::Function, error::RuntimeError, machine::Closure};
 use std::{cell::RefCell, fmt::Display, println, rc::Rc};
 
-// #[derive(Debug, Clone)]
-// pub struct Closure {
-//     pub function: Rc<Function>,
-// }
-
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Upvalue {
@@ -47,7 +42,8 @@ impl Display for Value {
             Value::Function(function) => write!(f, "<fun '{}'>", function.name),
             Value::Closure(closure) => {
                 let closure = closure.borrow();
-                write!(f, "<closure '{}'>", closure.function.name)
+                write!(f, "<closure '{}'>", closure.function.name)?;
+                Ok(())
             }
         }
     }

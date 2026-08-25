@@ -200,7 +200,7 @@ impl VirtualMachine {
                     let slot = self.read_byte() as usize;
                     let frame = self.frames.last().expect("Aucun CallFrame");
                     let index = frame.slot_start + 1 + slot;
-                    let value = self.stack[index].clone();
+                    let value = self.stack[index ].clone();
 
                     self.push(value);
                 }

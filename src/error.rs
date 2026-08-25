@@ -1,3 +1,7 @@
+// ================================================================
+// LEXER_ERROR
+// ================================================================
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct LexerError {
@@ -6,6 +10,10 @@ pub struct LexerError {
     pub column: usize,
 }
 
+// ================================================================
+// PARSE_ERROR
+// ================================================================
+
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ParserError {
@@ -13,6 +21,10 @@ pub struct ParserError {
     pub line: usize,
     pub column: usize,
 }
+
+// ================================================================
+// COMPILE_ERROR
+// ================================================================
 
 #[derive(Debug)]
 pub enum CompileError {
@@ -43,6 +55,10 @@ impl std::fmt::Display for CompileError {
     }
 }
 
+// ================================================================
+// VM_ERROR
+// ================================================================
+
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum VMError {
@@ -59,7 +75,8 @@ impl std::fmt::Display for VMError {
             VMError::StackUnderflow => write!(formatter, "stack underflow"),
 
             VMError::InvalidConstantIndex(index) => {
-                write!(formatter, "invalid constant index: {index}")
+                write!(formatter, "invalid constant index: {index}")?;
+                Ok(())
             }
 
             VMError::TypeError(message) => write!(formatter, "type error: {message}"),
@@ -67,13 +84,16 @@ impl std::fmt::Display for VMError {
             VMError::DivisionByZero => write!(formatter, "division by zero"),
 
             VMError::InvalidInstruction(message) => {
-                write!(formatter, "invalid instruction: {message}")
+                write!(formatter, "invalid instruction: {message}")?;
+                Ok(())
             }
         }
     }
 }
 
-
+// ================================================================
+// RUNTIME_ERROR
+// ================================================================
 
 pub enum RuntimeError {
     TypeError,
@@ -87,19 +107,22 @@ impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RuntimeError::TypeError => {
-                write!(f, "Operand must be numbers.")
+                write!(f, "Operand must be numbers.")?;
+                Ok(())
             }
             RuntimeError::DivisionByZero => {
-                write!(f, "Division by zero.")
+                write!(f, "Division by zero.")?;
+                Ok(())
             }
             RuntimeError::WrongArgumentCount { expected, found } => {
                 write!(
                     f,
-                    "Mauvais liste d'argument au lieu de {expected} or {found}."
-                )
+                    "Mauvais liste d'argument au lieu de {expected} on a {found}. argument(s)"
+                )?;
+                Ok(())
             }
             RuntimeError::NotCallable => {
-                write!(f, "Cette expression ne peut pas être appeler")
+                Ok(write!(f, "Cette expression ne peut pas être appeler")?)
             }
             RuntimeError::InvalidFunction => todo!(),
         }

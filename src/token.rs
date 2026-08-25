@@ -106,6 +106,7 @@ impl fmt::Display for Token {
             f,
             "{:?} '{}' ({}:{})",
             self.kind, self.lexeme, self.line, self.column
-        )
+        )?;
+        Ok(())
     }
 }
