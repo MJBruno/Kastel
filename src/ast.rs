@@ -65,7 +65,7 @@ pub enum Expression {
         operator: BinaryOp,
         right: Box<Expression>,
     },
- 
+
     Call {
         callee: Box<Expression>,
         arguments: Vec<Expression>,

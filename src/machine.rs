@@ -198,19 +198,21 @@ impl VirtualMachine {
 
                 x if x == OpCode::GetLocal.into() => {
                     let slot = self.read_byte() as usize;
+
                     let frame = self.frames.last().expect("Aucun CallFrame");
+
                     let index = frame.slot_start + 1 + slot;
-                    let value = self.stack[index ].clone();
+
+                    let value = self.stack[index].clone();
 
                     self.push(value);
                 }
-
                 x if x == OpCode::SetLocal.into() => {
                     let slot = self.read_byte() as usize;
 
                     let value = self.peek().clone();
 
-                    let slot_start = self.current_frame().slot_start;
+                    let slot_start = self.frames.last().expect("Aucun CallFrame").slot_start;
 
                     let index = slot_start + 1 + slot;
 

@@ -375,9 +375,9 @@ impl Parser {
         Ok(statements)
     }
 
-    //////////////////////////
-    // HELPER DE STATEMENTS //
-    /////////////////////////
+    //========================================================
+    // HELPER DE STATEMENTS
+    //========================================================
 
     fn parse_let_statement(&mut self) -> Result<Vec<Statement>, ParserError> {
         let mut declarations = Vec::new();

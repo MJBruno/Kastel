@@ -15,9 +15,10 @@ pub struct Local {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum VariableLocation {
     Local(usize),
-    Global(usize),
+    Global,
     Upvalue(usize),
 }
 
@@ -252,33 +253,23 @@ impl Compiler {
         self.emit_opcode(opcode, line);
         self.emit_byte(0xff, line);
         self.emit_byte(0xff, line);
-
         self.chunk.code.len() - 2
     }
 
     fn patch_jump(&mut self, offset: usize) {
         let jump = self.chunk.code.len() - offset - 2;
-
         assert!(jump <= u16::MAX as usize, "Jump trop grand");
-
         let jump = jump as u16;
-
         self.chunk.code[offset] = (jump >> 8) as u8;
-
         self.chunk.code[offset + 1] = (jump & 0xff) as u8;
     }
 
     fn emit_loop(&mut self, loop_start: usize, line: usize) {
         self.emit_opcode(OpCode::Loop, line);
-
         let offset = self.chunk.code.len() + 2 - loop_start;
-
         assert!(offset <= u16::MAX as usize, "Loop body too large");
-
         let offset = offset as u16;
-
         self.emit_byte((offset >> 8) as u8, line);
-
         self.emit_byte((offset & 0xff) as u8, line);
     }
 
@@ -452,57 +443,94 @@ impl Compiler {
     // VARIABLES
     // ============================================================
 
-    fn resolve_variable(&mut self, name: &str) -> Result<VariableLocation, CompileError> {
-        if let Some(slot) = self.context.borrow().locals.resolve_local(name)? {
-            return Ok(VariableLocation::Local(slot as usize));
-        }
-
-        if let Some(index) = self.resolve_upvalue(name)? {
-            return Ok(VariableLocation::Upvalue(index));
-        }
-
-        if let Some(index) = self.globals.borrow().get(name) {
-            return Ok(VariableLocation::Global(*index as usize));
-        }
-
-        Err(CompileError::UndefinedVariable(name.to_string()))
+    fn resolve_variable(
+    &self,
+    name: &str,
+) -> Result<VariableLocation, CompileError> {
+    if let Some(slot) = self.context.borrow().locals.resolve_local(name)? {
+        return Ok(VariableLocation::Local(slot as usize));
     }
 
-    fn compile_variable_get(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
-        match self.resolve_variable(name)? {
-            VariableLocation::Local(slot) => {
-                self.emit_bytes(OpCode::GetLocal, slot as u8, line);
-            }
-
-            VariableLocation::Global(index) => {
-                self.emit_bytes(OpCode::GetGlobal, index as u8, line);
-            }
-
-            VariableLocation::Upvalue(index) => {
-                self.emit_bytes(OpCode::GetUpvalue, index as u8, line);
-            }
-        }
-
-        Ok(())
+    if self.globals.borrow().contains_key(name) {
+        return Ok(VariableLocation::Global);
     }
 
-    fn compile_variable_set(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
-        match self.resolve_variable(name)? {
-            VariableLocation::Local(slot) => {
-                self.emit_bytes(OpCode::SetLocal, slot as u8, line);
-            }
+    Err(CompileError::UndefinedVariable(
+        name.to_string()
+    ))
+}
 
-            VariableLocation::Global(index) => {
-                self.emit_bytes(OpCode::SetGlobal, index as u8, line);
-            }
-
-            VariableLocation::Upvalue(index) => {
-                self.emit_bytes(OpCode::SetUpvalue, index as u8, line);
-            }
+  fn compile_variable_get(
+    &mut self,
+    name: &str,
+    line: usize,
+) -> Result<(), CompileError> {
+    match self.resolve_variable(name)? {
+        VariableLocation::Local(slot) => {
+            self.emit_bytes(
+                OpCode::GetLocal,
+                slot as u8,
+                line,
+            );
         }
 
-        Ok(())
+        VariableLocation::Global => {
+            // IMPORTANT :
+            // la constante doit appartenir au chunk courant
+            let name_constant = self.identifier_constant(name)?;
+
+            self.emit_bytes(
+                OpCode::GetGlobal,
+                name_constant,
+                line,
+            );
+        }
+        VariableLocation::Upvalue(slot) => {
+            self.emit_bytes(
+                OpCode::GetUpvalue,
+                slot as u8,
+                line,
+            );
+        }
     }
+
+    Ok(())
+}
+
+   fn compile_variable_set(
+    &mut self,
+    name: &str,
+    line: usize,
+) -> Result<(), CompileError> {
+    match self.resolve_variable(name)? {
+        VariableLocation::Local(slot) => {
+            self.emit_bytes(
+                OpCode::SetLocal,
+                slot as u8,
+                line,
+            );
+        }
+
+        VariableLocation::Global => {
+            let name_constant = self.identifier_constant(name)?;
+
+            self.emit_bytes(
+                OpCode::SetGlobal,
+                name_constant,
+                line,
+            );
+        }
+        VariableLocation::Upvalue(slot) => {
+            self.emit_bytes(
+                OpCode::SetUpvalue,
+                slot as u8,
+                line,
+            );
+        }
+    }
+
+    Ok(())
+}
 
     // ============================================================
     // VARIABLES DECLARATION
@@ -778,6 +806,7 @@ impl Compiler {
             Expression::Call { callee, arguments } => {
                 self.compile_call(callee, arguments, line)?;
             }
+           
         }
 
         Ok(())
