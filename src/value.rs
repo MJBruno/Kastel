@@ -30,7 +30,7 @@ pub enum Value {
     Function(Rc<Function>),
     Closure(Rc<RefCell<Closure>>),
     Nil,
-    NativeFunction { function: NativeFn, arity: usize },
+    NativeFunction(NativeFn),
 }
 
 impl Display for Value {
@@ -46,8 +46,8 @@ impl Display for Value {
                 write!(f, "<closure '{}'>", closure.function.name)?;
                 Ok(())
             }
-            Value::NativeFunction { function, arity } => {
-                write!(f, "<nativeFn '{:?} {}'>", function, arity)?;
+            Value::NativeFunction(function) => {
+                write!(f, "<nativeFn '{:?}  '>", function)?;
                 Ok(())
             }
         }
@@ -120,17 +120,17 @@ impl Value {
 
 pub fn print_value(value: Value) {
     match value {
-        Value::Number(n) => println!("{}", n),
-        Value::Boolean(b) => println!("{}", b),
-        Value::String(s) => println!("{}", s),
-        Value::Nil => println!("nil"),
-        Value::Function(function) => println!("<func: {}>", function.name),
+        Value::Number(n) => print!("{}", n),
+        Value::Boolean(b) => print!("{}", b),
+        Value::String(s) => print!("{}", s),
+        Value::Nil => print!("nil"),
+        Value::Function(function) => print!("<func: {}>", function.name),
         Value::Closure(closure) => {
             let closure = closure.borrow();
-            println!("<closure '{}'>", closure.function.name)
+            print!("<closure '{}'>", closure.function.name)
         }
-        Value::NativeFunction { function, arity } => {
-            println!("<fun '{:?} {}'>", function, arity)
+        Value::NativeFunction(function) => {
+            print!("<fun '{:?} '>", function)
         }
     }
 }

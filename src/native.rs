@@ -1,7 +1,8 @@
-use crate::{compiler::Compiler, error::RuntimeError};
 use crate::value::Value;
+use crate::{compiler::Compiler, error::RuntimeError};
 
 use std::time::{SystemTime, UNIX_EPOCH};
+ 
 
 pub type NativeFn = fn(&[Value]) -> Result<Value, RuntimeError>;
 
@@ -40,26 +41,40 @@ pub fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
 
     Ok(Value::Number(a + b))
 }
+pub fn native_print(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    match &args[0] {
+        Value::Number(n) => println!("{}", n),
+        Value::Boolean(b) => println!("{}", b),
+        Value::String(s) => println!("{}", s),
+        Value::Nil => println!("nil"),
+        Value::Function(function) => println!("<func: {}>", function.name),
+        Value::Closure(closure) => {
+            let closure = closure.borrow();
+            println!("<closure '{}'>", closure.function.name)
+        }
+        Value::NativeFunction(function) => {
+            println!("<fun '{:?} '>", function)
+        }
+    };
+
+    Ok(args[0].clone())
+}
 
 pub fn register_natives(globals: &mut std::collections::HashMap<String, Value>) {
-    globals.insert(
-        "clock".to_string(),
-        Value::NativeFunction {
-            function: native_clock,
-            arity: 0,
-        },
-    );
-
-    globals.insert(
-        "native_add".to_string(),
-        Value::NativeFunction {
-            function: native_add,
-            arity: 2,
-        },
-    );
+    globals.insert("clock".to_string(), Value::NativeFunction(native_clock));
+    globals.insert("native_add".to_string(), Value::NativeFunction(native_add));
+    globals.insert("println".to_string(), Value::NativeFunction(native_print));
 }
 
 pub fn execute_native(compiler: &mut Compiler) {
     let _ = compiler.define_native("clock");
     let _ = compiler.define_native("native_add");
+    let _ = compiler.define_native("println");
 }

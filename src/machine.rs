@@ -45,7 +45,7 @@ pub struct VirtualMachine {
     open_upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
     natives: HashMap<String, Value>,
 }
-// #[allow(dead_code)]
+#[allow(dead_code)]
 impl VirtualMachine {
     pub fn new(function: Rc<Function>) -> Self {
         let closure = Rc::new(RefCell::new(Closure {
@@ -140,19 +140,9 @@ impl VirtualMachine {
 
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
-            self.print_stack();
-            let _ip = self.current_ip();
-
-            let (ip, chunk) = {
-                let frame = self.current_frame();
-
-                let closure = frame.closure.borrow();
-
-                (frame.ip, closure.function.chunk.clone())
-            };
-
-            chunk.disassemble_instruction(ip);
-
+            if cfg!(feature = "debug_trace") {
+                self.debug_machine();
+            }
             let instruction = self.read_byte();
 
             match instruction {
@@ -341,14 +331,7 @@ impl VirtualMachine {
                             self.call(function, arg_count)?;
                         }
 
-                        Value::NativeFunction { function, arity } => {
-                            if arg_count != arity {
-                                return Err(RuntimeError::WrongArgumentCount {
-                                    expected: arity,
-                                    found: arg_count,
-                                });
-                            }
-
+                        Value::NativeFunction(function) => {
                             let args_start = self.stack.len() - arg_count;
 
                             let args = self.stack[args_start..].to_vec();
@@ -393,6 +376,7 @@ impl VirtualMachine {
                     self.push(result);
                 }
                 x if x == OpCode::Halt.into() => {
+  
                     return Ok(());
                 }
                 _ => panic!("Unknown opcode: {instruction}"),
@@ -400,6 +384,16 @@ impl VirtualMachine {
         }
     }
 
+    fn debug_machine(&mut self) {
+        self.print_stack();
+        let _ip = self.current_ip();
+        let (ip, chunk) = {
+            let frame = self.current_frame();
+            let closure = frame.closure.borrow();
+            (frame.ip, closure.function.chunk.clone())
+        };
+        chunk.disassemble_instruction(ip);
+    }
     fn capture_upvalue(&mut self, slot: usize) -> Rc<RefCell<ObjUpvalue>> {
         let absolute_slot = self.current_frame().slot_start + 1 + slot;
 

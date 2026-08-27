@@ -13,7 +13,7 @@ pub struct Local {
     pub depth: Option<usize>,
     pub slot: u8,
 }
- 
+
 #[allow(dead_code)]
 enum VariableLocation {
     Local(usize),
@@ -241,23 +241,23 @@ impl Compiler {
     // BYTECODE
     // ============================================================
 
-    fn emit_byte(&mut self, byte: u8, line: usize) {
-        self.chunk.write(byte, line);
+    fn emit_byte(&mut self, byte: u8) {
+        self.chunk.write(byte);
     }
 
-    fn emit_opcode(&mut self, opcode: OpCode, line: usize) {
-        self.emit_byte(opcode.into(), line);
+    fn emit_opcode(&mut self, opcode: OpCode) {
+        self.emit_byte(opcode.into());
     }
 
-    fn emit_bytes(&mut self, opcode: OpCode, operand: u8, line: usize) {
-        self.emit_opcode(opcode, line);
-        self.emit_byte(operand, line);
+    fn emit_bytes(&mut self, opcode: OpCode, operand: u8) {
+        self.emit_opcode(opcode);
+        self.emit_byte(operand);
     }
 
-    fn emit_jump(&mut self, opcode: OpCode, line: usize) -> usize {
-        self.emit_opcode(opcode, line);
-        self.emit_byte(0xff, line);
-        self.emit_byte(0xff, line);
+    fn emit_jump(&mut self, opcode: OpCode) -> usize {
+        self.emit_opcode(opcode);
+        self.emit_byte(0xff);
+        self.emit_byte(0xff);
         self.chunk.code.len() - 2
     }
 
@@ -269,13 +269,13 @@ impl Compiler {
         self.chunk.code[offset + 1] = (jump & 0xff) as u8;
     }
 
-    fn emit_loop(&mut self, loop_start: usize, line: usize) {
-        self.emit_opcode(OpCode::Loop, line);
+    fn emit_loop(&mut self, loop_start: usize) {
+        self.emit_opcode(OpCode::Loop);
         let offset = self.chunk.code.len() + 2 - loop_start;
         assert!(offset <= u16::MAX as usize, "Loop body too large");
         let offset = offset as u16;
-        self.emit_byte((offset >> 8) as u8, line);
-        self.emit_byte((offset & 0xff) as u8, line);
+        self.emit_byte((offset >> 8) as u8);
+        self.emit_byte((offset & 0xff) as u8);
     }
 
     // ============================================================
@@ -286,21 +286,21 @@ impl Compiler {
         self.scope_depth += 1;
     }
 
-    fn end_scope(&mut self, line: usize) {
+    fn end_scope(&mut self) {
         self.scope_depth -= 1;
 
         let count = self.context.borrow_mut().locals.pop_scope(self.scope_depth);
 
         for _ in 0..count {
-            self.emit_opcode(OpCode::Pop, line);
+            self.emit_opcode(OpCode::Pop);
         }
     }
 
-    fn emit_scope_cleanup(&mut self, target_depth: usize, line: usize) {
+    fn emit_scope_cleanup(&mut self, target_depth: usize) {
         let count = self.context.borrow().locals.cleanup_count(target_depth);
 
         for _ in 0..count {
-            self.emit_opcode(OpCode::Pop, line);
+            self.emit_opcode(OpCode::Pop);
         }
     }
 
@@ -460,10 +460,10 @@ impl Compiler {
         Err(CompileError::UndefinedVariable(name.to_string()))
     }
 
-    fn compile_variable_get(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
+    fn compile_variable_get(&mut self, name: &str) -> Result<(), CompileError> {
         match self.resolve_variable(name)? {
             VariableLocation::Local(slot) => {
-                self.emit_bytes(OpCode::GetLocal, slot as u8, line);
+                self.emit_bytes(OpCode::GetLocal, slot as u8);
             }
 
             VariableLocation::Global => {
@@ -471,29 +471,29 @@ impl Compiler {
                 // la constante doit appartenir au chunk courant
                 let name_constant = self.identifier_constant(name)?;
 
-                self.emit_bytes(OpCode::GetGlobal, name_constant, line);
+                self.emit_bytes(OpCode::GetGlobal, name_constant);
             }
             VariableLocation::Upvalue(slot) => {
-                self.emit_bytes(OpCode::GetUpvalue, slot as u8, line);
+                self.emit_bytes(OpCode::GetUpvalue, slot as u8);
             }
         }
 
         Ok(())
     }
 
-    fn compile_variable_set(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
+    fn compile_variable_set(&mut self, name: &str) -> Result<(), CompileError> {
         match self.resolve_variable(name)? {
             VariableLocation::Local(slot) => {
-                self.emit_bytes(OpCode::SetLocal, slot as u8, line);
+                self.emit_bytes(OpCode::SetLocal, slot as u8);
             }
 
             VariableLocation::Global => {
                 let name_constant = self.identifier_constant(name)?;
 
-                self.emit_bytes(OpCode::SetGlobal, name_constant, line);
+                self.emit_bytes(OpCode::SetGlobal, name_constant);
             }
             VariableLocation::Upvalue(slot) => {
-                self.emit_bytes(OpCode::SetUpvalue, slot as u8, line);
+                self.emit_bytes(OpCode::SetUpvalue, slot as u8);
             }
         }
 
@@ -508,12 +508,11 @@ impl Compiler {
         &mut self,
         name: &str,
         initializer: Option<&Expression>,
-        line: usize,
     ) -> Result<(), CompileError> {
         if self.in_function || self.scope_depth > 0 {
-            self.compile_local_var(name, initializer, line)
+            self.compile_local_var(name, initializer)
         } else {
-            self.compile_global_var(name, initializer, line)
+            self.compile_global_var(name, initializer)
         }
     }
 
@@ -521,7 +520,6 @@ impl Compiler {
         &mut self,
         name: &str,
         initializer: Option<&Expression>,
-        line: usize,
     ) -> Result<(), CompileError> {
         let slot = self
             .context
@@ -531,11 +529,11 @@ impl Compiler {
 
         match initializer {
             Some(expr) => {
-                self.compile_expression(expr, line)?;
+                self.compile_expression(expr)?;
             }
 
             None => {
-                self.emit_opcode(OpCode::Nil, line);
+                self.emit_opcode(OpCode::Nil);
             }
         }
 
@@ -553,7 +551,6 @@ impl Compiler {
         &mut self,
         name: &str,
         initializer: Option<&Expression>,
-        line: usize,
     ) -> Result<(), CompileError> {
         if self.globals.borrow().contains_key(name) {
             return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
@@ -563,15 +560,15 @@ impl Compiler {
 
         match initializer {
             Some(expr) => {
-                self.compile_expression(expr, line)?;
+                self.compile_expression(expr)?;
             }
 
             None => {
-                self.emit_opcode(OpCode::Nil, line);
+                self.emit_opcode(OpCode::Nil);
             }
         }
 
-        self.emit_bytes(OpCode::DefineGlobal, name_constant, line);
+        self.emit_bytes(OpCode::DefineGlobal, name_constant);
 
         self.globals
             .borrow_mut()
@@ -607,13 +604,13 @@ impl Compiler {
     // CLOSURE
     // ============================================================
 
-    fn emit_closure(&mut self, function_constant: u8, upvalues: &[Upvalue], line: usize) {
-        self.emit_bytes(OpCode::Closure, function_constant, line);
+    fn emit_closure(&mut self, function_constant: u8, upvalues: &[Upvalue]) {
+        self.emit_bytes(OpCode::Closure, function_constant);
 
         for upvalue in upvalues {
-            self.emit_byte(if upvalue.is_local { 1 } else { 0 }, line);
+            self.emit_byte(if upvalue.is_local { 1 } else { 0 });
 
-            self.emit_byte(upvalue.index, line);
+            self.emit_byte(upvalue.index);
         }
     }
 
@@ -622,7 +619,6 @@ impl Compiler {
         name: &str,
         params: &[String],
         body: &[Statement],
-        line: usize,
     ) -> Result<(), CompileError> {
         // ========================================================
         // FONCTION GLOBALE
@@ -640,14 +636,14 @@ impl Compiler {
                 .borrow_mut()
                 .insert(name.to_string(), name_constant);
 
-            let function = self.compile_function(name, params, body, line)?;
+            let function = self.compile_function(name, params, body)?;
 
             let function_constant =
                 self.make_constant(Value::Function(Rc::new(function.clone())))?;
 
-            self.emit_closure(function_constant, &function.upvalues, line);
+            self.emit_closure(function_constant, &function.upvalues);
 
-            self.emit_bytes(OpCode::DefineGlobal, name_constant, line);
+            self.emit_bytes(OpCode::DefineGlobal, name_constant);
 
             return Ok(());
         }
@@ -656,11 +652,11 @@ impl Compiler {
         // FONCTION LOCALE / NESTED
         // ========================================================
 
-        let function = self.compile_function(name, params, body, line)?;
+        let function = self.compile_function(name, params, body)?;
 
         let function_constant = self.make_constant(Value::Function(Rc::new(function.clone())))?;
 
-        self.emit_closure(function_constant, &function.upvalues, line);
+        self.emit_closure(function_constant, &function.upvalues);
 
         let slot = self
             .context
@@ -683,7 +679,6 @@ impl Compiler {
         name: &str,
         params: &[String],
         body: &[Statement],
-        line: usize,
     ) -> Result<Function, CompileError> {
         let enclosing = Rc::clone(&self.context);
 
@@ -695,12 +690,12 @@ impl Compiler {
         }
 
         for statement in body {
-            compiler.compile_statement(statement, line)?;
+            compiler.compile_statement(statement)?;
         }
 
-        compiler.emit_opcode(OpCode::Nil, line);
+        compiler.emit_opcode(OpCode::Nil);
 
-        compiler.emit_opcode(OpCode::Return, line);
+        compiler.emit_opcode(OpCode::Return);
 
         let upvalues = compiler.context.borrow().upvalues.clone();
 
@@ -717,7 +712,7 @@ impl Compiler {
     // EXPRESSION
     // ============================================================
 
-    fn compile_expression(&mut self, expr: &Expression, line: usize) -> Result<(), CompileError> {
+    fn compile_expression(&mut self, expr: &Expression) -> Result<(), CompileError> {
         match expr {
             Expression::Literal(value) => {
                 let value = match value {
@@ -732,11 +727,11 @@ impl Compiler {
 
                 let constant = self.make_constant(value)?;
 
-                self.emit_bytes(OpCode::Constant, constant, line);
+                self.emit_bytes(OpCode::Constant, constant);
             }
 
             Expression::Variable(name) => {
-                self.compile_variable_get(name, line)?;
+                self.compile_variable_get(name)?;
             }
 
             Expression::Binary {
@@ -745,34 +740,34 @@ impl Compiler {
                 right,
             } => match operator {
                 BinaryOp::And => {
-                    self.compile_logical_and(left, right, line)?;
+                    self.compile_logical_and(left, right)?;
                 }
 
                 BinaryOp::Or => {
-                    self.compile_logical_or(left, right, line)?;
+                    self.compile_logical_or(left, right)?;
                 }
 
                 _ => {
-                    self.compile_expression(left, line)?;
+                    self.compile_expression(left)?;
 
-                    self.compile_expression(right, line)?;
+                    self.compile_expression(right)?;
 
-                    self.compile_binary(operator.clone(), line);
+                    self.compile_binary(operator.clone());
                 }
             },
 
             Expression::Unary { operator, right } => {
-                self.compile_expression(right, line)?;
+                self.compile_expression(right)?;
 
                 match operator {
-                    UnaryOp::Negate => self.emit_opcode(OpCode::Negate, line),
+                    UnaryOp::Negate => self.emit_opcode(OpCode::Negate),
 
-                    UnaryOp::Not => self.emit_opcode(OpCode::Not, line),
+                    UnaryOp::Not => self.emit_opcode(OpCode::Not),
                 }
             }
 
             Expression::Call { callee, arguments } => {
-                self.compile_call(callee, arguments, line)?;
+                self.compile_call(callee, arguments)?;
             }
         }
 
@@ -783,19 +778,18 @@ impl Compiler {
         &mut self,
         callee: &Expression,
         arguments: &[Expression],
-        line: usize,
     ) -> Result<(), CompileError> {
-        self.compile_expression(callee, line)?;
+        self.compile_expression(callee)?;
 
         for argument in arguments {
-            self.compile_expression(argument, line)?;
+            self.compile_expression(argument)?;
         }
 
         if arguments.len() > u8::MAX as usize {
             return Err(CompileError::TooManyConstants);
         }
 
-        self.emit_bytes(OpCode::Call, arguments.len() as u8, line);
+        self.emit_bytes(OpCode::Call, arguments.len() as u8);
 
         Ok(())
     }
@@ -804,15 +798,14 @@ impl Compiler {
         &mut self,
         left: &Expression,
         right: &Expression,
-        line: usize,
     ) -> Result<(), CompileError> {
-        self.compile_expression(left, line)?;
+        self.compile_expression(left)?;
 
-        let end_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+        let end_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-        self.emit_opcode(OpCode::Pop, line);
+        self.emit_opcode(OpCode::Pop);
 
-        self.compile_expression(right, line)?;
+        self.compile_expression(right)?;
 
         self.patch_jump(end_jump);
 
@@ -823,26 +816,25 @@ impl Compiler {
         &mut self,
         left: &Expression,
         right: &Expression,
-        line: usize,
     ) -> Result<(), CompileError> {
-        self.compile_expression(left, line)?;
+        self.compile_expression(left)?;
 
-        self.emit_opcode(OpCode::Not, line);
+        self.emit_opcode(OpCode::Not);
 
-        let end_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+        let end_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-        self.emit_opcode(OpCode::Not, line);
+        self.emit_opcode(OpCode::Not);
 
-        self.emit_opcode(OpCode::Pop, line);
+        self.emit_opcode(OpCode::Pop);
 
-        self.compile_expression(right, line)?;
+        self.compile_expression(right)?;
 
         self.patch_jump(end_jump);
 
         Ok(())
     }
 
-    fn compile_binary(&mut self, operator: BinaryOp, line: usize) {
+    fn compile_binary(&mut self, operator: BinaryOp) {
         let opcode = match operator {
             BinaryOp::Add => OpCode::Add,
 
@@ -857,9 +849,9 @@ impl Compiler {
             BinaryOp::Equal => OpCode::Equal,
 
             BinaryOp::NotEqual => {
-                self.emit_opcode(OpCode::Equal, line);
+                self.emit_opcode(OpCode::Equal);
 
-                self.emit_opcode(OpCode::Not, line);
+                self.emit_opcode(OpCode::Not);
 
                 return;
             }
@@ -867,9 +859,9 @@ impl Compiler {
             BinaryOp::Less => OpCode::Less,
 
             BinaryOp::LessEqual => {
-                self.emit_opcode(OpCode::Greater, line);
+                self.emit_opcode(OpCode::Greater);
 
-                self.emit_opcode(OpCode::Not, line);
+                self.emit_opcode(OpCode::Not);
 
                 return;
             }
@@ -877,9 +869,9 @@ impl Compiler {
             BinaryOp::Greater => OpCode::Greater,
 
             BinaryOp::GreaterEqual => {
-                self.emit_opcode(OpCode::Less, line);
+                self.emit_opcode(OpCode::Less);
 
-                self.emit_opcode(OpCode::Not, line);
+                self.emit_opcode(OpCode::Not);
 
                 return;
             }
@@ -887,33 +879,29 @@ impl Compiler {
             _ => unreachable!(),
         };
 
-        self.emit_opcode(opcode, line);
+        self.emit_opcode(opcode);
     }
 
     // ============================================================
     // RETURN
     // ============================================================
 
-    fn compile_return(
-        &mut self,
-        value: Option<&Expression>,
-        line: usize,
-    ) -> Result<(), CompileError> {
+    fn compile_return(&mut self, value: Option<&Expression>) -> Result<(), CompileError> {
         if !self.in_function {
             return Err(CompileError::ReturnOutsidFunction);
         }
 
         match value {
             Some(expression) => {
-                self.compile_expression(expression, line)?;
+                self.compile_expression(expression)?;
             }
 
             None => {
-                self.emit_opcode(OpCode::Nil, line);
+                self.emit_opcode(OpCode::Nil);
             }
         }
 
-        self.emit_opcode(OpCode::Return, line);
+        self.emit_opcode(OpCode::Return);
 
         Ok(())
     }
@@ -927,32 +915,31 @@ impl Compiler {
         condition: &Expression,
         then_branch: &[Statement],
         else_branch: Option<&Vec<Statement>>,
-        line: usize,
     ) -> Result<(), CompileError> {
-        self.compile_expression(condition, line)?;
+        self.compile_expression(condition)?;
 
-        let then_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+        let then_jump = self.emit_jump(OpCode::JumpIfFalse);
 
         for statement in then_branch {
-            self.compile_statement(statement, line)?;
+            self.compile_statement(statement)?;
         }
 
         if let Some(else_branch) = else_branch {
-            let else_jump = self.emit_jump(OpCode::Jump, line);
+            let else_jump = self.emit_jump(OpCode::Jump);
 
             self.patch_jump(then_jump);
 
-            self.emit_opcode(OpCode::Pop, line);
+            self.emit_opcode(OpCode::Pop);
 
             for statement in else_branch {
-                self.compile_statement(statement, line)?;
+                self.compile_statement(statement)?;
             }
 
             self.patch_jump(else_jump);
         } else {
             self.patch_jump(then_jump);
 
-            self.emit_opcode(OpCode::Pop, line);
+            self.emit_opcode(OpCode::Pop);
         }
 
         Ok(())
@@ -966,15 +953,14 @@ impl Compiler {
         &mut self,
         condition: &Expression,
         body: &[Statement],
-        line: usize,
     ) -> Result<(), CompileError> {
         let loop_start = self.chunk.code.len();
 
-        self.compile_expression(condition, line)?;
+        self.compile_expression(condition)?;
 
-        let exit_jump = self.emit_jump(OpCode::JumpIfFalse, line);
+        let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-        self.emit_opcode(OpCode::Pop, line);
+        self.emit_opcode(OpCode::Pop);
 
         self.loops.push(LoopContext {
             continue_target: loop_start,
@@ -985,16 +971,16 @@ impl Compiler {
         self.begin_scope();
 
         for statement in body {
-            self.compile_statement(statement, line)?;
+            self.compile_statement(statement)?;
         }
 
-        self.end_scope(line);
+        self.end_scope();
 
-        self.emit_loop(loop_start, line);
+        self.emit_loop(loop_start);
 
         self.patch_jump(exit_jump);
 
-        self.emit_opcode(OpCode::Pop, line);
+        self.emit_opcode(OpCode::Pop);
 
         let loop_context = self.loops.pop().expect("loop stack underflow");
 
@@ -1009,32 +995,32 @@ impl Compiler {
     // BREAK / CONTINUE
     // ============================================================
 
-    fn compile_break(&mut self, line: usize) -> Result<(), CompileError> {
+    fn compile_break(&mut self) -> Result<(), CompileError> {
         let loop_depth = match self.loops.last() {
             Some(loop_context) => loop_context.scope_depth,
 
             None => return Err(CompileError::BreakOutsideLoop),
         };
 
-        self.emit_scope_cleanup(loop_depth, line);
+        self.emit_scope_cleanup(loop_depth);
 
-        let jump = self.emit_jump(OpCode::Jump, line);
+        let jump = self.emit_jump(OpCode::Jump);
 
         self.loops.last_mut().unwrap().break_jumps.push(jump);
 
         Ok(())
     }
 
-    fn compile_continue(&mut self, line: usize) -> Result<(), CompileError> {
+    fn compile_continue(&mut self) -> Result<(), CompileError> {
         let (continue_target, loop_depth) = match self.loops.last() {
             Some(loop_context) => (loop_context.continue_target, loop_context.scope_depth),
 
             None => return Err(CompileError::ContinueOutsideLoop),
         };
 
-        self.emit_scope_cleanup(loop_depth, line);
+        self.emit_scope_cleanup(loop_depth);
 
-        self.emit_loop(continue_target, line);
+        self.emit_loop(continue_target);
 
         Ok(())
     }
@@ -1043,36 +1029,36 @@ impl Compiler {
     // STATEMENTS
     // ============================================================
 
-    pub fn compile_statement(&mut self, stmt: &Statement, line: usize) -> Result<(), CompileError> {
+    pub fn compile_statement(&mut self, stmt: &Statement) -> Result<(), CompileError> {
         match stmt {
             Statement::Expression { expression } => {
-                self.compile_expression(expression, line)?;
+                self.compile_expression(expression)?;
             }
 
             Statement::Let { name, value } => {
-                self.compile_var(name, Some(value), line)?;
+                self.compile_var(name, Some(value))?;
             }
 
             Statement::Block(statements) => {
                 self.begin_scope();
 
                 for statement in statements {
-                    self.compile_statement(statement, line)?;
+                    self.compile_statement(statement)?;
                 }
 
-                self.end_scope(line);
+                self.end_scope();
             }
 
             Statement::Assignment { name, value } => {
-                self.compile_expression(value, line)?;
+                self.compile_expression(value)?;
 
-                self.compile_variable_set(name, line)?;
+                self.compile_variable_set(name)?;
             }
 
             Statement::Print(expression) => {
-                self.compile_expression(expression, line)?;
+                self.compile_expression(expression)?;
 
-                self.emit_opcode(OpCode::Print, line);
+                self.emit_opcode(OpCode::Print);
             }
 
             Statement::If {
@@ -1080,27 +1066,27 @@ impl Compiler {
                 then_branch,
                 else_branch,
             } => {
-                self.compile_if(condition, then_branch, else_branch.as_ref(), line)?;
+                self.compile_if(condition, then_branch, else_branch.as_ref())?;
             }
 
             Statement::While { condition, body } => {
-                self.compile_while(condition, body, line)?;
+                self.compile_while(condition, body)?;
             }
 
             Statement::Function { name, params, body } => {
-                self.compile_function_statement(name, params, body, line)?;
+                self.compile_function_statement(name, params, body)?;
             }
 
             Statement::Break => {
-                self.compile_break(line)?;
+                self.compile_break()?;
             }
 
             Statement::Continue => {
-                self.compile_continue(line)?;
+                self.compile_continue()?;
             }
 
             Statement::Return { value } => {
-                self.compile_return(value.as_ref(), line)?;
+                self.compile_return(value.as_ref())?;
             }
         }
 
@@ -1111,16 +1097,12 @@ impl Compiler {
     // SCRIPT
     // ============================================================
 
-    pub fn compile(
-        mut self,
-        statements: &[Statement],
-        line: usize,
-    ) -> Result<Function, CompileError> {
+    pub fn compile(mut self, statements: &[Statement]) -> Result<Function, CompileError> {
         for statement in statements {
-            self.compile_statement(statement, line)?;
+            self.compile_statement(statement)?;
         }
 
-        self.emit_opcode(OpCode::Halt, line);
+        self.emit_opcode(OpCode::Halt);
 
         Ok(Function {
             name: "<script>".to_string(),

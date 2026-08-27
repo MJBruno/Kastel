@@ -54,22 +54,19 @@ impl From<OpCode> for u8 {
 pub struct Chunk {
     pub code: Vec<u8>,
     pub constants: Vec<Value>,
-    lines: Vec<usize>,
 }
- 
+ #[allow(dead_code)]
 impl Chunk {
     pub fn new() -> Self {
         Self {
             code: Vec::new(),
-            lines: Vec::new(),
             constants: Vec::new(),
         }
     }
 
     // poussé les donnée du bytecode
-    pub fn write(&mut self, byte: u8, line: usize) {
+    pub fn write(&mut self, byte: u8) {
         self.code.push(byte);
-        self.lines.push(line);
     }
 
     /// <h3>Ajoute une constant dans le pool de constant</h3>
@@ -82,12 +79,7 @@ impl Chunk {
 
     pub fn disassemble_instruction(&self, offset: usize) -> usize {
         print!("{offset:04} ");
-        if offset > 0 && self.lines[offset] == self.lines[offset - 1] {
-            print!("    | ");
-        } else {
-            print!("{:4} ", self.lines[offset]);
-        }
-
+        
         let instruction = self.code[offset];
 
         match instruction {

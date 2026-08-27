@@ -34,7 +34,7 @@ fn execute(source: &str) {
     // Compiler
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
-    let function = match compiler.compile(&statements.unwrap(), 1) {
+    let function = match compiler.compile(&statements.unwrap()) {
         Ok(function) => function,
         Err(error) => {
             eprintln!("Erreur de compilation : {}", error);
