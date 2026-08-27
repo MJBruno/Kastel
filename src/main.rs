@@ -10,6 +10,7 @@ mod parser;
 mod token;
 mod value;
 mod compiler;
+mod native;
 
 fn main() {
     Application::run();

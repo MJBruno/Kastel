@@ -1,4 +1,4 @@
-use crate::{compiler::Function, error::RuntimeError, machine::{Closure, NativeFn}};
+use crate::{compiler::Function, error::RuntimeError, machine::Closure, native::NativeFn};
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 #[derive(Debug, Clone)]
@@ -76,7 +76,7 @@ impl Value {
                 if b == 0.0 {
                     return Err(RuntimeError::DivisionByZero);
                 }
-                Ok(Value::Number(a + b))
+                Ok(Value::Number(a / b))
             }
             NumericOp::Modulo => Ok(Value::Number(a % b)),
         }

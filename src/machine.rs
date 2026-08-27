@@ -1,19 +1,17 @@
+use crate::chunk::OpCode;
+use crate::native::NativeFn;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
-
-use crate::chunk::OpCode;
 
 use crate::compiler::Function;
 use crate::error::RuntimeError;
+use crate::native::register_natives;
 use crate::value::ComparisonOp;
 use crate::value::NumericOp;
 use crate::value::Value;
 use crate::value::print_value;
 
-pub type NativeFn = fn(&[Value]) -> Result<Value, RuntimeError>;
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct ObjUpvalue {
@@ -68,19 +66,9 @@ impl VirtualMachine {
             open_upvalues: Vec::new(),
         };
 
-        vm.register_natives();
+        register_natives(&mut vm.globals);
 
         vm
-        // Self {
-        //     stack: Vec::new(),
-        //     globals: HashMap::new(),
-        //     frames: vec![CallFrame {
-        //         closure,
-        //         ip: 0,
-        //         slot_start: 0,
-        //     }],
-        //     open_upvalues: Vec::new(),
-        // }
     }
 
     //Lire les instructions(bytecode) dans le chunk
@@ -98,22 +86,6 @@ impl VirtualMachine {
         byte
     }
 
-    fn register_natives(&mut self) {
-        self.globals.insert(
-            "clock".to_string(),
-            Value::NativeFunction {
-                function: native_clock,
-                arity: 0,
-            },
-        );
-        self.globals.insert(
-            "add_native".to_string(),
-            Value::NativeFunction {
-                function: native_add,
-                arity: 2,
-            },
-        );
-    }
     //
     fn read_short(&mut self) -> u16 {
         let hight = self.read_byte() as u16;
@@ -169,18 +141,18 @@ impl VirtualMachine {
 
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
-            self.print_stack();
-            let _ip = self.current_ip();
+            // self.print_stack();
+            // let _ip = self.current_ip();
 
-            let (ip, chunk) = {
-                let frame = self.current_frame();
+            // let (ip, chunk) = {
+            //     let frame = self.current_frame();
 
-                let closure = frame.closure.borrow();
+            //     let closure = frame.closure.borrow();
 
-                (frame.ip, closure.function.chunk.clone())
-            };
+            //     (frame.ip, closure.function.chunk.clone())
+            // };
 
-            chunk.disassemble_instruction(ip);
+            // chunk.disassemble_instruction(ip);
 
             let instruction = self.read_byte();
 
@@ -366,8 +338,8 @@ impl VirtualMachine {
                     let callee = self.stack[callee_index].clone();
 
                     match callee {
-                        Value::Closure(closure) => {
-                            self.call(closure, arg_count)?;
+                        Value::Closure(function) => {
+                            self.call(function, arg_count)?;
                         }
 
                         Value::NativeFunction { function, arity } => {
@@ -614,25 +586,15 @@ impl VirtualMachine {
             }
         }
     }
-}
-fn native_clock(_args: &[Value]) -> Result<Value, RuntimeError> {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| RuntimeError::NativeError)?;
 
-    Ok(Value::Number(duration.as_secs_f64()))
-}
+    fn call_native(&mut self, function: NativeFn, arg_count: usize) -> Result<(), RuntimeError> {
+        let callee_index = self.stack.len() - arg_count - 1;
+        let args_start = callee_index + 1;
+        let args = &self.stack[args_start..];
+        let result = function(args)?;
+        self.stack.truncate(callee_index);
+        self.push(result);
 
-fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
-    let a = match &args[0] {
-        Value::Number(value) => *value,
-        _ => return Err(RuntimeError::TypeError),
-    };
-
-    let b = match &args[1] {
-        Value::Number(value) => *value,
-        _ => return Err(RuntimeError::TypeError),
-    };
-
-    Ok(Value::Number(a + b))
+        Ok(())
+    }
 }

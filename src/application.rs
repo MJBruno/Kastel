@@ -32,8 +32,7 @@ fn execute(source: &str) {
     let statements = Parser::new(tokens.unwrap()).parse();
     // Compiler
     let mut compiler = Compiler::new();
-    let _ = compiler.define_native("clock");
-    let _ = compiler.define_native("add_native");
+    execute_native(&mut compiler);
     let function = match compiler.compile(&statements.unwrap(), 1) {
         Ok(function) => function,
         Err(error) => {
@@ -50,6 +49,11 @@ fn execute(source: &str) {
     if let Err(error) = vm.run() {
         eprintln!("Erreur de l'exécution du VM : {}", error);
     }
+}
+
+fn execute_native(compiler: &mut Compiler) {
+    let _ = compiler.define_native("clock");
+    let _ = compiler.define_native("native_add");
 }
 
 //Ä

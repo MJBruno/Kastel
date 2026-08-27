@@ -1,4 +1,8 @@
- 
-
-print(clock());
-print(add_native(5,2));
+function fib(n) {
+    if (n < 2) { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+let before = clock();
+print(fib(30));
+let after = clock();
+print(after - before);

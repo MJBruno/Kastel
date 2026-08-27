@@ -94,7 +94,7 @@ impl std::fmt::Display for VMError {
 // ================================================================
 // RUNTIME_ERROR
 // ================================================================
-
+#[allow(dead_code)]
 pub enum RuntimeError {
     TypeError,
     DivisionByZero,
