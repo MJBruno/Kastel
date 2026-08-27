@@ -1,9 +1,4 @@
-let x = "global";
-function outer() {
-    let x = "outer";
-    function inner() {
-        print(x);
-    }
-    inner();
-}
-outer();
+ 
+
+print(clock());
+print(add_native(5,2));

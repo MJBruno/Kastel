@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use crate::chunk::OpCode;
 
@@ -11,6 +13,7 @@ use crate::value::NumericOp;
 use crate::value::Value;
 use crate::value::print_value;
 
+pub type NativeFn = fn(&[Value]) -> Result<Value, RuntimeError>;
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct ObjUpvalue {
@@ -37,12 +40,13 @@ pub struct CallFrame {
     pub ip: usize,
     pub slot_start: usize,
 }
-
+#[allow(dead_code)]
 pub struct VirtualMachine {
     pub stack: Vec<Value>,
     pub globals: HashMap<String, Value>,
     frames: Vec<CallFrame>,
     open_upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
+    natives: HashMap<String, Value>,
 }
 #[allow(dead_code)]
 impl VirtualMachine {
@@ -51,17 +55,32 @@ impl VirtualMachine {
             function,
             upvalues: Vec::new(),
         }));
-
-        Self {
+        let mut vm = Self {
             stack: Vec::new(),
             globals: HashMap::new(),
+
+            natives: HashMap::new(),
             frames: vec![CallFrame {
                 closure,
                 ip: 0,
                 slot_start: 0,
             }],
             open_upvalues: Vec::new(),
-        }
+        };
+
+        vm.register_natives();
+
+        vm
+        // Self {
+        //     stack: Vec::new(),
+        //     globals: HashMap::new(),
+        //     frames: vec![CallFrame {
+        //         closure,
+        //         ip: 0,
+        //         slot_start: 0,
+        //     }],
+        //     open_upvalues: Vec::new(),
+        // }
     }
 
     //Lire les instructions(bytecode) dans le chunk
@@ -79,6 +98,22 @@ impl VirtualMachine {
         byte
     }
 
+    fn register_natives(&mut self) {
+        self.globals.insert(
+            "clock".to_string(),
+            Value::NativeFunction {
+                function: native_clock,
+                arity: 0,
+            },
+        );
+        self.globals.insert(
+            "add_native".to_string(),
+            Value::NativeFunction {
+                function: native_add,
+                arity: 2,
+            },
+        );
+    }
     //
     fn read_short(&mut self) -> u16 {
         let hight = self.read_byte() as u16;
@@ -335,6 +370,27 @@ impl VirtualMachine {
                             self.call(closure, arg_count)?;
                         }
 
+                        Value::NativeFunction { function, arity } => {
+                            if arg_count != arity {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: arity,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let args_start = self.stack.len() - arg_count;
+
+                            let args = self.stack[args_start..].to_vec();
+
+                            let result = function(&args)?;
+
+                            // Supprimer arguments + callee
+                            self.stack.truncate(callee_index);
+
+                            // Ajouter le résultat
+                            self.push(result);
+                        }
+
                         _ => {
                             return Err(RuntimeError::NotCallable);
                         }
@@ -558,4 +614,25 @@ impl VirtualMachine {
             }
         }
     }
+}
+fn native_clock(_args: &[Value]) -> Result<Value, RuntimeError> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| RuntimeError::NativeError)?;
+
+    Ok(Value::Number(duration.as_secs_f64()))
+}
+
+fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
+    let a = match &args[0] {
+        Value::Number(value) => *value,
+        _ => return Err(RuntimeError::TypeError),
+    };
+
+    let b = match &args[1] {
+        Value::Number(value) => *value,
+        _ => return Err(RuntimeError::TypeError),
+    };
+
+    Ok(Value::Number(a + b))
 }

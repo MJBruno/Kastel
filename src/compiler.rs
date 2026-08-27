@@ -201,7 +201,13 @@ impl Compiler {
             in_function: true,
         }
     }
+    pub fn define_native(&mut self, name: &str) -> Result<(), CompileError> {
+        let constant = self.identifier_constant(name)?;
 
+        self.globals.borrow_mut().insert(name.to_string(), constant);
+
+        Ok(())
+    }
     // ============================================================
     // CONTEXTE
     // ============================================================
@@ -443,94 +449,57 @@ impl Compiler {
     // VARIABLES
     // ============================================================
 
-    fn resolve_variable(
-    &self,
-    name: &str,
-) -> Result<VariableLocation, CompileError> {
-    if let Some(slot) = self.context.borrow().locals.resolve_local(name)? {
-        return Ok(VariableLocation::Local(slot as usize));
+    fn resolve_variable(&self, name: &str) -> Result<VariableLocation, CompileError> {
+        if let Some(slot) = self.context.borrow().locals.resolve_local(name)? {
+            return Ok(VariableLocation::Local(slot as usize));
+        }
+
+        if self.globals.borrow().contains_key(name) {
+            return Ok(VariableLocation::Global);
+        }
+
+        Err(CompileError::UndefinedVariable(name.to_string()))
     }
 
-    if self.globals.borrow().contains_key(name) {
-        return Ok(VariableLocation::Global);
+    fn compile_variable_get(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
+        match self.resolve_variable(name)? {
+            VariableLocation::Local(slot) => {
+                self.emit_bytes(OpCode::GetLocal, slot as u8, line);
+            }
+
+            VariableLocation::Global => {
+                // IMPORTANT :
+                // la constante doit appartenir au chunk courant
+                let name_constant = self.identifier_constant(name)?;
+
+                self.emit_bytes(OpCode::GetGlobal, name_constant, line);
+            }
+            VariableLocation::Upvalue(slot) => {
+                self.emit_bytes(OpCode::GetUpvalue, slot as u8, line);
+            }
+        }
+
+        Ok(())
     }
 
-    Err(CompileError::UndefinedVariable(
-        name.to_string()
-    ))
-}
+    fn compile_variable_set(&mut self, name: &str, line: usize) -> Result<(), CompileError> {
+        match self.resolve_variable(name)? {
+            VariableLocation::Local(slot) => {
+                self.emit_bytes(OpCode::SetLocal, slot as u8, line);
+            }
 
-  fn compile_variable_get(
-    &mut self,
-    name: &str,
-    line: usize,
-) -> Result<(), CompileError> {
-    match self.resolve_variable(name)? {
-        VariableLocation::Local(slot) => {
-            self.emit_bytes(
-                OpCode::GetLocal,
-                slot as u8,
-                line,
-            );
+            VariableLocation::Global => {
+                let name_constant = self.identifier_constant(name)?;
+
+                self.emit_bytes(OpCode::SetGlobal, name_constant, line);
+            }
+            VariableLocation::Upvalue(slot) => {
+                self.emit_bytes(OpCode::SetUpvalue, slot as u8, line);
+            }
         }
 
-        VariableLocation::Global => {
-            // IMPORTANT :
-            // la constante doit appartenir au chunk courant
-            let name_constant = self.identifier_constant(name)?;
-
-            self.emit_bytes(
-                OpCode::GetGlobal,
-                name_constant,
-                line,
-            );
-        }
-        VariableLocation::Upvalue(slot) => {
-            self.emit_bytes(
-                OpCode::GetUpvalue,
-                slot as u8,
-                line,
-            );
-        }
+        Ok(())
     }
-
-    Ok(())
-}
-
-   fn compile_variable_set(
-    &mut self,
-    name: &str,
-    line: usize,
-) -> Result<(), CompileError> {
-    match self.resolve_variable(name)? {
-        VariableLocation::Local(slot) => {
-            self.emit_bytes(
-                OpCode::SetLocal,
-                slot as u8,
-                line,
-            );
-        }
-
-        VariableLocation::Global => {
-            let name_constant = self.identifier_constant(name)?;
-
-            self.emit_bytes(
-                OpCode::SetGlobal,
-                name_constant,
-                line,
-            );
-        }
-        VariableLocation::Upvalue(slot) => {
-            self.emit_bytes(
-                OpCode::SetUpvalue,
-                slot as u8,
-                line,
-            );
-        }
-    }
-
-    Ok(())
-}
 
     // ============================================================
     // VARIABLES DECLARATION
@@ -806,7 +775,6 @@ impl Compiler {
             Expression::Call { callee, arguments } => {
                 self.compile_call(callee, arguments, line)?;
             }
-           
         }
 
         Ok(())

@@ -1,5 +1,5 @@
-use crate::{compiler::Function, error::RuntimeError, machine::Closure};
-use std::{cell::RefCell, fmt::Display, println, rc::Rc};
+use crate::{compiler::Function, error::RuntimeError, machine::{Closure, NativeFn}};
+use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -30,6 +30,7 @@ pub enum Value {
     Function(Rc<Function>),
     Closure(Rc<RefCell<Closure>>),
     Nil,
+    NativeFunction { function: NativeFn, arity: usize },
 }
 
 impl Display for Value {
@@ -44,6 +45,9 @@ impl Display for Value {
                 let closure = closure.borrow();
                 write!(f, "<closure '{}'>", closure.function.name)?;
                 Ok(())
+            }
+            Value::NativeFunction { function, arity } => {
+                write!(f, "<fun '{:?} {}'>", function, arity)
             }
         }
     }
@@ -123,6 +127,9 @@ pub fn print_value(value: Value) {
         Value::Closure(closure) => {
             let closure = closure.borrow();
             println!("<closure '{}'>", closure.function.name)
+        }
+        Value::NativeFunction { function, arity } => {
+            println!("<fun '{:?} {}'>", function, arity)
         }
     }
 }

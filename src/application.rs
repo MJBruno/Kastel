@@ -4,7 +4,9 @@ use crate::{
 };
 
 use std::{
-    env, fs, io::{self, Write}, rc::Rc,
+    env, fs,
+    io::{self, Write},
+    rc::Rc,
 };
 
 pub struct Application;
@@ -29,8 +31,9 @@ fn execute(source: &str) {
     let tokens = lexer.scan_token();
     let statements = Parser::new(tokens.unwrap()).parse();
     // Compiler
-    let compiler = Compiler::new();
-
+    let mut compiler = Compiler::new();
+    let _ = compiler.define_native("clock");
+    let _ = compiler.define_native("add_native");
     let function = match compiler.compile(&statements.unwrap(), 1) {
         Ok(function) => function,
         Err(error) => {

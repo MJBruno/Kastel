@@ -101,6 +101,7 @@ pub enum RuntimeError {
     WrongArgumentCount { expected: usize, found: usize },
     NotCallable,
     InvalidFunction,
+    NativeError,
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -125,6 +126,7 @@ impl std::fmt::Display for RuntimeError {
                 Ok(write!(f, "Cette expression ne peut pas être appeler")?)
             }
             RuntimeError::InvalidFunction => todo!(),
+            RuntimeError::NativeError => todo!(),
         }
     }
 }
