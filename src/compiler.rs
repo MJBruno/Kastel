@@ -13,8 +13,7 @@ pub struct Local {
     pub depth: Option<usize>,
     pub slot: u8,
 }
-
-#[derive(Debug)]
+ 
 #[allow(dead_code)]
 enum VariableLocation {
     Local(usize),

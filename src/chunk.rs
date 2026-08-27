@@ -56,7 +56,7 @@ pub struct Chunk {
     pub constants: Vec<Value>,
     lines: Vec<usize>,
 }
-#[allow(dead_code)]
+ 
 impl Chunk {
     pub fn new() -> Self {
         Self {
@@ -99,10 +99,8 @@ impl Chunk {
                 self.constant_instruction("OP_GET_GLOBAL", offset)
             }
             x if x == OpCode::SetGlobal.into() => self.byte_instruction("OP_SET_GLOBAL", offset),
-
             x if x == OpCode::GetLocal.into() => self.byte_instruction("OP_GET_LOCAL", offset),
             x if x == OpCode::SetLocal.into() => self.constant_instruction("OP_SET_LOCAL", offset),
-
             x if x == OpCode::Add.into() => self.simple_instruction("OP_ADD", offset),
             x if x == OpCode::Subtract.into() => self.simple_instruction("OP_SUBTRACT", offset),
             x if x == OpCode::Multiply.into() => self.simple_instruction("OP_MULTIPLY", offset),
@@ -132,6 +130,7 @@ impl Chunk {
 
             _ => {
                 panic!("Unknown opcode: {}", instruction);
+          
             }
         }
     }

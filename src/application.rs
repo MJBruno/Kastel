@@ -1,6 +1,7 @@
 #[allow(unused_imports)]
 use crate::{
-    compiler::Compiler, error::RuntimeError, lexer::Lexer, machine::VirtualMachine, parser::Parser,
+    compiler::Compiler, error::RuntimeError, lexer::Lexer, machine::VirtualMachine,
+    native::execute_native, parser::Parser,
 };
 
 use std::{
@@ -43,20 +44,12 @@ fn execute(source: &str) {
 
     // VM
     let function = Rc::new(function);
-
     let mut vm = VirtualMachine::new(function);
-
     if let Err(error) = vm.run() {
         eprintln!("Erreur de l'exécution du VM : {}", error);
     }
 }
 
-fn execute_native(compiler: &mut Compiler) {
-    let _ = compiler.define_native("clock");
-    let _ = compiler.define_native("native_add");
-}
-
-//Ä
 fn repl() -> Result<(), RuntimeError> {
     println!("Crafted by nova.org, Madagascar: 2026 – 2027 ");
     loop {

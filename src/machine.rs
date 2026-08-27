@@ -1,9 +1,8 @@
-use crate::chunk::OpCode;
-use crate::native::NativeFn;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::chunk::OpCode;
 use crate::compiler::Function;
 use crate::error::RuntimeError;
 use crate::native::register_natives;
@@ -46,7 +45,7 @@ pub struct VirtualMachine {
     open_upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
     natives: HashMap<String, Value>,
 }
-#[allow(dead_code)]
+// #[allow(dead_code)]
 impl VirtualMachine {
     pub fn new(function: Rc<Function>) -> Self {
         let closure = Rc::new(RefCell::new(Closure {
@@ -107,7 +106,7 @@ impl VirtualMachine {
         self.stack.last().expect("Stack underflow")
     }
 
-    ///Affiche l'état de notre pile
+    // Affiche l'état de notre pile
     fn print_stack(&self) {
         print!("          ");
         for value in &self.stack {
@@ -141,18 +140,18 @@ impl VirtualMachine {
 
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
-            // self.print_stack();
-            // let _ip = self.current_ip();
+            self.print_stack();
+            let _ip = self.current_ip();
 
-            // let (ip, chunk) = {
-            //     let frame = self.current_frame();
+            let (ip, chunk) = {
+                let frame = self.current_frame();
 
-            //     let closure = frame.closure.borrow();
+                let closure = frame.closure.borrow();
 
-            //     (frame.ip, closure.function.chunk.clone())
-            // };
+                (frame.ip, closure.function.chunk.clone())
+            };
 
-            // chunk.disassemble_instruction(ip);
+            chunk.disassemble_instruction(ip);
 
             let instruction = self.read_byte();
 
@@ -587,14 +586,14 @@ impl VirtualMachine {
         }
     }
 
-    fn call_native(&mut self, function: NativeFn, arg_count: usize) -> Result<(), RuntimeError> {
-        let callee_index = self.stack.len() - arg_count - 1;
-        let args_start = callee_index + 1;
-        let args = &self.stack[args_start..];
-        let result = function(args)?;
-        self.stack.truncate(callee_index);
-        self.push(result);
+    // fn call_native(&mut self, function: NativeFn, arg_count: usize) -> Result<(), RuntimeError> {
+    //     let callee_index = self.stack.len() - arg_count - 1;
+    //     let args_start = callee_index + 1;
+    //     let args = &self.stack[args_start..];
+    //     let result = function(args)?;
+    //     self.stack.truncate(callee_index);
+    //     self.push(result);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 }

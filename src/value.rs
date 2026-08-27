@@ -47,7 +47,8 @@ impl Display for Value {
                 Ok(())
             }
             Value::NativeFunction { function, arity } => {
-                write!(f, "<fun '{:?} {}'>", function, arity)
+                write!(f, "<nativeFn '{:?} {}'>", function, arity)?;
+                Ok(())
             }
         }
     }

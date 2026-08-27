@@ -1,24 +1,16 @@
 use crate::ast::*;
+use crate::error::ParserError;
 use crate::token::{Token, TokenKind};
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct ParserError {
-    pub message: String,
-
-    pub line: usize,
-
-    pub column: usize,
-}
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+// #[allow(dead_code)]
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     errors: Vec<ParserError>,
 }
-#[allow(dead_code)]
+// #[allow(dead_code)]
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Self {
@@ -447,9 +439,9 @@ impl Parser {
         })
     }
 
-    fn consume_optional_semicolon(&mut self) {
-        self.match_token(TokenKind::Semicolon);
-    }
+    // fn consume_optional_semicolon(&mut self) {
+    //     self.match_token(TokenKind::Semicolon);
+    // }
 
     fn parse_block_statement(&mut self) -> Result<Vec<Statement>, ParserError> {
         let mut statements = Vec::new();

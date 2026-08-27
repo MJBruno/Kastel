@@ -1,4 +1,4 @@
-use crate::error::RuntimeError;
+use crate::{compiler::Compiler, error::RuntimeError};
 use crate::value::Value;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,7 +17,7 @@ pub fn native_clock(args: &[Value]) -> Result<Value, RuntimeError> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| RuntimeError::TypeError)?;
 
-    Ok(Value::Number(duration.as_secs_f64() ))
+    Ok(Value::Number(duration.as_secs_f64()))
 }
 
 pub fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -41,9 +41,7 @@ pub fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::Number(a + b))
 }
 
-pub fn register_natives(
-    globals: &mut std::collections::HashMap<String, Value>,
-) {
+pub fn register_natives(globals: &mut std::collections::HashMap<String, Value>) {
     globals.insert(
         "clock".to_string(),
         Value::NativeFunction {
@@ -59,4 +57,9 @@ pub fn register_natives(
             arity: 2,
         },
     );
+}
+
+pub fn execute_native(compiler: &mut Compiler) {
+    let _ = compiler.define_native("clock");
+    let _ = compiler.define_native("native_add");
 }
