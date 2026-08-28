@@ -7,34 +7,26 @@ pub enum OpCode {
     Nil,
     True,
     False,
-
     Equal,
     Greater,
     Less,
-
     Not,
-
     Add,
     Subtract,
     Multiply,
     Divide,
     Modulo,
     Negate,
-
     DefineGlobal,
     SetGlobal,
     GetGlobal,
-
     GetLocal,
     SetLocal,
-
     JumpIfFalse,
     Jump,
-
     Closure,
     GetUpvalue,
     SetUpvalue,
-
     Pop,
     Print,
     Loop,
@@ -55,7 +47,7 @@ pub struct Chunk {
     pub code: Vec<u8>,
     pub constants: Vec<Value>,
 }
- #[allow(dead_code)]
+
 impl Chunk {
     pub fn new() -> Self {
         Self {
@@ -79,9 +71,7 @@ impl Chunk {
 
     pub fn disassemble_instruction(&self, offset: usize) -> usize {
         print!("{offset:04} ");
-        
         let instruction = self.code[offset];
-
         match instruction {
             x if x == OpCode::Constant.into() => self.constant_instruction("OP_CONSTANT", offset),
             x if x == OpCode::DefineGlobal.into() => {
@@ -110,6 +100,7 @@ impl Chunk {
             x if x == OpCode::JumpIfFalse.into() => {
                 self.byte_instruction("OP_JUMP_IF_FALSE", offset)
             }
+
             x if x == OpCode::Jump.into() => self.byte_instruction("OP_JUMP", offset),
             x if x == OpCode::Closure.into() => self.constant_instruction("OP_CLOSURE", offset),
             x if x == OpCode::GetUpvalue.into() => self.byte_instruction("OP_GET_UPVALUE", offset),
@@ -119,10 +110,8 @@ impl Chunk {
             x if x == OpCode::Print.into() => self.simple_instruction("OP_PRINT", offset),
             x if x == OpCode::Return.into() => self.simple_instruction("OP_RETURN", offset),
             x if x == OpCode::Halt.into() => self.simple_instruction("OP_HALT", offset),
-
             _ => {
                 panic!("Unknown opcode: {}", instruction);
-          
             }
         }
     }

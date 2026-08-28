@@ -2,9 +2,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::chunk::OpCode;
-use crate::compiler::Function;
+use crate::bytecode::OpCode;
+use crate::closure::Closure;
 use crate::error::RuntimeError;
+use crate::function::Function;
 use crate::native::register_natives;
 use crate::value::ComparisonOp;
 use crate::value::NumericOp;
@@ -24,12 +25,6 @@ impl ObjUpvalue {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct Closure {
-    pub function: Rc<Function>,
-    pub upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
-}
 
 #[allow(dead_code)]
 pub struct CallFrame {
@@ -376,7 +371,6 @@ impl VirtualMachine {
                     self.push(result);
                 }
                 x if x == OpCode::Halt.into() => {
-  
                     return Ok(());
                 }
                 _ => panic!("Unknown opcode: {instruction}"),

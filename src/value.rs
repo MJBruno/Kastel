@@ -1,4 +1,4 @@
-use crate::{compiler::Function, error::RuntimeError, machine::Closure, native::NativeFn};
+use crate::{ closure::Closure, error::RuntimeError, function::Function, native::NativeFn};
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
 #[derive(Debug, Clone)]
@@ -46,10 +46,7 @@ impl Display for Value {
                 write!(f, "<closure '{}'>", closure.function.name)?;
                 Ok(())
             }
-            Value::NativeFunction(function) => {
-                write!(f, "<nativeFn '{:?}  '>", function)?;
-                Ok(())
-            }
+            Value::NativeFunction(function) => write!(f, "<nativeFn '{:?}  '>", function),
         }
     }
 }

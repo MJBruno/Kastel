@@ -50,7 +50,7 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+
 pub enum Expression {
     Literal(Literal),
     Variable(String),
@@ -79,7 +79,6 @@ pub enum UnaryOp {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum BinaryOp {
     Add,
     Subtract,

@@ -2,7 +2,6 @@ use crate::value::Value;
 use crate::{compiler::Compiler, error::RuntimeError};
 
 use std::time::{SystemTime, UNIX_EPOCH};
- 
 
 pub type NativeFn = fn(&[Value]) -> Result<Value, RuntimeError>;
 

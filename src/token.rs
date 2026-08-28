@@ -1,4 +1,4 @@
-use std::fmt;
+// use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -100,13 +100,13 @@ impl Token {
     }
 }
 
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{:?} '{}' ({}:{})",
-            self.kind, self.lexeme, self.line, self.column
-        )?;
-        Ok(())
-    }
-}
+// impl fmt::Display for Token {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(
+//             f,
+//             "{:?} '{}' ({}:{})",
+//             self.kind, self.lexeme, self.line, self.column
+//         )?;
+//         Ok(())
+//     }
+// }

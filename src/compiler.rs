@@ -3,18 +3,31 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ast::{BinaryOp, Expression, Literal, Statement, UnaryOp};
-use crate::chunk::{Chunk, OpCode};
+use crate::bytecode::{Chunk, OpCode};
 use crate::error::CompileError;
+use crate::function::Function;
 use crate::value::Value;
 
 #[derive(Clone, Debug)]
+/// # Local
+/// Représente une variable locale connue du compilateur.
+/// `name` contient le nom source de la variable, `depth` indique la profondeur
+/// de portée à laquelle elle est initialisée et `slot` correspond à sa position
+/// dans la pile de la VM."
 pub struct Local {
+    /// Nom de la variable tel qu'il apparaît dans le programme source.",
     pub name: String,
+    /// Profondeur de portée où la variable a été initialisée.
+    /// `None` signifie que la variable est encore en cours d'initialisation.",
     pub depth: Option<usize>,
+    /// Emplacement de la variable dans la pile des variables locales.",
     pub slot: u8,
 }
-
 #[allow(dead_code)]
+/// # VariableLocation
+/// Indique l'emplacement où une variable a été résolue par le compilateur.
+/// Une variable peut appartenir à la portée `locale`, être globale ou être
+/// capturée depuis une portée extérieure sous forme d'upvalue.",
 enum VariableLocation {
     Local(usize),
     Global,
@@ -22,19 +35,22 @@ enum VariableLocation {
 }
 
 #[derive(Clone, Debug)]
+/// Table des variables locales actuellement visibles par le compilateur.",
 pub struct LocalTable {
     locals: Vec<Local>,
 }
-
 impl LocalTable {
+    /// Crée une table locale vide.",
     pub fn new() -> Self {
         Self { locals: Vec::new() }
     }
-
+    /// Retourne le nombre de variables locales actuellement enregistrées.",
     pub fn len(&self) -> usize {
         self.locals.len()
     }
-
+    /// Déclare une nouvelle variable locale et lui attribue un slot.
+    /// La fonction vérifie également les redéclarations dans la portée courante
+    /// et refuse de dépasser la capacité représentable par un `u8`.",
     pub fn declare_local(&mut self, name: &str, depth: usize) -> Result<u8, CompileError> {
         for local in self.locals.iter().rev() {
             if let Some(local_depth) = local.depth {
@@ -63,12 +79,15 @@ impl LocalTable {
         Ok(slot)
     }
 
+    /// Marque la dernière variable déclarée comme complètement initialisée.",
     pub fn mark_initialized(&mut self, depth: usize) {
         if let Some(local) = self.locals.last_mut() {
             local.depth = Some(depth);
         }
     }
 
+    /// Recherche une variable locale depuis la portée la plus proche.
+    /// Retourne son slot si elle existe, ou `None` lorsqu'elle n'est pas locale.",
     pub fn resolve_local(&self, name: &str) -> Result<Option<u8>, CompileError> {
         for local in self.locals.iter().rev() {
             if local.name != name {
@@ -85,6 +104,9 @@ impl LocalTable {
         Ok(None)
     }
 
+    /// Supprime les variables appartenant aux portées qui viennent de se terminer.
+    /// Retourne le nombre de variables retirées afin que le compilateur puisse
+    /// générer autant d'instructions `Pop` dans le bytecode.",
     pub fn pop_scope(&mut self, depth: usize) -> usize {
         let mut count = 0;
 
@@ -105,6 +127,7 @@ impl LocalTable {
         count
     }
 
+    /// Compte les variables qui doivent être retirées avant un saut hors de portée.",
     pub fn cleanup_count(&self, depth: usize) -> usize {
         self.locals
             .iter()
@@ -114,21 +137,33 @@ impl LocalTable {
 }
 
 #[derive(Debug, Clone)]
+/// Décrit une variable capturée par une closure.
+/// `index` désigne soit un slot local, soit un index d'upvalue du contexte parent.
+/// `is_local` indique lequel des deux cas s'applique.",
 pub struct Upvalue {
+    /// Index du slot local ou de l'upvalue dans le contexte source.",
     pub index: u8,
+    /// Vrai lorsque l'upvalue capture directement une variable locale du parent.",
     pub is_local: bool,
 }
 
 type CompilerContextRef = Rc<RefCell<CompilerContext>>;
-
+#[allow(dead_code)]
 #[derive(Debug)]
+/// Contexte lexical utilisé pendant la compilation d'une fonction ou d'un script.
+/// Il contient les variables locales, les upvalues et un lien vers le contexte
+/// de compilation de la fonction englobante.",
 pub struct CompilerContext {
+    /// Variables locales appartenant à ce contexte de compilation.",
     pub locals: LocalTable,
+    /// Variables capturées depuis les contextes englobants.",
     pub upvalues: Vec<Upvalue>,
+    /// Contexte de compilation de la fonction parente, s'il existe.",
     pub enclosing: Option<CompilerContextRef>,
 }
 
 impl CompilerContext {
+    /// Crée un contexte racine sans fonction englobante.",
     pub fn new() -> Self {
         Self {
             locals: LocalTable::new(),
@@ -137,6 +172,7 @@ impl CompilerContext {
         }
     }
 
+    /// Crée un contexte enfant relié au contexte de compilation parent.",
     pub fn new_child(enclosing: CompilerContextRef) -> Self {
         Self {
             locals: LocalTable::new(),
@@ -145,28 +181,47 @@ impl CompilerContext {
         }
     }
 }
-
+/// État de compilation d'une boucle actuellement active.
+/// Cet état permet de résoudre correctement `break` et `continue` après
+/// génération du bytecode.",
 struct LoopContext {
+    /// Offset de bytecode vers lequel `continue` doit revenir.",
     continue_target: usize,
+    /// Liste des sauts `break` qui devront être corrigés à la fin de la boucle.",
     break_jumps: Vec<usize>,
+    /// Profondeur de portée à laquelle la boucle a été créée.",
     scope_depth: usize,
 }
 
 #[allow(dead_code)]
+/// Compile l'AST du langage en bytecode exécutable par la machine virtuelle.
+/// Le compilateur gère notamment les variables, les fonctions, les closures,
+/// les portées lexicales, les conditions, les boucles et les expressions.",
 pub struct Compiler {
+    /// Table partagée des variables globales et de leurs constantes de nom.",
     globals: Rc<RefCell<HashMap<String, u8>>>,
+    /// Chunk contenant le bytecode et les constantes produits par ce compilateur.",
     chunk: Chunk,
+    /// Contexte lexical courant utilisé pour résoudre les variables et captures."
     context: CompilerContextRef,
-
+    /// Profondeur de portée lexicale actuellement compilée.",
     scope_depth: usize,
+    /// Pile des boucles imbriquées actuellement en cours de compilation.",
     loops: Vec<LoopContext>,
-
+    /// Nom de la fonction actuellement compilée, lorsqu'il y en a une.",
     function_name: Option<String>,
+    /// Nombre de paramètres de la fonction courante.",
     function_arity: u8,
+    /// Indique si le compilateur se trouve à l'intérieur d'une fonction.",
     in_function: bool,
 }
+
 #[allow(dead_code)]
+/// Crée un compilateur racine prêt à compiler un script.",
 impl Compiler {
+    /// Crée un compilateur indépendant pour une nouvelle fonction.
+    /// Le nouveau compilateur partage les globales avec son parent et conserve
+    /// une référence vers le contexte englobant afin de résoudre les captures.",
     pub fn new() -> Self {
         Self {
             globals: Rc::new(RefCell::new(HashMap::new())),
@@ -200,6 +255,28 @@ impl Compiler {
             in_function: true,
         }
     }
+
+    // ============================================================
+    //                      MAIN_COMPILER
+    // ============================================================
+
+    pub fn compile(mut self, statements: &[Statement]) -> Result<Function, CompileError> {
+        for statement in statements {
+            self.compile_statement(statement)?;
+        }
+
+        self.emit_opcode(OpCode::Halt);
+
+        Ok(Function {
+            name: "<script>".to_string(),
+            arity: 0,
+            chunk: self.chunk,
+            upvalue_count: 0,
+            upvalues: Vec::new(),
+        })
+    }
+
+    /// Enregistre une fonction native dans la table des symboles globaux.",
     pub fn define_native(&mut self, name: &str) -> Result<(), CompileError> {
         let constant = self.identifier_constant(name)?;
 
@@ -208,21 +285,21 @@ impl Compiler {
         Ok(())
     }
     // ============================================================
-    // CONTEXTE
+    //                      CONTEXTE
     // ============================================================
-
+    /// Retourne une copie de la table des variables locales courantes.",
     fn locals(&self) -> LocalTable {
         self.context.borrow().locals.clone()
     }
-
+    /// Retourne une copie des upvalues du contexte courant.",
     fn upvalues(&self) -> Vec<Upvalue> {
         self.context.borrow().upvalues.clone()
     }
 
     // ============================================================
-    // CONSTANTES
+    //                      CONSTANTES
     // ============================================================
-
+    /// Ajoute une valeur à la table des constantes et retourne son index sur 8 bits.",
     fn make_constant(&mut self, value: Value) -> Result<u8, CompileError> {
         let index = self.chunk.add_constant(value);
 
@@ -445,7 +522,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // VARIABLES
+    //                      VARIABLES
     // ============================================================
 
     fn resolve_variable(&self, name: &str) -> Result<VariableLocation, CompileError> {
@@ -501,7 +578,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // VARIABLES DECLARATION
+    //                      VARIABLES DECLARATION
     // ============================================================
 
     fn compile_var(
@@ -578,7 +655,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // PARAMÈTRES
+    //                      PARAMÈTRES
     // ============================================================
 
     fn add_parametre(&mut self, name: &str) -> Result<(), CompileError> {
@@ -601,7 +678,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // CLOSURE
+    //                      CLOSURE
     // ============================================================
 
     fn emit_closure(&mut self, function_constant: u8, upvalues: &[Upvalue]) {
@@ -674,6 +751,10 @@ impl Compiler {
         Ok(())
     }
 
+    // ========================================================
+    //                      COMPILE_FONCTION
+    // ========================================================
+
     fn compile_function(
         &mut self,
         name: &str,
@@ -709,7 +790,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // EXPRESSION
+    //                      EXPRESSION
     // ============================================================
 
     fn compile_expression(&mut self, expr: &Expression) -> Result<(), CompileError> {
@@ -837,17 +918,11 @@ impl Compiler {
     fn compile_binary(&mut self, operator: BinaryOp) {
         let opcode = match operator {
             BinaryOp::Add => OpCode::Add,
-
             BinaryOp::Subtract => OpCode::Subtract,
-
             BinaryOp::Multiply => OpCode::Multiply,
-
             BinaryOp::Divide => OpCode::Divide,
-
             BinaryOp::Modulo => OpCode::Modulo,
-
             BinaryOp::Equal => OpCode::Equal,
-
             BinaryOp::NotEqual => {
                 self.emit_opcode(OpCode::Equal);
 
@@ -857,7 +932,6 @@ impl Compiler {
             }
 
             BinaryOp::Less => OpCode::Less,
-
             BinaryOp::LessEqual => {
                 self.emit_opcode(OpCode::Greater);
 
@@ -867,7 +941,6 @@ impl Compiler {
             }
 
             BinaryOp::Greater => OpCode::Greater,
-
             BinaryOp::GreaterEqual => {
                 self.emit_opcode(OpCode::Less);
 
@@ -883,7 +956,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // RETURN
+    //                      RETURN
     // ============================================================
 
     fn compile_return(&mut self, value: Option<&Expression>) -> Result<(), CompileError> {
@@ -907,7 +980,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // IF
+    //                      COMPILE_IF
     // ============================================================
 
     fn compile_if(
@@ -946,7 +1019,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // WHILE
+    //                      WHILE
     // ============================================================
 
     fn compile_while(
@@ -992,7 +1065,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // BREAK / CONTINUE
+    //                      BREAK / CONTINUE
     // ============================================================
 
     fn compile_break(&mut self) -> Result<(), CompileError> {
@@ -1026,7 +1099,7 @@ impl Compiler {
     }
 
     // ============================================================
-    // STATEMENTS
+    //                      STATEMENTS
     // ============================================================
 
     pub fn compile_statement(&mut self, stmt: &Statement) -> Result<(), CompileError> {
@@ -1092,37 +1165,4 @@ impl Compiler {
 
         Ok(())
     }
-
-    // ============================================================
-    // SCRIPT
-    // ============================================================
-
-    pub fn compile(mut self, statements: &[Statement]) -> Result<Function, CompileError> {
-        for statement in statements {
-            self.compile_statement(statement)?;
-        }
-
-        self.emit_opcode(OpCode::Halt);
-
-        Ok(Function {
-            name: "<script>".to_string(),
-            arity: 0,
-            chunk: self.chunk,
-            upvalue_count: 0,
-            upvalues: Vec::new(),
-        })
-    }
-}
-
-// ================================================================
-// FUNCTION
-// ================================================================
-
-#[derive(Debug, Clone)]
-pub struct Function {
-    pub name: String,
-    pub arity: usize,
-    pub chunk: Chunk,
-    pub upvalue_count: usize,
-    pub upvalues: Vec<Upvalue>,
 }

@@ -2,7 +2,6 @@ use crate::ast::*;
 use crate::error::ParserError;
 use crate::token::{Token, TokenKind};
 
-
 #[derive(Debug, Clone)]
 // #[allow(dead_code)]
 pub struct Parser {
