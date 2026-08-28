@@ -96,7 +96,7 @@ impl LocalTable {
         Ok(slot)
     }
 
-    pub fn is_mutable(&self, name: &str) -> Result<bool, CompileError> {
+    pub fn is_mutable(&self, name: &str) -> Result<Option<bool>, CompileError> {
         for local in self.locals.iter().rev() {
             if local.name != name {
                 continue;
@@ -106,12 +106,11 @@ impl LocalTable {
                 return Err(CompileError::VariableUseInInitializer(name.to_string()));
             }
 
-            return Ok(local.mutable);
+            return Ok(Some(local.mutable));
         }
 
-        Ok(true)
+        Ok(None)
     }
-
     /// Marque la dernière variable déclarée comme complètement initialisée.",
     pub fn mark_initialized(&mut self, depth: usize) {
         if let Some(local) = self.locals.last_mut() {
@@ -564,14 +563,34 @@ impl Compiler {
     //                      VARIABLES
     // ============================================================
 
-    fn resolve_variable(&self, name: &str) -> Result<VariableLocation, CompileError> {
+    fn resolve_variable(&mut self, name: &str) -> Result<VariableLocation, CompileError> {
+        // ============================================================
+        // 1. VARIABLE LOCALE
+        // ============================================================
+
         if let Some(slot) = self.context.borrow().locals.resolve_local(name)? {
             return Ok(VariableLocation::Local(slot as usize));
         }
 
+        // ============================================================
+        // 2. UPVALUE
+        // ============================================================
+
+        if let Some(slot) = self.resolve_upvalue(name)? {
+            return Ok(VariableLocation::Upvalue(slot));
+        }
+
+        // ============================================================
+        // 3. VARIABLE GLOBALE
+        // ============================================================
+
         if self.globals.borrow().contains_key(name) {
             return Ok(VariableLocation::Global);
         }
+
+        // ============================================================
+        // 4. VARIABLE INEXISTANTE
+        // ============================================================
 
         Err(CompileError::UndefinedVariable(name.to_string()))
     }
@@ -583,12 +602,11 @@ impl Compiler {
             }
 
             VariableLocation::Global => {
-                // IMPORTANT :
-                // la constante doit appartenir au chunk courant
                 let name_constant = self.identifier_constant(name)?;
 
                 self.emit_bytes(OpCode::GetGlobal, name_constant);
             }
+
             VariableLocation::Upvalue(slot) => {
                 self.emit_bytes(OpCode::GetUpvalue, slot as u8);
             }
@@ -599,26 +617,31 @@ impl Compiler {
 
     fn compile_variable_set(&mut self, name: &str) -> Result<(), CompileError> {
         match self.resolve_variable(name)? {
+            // ========================================================
+            // LOCAL
+            // ========================================================
             VariableLocation::Local(slot) => {
-                let mutable = self.context.borrow().locals.is_mutable(name)?;
-
-                if let mutable = mutable
-                    && !mutable
-                {
+                if let Some(false) = self.context.borrow().locals.is_mutable(name)? {
                     return Err(CompileError::AssignmentToConstant(name.to_string()));
                 }
 
                 self.emit_bytes(OpCode::SetLocal, slot as u8);
             }
 
+            // ========================================================
+            // GLOBAL
+            // ========================================================
             VariableLocation::Global => {
-                let is_mutable = {
+                let mutable = {
                     let globals = self.globals.borrow();
 
-                    globals.get(name).map(|global| global.mutable)
+                    globals
+                        .get(name)
+                        .map(|global| global.mutable)
+                        .unwrap_or(true)
                 };
 
-                if let Some(false) = is_mutable {
+                if !mutable {
                     return Err(CompileError::AssignmentToConstant(name.to_string()));
                 }
 
@@ -627,19 +650,53 @@ impl Compiler {
                 self.emit_bytes(OpCode::SetGlobal, name_constant);
             }
 
+            // ========================================================
+            // UPVALUE
+            // ========================================================
             VariableLocation::Upvalue(slot) => {
-                /*
-                 * Une variable capturée conserve sa mutabilité
-                 * depuis le Local d'origine.
-                 *
-                 * La vérification doit donc être faite pendant
-                 * la résolution de l'upvalue.
-                 */
+                if !self.is_upvalue_mutable(name)? {
+                    return Err(CompileError::AssignmentToConstant(name.to_string()));
+                }
+
                 self.emit_bytes(OpCode::SetUpvalue, slot as u8);
             }
         }
 
         Ok(())
+    }
+
+    fn is_upvalue_mutable(&self, name: &str) -> Result<bool, CompileError> {
+        let mut context = {
+            let current = self.context.borrow();
+
+            match &current.enclosing {
+                Some(parent) => Rc::clone(parent),
+                None => return Ok(true),
+            }
+        };
+
+        loop {
+            let mutable = {
+                let context_ref = context.borrow();
+
+                context_ref.locals.is_mutable(name)?
+            };
+
+            if let Some(mutable) = mutable {
+                return Ok(mutable);
+            }
+
+            let next = {
+                let context_ref = context.borrow();
+
+                match &context_ref.enclosing {
+                    Some(parent) => Rc::clone(parent),
+                    None => return Ok(true),
+                }
+            };
+
+            context = next;
+        }
     }
 
     // ============================================================
