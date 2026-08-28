@@ -1,2 +1,11 @@
-const a = 56;
-println(a); 
+function outer() {
+    const x = 10;
+
+    function inner() {
+        println(x);
+    }
+
+    inner();
+}
+
+outer();

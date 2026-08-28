@@ -565,7 +565,7 @@ impl Compiler {
 
     fn resolve_variable(&mut self, name: &str) -> Result<VariableLocation, CompileError> {
         // ============================================================
-        // 1. VARIABLE LOCALE
+        // 1. LOCAL
         // ============================================================
 
         if let Some(slot) = self.context.borrow().locals.resolve_local(name)? {
@@ -581,7 +581,7 @@ impl Compiler {
         }
 
         // ============================================================
-        // 3. VARIABLE GLOBALE
+        // 3. GLOBAL
         // ============================================================
 
         if self.globals.borrow().contains_key(name) {
@@ -589,7 +589,7 @@ impl Compiler {
         }
 
         // ============================================================
-        // 4. VARIABLE INEXISTANTE
+        // 4. INEXISTANTE
         // ============================================================
 
         Err(CompileError::UndefinedVariable(name.to_string()))
