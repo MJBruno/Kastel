@@ -9,6 +9,7 @@ pub enum TokenKind {
 
     // Mots-clés
     Let,
+    Const,
     Function,
     Return,
     If,
@@ -82,6 +83,7 @@ impl Token {
     pub fn keyword(text: &str) -> Option<TokenKind> {
         match text {
             "let" => Some(TokenKind::Let),
+            "const" => Some(TokenKind::Const),
             "function" => Some(TokenKind::Function),
             "return" => Some(TokenKind::Return),
             "if" => Some(TokenKind::If),

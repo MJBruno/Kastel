@@ -22,7 +22,17 @@ pub struct Local {
     pub depth: Option<usize>,
     /// Emplacement de la variable dans la pile des variables locales.",
     pub slot: u8,
+    ///Pour distinguer une declaration `const` ou `let`
+    pub mutable: bool,
 }
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct Global {
+    constant: u8,
+    mutable: bool,
+}
+
 #[allow(dead_code)]
 /// # VariableLocation
 /// Indique l'emplacement où une variable a été résolue par le compilateur.
@@ -39,6 +49,7 @@ enum VariableLocation {
 pub struct LocalTable {
     locals: Vec<Local>,
 }
+// #[allow(dead_code)]
 impl LocalTable {
     /// Crée une table locale vide.",
     pub fn new() -> Self {
@@ -51,7 +62,12 @@ impl LocalTable {
     /// Déclare une nouvelle variable locale et lui attribue un slot.
     /// La fonction vérifie également les redéclarations dans la portée courante
     /// et refuse de dépasser la capacité représentable par un `u8`.",
-    pub fn declare_local(&mut self, name: &str, depth: usize) -> Result<u8, CompileError> {
+    pub fn declare_local(
+        &mut self,
+        name: &str,
+        depth: usize,
+        mutable: bool,
+    ) -> Result<u8, CompileError> {
         for local in self.locals.iter().rev() {
             if let Some(local_depth) = local.depth {
                 if local_depth < depth {
@@ -74,9 +90,26 @@ impl LocalTable {
             name: name.to_string(),
             depth: None,
             slot,
+            mutable,
         });
 
         Ok(slot)
+    }
+
+    pub fn is_mutable(&self, name: &str) -> Result<bool, CompileError> {
+        for local in self.locals.iter().rev() {
+            if local.name != name {
+                continue;
+            }
+
+            if local.depth.is_none() {
+                return Err(CompileError::VariableUseInInitializer(name.to_string()));
+            }
+
+            return Ok(local.mutable);
+        }
+
+        Ok(true)
     }
 
     /// Marque la dernière variable déclarée comme complètement initialisée.",
@@ -199,7 +232,7 @@ struct LoopContext {
 /// les portées lexicales, les conditions, les boucles et les expressions.",
 pub struct Compiler {
     /// Table partagée des variables globales et de leurs constantes de nom.",
-    globals: Rc<RefCell<HashMap<String, u8>>>,
+    globals: Rc<RefCell<HashMap<String, Global>>>,
     /// Chunk contenant le bytecode et les constantes produits par ce compilateur.",
     chunk: Chunk,
     /// Contexte lexical courant utilisé pour résoudre les variables et captures."
@@ -239,7 +272,7 @@ impl Compiler {
 
     fn new_function(
         name: String,
-        globals: Rc<RefCell<HashMap<String, u8>>>,
+        globals: Rc<RefCell<HashMap<String, Global>>>,
         enclosing: CompilerContextRef,
     ) -> Self {
         Self {
@@ -280,7 +313,13 @@ impl Compiler {
     pub fn define_native(&mut self, name: &str) -> Result<(), CompileError> {
         let constant = self.identifier_constant(name)?;
 
-        self.globals.borrow_mut().insert(name.to_string(), constant);
+        self.globals.borrow_mut().insert(
+            name.to_string(),
+            Global {
+                constant,
+                mutable: true,
+            },
+        );
 
         Ok(())
     }
@@ -561,15 +600,41 @@ impl Compiler {
     fn compile_variable_set(&mut self, name: &str) -> Result<(), CompileError> {
         match self.resolve_variable(name)? {
             VariableLocation::Local(slot) => {
+                let mutable = self.context.borrow().locals.is_mutable(name)?;
+
+                if let mutable = mutable
+                    && !mutable
+                {
+                    return Err(CompileError::AssignmentToConstant(name.to_string()));
+                }
+
                 self.emit_bytes(OpCode::SetLocal, slot as u8);
             }
 
             VariableLocation::Global => {
+                let is_mutable = {
+                    let globals = self.globals.borrow();
+
+                    globals.get(name).map(|global| global.mutable)
+                };
+
+                if let Some(false) = is_mutable {
+                    return Err(CompileError::AssignmentToConstant(name.to_string()));
+                }
+
                 let name_constant = self.identifier_constant(name)?;
 
                 self.emit_bytes(OpCode::SetGlobal, name_constant);
             }
+
             VariableLocation::Upvalue(slot) => {
+                /*
+                 * Une variable capturée conserve sa mutabilité
+                 * depuis le Local d'origine.
+                 *
+                 * La vérification doit donc être faite pendant
+                 * la résolution de l'upvalue.
+                 */
                 self.emit_bytes(OpCode::SetUpvalue, slot as u8);
             }
         }
@@ -585,24 +650,25 @@ impl Compiler {
         &mut self,
         name: &str,
         initializer: Option<&Expression>,
+        mutable: bool,
     ) -> Result<(), CompileError> {
         if self.in_function || self.scope_depth > 0 {
-            self.compile_local_var(name, initializer)
+            self.compile_local_var(name, initializer, mutable)
         } else {
-            self.compile_global_var(name, initializer)
+            self.compile_global_var(name, initializer, mutable)
         }
     }
-
     fn compile_local_var(
         &mut self,
         name: &str,
         initializer: Option<&Expression>,
+        mutable: bool,
     ) -> Result<(), CompileError> {
-        let slot = self
-            .context
-            .borrow_mut()
-            .locals
-            .declare_local(name, self.scope_depth)?;
+        let slot =
+            self.context
+                .borrow_mut()
+                .locals
+                .declare_local(name, self.scope_depth, mutable)?;
 
         match initializer {
             Some(expr) => {
@@ -628,6 +694,7 @@ impl Compiler {
         &mut self,
         name: &str,
         initializer: Option<&Expression>,
+        mutable: bool,
     ) -> Result<(), CompileError> {
         if self.globals.borrow().contains_key(name) {
             return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
@@ -647,9 +714,13 @@ impl Compiler {
 
         self.emit_bytes(OpCode::DefineGlobal, name_constant);
 
-        self.globals
-            .borrow_mut()
-            .insert(name.to_string(), name_constant);
+        self.globals.borrow_mut().insert(
+            name.to_string(),
+            Global {
+                constant: name_constant,
+                mutable,
+            },
+        );
 
         Ok(())
     }
@@ -663,7 +734,7 @@ impl Compiler {
             .context
             .borrow_mut()
             .locals
-            .declare_local(name, self.scope_depth)?;
+            .declare_local(name, self.scope_depth, true)?;
 
         self.context
             .borrow_mut()
@@ -709,9 +780,13 @@ impl Compiler {
             let name_constant = self.identifier_constant(name)?;
 
             // Réserver le nom.
-            self.globals
-                .borrow_mut()
-                .insert(name.to_string(), name_constant);
+            self.globals.borrow_mut().insert(
+                name.to_string(),
+                Global {
+                    constant: name_constant,
+                    mutable: true,
+                },
+            );
 
             let function = self.compile_function(name, params, body)?;
 
@@ -739,7 +814,7 @@ impl Compiler {
             .context
             .borrow_mut()
             .locals
-            .declare_local(name, self.scope_depth)?;
+            .declare_local(name, self.scope_depth, true)?;
 
         self.context
             .borrow_mut()
@@ -792,7 +867,7 @@ impl Compiler {
     // ============================================================
     //                      EXPRESSION
     // ============================================================
-
+    #[allow(unused_variables)]
     fn compile_expression(&mut self, expr: &Expression) -> Result<(), CompileError> {
         match expr {
             Expression::Literal(value) => {
@@ -850,6 +925,10 @@ impl Compiler {
             Expression::Call { callee, arguments } => {
                 self.compile_call(callee, arguments)?;
             }
+            Expression::Member { object, property } => todo!(),
+            Expression::Index { object, index } => todo!(),
+            Expression::Array(expressions) => todo!(),
+            Expression::Object(items) => todo!(),
         }
 
         Ok(())
@@ -1108,8 +1187,12 @@ impl Compiler {
                 self.compile_expression(expression)?;
             }
 
-            Statement::Let { name, value } => {
-                self.compile_var(name, Some(value))?;
+            Statement::Let {
+                name,
+                value,
+                mutable,
+            } => {
+                self.compile_var(name, Some(value), *mutable)?;
             }
 
             Statement::Block(statements) => {

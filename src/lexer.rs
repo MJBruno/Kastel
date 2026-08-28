@@ -136,6 +136,12 @@ impl Lexer {
                 '&' => {
                     if self.match_char('&') {
                         tokens.push(self.make_token(TokenKind::And, "&&"));
+                    } else {
+                        self.errors.push(LexerError {
+                            message: "Opérateur '&' invalide, utilisez '&&'".to_string(),
+                            line: self.line,
+                            column: self.column - 1,
+                        });
                     }
                 }
 
@@ -272,12 +278,18 @@ impl Lexer {
             if self.peek() == '*' && self.peek_next() == '/' {
                 self.advance();
                 self.advance();
-                break;
+                return;
             }
+
             self.advance();
         }
-    }
 
+        self.errors.push(LexerError {
+            message: "Commentaire bloc non fermé".to_string(),
+            line: self.line,
+            column: self.column,
+        });
+    }
     fn match_char(&mut self, expected: char) -> bool {
         if self.is_at_end() {
             return false;

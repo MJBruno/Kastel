@@ -114,11 +114,13 @@ impl Parser {
     }
 
     fn parse_number(&self, token: Token) -> Result<Expression, ParserError> {
-        let value = token
-            .lexeme
-            .parse::<f64>()
-            .map_err(|_| format!("Invalid number '{}' at line {}", token.lexeme, token.line));
-        Ok(Expression::Literal(Literal::Number(value.unwrap())))
+        let value = token.lexeme.parse::<f64>().map_err(|_| ParserError {
+            message: format!("Nombre invalide '{}'", token.lexeme),
+            line: token.line,
+            column: token.column,
+        })?;
+
+        Ok(Expression::Literal(Literal::Number(value)))
     }
 
     fn parse_string(&self, token: Token) -> Result<Expression, ParserError> {
@@ -335,7 +337,9 @@ impl Parser {
 
     fn statement(&mut self) -> Result<Vec<Statement>, ParserError> {
         let statements = if self.match_token(TokenKind::Let) {
-            self.parse_let_statement()?
+            self.parse_variable_declaration(true)?
+        } else if self.match_token(TokenKind::Const) {
+            self.parse_variable_declaration(false)?
         } else if self.match_token(TokenKind::Function) {
             vec![self.parse_function_statement()?]
         } else if self.match_token(TokenKind::Return) {
@@ -370,7 +374,7 @@ impl Parser {
     // HELPER DE STATEMENTS
     //========================================================
 
-    fn parse_let_statement(&mut self) -> Result<Vec<Statement>, ParserError> {
+    fn parse_variable_declaration(&mut self, mutable: bool) -> Result<Vec<Statement>, ParserError> {
         let mut declarations = Vec::new();
 
         loop {
@@ -383,6 +387,7 @@ impl Parser {
             declarations.push(Statement::Let {
                 name: name.lexeme,
                 value,
+                mutable,
             });
 
             if !self.match_token(TokenKind::Comma) {
@@ -392,7 +397,6 @@ impl Parser {
 
         Ok(declarations)
     }
-
     fn parse_function_statement(&mut self) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom de variable attendu")?;
         self.consume(TokenKind::LeftParen, " ( attendu après la condition")?;
@@ -424,10 +428,18 @@ impl Parser {
     }
 
     fn parse_return_statement(&mut self) -> Result<Statement, ParserError> {
-        let value = self.parse_expression()?;
+        let value = if self.check(TokenKind::Semicolon)
+            || self.check(TokenKind::RightBrace)
+            || self.is_at_end()
+        {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
 
-        Ok(Statement::Return { value: Some(value) })
+        Ok(Statement::Return { value })
     }
+
     fn parse_assignment(&mut self) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom de variable attendu")?;
         self.consume(TokenKind::Equal, " = attendu")?;

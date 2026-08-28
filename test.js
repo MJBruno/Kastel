@@ -1,1 +1,3 @@
-println(((clock() % 86400) % 3600) / 60);
+const a = 56;
+a = 22;
+print(a);

@@ -1,11 +1,6 @@
-use crate::{ closure::Closure, error::RuntimeError, function::Function, native::NativeFn};
+use crate::{closure::Closure, error::RuntimeError, function::Function, native::NativeFn};
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct Upvalue {
-    pub location: Rc<RefCell<Value>>,
-}
 pub enum NumericOp {
     Add,
     Subtract,
@@ -31,6 +26,7 @@ pub enum Value {
     Closure(Rc<RefCell<Closure>>),
     Nil,
     NativeFunction(NativeFn),
+    
 }
 
 impl Display for Value {
@@ -55,6 +51,8 @@ impl Value {
         match self {
             Value::Nil => false,
             Value::Boolean(value) => *value,
+            Value::Number(value) => *value != 0.0 && !value.is_nan(),
+            Value::String(value) => !value.is_empty(),
             _ => true,
         }
     }

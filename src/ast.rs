@@ -3,6 +3,7 @@ pub enum Statement {
     Let {
         name: String,
         value: Expression,
+        mutable: bool,
     },
 
     Assignment {
@@ -50,7 +51,7 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone)]
-
+#[allow(dead_code)]
 pub enum Expression {
     Literal(Literal),
     Variable(String),
@@ -70,6 +71,19 @@ pub enum Expression {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
     },
+
+    Member {
+        object: Box<Expression>,
+        property: Box<Expression>,
+    },
+    Index {
+        object: Box<Expression>,
+        index: Box<Expression>,
+    },
+
+    Array(Vec<Expression>),
+
+    Object(Vec<(Expression, Expression)>),
 }
 
 #[derive(Debug, Clone)]
