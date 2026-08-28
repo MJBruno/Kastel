@@ -17,7 +17,7 @@ pub fn native_clock(args: &[Value]) -> Result<Value, RuntimeError> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| RuntimeError::TypeError)?;
 
-    Ok(Value::Number(duration.as_secs_f64()))
+    Ok(Value::Number(duration.as_secs() as f64))
 }
 
 pub fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {

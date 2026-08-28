@@ -1,8 +1,1 @@
-let x = 32;
-
-function lunch() {
-    println(x * x);
-}
-
-lunch();
-println(x);
+println(((clock() % 86400) % 3600) / 60);
