@@ -142,6 +142,10 @@ pub enum RuntimeError {
     NotCallable,
     InvalidFunction,
     NativeError,
+    IndexOutOfBounds,
+
+    ArrayIndexNotInteger,
+    ArrayIndexOutOfBounds { index: usize, length: usize },
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -169,6 +173,18 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::NativeError => {
                 write!(f, "Native function error.")
+            }
+
+            RuntimeError::ArrayIndexNotInteger => {
+                write!(f, "Array index must be an integer.")
+            }
+
+            RuntimeError::ArrayIndexOutOfBounds { index, length } => {
+                write!(f, "Array index {index} out of bounds for length {length}.")
+            }
+
+            RuntimeError::IndexOutOfBounds => {
+                write!(f, "Array index out of bounds")
             }
         }
     }

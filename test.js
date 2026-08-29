@@ -1,11 +1,3 @@
-function outer() {
-    const x = 10;
+let c = [2, 9.6, "6", 7];
 
-    function inner() {
-        println(x);
-    }
-
-    inner();
-}
-
-outer();
+print(c);

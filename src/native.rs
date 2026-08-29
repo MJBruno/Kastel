@@ -40,6 +40,8 @@ pub fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
 
     Ok(Value::Number(a + b))
 }
+
+#[allow(dead_code)]
 pub fn native_print(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
@@ -61,6 +63,8 @@ pub fn native_print(args: &[Value]) -> Result<Value, RuntimeError> {
         Value::NativeFunction(function) => {
             println!("<fun '{:?} '>", function)
         }
+        #[allow(unused_variables)]
+        Value::Array(ref_cell) => todo!(),
     };
 
     Ok(args[0].clone())

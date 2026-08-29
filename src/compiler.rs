@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ast::{BinaryOp, Expression, Literal, Statement, UnaryOp};
+use crate::ast::{AssignmentTarget, BinaryOp, Expression, Literal, Statement, UnaryOp};
 use crate::bytecode::{Chunk, OpCode};
 use crate::error::CompileError;
 use crate::function::Function;
@@ -982,10 +982,28 @@ impl Compiler {
             Expression::Call { callee, arguments } => {
                 self.compile_call(callee, arguments)?;
             }
-            Expression::Member { object, property } => todo!(),
-            Expression::Index { object, index } => todo!(),
-            Expression::Array(expressions) => todo!(),
+
+            Expression::Array(elements) => {
+                if elements.len() > u8::MAX as usize {
+                    return Err(CompileError::TooManyConstants);
+                }
+
+                for element in elements {
+                    self.compile_expression(element)?;
+                }
+
+                self.emit_bytes(OpCode::Array, elements.len() as u8);
+            }
+
+            Expression::Index { object, index } => {
+                self.compile_expression(object)?;
+                self.compile_expression(index)?;
+
+                self.emit_opcode(OpCode::GetIndex);
+            }
+
             Expression::Object(items) => todo!(),
+            Expression::Member { object, property } => todo!(),
         }
 
         Ok(())
@@ -1262,11 +1280,20 @@ impl Compiler {
                 self.end_scope();
             }
 
-            Statement::Assignment { name, value } => {
-                self.compile_expression(value)?;
+            Statement::Assignment { target, value } => match target {
+                AssignmentTarget::Variable(name) => {
+                    self.compile_expression(value)?;
+                    self.compile_variable_set(name)?;
+                }
 
-                self.compile_variable_set(name)?;
-            }
+                AssignmentTarget::Index { object, index } => {
+                    self.compile_expression(object)?;
+                    self.compile_expression(index)?;
+                    self.compile_expression(value)?;
+
+                    self.emit_opcode(OpCode::SetIndex);
+                }
+            },
 
             Statement::Print(expression) => {
                 self.compile_expression(expression)?;

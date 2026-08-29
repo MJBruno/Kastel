@@ -3,13 +3,12 @@ use crate::error::ParserError;
 use crate::token::{Token, TokenKind};
 
 #[derive(Debug, Clone)]
-// #[allow(dead_code)]
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     errors: Vec<ParserError>,
 }
-// #[allow(dead_code)]
+#[allow(dead_code)]
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Self {
@@ -42,9 +41,9 @@ impl Parser {
         }
     }
 
-    // --------------------------------------------------
-    //                  TOKEN HELPERS
-    // --------------------------------------------------
+    // ============================================================
+    // TOKEN HELPERS
+    // ============================================================
 
     fn is_at_end(&self) -> bool {
         self.peek().kind == TokenKind::Eof
@@ -57,7 +56,6 @@ impl Parser {
     fn match_token(&mut self, kind: TokenKind) -> bool {
         if self.check(kind) {
             self.advance();
-
             true
         } else {
             false
@@ -68,7 +66,6 @@ impl Parser {
         for kind in kinds {
             if self.check(kind.clone()) {
                 self.advance();
-
                 return true;
             }
         }
@@ -96,6 +93,7 @@ impl Parser {
         if self.current + 1 >= self.tokens.len() {
             return false;
         }
+
         self.tokens[self.current + 1].kind == kind
     }
 
@@ -106,9 +104,7 @@ impl Parser {
 
         Err(ParserError {
             message: message.to_string(),
-
             line: self.peek().line,
-
             column: self.peek().column,
         })
     }
@@ -125,16 +121,16 @@ impl Parser {
 
     fn parse_string(&self, token: Token) -> Result<Expression, ParserError> {
         let value = token.lexeme.trim_matches('"').to_string();
+
         Ok(Expression::Literal(Literal::String(value)))
     }
 
-    // --------------------------------------------------
-    //                  PARSE-EXPRESSION
-    // --------------------------------------------------
+    // ============================================================
+    // EXPRESSIONS
+    // ============================================================
 
     fn parse_expression(&mut self) -> Result<Expression, ParserError> {
-        let condition = self.logical_or()?;
-        Ok(condition)
+        self.logical_or()
     }
 
     fn logical_or(&mut self) -> Result<Expression, ParserError> {
@@ -145,9 +141,7 @@ impl Parser {
 
             expr = Expression::Binary {
                 left: Box::new(expr),
-
                 operator: BinaryOp::Or,
-
                 right: Box::new(right),
             };
         }
@@ -163,9 +157,7 @@ impl Parser {
 
             expr = Expression::Binary {
                 left: Box::new(expr),
-
                 operator: BinaryOp::And,
-
                 right: Box::new(right),
             };
         }
@@ -206,6 +198,7 @@ impl Parser {
 
         Ok(expr)
     }
+
     fn term(&mut self) -> Result<Expression, ParserError> {
         let mut expr = self.factor()?;
 
@@ -275,15 +268,34 @@ impl Parser {
         self.call()
     }
 
+    // ============================================================
+    // CALL / INDEX
+    // ============================================================
+
     fn call(&mut self) -> Result<Expression, ParserError> {
         let mut expression = self.primary()?;
 
         loop {
             if self.match_token(TokenKind::LeftParen) {
                 expression = self.parse_call(expression)?;
-            } else {
-                break;
+
+                continue;
             }
+
+            if self.match_token(TokenKind::LeftBracket) {
+                let index = self.parse_expression()?;
+
+                self.consume(TokenKind::RightBracket, "']' attendu après l'index")?;
+
+                expression = Expression::Index {
+                    object: Box::new(expression),
+                    index: Box::new(index),
+                };
+
+                continue;
+            }
+
+            break;
         }
 
         Ok(expression)
@@ -291,6 +303,7 @@ impl Parser {
 
     fn parse_call(&mut self, callee: Expression) -> Result<Expression, ParserError> {
         let mut arguments = Vec::new();
+
         if !self.check(TokenKind::RightParen) {
             loop {
                 arguments.push(self.parse_expression()?);
@@ -301,7 +314,7 @@ impl Parser {
             }
         }
 
-        self.consume(TokenKind::RightParen, "message")?;
+        self.consume(TokenKind::RightParen, "')' attendu après les arguments")?;
 
         Ok(Expression::Call {
             callee: Box::new(callee),
@@ -309,22 +322,63 @@ impl Parser {
         })
     }
 
+    // ============================================================
+    // PRIMARY
+    // ============================================================
+
     fn primary(&mut self) -> Result<Expression, ParserError> {
         let token = self.advance().clone();
 
         match token.kind {
             TokenKind::Number => self.parse_number(token),
+
             TokenKind::String => self.parse_string(token),
+
             TokenKind::Identifier => Ok(Expression::Variable(token.lexeme)),
+
             TokenKind::True => Ok(Expression::Literal(Literal::Bool(true))),
+
             TokenKind::False => Ok(Expression::Literal(Literal::Bool(false))),
+
             TokenKind::Nil => Ok(Expression::Literal(Literal::Nil)),
+
+            // ----------------------------------------------------
+            // Parenthèses
+            // ----------------------------------------------------
             TokenKind::LeftParen => {
-                let expr = self.parse_expression()?;
+                let expression = self.parse_expression()?;
 
-                self.consume(TokenKind::RightParen, "Parenthèse fermante attendue")?;
+                self.consume(TokenKind::RightParen, "')' attendu après l'expression")?;
 
-                Ok(expr)
+                Ok(expression)
+            }
+
+            // ----------------------------------------------------
+            // Tableau
+            // ----------------------------------------------------
+            TokenKind::LeftBracket => {
+                let mut elements = Vec::new();
+
+                if !self.check(TokenKind::RightBracket) {
+                    loop {
+                        elements.push(self.parse_expression()?);
+
+                        if !self.match_token(TokenKind::Comma) {
+                            break;
+                        }
+
+                        // Autorise :
+                        //
+                        // [1, 2, 3,]
+                        if self.check(TokenKind::RightBracket) {
+                            break;
+                        }
+                    }
+                }
+
+                self.consume(TokenKind::RightBracket, "']' attendu après le tableau")?;
+
+                Ok(Expression::Array(elements))
             }
 
             _ => Err(ParserError {
@@ -335,6 +389,10 @@ impl Parser {
         }
     }
 
+    // ============================================================
+    // STATEMENTS
+    // ============================================================
+
     fn statement(&mut self) -> Result<Vec<Statement>, ParserError> {
         let statements = if self.match_token(TokenKind::Let) {
             self.parse_variable_declaration(true)?
@@ -344,8 +402,6 @@ impl Parser {
             vec![self.parse_function_statement()?]
         } else if self.match_token(TokenKind::Return) {
             vec![self.parse_return_statement()?]
-        } else if self.check(TokenKind::Identifier) && self.check_next(TokenKind::Equal) {
-            vec![self.parse_assignment()?]
         } else if self.match_token(TokenKind::Print) {
             vec![self.parse_print_statement()?]
         } else if self.match_token(TokenKind::Break) {
@@ -359,20 +415,57 @@ impl Parser {
         } else if self.match_token(TokenKind::LeftBrace) {
             vec![Statement::Block(self.parse_block_statement()?)]
         } else {
-            let expr = self.parse_expression()?;
-
-            vec![Statement::Expression { expression: expr }]
+            vec![self.parse_expression_or_assignment()?]
         };
 
-        // ; optionnel
+        // ';' optionnel
         self.match_token(TokenKind::Semicolon);
 
         Ok(statements)
     }
 
-    //========================================================
-    // HELPER DE STATEMENTS
-    //========================================================
+    // ============================================================
+    // EXPRESSION / ASSIGNMENT
+    // ============================================================
+
+    fn parse_expression_or_assignment(&mut self) -> Result<Statement, ParserError> {
+        let expression = self.parse_expression()?;
+
+        if self.match_token(TokenKind::Equal) {
+            let value = self.parse_expression()?;
+
+            let target = self.expression_to_assignment_target(expression)?;
+
+            return Ok(Statement::Assignment { target, value });
+        }
+
+        Ok(Statement::Expression { expression })
+    }
+
+    fn expression_to_assignment_target(
+        &self,
+        expression: Expression,
+    ) -> Result<AssignmentTarget, ParserError> {
+        match expression {
+            Expression::Variable(name) => Ok(AssignmentTarget::Variable(name)),
+
+            Expression::Index { object, index } => Ok(AssignmentTarget::Index { object, index }),
+
+            _ => {
+                let token = self.peek();
+
+                Err(ParserError {
+                    message: "Cible d'affectation invalide".to_string(),
+                    line: token.line,
+                    column: token.column,
+                })
+            }
+        }
+    }
+
+    // ============================================================
+    // DECLARATION
+    // ============================================================
 
     fn parse_variable_declaration(&mut self, mutable: bool) -> Result<Vec<Statement>, ParserError> {
         let mut declarations = Vec::new();
@@ -380,7 +473,7 @@ impl Parser {
         loop {
             let name = self.consume(TokenKind::Identifier, "Nom de variable attendu")?;
 
-            self.consume(TokenKind::Equal, " '=' attendu après le nom")?;
+            self.consume(TokenKind::Equal, "'=' attendu après le nom")?;
 
             let value = self.parse_expression()?;
 
@@ -397,24 +490,36 @@ impl Parser {
 
         Ok(declarations)
     }
+
+    // ============================================================
+    // FUNCTION
+    // ============================================================
+
     fn parse_function_statement(&mut self) -> Result<Statement, ParserError> {
-        let name = self.consume(TokenKind::Identifier, "Nom de variable attendu")?;
-        self.consume(TokenKind::LeftParen, " ( attendu après la condition")?;
+        let name = self.consume(TokenKind::Identifier, "Nom de fonction attendu")?;
+
+        self.consume(TokenKind::LeftParen, "'(' attendu après le nom de fonction")?;
+
         let mut params = Vec::new();
+
         if !self.check(TokenKind::RightParen) {
             loop {
-                let param = self.consume(TokenKind::Identifier, "message")?;
+                let param = self.consume(TokenKind::Identifier, "Nom de paramètre attendu")?;
+
                 params.push(param.lexeme);
+
                 if !self.match_token(TokenKind::Comma) {
                     break;
                 }
             }
         }
 
-        self.consume(TokenKind::RightParen, "")?;
-        self.consume(TokenKind::LeftBrace, "")?;
+        self.consume(TokenKind::RightParen, "')' attendu après les paramètres")?;
+
+        self.consume(TokenKind::LeftBrace, "'{' attendu avant le corps")?;
 
         let body = self.parse_block_statement()?;
+
         Ok(Statement::Function {
             name: name.lexeme,
             params,
@@ -422,10 +527,19 @@ impl Parser {
         })
     }
 
+    // ============================================================
+    // PRINT
+    // ============================================================
+
     fn parse_print_statement(&mut self) -> Result<Statement, ParserError> {
-        let expr = self.parse_expression()?;
-        Ok(Statement::Print(expr))
+        let expression = self.parse_expression()?;
+
+        Ok(Statement::Print(expression))
     }
+
+    // ============================================================
+    // RETURN
+    // ============================================================
 
     fn parse_return_statement(&mut self) -> Result<Statement, ParserError> {
         let value = if self.check(TokenKind::Semicolon)
@@ -440,41 +554,42 @@ impl Parser {
         Ok(Statement::Return { value })
     }
 
-    fn parse_assignment(&mut self) -> Result<Statement, ParserError> {
-        let name = self.consume(TokenKind::Identifier, "Nom de variable attendu")?;
-        self.consume(TokenKind::Equal, " = attendu")?;
-        let value = self.parse_expression()?;
-        Ok(Statement::Assignment {
-            name: name.lexeme,
-            value,
-        })
-    }
-
-    // fn consume_optional_semicolon(&mut self) {
-    //     self.match_token(TokenKind::Semicolon);
-    // }
+    // ============================================================
+    // BLOCK
+    // ============================================================
 
     fn parse_block_statement(&mut self) -> Result<Vec<Statement>, ParserError> {
         let mut statements = Vec::new();
 
         while !self.check(TokenKind::RightBrace) && !self.is_at_end() {
             let parsed = self.statement()?;
+
             statements.extend(parsed);
         }
 
-        self.consume(TokenKind::RightBrace, " } attendu après le bloc")?;
+        self.consume(TokenKind::RightBrace, "'}' attendu après le bloc")?;
 
         Ok(statements)
     }
 
+    // ============================================================
+    // IF
+    // ============================================================
+
     fn parse_if_statement(&mut self) -> Result<Statement, ParserError> {
-        self.consume(TokenKind::LeftParen, " ( attendu après la condition")?;
+        self.consume(TokenKind::LeftParen, "'(' attendu après if")?;
+
         let condition = self.parse_expression()?;
-        self.consume(TokenKind::RightParen, " ) attendu après la condition")?;
-        self.consume(TokenKind::LeftBrace, " { attendu après la condition")?;
+
+        self.consume(TokenKind::RightParen, "')' attendu après la condition")?;
+
+        self.consume(TokenKind::LeftBrace, "'{' attendu après la condition")?;
+
         let then_branch = self.parse_block_statement()?;
+
         let else_branch = if self.match_token(TokenKind::Else) {
-            self.consume(TokenKind::LeftBrace, " { attendu après else")?;
+            self.consume(TokenKind::LeftBrace, "'{' attendu après else")?;
+
             Some(self.parse_block_statement()?)
         } else {
             None
@@ -486,12 +601,22 @@ impl Parser {
             else_branch,
         })
     }
+
+    // ============================================================
+    // WHILE
+    // ============================================================
+
     fn parse_while_statement(&mut self) -> Result<Statement, ParserError> {
-        self.consume(TokenKind::LeftParen, " ( attendu après la condition")?;
+        self.consume(TokenKind::LeftParen, "'(' attendu après while")?;
+
         let condition = self.parse_expression()?;
-        self.consume(TokenKind::RightParen, " ) attendu après la condition")?;
-        self.consume(TokenKind::LeftBrace, " { attendu après la condition")?;
+
+        self.consume(TokenKind::RightParen, "')' attendu après la condition")?;
+
+        self.consume(TokenKind::LeftBrace, "'{' attendu après la condition")?;
+
         let body = self.parse_block_statement()?;
+
         Ok(Statement::While { condition, body })
     }
 }

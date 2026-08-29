@@ -1,4 +1,14 @@
 #[derive(Debug, Clone)]
+pub enum AssignmentTarget {
+    Variable(String),
+
+    Index {
+        object: Box<Expression>,
+        index: Box<Expression>,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub enum Statement {
     Let {
         name: String,
@@ -7,7 +17,7 @@ pub enum Statement {
     },
 
     Assignment {
-        name: String,
+        target: AssignmentTarget,
         value: Expression,
     },
 
@@ -35,9 +45,11 @@ pub enum Statement {
         params: Vec<String>,
         body: Vec<Statement>,
     },
+
     Return {
         value: Option<Expression>,
     },
+
     Break,
     Continue,
 }
@@ -54,6 +66,7 @@ pub enum Literal {
 #[allow(dead_code)]
 pub enum Expression {
     Literal(Literal),
+
     Variable(String),
 
     Unary {
@@ -76,6 +89,7 @@ pub enum Expression {
         object: Box<Expression>,
         property: Box<Expression>,
     },
+
     Index {
         object: Box<Expression>,
         index: Box<Expression>,
@@ -105,6 +119,7 @@ pub enum BinaryOp {
 
     Less,
     LessEqual,
+
     Greater,
     GreaterEqual,
 

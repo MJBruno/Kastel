@@ -31,6 +31,9 @@ pub enum OpCode {
     Print,
     Loop,
     Call,
+    Array,
+    GetIndex,
+    SetIndex,
     Return,
     Halt,
 }
@@ -95,6 +98,7 @@ impl Chunk {
             x if x == OpCode::Greater.into() => self.simple_instruction("OP_GREATER", offset),
             x if x == OpCode::Equal.into() => self.simple_instruction("OP_EQUAL", offset),
             x if x == OpCode::Nil.into() => self.simple_instruction("OP_NIL", offset),
+
             x if x == OpCode::Negate.into() => self.simple_instruction("OP_NEGATE", offset),
             x if x == OpCode::Loop.into() => self.simple_instruction("OP_LOOP", offset),
             x if x == OpCode::JumpIfFalse.into() => {
@@ -105,6 +109,12 @@ impl Chunk {
             x if x == OpCode::Closure.into() => self.constant_instruction("OP_CLOSURE", offset),
             x if x == OpCode::GetUpvalue.into() => self.byte_instruction("OP_GET_UPVALUE", offset),
             x if x == OpCode::SetUpvalue.into() => self.byte_instruction("OP_SET_UPVALUE", offset),
+            // Tableaux
+            x if x == OpCode::Array.into() => self.byte_instruction("OP_ARRAY", offset),
+
+            x if x == OpCode::GetIndex.into() => self.simple_instruction("OP_GET_INDEX", offset),
+
+            x if x == OpCode::SetIndex.into() => self.simple_instruction("OP_SET_INDEX", offset),
             x if x == OpCode::Pop.into() => self.simple_instruction("OP_POP", offset),
             x if x == OpCode::Call.into() => self.byte_instruction("OP_CALL", offset),
             x if x == OpCode::Print.into() => self.simple_instruction("OP_PRINT", offset),
