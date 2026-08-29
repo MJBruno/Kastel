@@ -256,20 +256,20 @@ impl Chunk {
 
     fn byte_instruction(&self, name: &str, offset: usize) -> usize {
         if offset + 1 >= self.code.len() {
-            println!("{:<20} <missing operand>", name);
+            println!("{name:<16} <missing operand>");
             return self.code.len();
         }
 
-        let operand = self.code[offset + 1];
+        let slot = self.code[offset + 1];
 
-        println!("{:<20} {:4}", name, operand);
+        println!("{name:<16} {:4}", slot);
 
         offset + 2
     }
 
     fn constant_instruction(&self, name: &str, offset: usize) -> usize {
         if offset + 1 >= self.code.len() {
-            println!("{:<20} <missing constant>", name);
+            println!("{name:<16} <missing operand>");
             return self.code.len();
         }
 
@@ -277,11 +277,11 @@ impl Chunk {
 
         match self.constants.get(constant_index) {
             Some(constant) => {
-                println!("{:<20} {:4} '{constant}'", name, constant_index);
+                println!("{name:<16} {:4} '{constant}'", constant_index);
             }
 
             None => {
-                println!("{:<20} {:4} <invalid constant>", name, constant_index);
+                println!("{name:<16} {:4} <invalid constant>", constant_index);
             }
         }
 
