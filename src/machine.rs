@@ -80,8 +80,11 @@ impl VirtualMachine {
     pub fn execute_module(
         function: Rc<Function>,
         exports: &[String],
+        module_path: PathBuf,
     ) -> Result<HashMap<String, Value>, RuntimeError> {
         let mut vm = Self::new(function);
+
+        vm.module_path = Some(module_path);
 
         vm.run()?;
 
@@ -92,7 +95,10 @@ impl VirtualMachine {
                 .globals
                 .get(name)
                 .cloned()
-                .ok_or(RuntimeError::TypeError)?;
+                .ok_or(RuntimeError::ModuleError(format!(
+                    "Export '{}' was not initialized",
+                    name
+                )))?;
 
             values.insert(name.clone(), value);
         }
@@ -556,9 +562,9 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::GetProperty.into() => {
-                    let constant = self.read_short();
+                    let constant = self.read_byte();
 
-                    let property = self.read_constant(constant.try_into().unwrap());
+                    let property = self.read_constant(constant);
 
                     let name = match property {
                         Value::String(name) => name,
@@ -570,30 +576,9 @@ impl VirtualMachine {
 
                     let object = self.pop();
 
-                    match object {
-                        Value::Module(module) => {
-                            let value = module.get_export(&name).cloned().ok_or_else(|| {
-                                RuntimeError::ModuleError(format!(
-                                    "Module '{}' does not export '{}'",
-                                    module.name, name
-                                ))
-                            })?;
+                    let value = object.module_get(&name)?;
 
-                            self.push(value);
-                        }
-
-                        value => {
-                            
-                            // Ici, conserve ton traitement
-                            // actuel des autres objets/propriétés.
-                            //
-                            // Ne remplace pas cette partie par une
-                            // nouvelle implémentation si ton VM possède
-                            // déjà Array/String/etc.
-
-                            return Err(RuntimeError::TypeError);
-                        }
-                    }
+                    self.push(value);
                 }
 
                 // =================================================
@@ -642,9 +627,9 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Import.into() => {
-                    let constant = self.read_short();
+                    let constant = self.read_byte();
 
-                    let value = self.read_constant(constant.try_into().unwrap());
+                    let value = self.read_constant(constant);
 
                     let module_name = match value {
                         Value::String(name) => name,
@@ -673,16 +658,13 @@ impl VirtualMachine {
                         return Err(RuntimeError::ModuleError("Invalid module name".to_string()));
                     }
 
-                    let global_name = parts[0].clone();
-
                     let module = self
                         .module_loader
                         .load_from(&current_file, &parts)
                         .map_err(|error| RuntimeError::ModuleError(error.to_string()))?;
 
-                    self.globals.insert(global_name, Value::Module(module));
+                    self.push(Value::Module(module));
                 }
-
                 // =================================================
                 // CLOSURES
                 // =================================================

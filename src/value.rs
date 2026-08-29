@@ -100,8 +100,6 @@ impl Display for Value {
 
 #[allow(dead_code)]
 impl Value {
-    
-
     // ============================================================
     // ARRAY
     // ============================================================
@@ -251,10 +249,12 @@ impl Value {
 
     pub fn module_get(&self, name: &str) -> Result<Value, RuntimeError> {
         match self {
-            Value::Module(module) => module
-                .get_export(name)
-                .cloned()
-                .ok_or(RuntimeError::TypeError),
+            Value::Module(module) => module.get_export(name).cloned().ok_or_else(|| {
+                RuntimeError::ModuleError(format!(
+                    "Module '{}' does not export '{}'",
+                    module.name, name
+                ))
+            }),
 
             _ => Err(RuntimeError::TypeError),
         }

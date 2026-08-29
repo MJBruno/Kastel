@@ -112,9 +112,8 @@ impl ModuleLoader {
 
     fn load_uncached(&mut self, path: &Path) -> Result<Rc<ModuleInstance>, CompileError> {
         // ------------------------------------------------------------
-        // 1. Lire le fichier du module
+        // 1. Lire le fichier
         // ------------------------------------------------------------
-
         let source = fs::read_to_string(path).map_err(|error| CompileError::ModuleReadError {
             path: path.display().to_string(),
             message: error.to_string(),
@@ -123,39 +122,34 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         // 2. Lexer
         // ------------------------------------------------------------
-
         let mut lexer = Lexer::new(source);
 
-        let tokens = lexer.scan_token();
-
+        let tokens = lexer.scan_token().map_err(CompileError::ModuleLexerErrors)?;
         // ------------------------------------------------------------
         // 3. Parser
         // ------------------------------------------------------------
+        let mut parser = Parser::new(tokens);
 
-        let mut parser = Parser::new(tokens.unwrap());
-
-        let statements = parser.parse();
-
+        let statements = parser.parse().map_err(CompileError::ModuleParserErrors)?;
         // ------------------------------------------------------------
         // 4. Compiler
         // ------------------------------------------------------------
-
         let compiler = Compiler::new();
 
-        let (function, exports) = compiler.compile_module(&statements.unwrap())?;
+        let (function, exports) = compiler.compile_module(&statements)?;
 
         let function = Rc::new(function);
 
         // ------------------------------------------------------------
         // 5. Exécuter le module dans une VM isolée
         // ------------------------------------------------------------
-
-        let values = VirtualMachine::execute_module(Rc::clone(&function), &exports);
+        let values =
+            VirtualMachine::execute_module(Rc::clone(&function), &exports, path.to_path_buf())
+                .map_err(CompileError::ModuleRuntimeError)?;
 
         // ------------------------------------------------------------
         // 6. Nom du module
         // ------------------------------------------------------------
-
         let name = path
             .file_stem()
             .and_then(|name| name.to_str())
@@ -163,23 +157,20 @@ impl ModuleLoader {
             .to_string();
 
         // ------------------------------------------------------------
-        // 7. Construire l'instance du module
+        // 7. Construire l'instance
         // ------------------------------------------------------------
-
         let mut module = ModuleInstance::new(name, path.to_path_buf());
 
         // ------------------------------------------------------------
-        // 8. Ajouter uniquement les symboles exportés
+        // 8. Ajouter uniquement les exports
         // ------------------------------------------------------------
-
-        for (name, value) in values.unwrap() {
+        for (name, value) in values {
             module.export(name, value)?;
         }
 
         // ------------------------------------------------------------
-        // 9. Mettre le module dans le cache
+        // 9. Mettre en cache
         // ------------------------------------------------------------
-
         let module = Rc::new(module);
 
         self.cache.insert(path.to_path_buf(), Rc::clone(&module));

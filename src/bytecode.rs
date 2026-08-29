@@ -141,7 +141,11 @@ impl Chunk {
             x if x == OpCode::GetUpvalue.into() => self.byte_instruction("OP_GET_UPVALUE", offset),
 
             x if x == OpCode::SetUpvalue.into() => self.byte_instruction("OP_SET_UPVALUE", offset),
+            x if x == OpCode::Import.into() => self.constant_instruction("OP_IMPORT", offset),
 
+            x if x == OpCode::GetProperty.into() => {
+                self.constant_instruction("OP_GET_PROPERTY", offset)
+            }
             // =====================================================
             // ARITHMETIC
             // =====================================================

@@ -1,5 +1,0 @@
-let numbers = [10, 20, 30];
-
-if (numbers.contains(20)) {
-    print("Ok")
-}

@@ -36,12 +36,16 @@ pub enum CompileError {
     AssignmentToConstant(String),
 
     TooManyConstants,
+    TooManyArguments,
+    TooManyArrayElements,
     TooManyLocals,
     BreakOutsideLoop,
     ContinueOutsideLoop,
     ReturnOutsidFunction,
     TooManyUpvalues,
     ExpectedDeclarationAfterExport,
+    ModuleParserErrors(Vec<ParserError>),
+    ModuleLexerErrors(Vec<LexerError>),
 
     WrongArgumentCount { expected: i32, found: usize },
 
@@ -94,7 +98,12 @@ impl std::fmt::Display for CompileError {
             CompileError::TooManyConstants => {
                 write!(f, "Too many constants")
             }
-
+            CompileError::TooManyArguments => {
+                write!(f, "Too many arguments")
+            }
+            CompileError::TooManyArrayElements => {
+                write!(f, "Too many array elements")
+            }
             CompileError::TooManyLocals => {
                 write!(f, "Too many local variables")
             }
@@ -170,6 +179,36 @@ impl std::fmt::Display for CompileError {
             }
             CompileError::ExpectedDeclarationAfterExport => {
                 write!(f, "Expected declaration after export")
+            }
+            CompileError::ModuleParserErrors(errors) => {
+                for (index, error) in errors.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, "\n")?;
+                    }
+
+                    write!(
+                        f,
+                        "Parser error in module at {}:{}: {}",
+                        error.line, error.column, error.message
+                    )?;
+                }
+
+                Ok(())
+            }
+            CompileError::ModuleLexerErrors(lexer_errors) => {
+                for (index, error) in lexer_errors.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, "\n")?;
+                    }
+
+                    write!(
+                        f,
+                        "Parser error in module at {}:{}: {}",
+                        error.line, error.column, error.message
+                    )?;
+                }
+
+                Ok(())
             }
         }
     }
@@ -282,7 +321,9 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::IndexOutOfBounds => {
                 write!(f, "Array index out of bounds")
             }
-            RuntimeError::ModuleError(_) => todo!(),
+            RuntimeError::ModuleError(message) => {
+                write!(f, "Module error: {message}")
+            }
         }
     }
 }

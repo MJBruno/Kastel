@@ -1,5 +1,4 @@
-let numbers = [10, 20, 30];
+import math;
 
-if (numbers.contains(30)) {
-    print("Ok")
-}
+print math.answer;
+print math.add(10, 20);

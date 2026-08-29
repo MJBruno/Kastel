@@ -445,8 +445,6 @@ impl Parser {
             vec![self.parse_return_statement()?]
         } else if self.match_token(TokenKind::Print) {
             vec![self.parse_print_statement()?]
-        } else if self.match_token(TokenKind::Export) {
-            vec![]
         } else if self.match_token(TokenKind::Break) {
             vec![Statement::Break]
         } else if self.match_token(TokenKind::Continue) {
@@ -511,21 +509,16 @@ impl Parser {
 
         let name = self.consume(
             TokenKind::Identifier,
-            "Expected module name after 'import'.",
+            "Nom de module attendu après 'import'",
         )?;
 
-        path.push(name.lexeme.clone());
+        path.push(name.lexeme);
 
         while self.match_token(TokenKind::Dot) {
-            let name = self.consume(TokenKind::Identifier, "Expected module name after '.'.")?;
+            let name = self.consume(TokenKind::Identifier, "Nom de module attendu après '.'")?;
 
-            path.push(name.lexeme.clone());
+            path.push(name.lexeme);
         }
-
-        self.consume(
-            TokenKind::Semicolon,
-            "Expected ';' after import declaration.",
-        )?;
 
         Ok(Statement::Import { path })
     }
@@ -680,47 +673,6 @@ impl Parser {
         })
     }
 
-    fn parse_export(&mut self) -> Result<Statement, ParserError> {
-        self.consume(TokenKind::Export, "Expected 'export'.")?;
-
-        let statement = match self.peek().kind {
-            TokenKind::Let => {
-                let statements = self.parse_variable_declaration(false)?;
-
-                if statements.len() != 1 {
-                    eprintln!("")
-                }
-
-                statements
-                    .into_iter()
-                    .next()
-                    .ok_or(self.errors).unwrap()
-            }
-
-            TokenKind::Const => {
-                let statements = self.parse_variable_declaration(true)?;
-
-                if statements.len() != 1 {
-                   eprintln!("")
-                }
-
-                statements
-                    .into_iter()
-                    .next()
-            }
-
-            TokenKind::Function => self.parse_function_statement()?,
-
-            _ => {
-                eprintln!("")
-            }
-        };
-
-        Ok(Statement::Export {
-            statement: Box::new(statement),
-        })
-    }
-
     // ============================================================
     // PRINT
     // ============================================================
@@ -815,108 +767,141 @@ impl Parser {
     }
 }
 
-// #[cfg(test)]
-// mod import_export_tests {
-//     use super::*;
-//     use crate::lexer::Lexer;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
 
-//     fn parse(source: &str) -> Vec<Statement> {
-//         let mut lexer = Lexer::new(source.to_string());
+    fn parse(source: &str) -> Vec<Statement> {
+        let mut lexer = Lexer::new(source.to_string());
+        let tokens = lexer.scan_token().expect("lexer failed");
 
-//         let tokens = lexer.scan_token().expect("lexer failed");
+        let mut parser = Parser::new(tokens);
 
-//         let mut parser = Parser::new(tokens);
+        parser.parse().expect("parser failed")
+    }
 
-//         parser.parse().expect("parser failed")
-//     }
+    #[test]
+    fn parse_export_let() {
+        let statements = parse("export let value = 42;");
 
-//     #[test]
-//     fn parse_import() {
-//         let statements = parse("import math;");
+        assert_eq!(statements.len(), 1);
 
-//         assert_eq!(statements.len(), 1);
+        match &statements[0] {
+            Statement::Export { statement } => match statement.as_ref() {
+                Statement::Let {
+                    name,
+                    mutable,
+                    ..
+                } => {
+                    assert_eq!(name, "value");
+                    assert!(*mutable);
+                }
+                _ => panic!("expected let"),
+            },
 
-//         match &statements[0] {
-//             Statement::Import { module, alias } => {
-//                 assert_eq!(module.parts, vec!["math"]);
-//                 assert!(alias.is_none());
-//             }
+            _ => panic!("expected export"),
+        }
+    }
 
-//             _ => panic!("expected import"),
-//         }
-//     }
+    #[test]
+    fn parse_export_const() {
+        let statements = parse("export const value = 42;");
 
-//     #[test]
-//     fn parse_import_alias() {
-//         let statements = parse("import math as m;");
+        assert_eq!(statements.len(), 1);
 
-//         match &statements[0] {
-//             Statement::Import { module, alias } => {
-//                 assert_eq!(module.parts, vec!["math"]);
-//                 assert_eq!(alias.as_deref(), Some("m"));
-//             }
+        match &statements[0] {
+            Statement::Export { statement } => match statement.as_ref() {
+                Statement::Let {
+                    name,
+                    mutable,
+                    ..
+                } => {
+                    assert_eq!(name, "value");
+                    assert!(!*mutable);
+                }
 
-//             _ => panic!("expected import"),
-//         }
-//     }
+                _ => panic!("expected const/let"),
+            },
 
-//     #[test]
-//     fn parse_from_import() {
-//         let statements = parse("from math import add as somme;");
+            _ => panic!("expected export"),
+        }
+    }
 
-//         match &statements[0] {
-//             Statement::FromImport { module, items } => {
-//                 assert_eq!(module.parts, vec!["math"]);
-//                 assert_eq!(items.len(), 1);
-//                 assert_eq!(items[0].name, "add");
-//                 assert_eq!(items[0].alias.as_deref(), Some("somme"));
-//             }
+    #[test]
+    fn parse_export_function() {
+        let statements = parse(
+            r#"
+            export function add(a, b) {
+                return a + b;
+            }
+            "#,
+        );
 
-//             _ => panic!("expected from import"),
-//         }
-//     }
+        assert_eq!(statements.len(), 1);
 
-//     #[test]
-//     fn parse_export_function() {
-//         let statements = parse(
-//             r#"
-//             export function add(a, b) {
-//                 return a + b;
-//             }
-//             "#,
-//         );
+        match &statements[0] {
+            Statement::Export { statement } => match statement.as_ref() {
+                Statement::Function {
+                    name,
+                    params,
+                    body,
+                } => {
+                    assert_eq!(name, "add");
+                    assert_eq!(params, &vec!["a".to_string(), "b".to_string()]);
+                    assert_eq!(body.len(), 1);
+                }
 
-//         assert_eq!(statements.len(), 1);
+                _ => panic!("expected function"),
+            },
 
-//         match &statements[0] {
-//             Statement::Export { statement } => match statement.as_ref() {
-//                 Statement::Function { name, params, .. } => {
-//                     assert_eq!(name, "add");
-//                     assert_eq!(params, &vec!["a".to_string(), "b".to_string()]);
-//                 }
+            _ => panic!("expected export"),
+        }
+    }
 
-//                 _ => panic!("expected function"),
-//             },
+    #[test]
+    fn reject_export_without_declaration() {
+        let mut lexer = Lexer::new("export 42;".to_string());
+        let tokens = lexer.scan_token().expect("lexer failed");
 
-//             _ => panic!("expected export"),
-//         }
-//     }
+        let mut parser = Parser::new(tokens);
 
-//     #[test]
-//     fn parse_export_variable() {
-//         let statements = parse("export let version = 1;");
+        assert!(parser.parse().is_err());
+    }
 
-//         match &statements[0] {
-//             Statement::Export { statement } => match statement.as_ref() {
-//                 Statement::Let { name, mutable, .. } => {
-//                     assert_eq!(name, "version");
-//                     assert!(*mutable);
-//                 }
+    #[test]
+    fn import_semicolon_is_optional() {
+        let statements = parse("import math");
 
-//                 _ => panic!("expected let"),
-//             },
+        assert_eq!(statements.len(), 1);
 
-//             _ => panic!("expected export"),
-//         }
-//     }
-// }
+        match &statements[0] {
+            Statement::Import { path } => {
+                assert_eq!(path, &vec!["math".to_string()]);
+            }
+
+            _ => panic!("expected import"),
+        }
+    }
+
+    #[test]
+    fn import_dotted_module() {
+        let statements = parse("import std.math;");
+
+        assert_eq!(statements.len(), 1);
+
+        match &statements[0] {
+            Statement::Import { path } => {
+                assert_eq!(
+                    path,
+                    &vec![
+                        "std".to_string(),
+                        "math".to_string()
+                    ]
+                );
+            }
+
+            _ => panic!("expected import"),
+        }
+    }
+}

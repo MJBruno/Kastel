@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ast::{AssignmentTarget, BinaryOp, Expression, Literal, Statement, UnaryOp};
+use crate::ast::{
+    AssignmentTarget, BinaryOp, Expression, ImportItem, Literal, ModulePath, Statement, UnaryOp,
+};
 use crate::bytecode::{Chunk, OpCode};
 use crate::error::CompileError;
 use crate::function::Function;
@@ -483,19 +485,16 @@ impl Compiler {
             }
         };
 
-        Self::resolve_upvalue_recursive(&enclosing, name).map(|result| {
-            result.map(|(index, is_local)| {
-                // Le résultat représente la capture
-                // que l'enfant doit faire.
-                //
-                // is_local = true  => slot du parent
-                // is_local = false => upvalue du parent
-                //
-                // On ajoute cette capture dans self.
-                self.add_upvalue(index, is_local)
-                    .expect("Too many upvalues")
-            })
-        })
+        let result = Self::resolve_upvalue_recursive(&enclosing, name)?;
+
+        match result {
+            Some((index, is_local)) => {
+                let upvalue = self.add_upvalue(index, is_local)?;
+                Ok(Some(upvalue))
+            }
+
+            None => Ok(None),
+        }
     }
 
     fn resolve_upvalue_recursive(
@@ -985,14 +984,21 @@ impl Compiler {
 
             Expression::Call { callee, arguments } => {
                 if let Expression::Member { object, name } = callee.as_ref() {
-                    return self.compile_array_method_call(object, name, arguments);
+                    match name.as_str() {
+                        "push" | "pop" | "insert" | "remove" | "clear" | "contains" => {
+                            return self.compile_array_method_call(object, name, arguments);
+                        }
+
+                        _ => {}
+                    }
                 }
+
                 self.compile_call(callee, arguments)?;
             }
 
             Expression::Array(elements) => {
                 if elements.len() > u8::MAX as usize {
-                    return Err(CompileError::TooManyConstants);
+                    return Err(CompileError::TooManyArrayElements);
                 }
 
                 for element in elements {
@@ -1010,7 +1016,15 @@ impl Compiler {
             }
 
             Expression::Member { object, name } => {
-                self.compile_array_member(object, name)?;
+                if name == "length" {
+                    self.compile_array_member(object, name)?;
+                } else {
+                    self.compile_expression(object)?;
+
+                    let name_constant = self.identifier_constant(name)?;
+
+                    self.emit_bytes(OpCode::GetProperty, name_constant);
+                }
             }
         }
 
@@ -1165,7 +1179,7 @@ impl Compiler {
         }
 
         if arguments.len() > u8::MAX as usize {
-            return Err(CompileError::TooManyConstants);
+            return Err(CompileError::TooManyArguments);
         }
 
         self.emit_bytes(OpCode::Call, arguments.len() as u8);
@@ -1476,8 +1490,9 @@ impl Compiler {
             Statement::Import { path } => {
                 self.compile_import(path)?;
             }
-            #[allow(unused)]
-            Statement::FromImport { module, items } => todo!(),
+            Statement::FromImport { module, items } => {
+                self.compile_from_import(module, items)?;
+            }
             Statement::Export { statement } => {
                 self.compile_export(statement)?;
             }
@@ -1486,6 +1501,52 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_from_import(
+        &mut self,
+        module: &ModulePath,
+        items: &[ImportItem],
+    ) -> Result<(), CompileError> {
+        if module.parts.is_empty() || items.is_empty() {
+            return Err(CompileError::InvalidImport);
+        }
+
+        let module_name = module.parts.join(".");
+
+        for item in items {
+            let binding_name = item.alias.as_deref().unwrap_or(&item.name);
+
+            if self.globals.borrow().contains_key(binding_name) {
+                return Err(CompileError::VariableAlreadyDeclared(
+                    binding_name.to_string(),
+                ));
+            }
+
+            // import module
+            let module_constant = self.make_constant(Value::String(module_name.clone()))?;
+
+            self.emit_bytes(OpCode::Import, module_constant);
+
+            // module.item
+            let property_constant = self.identifier_constant(&item.name)?;
+
+            self.emit_bytes(OpCode::GetProperty, property_constant);
+
+            // define alias/name
+            let binding_constant = self.identifier_constant(binding_name)?;
+
+            self.emit_bytes(OpCode::DefineGlobal, binding_constant);
+
+            self.globals.borrow_mut().insert(
+                binding_name.to_string(),
+                Global {
+                    constant: binding_constant,
+                    mutable: false,
+                },
+            );
+        }
+
+        Ok(())
+    }
     fn compile_import(&mut self, path: &[String]) -> Result<(), CompileError> {
         if path.is_empty() {
             return Err(CompileError::InvalidImport);
@@ -1493,19 +1554,33 @@ impl Compiler {
 
         let module_name = path.join(".");
 
-        let constant = self.make_constant(Value::String(module_name))?;
+        // Pour :
+        // import math;
+        //
+        // le nom disponible dans le scope est "math".
+        let binding_name = path.first().ok_or(CompileError::InvalidImport)?;
 
-        self.emit_opcode(OpCode::Constant);
-        self.emit_u16(constant as u16);
+        if self.globals.borrow().contains_key(binding_name) {
+            return Err(CompileError::VariableAlreadyDeclared(binding_name.clone()));
+        }
 
-        self.emit_opcode(OpCode::Import);
+        let module_constant = self.make_constant(Value::String(module_name))?;
+
+        self.emit_bytes(OpCode::Import, module_constant);
+
+        let name_constant = self.identifier_constant(binding_name)?;
+
+        self.emit_bytes(OpCode::DefineGlobal, name_constant);
+
+        self.globals.borrow_mut().insert(
+            binding_name.clone(),
+            Global {
+                constant: name_constant,
+                mutable: false,
+            },
+        );
 
         Ok(())
-    }
-
-    fn emit_u16(&mut self, value: u16) {
-        self.emit_byte((value >> 8) as u8);
-        self.emit_byte((value & 0xff) as u8);
     }
 
     fn compile_export(&mut self, statement: &Statement) -> Result<(), CompileError> {
