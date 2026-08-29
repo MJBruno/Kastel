@@ -1,37 +1,32 @@
 // let a = [1, 2, 3];
 
+// println(a.length);
+
+// let n = a.push(4);
+
+// println(n);
 // println(a);
+// println(a.length);
 
-// println(length(a));
+// let x = a.pop();
 
-// let new_length = push(a, 4);
-
-// println(new_length);
+// println(x);
 // println(a);
+// println(a.length);
 
-// let value = pop(a);
+let matrix = [
+    [1, 2],
+    [3, 4]
+];
 
-// println(value);
-// println(a);
-// println(length(a));
-// println("===================================");
+println(matrix.length);
+println(matrix[0].length);
 
-// let matrix = [
-//     [1, 2],
-//     [3, 4]
-// ];
+matrix[0].push(10);
 
-// push(matrix[0], 10);
+println(matrix);
 
-// println(matrix);
+let x = matrix[0].pop();
 
-// let s = pop(matrix[1]);
-
-// println(s);
-// println(matrix);
-
-// println(length(matrix));
-// println(length(matrix[0]));
-// println(length(matrix[1]));
-
-push(42, 10);
+println(x);
+println(matrix);

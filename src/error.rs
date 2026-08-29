@@ -40,6 +40,8 @@ pub enum CompileError {
     ContinueOutsideLoop,
     ReturnOutsidFunction,
     TooManyUpvalues,
+    WrongArgumentCount { expected: i32, found: usize },
+    InvalidMemberAccess { name: String },
 }
 
 impl std::fmt::Display for CompileError {
@@ -83,6 +85,12 @@ impl std::fmt::Display for CompileError {
 
             CompileError::TooManyUpvalues => {
                 write!(f, "Too many upvalues")
+            }
+            CompileError::WrongArgumentCount { expected, found } => {
+                write!(f, "Expected {expected} arguments but found {found}.")
+            }
+            CompileError::InvalidMemberAccess { name } => {
+                write!(f, "Invalid member access '{name}'")
             }
         }
     }

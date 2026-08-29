@@ -276,12 +276,26 @@ impl Parser {
         let mut expression = self.primary()?;
 
         loop {
+            // --------------------------------------------------------
+            // Appel de fonction
+            //
+            // foo(...)
+            // a.push(...)
+            // a[0](...)
+            // --------------------------------------------------------
             if self.match_token(TokenKind::LeftParen) {
                 expression = self.parse_call(expression)?;
 
                 continue;
             }
 
+            // --------------------------------------------------------
+            // Indexation
+            //
+            // a[0]
+            // matrix[0][1]
+            // matrix[0][1][2]
+            // --------------------------------------------------------
             if self.match_token(TokenKind::LeftBracket) {
                 let index = self.parse_expression()?;
 
@@ -290,6 +304,27 @@ impl Parser {
                 expression = Expression::Index {
                     object: Box::new(expression),
                     index: Box::new(index),
+                };
+
+                continue;
+            }
+
+            // --------------------------------------------------------
+            // Accès membre
+            //
+            // a.length
+            // a.push
+            // a.pop
+            // matrix[0].length
+            // matrix[0].push
+            // --------------------------------------------------------
+            if self.match_token(TokenKind::Dot) {
+                let name =
+                    self.consume(TokenKind::Identifier, "Nom de membre attendu après '.'")?;
+
+                expression = Expression::Member {
+                    object: Box::new(expression),
+                    name: name.lexeme,
                 };
 
                 continue;

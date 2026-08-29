@@ -87,7 +87,7 @@ pub enum Expression {
 
     Member {
         object: Box<Expression>,
-        property: Box<Expression>,
+        name: String,
     },
 
     Index {
@@ -97,7 +97,7 @@ pub enum Expression {
 
     Array(Vec<Expression>),
 
-    Object(Vec<(Expression, Expression)>),
+   
 }
 
 #[derive(Debug, Clone)]

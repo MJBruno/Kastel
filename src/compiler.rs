@@ -980,6 +980,9 @@ impl Compiler {
             }
 
             Expression::Call { callee, arguments } => {
+                if let Expression::Member { object, name } = callee.as_ref() {
+                    return self.compile_array_method_call(object, name, arguments);
+                }
                 self.compile_call(callee, arguments)?;
             }
 
@@ -1002,11 +1005,81 @@ impl Compiler {
                 self.emit_opcode(OpCode::GetIndex);
             }
 
-            Expression::Object(items) => todo!(),
-            Expression::Member { object, property } => todo!(),
+            Expression::Member { object, name } => {
+                self.compile_array_member(object, name)?;
+            }
         }
 
         Ok(())
+    }
+
+    fn compile_array_method_call(
+        &mut self,
+        object: &Expression,
+        name: &str,
+        arguments: &[Expression],
+    ) -> Result<(), CompileError> {
+        match name {
+            "push" => {
+                if arguments.len() != 1 {
+                    return Err(CompileError::WrongArgumentCount {
+                        expected: 1,
+                        found: arguments.len(),
+                    });
+                }
+
+                self.compile_expression(object)?;
+
+                self.compile_expression(&arguments[0])?;
+
+                self.emit_opcode(OpCode::ArrayPush);
+
+                Ok(())
+            }
+
+            "pop" => {
+                if !arguments.is_empty() {
+                    return Err(CompileError::WrongArgumentCount {
+                        expected: 0,
+                        found: arguments.len(),
+                    });
+                }
+
+                self.compile_expression(object)?;
+
+                self.emit_opcode(OpCode::ArrayPop);
+
+                Ok(())
+            }
+
+            _ => Err(CompileError::InvalidMemberAccess {
+                name: name.to_string(),
+            }),
+        }
+    }
+
+    fn compile_array_member(
+        &mut self,
+        object: &Expression,
+        name: &str,
+    ) -> Result<(), CompileError> {
+        match name {
+            "length" => {
+                self.compile_expression(object)?;
+
+                self.emit_opcode(OpCode::ArrayLength);
+
+                Ok(())
+            }
+
+            "push" | "pop" => Err(CompileError::InvalidMemberAccess {
+                name: name.to_string(),
+            }),
+
+            _ => Err(CompileError::InvalidMemberAccess {
+                name: name.to_string(),
+            }),
+        }
     }
 
     fn compile_call(
