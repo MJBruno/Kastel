@@ -1,7 +1,37 @@
-let a = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]];
+// let a = [1, 2, 3];
 
-println(a[0][1][0]);
+// println(a);
 
-a[1][0][1] = 99;
+// println(length(a));
 
-println(a);
+// let new_length = push(a, 4);
+
+// println(new_length);
+// println(a);
+
+// let value = pop(a);
+
+// println(value);
+// println(a);
+// println(length(a));
+// println("===================================");
+
+// let matrix = [
+//     [1, 2],
+//     [3, 4]
+// ];
+
+// push(matrix[0], 10);
+
+// println(matrix);
+
+// let s = pop(matrix[1]);
+
+// println(s);
+// println(matrix);
+
+// println(length(matrix));
+// println(length(matrix[0]));
+// println(length(matrix[1]));
+
+push(42, 10);
