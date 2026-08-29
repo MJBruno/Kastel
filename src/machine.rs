@@ -247,19 +247,15 @@ impl VirtualMachine {
             }
         };
 
-        {
-            let mut array_ref = array.borrow_mut();
+        let mut array_ref = array.borrow_mut();
 
-            let length = array_ref.len();
+        let length = array_ref.len();
 
-            let slot = array_ref
-                .get_mut(index)
-                .ok_or(RuntimeError::ArrayIndexOutOfBounds { index, length })?;
+        let slot = array_ref
+            .get_mut(index)
+            .ok_or(RuntimeError::ArrayIndexOutOfBounds { index, length })?;
 
-            *slot = value;
-        }
-
-        self.push(Value::Array(array));
+        *slot = value;
 
         Ok(())
     }
