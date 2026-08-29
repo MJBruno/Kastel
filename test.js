@@ -1,32 +1,36 @@
 // let a = [1, 2, 3];
 
-// println(a.length);
+// println(a);
 
-// let n = a.push(4);
+// let n = insert(a, 1, 99);
 
 // println(n);
 // println(a);
-// println(a.length);
 
-// let x = a.pop();
+// let x = remove(a, 2);
 
 // println(x);
 // println(a);
-// println(a.length);
 
-let matrix = [
-    [1, 2],
-    [3, 4]
-];
+// let a = [1, 2, 3];
 
-println(matrix.length);
-println(matrix[0].length);
+// insert(a, 3, 4);
 
-matrix[0].push(10);
+// print(a);
 
-println(matrix);
 
-let x = matrix[0].pop();
+// //Erreur
+// let a = [1, 2, 3];
 
-println(x);
-println(matrix);
+// insert(a, 5, 99);
+
+
+
+// //Erreur
+// let a = [1, 2, 3];
+
+// remove(a, 3);
+
+let a = [1, 2, 3];
+
+insert(a, -1, 99);

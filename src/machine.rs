@@ -291,6 +291,57 @@ impl VirtualMachine {
         Ok(())
     }
 
+    fn op_array_insert(&mut self) -> Result<(), RuntimeError> {
+        let value = self.pop();
+        let index = self.pop();
+        let array = self.pop();
+
+        let index = match index {
+            Value::Number(value) => {
+                if value < 0.0 || value.fract() != 0.0 {
+                    return Err(RuntimeError::TypeError);
+                }
+
+                value as usize
+            }
+
+            _ => {
+                return Err(RuntimeError::TypeError);
+            }
+        };
+
+        let length = array.array_insert(index, value)?;
+
+        self.push(Value::Number(length as f64));
+
+        Ok(())
+    }
+
+    fn op_array_remove(&mut self) -> Result<(), RuntimeError> {
+        let index = self.pop();
+        let array = self.pop();
+
+        let index = match index {
+            Value::Number(value) => {
+                if value < 0.0 || value.fract() != 0.0 {
+                    return Err(RuntimeError::TypeError);
+                }
+
+                value as usize
+            }
+
+            _ => {
+                return Err(RuntimeError::TypeError);
+            }
+        };
+
+        let value = array.array_remove(index)?;
+
+        self.push(value);
+
+        Ok(())
+    }
+
     // ============================================================
     // VM
     // ============================================================
@@ -532,6 +583,14 @@ impl VirtualMachine {
 
                 x if x == OpCode::ArrayPop.into() => {
                     self.op_array_pop()?;
+                }
+
+                x if x == OpCode::ArrayInsert.into() => {
+                    self.op_array_insert()?;
+                }
+
+                x if x == OpCode::ArrayRemove.into() => {
+                    self.op_array_remove()?;
                 }
 
                 // =================================================

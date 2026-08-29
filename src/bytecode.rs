@@ -24,19 +24,27 @@ pub enum OpCode {
     SetLocal,
     JumpIfFalse,
     Jump,
-    Closure,
-    GetUpvalue,
-    SetUpvalue,
+
     Pop,
     Print,
     Loop,
     Call,
+
+    //ARRAY
     Array,
     GetIndex,
     SetIndex,
     ArrayLength,
     ArrayPush,
     ArrayPop,
+    ArrayInsert,
+    ArrayRemove,
+
+    // CLOSURES
+    Closure,
+    GetUpvalue,
+    SetUpvalue,
+
     Return,
     Halt,
 }

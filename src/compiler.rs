@@ -1052,6 +1052,42 @@ impl Compiler {
                 Ok(())
             }
 
+            "insert" => {
+                if arguments.len() != 2 {
+                    return Err(CompileError::WrongArgumentCount {
+                        expected: 2,
+                        found: arguments.len(),
+                    });
+                }
+
+                self.compile_expression(object)?;
+
+                self.compile_expression(&arguments[0])?;
+
+                self.compile_expression(&arguments[1])?;
+
+                self.emit_opcode(OpCode::ArrayInsert);
+
+                Ok(())
+            }
+
+            "remove" => {
+                if arguments.len() != 1 {
+                    return Err(CompileError::WrongArgumentCount {
+                        expected: 1,
+                        found: arguments.len(),
+                    });
+                }
+
+                self.compile_expression(object)?;
+
+                self.compile_expression(&arguments[0])?;
+
+                self.emit_opcode(OpCode::ArrayRemove);
+
+                Ok(())
+            }
+
             _ => Err(CompileError::InvalidMemberAccess {
                 name: name.to_string(),
             }),

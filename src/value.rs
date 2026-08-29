@@ -128,7 +128,6 @@ impl Value {
         }
     }
 
-
     pub fn array_len(&self) -> Result<usize, RuntimeError> {
         match self {
             Value::Array(array) => Ok(array.borrow().len()),
@@ -157,6 +156,44 @@ impl Value {
                 let mut array = array.borrow_mut();
 
                 Ok(array.pop().unwrap_or(Value::Nil))
+            }
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn array_insert(&self, index: usize, value: Value) -> Result<usize, RuntimeError> {
+        match self {
+            Value::Array(array) => {
+                let mut array = array.borrow_mut();
+
+                let length = array.len();
+
+                if index > length {
+                    return Err(RuntimeError::ArrayIndexOutOfBounds { index, length });
+                }
+
+                array.insert(index, value);
+
+                Ok(array.len())
+            }
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn array_remove(&self, index: usize) -> Result<Value, RuntimeError> {
+        match self {
+            Value::Array(array) => {
+                let mut array = array.borrow_mut();
+
+                let length = array.len();
+
+                if index >= length {
+                    return Err(RuntimeError::ArrayIndexOutOfBounds { index, length });
+                }
+
+                Ok(array.remove(index))
             }
 
             _ => Err(RuntimeError::TypeError),
