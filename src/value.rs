@@ -19,8 +19,8 @@ pub enum ComparisonOp {
     Less,
 }
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[derive(Debug, Clone,PartialEq)]
+#[allow(dead_code,unpredictable_function_pointer_comparisons)]
 pub enum Value {
     Number(f64),
     Boolean(bool),
@@ -28,7 +28,7 @@ pub enum Value {
 
     Function(Rc<Function>),
     Closure(Rc<RefCell<Closure>>),
-
+ 
     NativeFunction(NativeFn),
 
     Array(ArrayRef),
@@ -198,6 +198,30 @@ impl Value {
                 }
 
                 Ok(array.remove(index))
+            }
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn array_clear(&self) -> Result<(), RuntimeError> {
+        match self {
+            Value::Array(array) => {
+                array.borrow_mut().clear();
+
+                Ok(())
+            }
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn array_contains(&self, value: &Value) -> Result<bool, RuntimeError> {
+        match self {
+            Value::Array(array) => {
+                let array = array.borrow();
+
+                Ok(array.iter().any(|element| element == value))
             }
 
             _ => Err(RuntimeError::TypeError),

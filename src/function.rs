@@ -4,7 +4,7 @@
 
 use crate::{bytecode::Chunk, compiler::Upvalue};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,PartialEq)]
 pub struct Function {
     pub name: String,
     pub arity: usize,

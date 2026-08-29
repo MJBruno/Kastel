@@ -168,7 +168,7 @@ impl LocalTable {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// Décrit une variable capturée par une closure.
 /// `index` désigne soit un slot local, soit un index d'upvalue du contexte parent.
 /// `is_local` indique lequel des deux cas s'applique.",
@@ -1084,6 +1084,37 @@ impl Compiler {
                 self.compile_expression(&arguments[0])?;
 
                 self.emit_opcode(OpCode::ArrayRemove);
+
+                Ok(())
+            }
+            "clear" => {
+                if !arguments.is_empty() {
+                    return Err(CompileError::WrongArgumentCount {
+                        expected: 0,
+                        found: arguments.len(),
+                    });
+                }
+
+                self.compile_expression(object)?;
+
+                self.emit_opcode(OpCode::ArrayClear);
+
+                Ok(())
+            }
+
+            "contains" => {
+                if arguments.len() != 1 {
+                    return Err(CompileError::WrongArgumentCount {
+                        expected: 1,
+                        found: arguments.len(),
+                    });
+                }
+
+                self.compile_expression(object)?;
+
+                self.compile_expression(&arguments[0])?;
+
+                self.emit_opcode(OpCode::ArrayContains);
 
                 Ok(())
             }

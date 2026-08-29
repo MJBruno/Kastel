@@ -12,7 +12,7 @@ use crate::value::NumericOp;
 use crate::value::Value;
 use crate::value::print_value;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub struct ObjUpvalue {
     pub slot: usize,
@@ -286,6 +286,25 @@ impl VirtualMachine {
         Ok(())
     }
 
+    fn op_array_clear(&mut self) -> Result<(), RuntimeError> {
+        let array = self.pop();
+
+        array.array_clear()?;
+
+        Ok(())
+    }
+
+    fn op_array_contains(&mut self) -> Result<(), RuntimeError> {
+        let value = self.pop();
+        let array = self.pop();
+
+        let contains = array.array_contains(&value)?;
+
+        self.push(Value::Boolean(contains));
+
+        Ok(())
+    }
+
     // ============================================================
     // VM
     // ============================================================
@@ -535,6 +554,14 @@ impl VirtualMachine {
 
                 x if x == OpCode::ArrayRemove.into() => {
                     self.op_array_remove()?;
+                }
+
+                x if x == OpCode::ArrayClear.into() => {
+                    self.op_array_clear()?;
+                }
+
+                x if x == OpCode::ArrayContains.into() => {
+                    self.op_array_contains()?;
                 }
 
                 // =================================================

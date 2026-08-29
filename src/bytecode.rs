@@ -7,21 +7,29 @@ pub enum OpCode {
     Nil,
     True,
     False,
+
+    // COMPARAISON
     Equal,
     Greater,
     Less,
     Not,
+
+    // ARITHMETIQUE
     Add,
     Subtract,
     Multiply,
     Divide,
     Modulo,
     Negate,
+
+    // SCOPE
     DefineGlobal,
     SetGlobal,
     GetGlobal,
     GetLocal,
     SetLocal,
+
+    // CONTROLE
     JumpIfFalse,
     Jump,
 
@@ -39,6 +47,8 @@ pub enum OpCode {
     ArrayPop,
     ArrayInsert,
     ArrayRemove,
+    ArrayClear,
+    ArrayContains,
 
     // CLOSURES
     Closure,
@@ -56,7 +66,7 @@ impl From<OpCode> for u8 {
 }
 
 // Ceci stocke notre bytecode
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone,PartialEq)]
 pub struct Chunk {
     pub code: Vec<u8>,
     pub constants: Vec<Value>,
