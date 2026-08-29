@@ -260,6 +260,37 @@ impl VirtualMachine {
         Ok(())
     }
 
+    fn op_array_length(&mut self) -> Result<(), RuntimeError> {
+        let array = self.pop();
+
+        let length = array.array_len()?;
+
+        self.push(Value::Number(length as f64));
+
+        Ok(())
+    }
+
+    fn op_array_push(&mut self) -> Result<(), RuntimeError> {
+        let value = self.pop();
+        let array = self.pop();
+
+        let length = array.array_push(value)?;
+
+        self.push(Value::Number(length as f64));
+
+        Ok(())
+    }
+
+    fn op_array_pop(&mut self) -> Result<(), RuntimeError> {
+        let array = self.pop();
+
+        let value = array.array_pop()?;
+
+        self.push(value);
+
+        Ok(())
+    }
+
     // ============================================================
     // VM
     // ============================================================
@@ -489,6 +520,18 @@ impl VirtualMachine {
 
                 x if x == OpCode::SetIndex.into() => {
                     self.op_set_index()?;
+                }
+
+                x if x == OpCode::ArrayLength.into() => {
+                    self.op_array_length()?;
+                }
+
+                x if x == OpCode::ArrayPush.into() => {
+                    self.op_array_push()?;
+                }
+
+                x if x == OpCode::ArrayPop.into() => {
+                    self.op_array_pop()?;
                 }
 
                 // =================================================

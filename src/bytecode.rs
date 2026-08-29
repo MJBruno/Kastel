@@ -34,6 +34,9 @@ pub enum OpCode {
     Array,
     GetIndex,
     SetIndex,
+    ArrayLength,
+    ArrayPush,
+    ArrayPop,
     Return,
     Halt,
 }
