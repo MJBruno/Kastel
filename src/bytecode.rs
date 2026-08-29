@@ -93,6 +93,16 @@ impl Chunk {
         self.constants.len() - 1
     }
 
+    // pub fn disassemble(&self, name: &str) {
+    //     println!("== {name} ==");
+
+    //     let mut offset = 0;
+
+    //     while offset < self.code.len() {
+    //         offset = self.disassemble_instruction(offset);
+    //     }
+    // }
+
     pub fn disassemble_instruction(&self, offset: usize) -> usize {
         if offset >= self.code.len() {
             println!("{offset:04} <EOF>");
@@ -173,13 +183,11 @@ impl Chunk {
             // =====================================================
             // CONTROL FLOW
             // =====================================================
-            x if x == OpCode::JumpIfFalse.into() => {
-                self.jump_instruction("OP_JUMP_IF_FALSE", offset)
-            }
+            x if x == OpCode::JumpIfFalse.into() => self.jump_instruction("OP_JUMP", offset, false),
 
-            x if x == OpCode::Jump.into() => self.jump_instruction("OP_JUMP", offset),
+            x if x == OpCode::Jump.into() => self.jump_instruction("OP_JUMP", offset, false),
 
-            x if x == OpCode::Loop.into() => self.jump_instruction("OP_LOOP", offset),
+            x if x == OpCode::Loop.into() => self.jump_instruction("OP_LOOP", offset, true),
 
             // =====================================================
             // STACK / CALL
@@ -280,18 +288,24 @@ impl Chunk {
         offset + 2
     }
 
-    fn jump_instruction(&self, name: &str, offset: usize) -> usize {
+    fn jump_instruction(&self, name: &str, offset: usize, backward: bool) -> usize {
         if offset + 2 >= self.code.len() {
-            println!("{:<20} <missing jump operand>", name);
+            println!("{:<20} <missing operand>", name);
             return self.code.len();
         }
 
         let high = self.code[offset + 1] as u16;
         let low = self.code[offset + 2] as u16;
 
-        let jump = (high << 8) | low;
+        let jump = ((high << 8) | low) as usize;
 
-        println!("{:<20} {:4}", name, jump);
+        let target = if backward {
+            offset + 3 - jump
+        } else {
+            offset + 3 + jump
+        };
+
+        println!("{:<20} {:4} -> {:04}", name, jump, target);
 
         offset + 3
     }
