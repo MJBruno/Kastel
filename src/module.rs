@@ -65,7 +65,7 @@ impl ModuleLoader {
             path.push(part);
         }
 
-        path.set_extension("km");
+        path.set_extension("js");
 
         if !path.exists() {
             return Err(CompileError::ModuleNotFound(path.display().to_string()));
@@ -124,7 +124,9 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         let mut lexer = Lexer::new(source);
 
-        let tokens = lexer.scan_token().map_err(CompileError::ModuleLexerErrors)?;
+        let tokens = lexer
+            .scan_token()
+            .map_err(CompileError::ModuleLexerErrors)?;
         // ------------------------------------------------------------
         // 3. Parser
         // ------------------------------------------------------------
@@ -144,9 +146,7 @@ impl ModuleLoader {
         // 5. Exécuter le module dans une VM isolée
         // ------------------------------------------------------------
         let values =
-            VirtualMachine::execute_module(Rc::clone(&function), &exports, path.to_path_buf())
-                .map_err(CompileError::ModuleRuntimeError)?;
-
+            VirtualMachine::execute_module(Rc::clone(&function), &exports, path.to_path_buf());
         // ------------------------------------------------------------
         // 6. Nom du module
         // ------------------------------------------------------------
@@ -164,7 +164,7 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         // 8. Ajouter uniquement les exports
         // ------------------------------------------------------------
-        for (name, value) in values {
+        for (name, value) in values.unwrap() {
             module.export(name, value)?;
         }
 

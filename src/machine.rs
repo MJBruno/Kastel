@@ -48,7 +48,7 @@ pub struct VirtualMachine {
 
 #[allow(dead_code)]
 impl VirtualMachine {
-    pub fn new(function: Rc<Function>) -> Self {
+    pub fn new(function: Rc<Function>, module_path: Option<PathBuf>) -> Self {
         let closure = Rc::new(RefCell::new(Closure {
             function,
             upvalues: Vec::new(),
@@ -65,7 +65,7 @@ impl VirtualMachine {
             }],
             open_upvalues: Vec::new(),
             module_loader: ModuleLoader::new(),
-            module_path: Some(PathBuf::new()),
+            module_path,
         };
 
         register_natives(&mut vm.globals);
@@ -82,9 +82,7 @@ impl VirtualMachine {
         exports: &[String],
         module_path: PathBuf,
     ) -> Result<HashMap<String, Value>, RuntimeError> {
-        let mut vm = Self::new(function);
-
-        vm.module_path = Some(module_path);
+        let mut vm = Self::new(function, Some(module_path));
 
         vm.run()?;
 

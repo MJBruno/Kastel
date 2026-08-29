@@ -109,14 +109,3 @@ impl Token {
         }
     }
 }
-
-// impl fmt::Display for Token {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(
-//             f,
-//             "{:?} '{}' ({}:{})",
-//             self.kind, self.lexeme, self.line, self.column
-//         )?;
-//         Ok(())
-//     }
-// }

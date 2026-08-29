@@ -1,4 +1,0 @@
-import math;
-
-print math.answer;
-print math.add(10, 20);

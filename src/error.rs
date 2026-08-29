@@ -183,7 +183,7 @@ impl std::fmt::Display for CompileError {
             CompileError::ModuleParserErrors(errors) => {
                 for (index, error) in errors.iter().enumerate() {
                     if index > 0 {
-                        write!(f, "\n")?;
+                        writeln!(f)?;
                     }
 
                     write!(
@@ -198,7 +198,7 @@ impl std::fmt::Display for CompileError {
             CompileError::ModuleLexerErrors(lexer_errors) => {
                 for (index, error) in lexer_errors.iter().enumerate() {
                     if index > 0 {
-                        write!(f, "\n")?;
+                        writeln!(f)?;
                     }
 
                     write!(
