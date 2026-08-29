@@ -2,35 +2,22 @@
 
 // println(a);
 
-// let n = insert(a, 1, 99);
+// let n = a.insert(1, 99);
 
 // println(n);
 // println(a);
 
-// let x = remove(a, 2);
+// let x = a.remove(2);
 
 // println(x);
 // println(a);
 
-// let a = [1, 2, 3];
+let matrix = [
+    [1, 2],
+    [3, 4]
+];
 
-// insert(a, 3, 4);
+matrix[0].insert(1, 99);
+matrix[1].remove(0);
 
-// print(a);
-
-
-// //Erreur
-// let a = [1, 2, 3];
-
-// insert(a, 5, 99);
-
-
-
-// //Erreur
-// let a = [1, 2, 3];
-
-// remove(a, 3);
-
-let a = [1, 2, 3];
-
-insert(a, -1, 99);
+println(matrix);
