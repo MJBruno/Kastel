@@ -2,9 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ast::{
-    AssignmentTarget, BinaryOp, Expression, ImportItem, Literal, ModulePath, Statement, UnaryOp,
-};
+use crate::frontend::ast::*;
 use crate::bytecode::{Chunk, OpCode};
 use crate::error::CompileError;
 use crate::function::Function;

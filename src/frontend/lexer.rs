@@ -1,7 +1,6 @@
-use crate::{
-    error::LexerError,
-    token::{Token, TokenKind},
-};
+use crate::{error::LexerError, frontend::token::{Token, TokenKind}};
+
+ 
 
 pub struct Lexer {
     source: Vec<char>,

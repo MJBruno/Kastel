@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use crate::{
-    compiler::Compiler, error::RuntimeError, lexer::Lexer, machine::VirtualMachine,
-    native::execute_native, parser::Parser,
+    compiler::Compiler, error::RuntimeError, frontend::lexer::Lexer, frontend::parser::Parser,
+    machine::VirtualMachine, native::execute_native,
 };
 
 use std::{
@@ -96,6 +96,6 @@ fn repl() -> Result<(), RuntimeError> {
         if input.trim().is_empty() {
             continue;
         }
-     execute(&input, None);
+        execute(&input, None);
     }
 }

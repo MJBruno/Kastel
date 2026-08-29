@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    compiler::Compiler, error::CompileError, lexer::Lexer, machine::VirtualMachine, parser::Parser,
-    value::Value,
+    compiler::Compiler, error::CompileError, frontend::lexer::Lexer, frontend::parser::Parser,
+    machine::VirtualMachine, value::Value,
 };
 
 #[derive(Debug, PartialEq)]
