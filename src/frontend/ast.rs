@@ -8,27 +8,25 @@ pub enum AssignmentTarget {
     },
 }
 #[derive(Debug, Clone)]
-
 pub struct ModulePath {
     pub parts: Vec<String>,
 }
-#[allow(dead_code)]
+
 impl ModulePath {
     pub fn new(parts: Vec<String>) -> Self {
         Self { parts }
     }
 
-    pub fn as_string(&self) -> String {
-        self.parts.join(".")
-    }
+    // pub fn as_string(&self) -> String {
+    //     self.parts.join(".")
+    // }
 
-    pub fn last(&self) -> Option<&str> {
-        self.parts.last().map(String::as_str)
-    }
+    // pub fn last(&self) -> Option<&str> {
+    //     self.parts.last().map(String::as_str)
+    // }
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ImportItem {
     pub name: String,
     pub alias: Option<String>,
@@ -99,7 +97,7 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
+
 pub enum Expression {
     Literal(Literal),
 

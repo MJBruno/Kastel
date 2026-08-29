@@ -1,8 +1,9 @@
-#[allow(unused_imports)]
-use crate::{
-    compiler::Compiler, error::RuntimeError, frontend::lexer::Lexer, frontend::parser::Parser,
-    machine::VirtualMachine, native::execute_native,
-};
+use crate::compile::compiler::Compiler;
+use crate::{  runtime::native::execute_native};
+use crate::error::runtime_error::RuntimeError;
+use crate::frontend::lexer::Lexer;
+use crate::frontend::parser::Parser;
+use crate::vm::machine::VirtualMachine;
 
 use std::{
     env, fs,

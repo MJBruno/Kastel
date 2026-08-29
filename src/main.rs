@@ -1,19 +1,12 @@
-use crate::application::Application;
-
-mod application;
-
+use crate::app::application::Application;
+mod app;
 mod bytecode;
-mod compiler;
+mod compile;
 mod error;
 mod frontend;
-mod machine;
-mod native;
-
-mod value;
-mod function;
-mod closure;
 mod module;
-
+mod runtime;
+mod vm;
 
 fn main() {
     Application::run();

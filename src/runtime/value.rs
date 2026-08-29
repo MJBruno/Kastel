@@ -1,7 +1,9 @@
-use crate::{
-    closure::Closure, error::RuntimeError, function::Function, module::ModuleInstance,
-    native::NativeFn,
-};
+use crate::module::module::ModuleInstance;
+use crate::runtime::closure::Closure;
+use crate::runtime::native::NativeFn;
+use crate::{error::runtime_error::RuntimeError, runtime::function::Function};
+ 
+ 
 
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 

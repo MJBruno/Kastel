@@ -3,16 +3,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::bytecode::OpCode;
-use crate::closure::Closure;
-use crate::error::RuntimeError;
-use crate::function::Function;
-use crate::module::ModuleLoader;
-use crate::native::register_natives;
-use crate::value::ComparisonOp;
-use crate::value::NumericOp;
-use crate::value::Value;
-use crate::value::print_value;
+use crate::error::runtime_error::RuntimeError;
+use crate::module::module::ModuleLoader;
+use crate::runtime::closure::Closure;
+use crate::runtime::function::Function;
+use crate::runtime::native::register_natives;
+use crate::runtime::value::*;
+use crate::bytecode::chunk::OpCode;
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]

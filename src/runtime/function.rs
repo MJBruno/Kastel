@@ -2,7 +2,9 @@
 // FUNCTION
 // ================================================================
 
-use crate::{bytecode::Chunk, compiler::Upvalue};
+use crate::{bytecode::chunk::Chunk, runtime::upvalue::Upvalue};
+
+ 
 
 #[derive(Debug, Clone,PartialEq)]
 pub struct Function {

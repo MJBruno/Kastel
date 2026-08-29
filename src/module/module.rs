@@ -5,10 +5,12 @@ use std::{
     rc::Rc,
 };
 
-use crate::{
-    compiler::Compiler, error::CompileError, frontend::lexer::Lexer, frontend::parser::Parser,
-    machine::VirtualMachine, value::Value,
-};
+use crate::{  compile::compiler::Compiler, runtime::value::Value};
+use crate::vm::machine::VirtualMachine;
+use crate::error::compile_error::CompileError;
+use crate::frontend::lexer::Lexer;
+use crate::frontend::parser::Parser;
+ 
 
 #[derive(Debug, PartialEq)]
 pub struct ModuleInstance {

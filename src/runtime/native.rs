@@ -1,5 +1,5 @@
-use crate::value::Value;
-use crate::{compiler::Compiler, error::RuntimeError};
+use crate::{compile::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value};
+ 
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

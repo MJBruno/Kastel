@@ -2,11 +2,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
-use crate::bytecode::{Chunk, OpCode};
-use crate::error::CompileError;
-use crate::function::Function;
-use crate::value::Value;
+use crate::runtime::function::Function;
+use crate::runtime::upvalue::Upvalue;
+use crate::runtime::value::Value;
+use crate::bytecode::chunk::*;
 
 #[derive(Clone, Debug)]
 /// # Local
@@ -166,17 +167,6 @@ impl LocalTable {
             .filter(|local| matches!(local.depth, Some(d) if d > depth))
             .count()
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-/// Décrit une variable capturée par une closure.
-/// `index` désigne soit un slot local, soit un index d'upvalue du contexte parent.
-/// `is_local` indique lequel des deux cas s'applique.",
-pub struct Upvalue {
-    /// Index du slot local ou de l'upvalue dans le contexte source.",
-    pub index: u8,
-    /// Vrai lorsque l'upvalue capture directement une variable locale du parent.",
-    pub is_local: bool,
 }
 
 type CompilerContextRef = Rc<RefCell<CompilerContext>>;
