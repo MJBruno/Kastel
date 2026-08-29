@@ -1,23 +1,16 @@
-// let a = [1, 2, 3];
+// let a = [10, 20, 30];
 
-// println(a);
+// print(a[1.5]);
 
-// let n = a.insert(1, 99);
+// let a = [10, 20, 30];
 
-// println(n);
-// println(a);
+// a.insert(1.5, 99);
 
-// let x = a.remove(2);
+// let a = [10, 20, 30];
 
-// println(x);
-// println(a);
+// a.remove(1.5);
 
-let matrix = [
-    [1, 2],
-    [3, 4]
-];
+// let a = [10, 20, 30];
 
-matrix[0].insert(1, 99);
-matrix[1].remove(0);
+// a.remove(-1);
 
-println(matrix);

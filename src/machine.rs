@@ -204,28 +204,12 @@ impl VirtualMachine {
     }
 
     fn op_get_index(&mut self) -> Result<(), RuntimeError> {
-        let index_value = self.pop();
-        let array_value = self.pop();
+        let index = self.pop();
+        let array = self.pop();
 
-        let index = Self::array_index(index_value)?;
+        let index = Self::array_index(index)?;
 
-        let array = match array_value {
-            Value::Array(array) => array,
-
-            _ => {
-                return Err(RuntimeError::TypeError);
-            }
-        };
-
-        let array_ref = array.borrow();
-
-        let value = array_ref
-            .get(index)
-            .cloned()
-            .ok_or(RuntimeError::ArrayIndexOutOfBounds {
-                index,
-                length: array_ref.len(),
-            })?;
+        let value = array.array_get(index)?;
 
         self.push(value);
 
@@ -234,28 +218,12 @@ impl VirtualMachine {
 
     fn op_set_index(&mut self) -> Result<(), RuntimeError> {
         let value = self.pop();
-        let index_value = self.pop();
-        let array_value = self.pop();
+        let index = self.pop();
+        let array = self.pop();
 
-        let index = Self::array_index(index_value)?;
+        let index = Self::array_index(index)?;
 
-        let array = match array_value {
-            Value::Array(array) => array,
-
-            _ => {
-                return Err(RuntimeError::TypeError);
-            }
-        };
-
-        let mut array_ref = array.borrow_mut();
-
-        let length = array_ref.len();
-
-        let slot = array_ref
-            .get_mut(index)
-            .ok_or(RuntimeError::ArrayIndexOutOfBounds { index, length })?;
-
-        *slot = value;
+        array.array_set(index, value)?;
 
         Ok(())
     }
@@ -296,19 +264,7 @@ impl VirtualMachine {
         let index = self.pop();
         let array = self.pop();
 
-        let index = match index {
-            Value::Number(value) => {
-                if value < 0.0 || value.fract() != 0.0 {
-                    return Err(RuntimeError::TypeError);
-                }
-
-                value as usize
-            }
-
-            _ => {
-                return Err(RuntimeError::TypeError);
-            }
-        };
+        let index = Self::array_index(index)?;
 
         let length = array.array_insert(index, value)?;
 
@@ -321,19 +277,7 @@ impl VirtualMachine {
         let index = self.pop();
         let array = self.pop();
 
-        let index = match index {
-            Value::Number(value) => {
-                if value < 0.0 || value.fract() != 0.0 {
-                    return Err(RuntimeError::TypeError);
-                }
-
-                value as usize
-            }
-
-            _ => {
-                return Err(RuntimeError::TypeError);
-            }
-        };
+        let index = Self::array_index(index)?;
 
         let value = array.array_remove(index)?;
 
