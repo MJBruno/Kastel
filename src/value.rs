@@ -155,7 +155,11 @@ impl Value {
             Value::Array(array) => {
                 let mut array = array.borrow_mut();
 
-                Ok(array.pop().unwrap_or(Value::Nil))
+                match array.pop() {
+                    Some(value) => Ok(value),
+
+                    None => Err(RuntimeError::ArrayEmpty),
+                }
             }
 
             _ => Err(RuntimeError::TypeError),

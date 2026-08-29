@@ -152,6 +152,8 @@ pub enum RuntimeError {
     NativeError,
     IndexOutOfBounds,
 
+    ArrayEmpty,
+
     ArrayIndexNotInteger,
     ArrayIndexOutOfBounds { index: usize, length: usize },
 }
@@ -161,6 +163,10 @@ impl std::fmt::Display for RuntimeError {
         match self {
             RuntimeError::TypeError => {
                 write!(f, "Operand must be numbers.")
+            }
+            
+            RuntimeError::ArrayEmpty => {
+                write!(f, "Array empty")
             }
 
             RuntimeError::DivisionByZero => {
