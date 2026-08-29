@@ -7,7 +7,32 @@ pub enum AssignmentTarget {
         index: Box<Expression>,
     },
 }
+#[derive(Debug, Clone)]
 
+pub struct ModulePath {
+    pub parts: Vec<String>,
+}
+#[allow(dead_code)]
+impl ModulePath {
+    pub fn new(parts: Vec<String>) -> Self {
+        Self { parts }
+    }
+
+    pub fn as_string(&self) -> String {
+        self.parts.join(".")
+    }
+
+    pub fn last(&self) -> Option<&str> {
+        self.parts.last().map(String::as_str)
+    }
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ImportItem {
+    pub name: String,
+    pub alias: Option<String>,
+}
 #[derive(Debug, Clone)]
 pub enum Statement {
     Let {
@@ -48,6 +73,17 @@ pub enum Statement {
 
     Return {
         value: Option<Expression>,
+    },
+    Import {
+        path: Vec<String>,
+    },
+    FromImport {
+        module: ModulePath,
+        items: Vec<ImportItem>,
+    },
+
+    Export {
+        statement: Box<Statement>,
     },
 
     Break,
@@ -96,8 +132,6 @@ pub enum Expression {
     },
 
     Array(Vec<Expression>),
-
-   
 }
 
 #[derive(Debug, Clone)]

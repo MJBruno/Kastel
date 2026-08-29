@@ -13,6 +13,7 @@ mod token;
 mod value;
 mod function;
 mod closure;
+mod module;
 
 
 fn main() {

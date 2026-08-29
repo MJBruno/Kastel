@@ -1,4 +1,7 @@
-use crate::{closure::Closure, error::RuntimeError, function::Function, native::NativeFn};
+use crate::{
+    closure::Closure, error::RuntimeError, function::Function, module::ModuleInstance,
+    native::NativeFn,
+};
 
 use std::{cell::RefCell, fmt::Display, rc::Rc};
 
@@ -19,8 +22,8 @@ pub enum ComparisonOp {
     Less,
 }
 
-#[derive(Debug, Clone,PartialEq)]
-#[allow(dead_code,unpredictable_function_pointer_comparisons)]
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code, unpredictable_function_pointer_comparisons)]
 pub enum Value {
     Number(f64),
     Boolean(bool),
@@ -28,13 +31,16 @@ pub enum Value {
 
     Function(Rc<Function>),
     Closure(Rc<RefCell<Closure>>),
- 
+
     NativeFunction(NativeFn),
 
     Array(ArrayRef),
 
+    Module(Rc<ModuleInstance>),
+
     Nil,
 }
+
 #[allow(dead_code)]
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -84,11 +90,18 @@ impl Display for Value {
 
                 write!(f, "]")
             }
+
+            Value::Module(module) => {
+                write!(f, "<module '{}'>", module.name)
+            }
         }
     }
 }
+
 #[allow(dead_code)]
 impl Value {
+    
+
     // ============================================================
     // ARRAY
     // ============================================================
@@ -223,6 +236,25 @@ impl Value {
 
                 Ok(array.iter().any(|element| element == value))
             }
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    // ============================================================
+    // MODULE
+    // ============================================================
+
+    pub fn new_module(module: Rc<ModuleInstance>) -> Self {
+        Value::Module(module)
+    }
+
+    pub fn module_get(&self, name: &str) -> Result<Value, RuntimeError> {
+        match self {
+            Value::Module(module) => module
+                .get_export(name)
+                .cloned()
+                .ok_or(RuntimeError::TypeError),
 
             _ => Err(RuntimeError::TypeError),
         }
@@ -377,6 +409,10 @@ pub fn print_value(value: Value) {
             }
 
             print!("]");
+        }
+
+        Value::Module(module) => {
+            print!("<module '{}'>", module.name);
         }
     }
 }

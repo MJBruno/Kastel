@@ -27,6 +27,7 @@ pub struct ParserError {
 // ================================================================
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum CompileError {
     VariableAlreadyDeclared(String),
     VariableUseInInitializer(String),
@@ -40,8 +41,35 @@ pub enum CompileError {
     ContinueOutsideLoop,
     ReturnOutsidFunction,
     TooManyUpvalues,
+    ExpectedDeclarationAfterExport,
+
     WrongArgumentCount { expected: i32, found: usize },
+
     InvalidMemberAccess { name: String },
+
+    // ============================================================
+    // MODULE / IMPORT / EXPORT
+    // ============================================================
+    DuplicateExport(String),
+
+    CircularImport(String),
+
+    ModuleNotFound(String),
+
+    ModuleInvalidPath(String),
+
+    ModuleReadError { path: String, message: String },
+
+    ModuleLexerError(LexerError),
+
+    ModuleParserError(ParserError),
+
+    ModuleRuntimeError(RuntimeError),
+
+    ExportNotFound { module: String, name: String },
+
+    InvalidExport,
+    InvalidImport,
 }
 
 impl std::fmt::Display for CompileError {
@@ -86,11 +114,62 @@ impl std::fmt::Display for CompileError {
             CompileError::TooManyUpvalues => {
                 write!(f, "Too many upvalues")
             }
+
             CompileError::WrongArgumentCount { expected, found } => {
                 write!(f, "Expected {expected} arguments but found {found}.")
             }
+
             CompileError::InvalidMemberAccess { name } => {
                 write!(f, "Invalid member access '{name}'")
+            }
+
+            // ====================================================
+            // MODULE / IMPORT / EXPORT
+            // ====================================================
+            CompileError::DuplicateExport(name) => {
+                write!(f, "Export '{name}' is already declared")
+            }
+
+            CompileError::CircularImport(path) => {
+                write!(f, "Circular module import: {path}")
+            }
+
+            CompileError::ModuleNotFound(path) => {
+                write!(f, "Module not found: {path}")
+            }
+
+            CompileError::ModuleInvalidPath(path) => {
+                write!(f, "Invalid module path: {path}")
+            }
+
+            CompileError::ModuleReadError { path, message } => {
+                write!(f, "Unable to read module '{path}': {message}")
+            }
+
+            CompileError::ModuleLexerError(message) => {
+                write!(f, "Lexer error in module: {}", message.message)
+            }
+
+            CompileError::ModuleParserError(error) => {
+                write!(f, "Parser error in module: {}", error.message)
+            }
+
+            CompileError::ModuleRuntimeError(message) => {
+                write!(f, "Runtime error in module: {message}")
+            }
+
+            CompileError::ExportNotFound { module, name } => {
+                write!(f, "Module '{module}' does not export '{name}'")
+            }
+
+            CompileError::InvalidExport => {
+                write!(f, "Invalid export declaration")
+            }
+            CompileError::InvalidImport => {
+                write!(f, "Invalid import declaration")
+            }
+            CompileError::ExpectedDeclarationAfterExport => {
+                write!(f, "Expected declaration after export")
             }
         }
     }
@@ -141,6 +220,7 @@ impl std::fmt::Display for VMError {
 // ================================================================
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub enum RuntimeError {
     TypeError,
     DivisionByZero,
@@ -155,7 +235,9 @@ pub enum RuntimeError {
     ArrayEmpty,
 
     ArrayIndexNotInteger,
+
     ArrayIndexOutOfBounds { index: usize, length: usize },
+    ModuleError(String),
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -164,7 +246,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::TypeError => {
                 write!(f, "Operand must be numbers.")
             }
-            
+
             RuntimeError::ArrayEmpty => {
                 write!(f, "Array empty")
             }
@@ -200,6 +282,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::IndexOutOfBounds => {
                 write!(f, "Array index out of bounds")
             }
+            RuntimeError::ModuleError(_) => todo!(),
         }
     }
 }

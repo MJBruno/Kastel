@@ -29,6 +29,9 @@ pub enum OpCode {
     GetLocal,
     SetLocal,
 
+    //
+    Import,
+
     // CONTROLE
     JumpIfFalse,
     Jump,
@@ -57,6 +60,7 @@ pub enum OpCode {
 
     Return,
     Halt,
+    GetProperty,
 }
 
 impl From<OpCode> for u8 {

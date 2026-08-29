@@ -246,6 +246,8 @@ pub struct Compiler {
     function_arity: u8,
     /// Indique si le compilateur se trouve à l'intérieur d'une fonction.",
     in_function: bool,
+
+    exports: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -266,6 +268,7 @@ impl Compiler {
             function_name: None,
             function_arity: 0,
             in_function: false,
+            exports: Vec::new(),
         }
     }
 
@@ -285,27 +288,28 @@ impl Compiler {
             function_name: Some(name),
             function_arity: 0,
             in_function: true,
+            exports: Vec::new(),
         }
+    }
+
+    fn register_export(&mut self, name: &str) -> Result<(), CompileError> {
+        if self.exports.iter().any(|export| export == name) {
+            return Err(CompileError::DuplicateExport(name.to_string()));
+        }
+
+        self.exports.push(name.to_string());
+
+        Ok(())
     }
 
     // ============================================================
     //                      MAIN_COMPILER
     // ============================================================
 
-    pub fn compile(mut self, statements: &[Statement]) -> Result<Function, CompileError> {
-        for statement in statements {
-            self.compile_statement(statement)?;
-        }
+    pub fn compile(self, statements: &[Statement]) -> Result<Function, CompileError> {
+        let (function, _) = self.compile_module(statements)?;
 
-        self.emit_opcode(OpCode::Halt);
-
-        Ok(Function {
-            name: "<script>".to_string(),
-            arity: 0,
-            chunk: self.chunk,
-            upvalue_count: 0,
-            upvalues: Vec::new(),
-        })
+        Ok(function)
     }
 
     /// Enregistre une fonction native dans la table des symboles globaux.",
@@ -1468,8 +1472,80 @@ impl Compiler {
             Statement::Return { value } => {
                 self.compile_return(value.as_ref())?;
             }
+
+            Statement::Import { path } => {
+                self.compile_import(path)?;
+            }
+            #[allow(unused)]
+            Statement::FromImport { module, items } => todo!(),
+            Statement::Export { statement } => {
+                self.compile_export(statement)?;
+            }
         }
 
         Ok(())
+    }
+
+    fn compile_import(&mut self, path: &[String]) -> Result<(), CompileError> {
+        if path.is_empty() {
+            return Err(CompileError::InvalidImport);
+        }
+
+        let module_name = path.join(".");
+
+        let constant = self.make_constant(Value::String(module_name))?;
+
+        self.emit_opcode(OpCode::Constant);
+        self.emit_u16(constant as u16);
+
+        self.emit_opcode(OpCode::Import);
+
+        Ok(())
+    }
+
+    fn emit_u16(&mut self, value: u16) {
+        self.emit_byte((value >> 8) as u8);
+        self.emit_byte((value & 0xff) as u8);
+    }
+
+    fn compile_export(&mut self, statement: &Statement) -> Result<(), CompileError> {
+        match statement {
+            Statement::Let { name, .. } => {
+                self.register_export(name)?;
+                self.compile_statement(statement)?;
+            }
+
+            Statement::Function { name, .. } => {
+                self.register_export(name)?;
+                self.compile_statement(statement)?;
+            }
+
+            _ => {
+                return Err(CompileError::InvalidExport);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn compile_module(
+        mut self,
+        statements: &[Statement],
+    ) -> Result<(Function, Vec<String>), CompileError> {
+        for statement in statements {
+            self.compile_statement(statement)?;
+        }
+
+        self.emit_opcode(OpCode::Halt);
+
+        let function = Function {
+            name: "<script>".to_string(),
+            arity: 0,
+            chunk: self.chunk,
+            upvalue_count: 0,
+            upvalues: Vec::new(),
+        };
+
+        Ok((function, self.exports))
     }
 }

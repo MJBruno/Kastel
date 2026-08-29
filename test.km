@@ -1,5 +1,5 @@
 let numbers = [10, 20, 30];
 
-if (numbers.contains(20)) {
+if (numbers.contains(30)) {
     print("Ok")
 }

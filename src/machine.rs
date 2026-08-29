@@ -1,11 +1,13 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::bytecode::OpCode;
 use crate::closure::Closure;
 use crate::error::RuntimeError;
 use crate::function::Function;
+use crate::module::ModuleLoader;
 use crate::native::register_natives;
 use crate::value::ComparisonOp;
 use crate::value::NumericOp;
@@ -40,6 +42,8 @@ pub struct VirtualMachine {
     frames: Vec<CallFrame>,
     open_upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
     natives: HashMap<String, Value>,
+    pub module_loader: ModuleLoader,
+    pub module_path: Option<PathBuf>,
 }
 
 #[allow(dead_code)]
@@ -60,6 +64,8 @@ impl VirtualMachine {
                 slot_start: 0,
             }],
             open_upvalues: Vec::new(),
+            module_loader: ModuleLoader::new(),
+            module_path: Some(PathBuf::new()),
         };
 
         register_natives(&mut vm.globals);
@@ -67,6 +73,36 @@ impl VirtualMachine {
         vm
     }
 
+    // ============================================================
+    // MODULE EXECUTION
+    // ============================================================
+
+    pub fn execute_module(
+        function: Rc<Function>,
+        exports: &[String],
+    ) -> Result<HashMap<String, Value>, RuntimeError> {
+        let mut vm = Self::new(function);
+
+        vm.run()?;
+
+        let mut values = HashMap::with_capacity(exports.len());
+
+        for name in exports {
+            let value = vm
+                .globals
+                .get(name)
+                .cloned()
+                .ok_or(RuntimeError::TypeError)?;
+
+            values.insert(name.clone(), value);
+        }
+
+        Ok(values)
+    }
+
+    pub fn get_global(&self, name: &str) -> Option<Value> {
+        self.globals.get(name).cloned()
+    }
     // ============================================================
     // STACK
     // ============================================================
@@ -519,6 +555,47 @@ impl VirtualMachine {
                     self.push(Value::Boolean(!value.is_truthy()));
                 }
 
+                x if x == OpCode::GetProperty.into() => {
+                    let constant = self.read_short();
+
+                    let property = self.read_constant(constant.try_into().unwrap());
+
+                    let name = match property {
+                        Value::String(name) => name,
+
+                        _ => {
+                            return Err(RuntimeError::TypeError);
+                        }
+                    };
+
+                    let object = self.pop();
+
+                    match object {
+                        Value::Module(module) => {
+                            let value = module.get_export(&name).cloned().ok_or_else(|| {
+                                RuntimeError::ModuleError(format!(
+                                    "Module '{}' does not export '{}'",
+                                    module.name, name
+                                ))
+                            })?;
+
+                            self.push(value);
+                        }
+
+                        value => {
+                            
+                            // Ici, conserve ton traitement
+                            // actuel des autres objets/propriétés.
+                            //
+                            // Ne remplace pas cette partie par une
+                            // nouvelle implémentation si ton VM possède
+                            // déjà Array/String/etc.
+
+                            return Err(RuntimeError::TypeError);
+                        }
+                    }
+                }
+
                 // =================================================
                 // ARRAYS
                 // =================================================
@@ -562,6 +639,48 @@ impl VirtualMachine {
 
                 x if x == OpCode::ArrayContains.into() => {
                     self.op_array_contains()?;
+                }
+
+                x if x == OpCode::Import.into() => {
+                    let constant = self.read_short();
+
+                    let value = self.read_constant(constant.try_into().unwrap());
+
+                    let module_name = match value {
+                        Value::String(name) => name,
+
+                        _ => {
+                            return Err(RuntimeError::TypeError);
+                        }
+                    };
+
+                    let current_file = match &self.module_path {
+                        Some(path) => path.clone(),
+
+                        None => {
+                            return Err(RuntimeError::ModuleError(
+                                "Cannot import module without a source path".to_string(),
+                            ));
+                        }
+                    };
+
+                    let parts = module_name
+                        .split('.')
+                        .map(str::to_string)
+                        .collect::<Vec<_>>();
+
+                    if parts.is_empty() {
+                        return Err(RuntimeError::ModuleError("Invalid module name".to_string()));
+                    }
+
+                    let global_name = parts[0].clone();
+
+                    let module = self
+                        .module_loader
+                        .load_from(&current_file, &parts)
+                        .map_err(|error| RuntimeError::ModuleError(error.to_string()))?;
+
+                    self.globals.insert(global_name, Value::Module(module));
                 }
 
                 // =================================================

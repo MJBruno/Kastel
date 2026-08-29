@@ -22,6 +22,10 @@ pub enum TokenKind {
     Break,
     Continue,
     Print,
+    Import,
+    From,
+    As,
+    Export,
 
     // Opérateurs
     Plus,
@@ -96,6 +100,10 @@ impl Token {
             "nil" => Some(TokenKind::Nil),
             "break" => Some(TokenKind::Break),
             "continue" => Some(TokenKind::Continue),
+            "import" => Some(TokenKind::Import),
+            "from" => Some(TokenKind::From),
+            "as" => Some(TokenKind::As),
+            "export" => Some(TokenKind::Export),
 
             _ => None,
         }
