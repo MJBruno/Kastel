@@ -6,6 +6,11 @@ pub enum AssignmentTarget {
         object: Box<Expression>,
         index: Box<Expression>,
     },
+
+    Member {
+        object: Box<Expression>,
+        name: String,
+    },
 }
 #[derive(Debug, Clone)]
 pub struct ModulePath {
@@ -16,14 +21,6 @@ impl ModulePath {
     pub fn new(parts: Vec<String>) -> Self {
         Self { parts }
     }
-
-    // pub fn as_string(&self) -> String {
-    //     self.parts.join(".")
-    // }
-
-    // pub fn last(&self) -> Option<&str> {
-    //     self.parts.last().map(String::as_str)
-    // }
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +57,13 @@ pub enum Statement {
 
     While {
         condition: Expression,
+        body: Vec<Statement>,
+    },
+
+    For {
+        init: Option<Box<Statement>>,
+        condition: Option<Expression>,
+        increment: Option<Box<Statement>>,
         body: Vec<Statement>,
     },
 
@@ -130,6 +134,12 @@ pub enum Expression {
     },
 
     Array(Vec<Expression>),
+
+    Ternary {
+        condition: Box<Expression>,
+        then_expr: Box<Expression>,
+        else_expr: Box<Expression>,
+    },
 }
 
 #[derive(Debug, Clone)]

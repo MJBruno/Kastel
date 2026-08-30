@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::{  compile::compiler::Compiler, runtime::value::Value};
+use crate::runtime::native::execute_native;
 use crate::vm::machine::VirtualMachine;
 use crate::error::compile_error::CompileError;
 use crate::frontend::lexer::Lexer;
@@ -67,7 +68,9 @@ impl ModuleLoader {
             path.push(part);
         }
 
-        path.set_extension("js");
+        // ⚠️ Adapte "ks" à l'extension réelle de tes fichiers source Kastel
+        // si ce n'est pas celle-ci (ex. "kastel", "kst"...).
+        path.set_extension("ks");
 
         if !path.exists() {
             return Err(CompileError::ModuleNotFound(path.display().to_string()));
@@ -138,7 +141,9 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         // 4. Compiler
         // ------------------------------------------------------------
-        let compiler = Compiler::new();
+        let mut compiler = Compiler::new();
+
+        execute_native(&mut compiler);
 
         let (function, exports) = compiler.compile_module(&statements)?;
 
@@ -147,8 +152,8 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         // 5. Exécuter le module dans une VM isolée
         // ------------------------------------------------------------
-        let values =
-            VirtualMachine::execute_module(Rc::clone(&function), &exports, path.to_path_buf());
+        let values = VirtualMachine::execute_module(Rc::clone(&function), &exports, path.to_path_buf())
+            .map_err(CompileError::ModuleRuntimeError)?;
         // ------------------------------------------------------------
         // 6. Nom du module
         // ------------------------------------------------------------
@@ -166,7 +171,7 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         // 8. Ajouter uniquement les exports
         // ------------------------------------------------------------
-        for (name, value) in values.unwrap() {
+        for (name, value) in values {
             module.export(name, value)?;
         }
 

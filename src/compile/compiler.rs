@@ -2,12 +2,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::bytecode::chunk::*;
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
 use crate::runtime::function::Function;
 use crate::runtime::upvalue::Upvalue;
 use crate::runtime::value::Value;
-use crate::bytecode::chunk::*;
 
 #[derive(Clone, Debug)]
 /// # Local
@@ -1014,6 +1014,28 @@ impl Compiler {
                     self.emit_bytes(OpCode::GetProperty, name_constant);
                 }
             }
+
+            Expression::Ternary {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                self.compile_expression(condition)?;
+
+                let else_jump = self.emit_jump(OpCode::JumpIfFalse);
+                self.emit_opcode(OpCode::Pop); // dépile la condition (chemin "vrai")
+
+                self.compile_expression(then_expr)?;
+
+                let end_jump = self.emit_jump(OpCode::Jump);
+
+                self.patch_jump(else_jump);
+                self.emit_opcode(OpCode::Pop); // dépile la condition (chemin "faux")
+
+                self.compile_expression(else_expr)?;
+
+                self.patch_jump(end_jump);
+            }
         }
 
         Ok(())
@@ -1365,6 +1387,113 @@ impl Compiler {
     }
 
     // ============================================================
+    //                      FOR
+    // ============================================================
+    //
+    // Désucrage classique (à la clox) :
+    //
+    //   for (init; condition; increment) { body }
+    //
+    // équivaut à :
+    //
+    //   { init; while (condition) { body; increment; } }
+    //
+    // mais généré de façon à ce que `continue` saute directement à
+    // l'incrément plutôt que de re-tester la condition depuis le début.
+
+    fn compile_for(
+        &mut self,
+        init: Option<&Statement>,
+        condition: Option<&Expression>,
+        increment: Option<&Statement>,
+        body: &[Statement],
+    ) -> Result<(), CompileError> {
+        // Scope englobant : la variable déclarée dans `init` (ex. `let i = 0`)
+        // doit vivre pendant toute la boucle, y compris pendant l'évaluation
+        // de la condition et de l'incrément, donc on ouvre le scope ici et
+        // pas seulement autour du corps.
+        self.begin_scope();
+
+        if let Some(init) = init {
+            self.compile_statement(init)?;
+        }
+
+        let mut loop_start = self.chunk.code.len();
+
+        // --------------------------------------------------------
+        // Condition (optionnelle : "for (;;)" boucle sans fin)
+        // --------------------------------------------------------
+        let exit_jump = if let Some(condition) = condition {
+            self.compile_expression(condition)?;
+
+            let jump = self.emit_jump(OpCode::JumpIfFalse);
+
+            self.emit_opcode(OpCode::Pop); // dépile la condition (chemin "on continue")
+
+            Some(jump)
+        } else {
+            None
+        };
+
+        // --------------------------------------------------------
+        // Incrément (optionnel)
+        //
+        // Généré AVANT le corps mais on saute par-dessus au premier
+        // passage : le corps s'exécute d'abord, puis un `Loop` revient
+        // ici pour exécuter l'incrément, puis reboucle sur la condition.
+        // --------------------------------------------------------
+        let continue_target = if let Some(increment) = increment {
+            let body_jump = self.emit_jump(OpCode::Jump);
+
+            let increment_start = self.chunk.code.len();
+
+            self.compile_statement(increment)?;
+
+            self.emit_loop(loop_start);
+
+            self.patch_jump(body_jump);
+
+            increment_start
+        } else {
+            loop_start
+        };
+
+        loop_start = continue_target;
+
+        self.loops.push(LoopContext {
+            continue_target: loop_start,
+            break_jumps: Vec::new(),
+            scope_depth: self.scope_depth,
+        });
+
+        self.begin_scope();
+
+        for statement in body {
+            self.compile_statement(statement)?;
+        }
+
+        self.end_scope();
+
+        self.emit_loop(loop_start);
+
+        if let Some(exit_jump) = exit_jump {
+            self.patch_jump(exit_jump);
+            self.emit_opcode(OpCode::Pop); // dépile la condition (chemin "on sort")
+        }
+
+        let loop_context = self.loops.pop().expect("loop stack underflow");
+
+        for break_jump in loop_context.break_jumps {
+            self.patch_jump(break_jump);
+        }
+
+        // Referme le scope ouvert pour la variable d'initialisation.
+        self.end_scope();
+
+        Ok(())
+    }
+
+    // ============================================================
     //                      BREAK / CONTINUE
     // ============================================================
 
@@ -1406,6 +1535,11 @@ impl Compiler {
         match stmt {
             Statement::Expression { expression } => {
                 self.compile_expression(expression)?;
+
+                // L'expression-statement ignore sa valeur : il faut la dépiler,
+                // sinon elle s'accumule et décale l'index de toutes les
+                // variables locales déclarées ensuite dans le même scope.
+                self.emit_opcode(OpCode::Pop);
             }
 
             Statement::Let {
@@ -1430,6 +1564,13 @@ impl Compiler {
                 AssignmentTarget::Variable(name) => {
                     self.compile_expression(value)?;
                     self.compile_variable_set(name)?;
+
+                    // SetLocal/SetGlobal/SetUpvalue laissent une copie de la
+                    // valeur assignée sur la pile (pour un futur usage en tant
+                    // qu'expression) : il faut la dépiler ici, sinon même bug
+                    // de désynchronisation des slots locaux qu'avec
+                    // Statement::Expression.
+                    self.emit_opcode(OpCode::Pop);
                 }
 
                 AssignmentTarget::Index { object, index } => {
@@ -1437,7 +1578,20 @@ impl Compiler {
                     self.compile_expression(index)?;
                     self.compile_expression(value)?;
 
+                    // SetIndex consomme les 3 valeurs et ne repousse rien :
+                    // la pile est déjà équilibrée, pas de Pop supplémentaire.
                     self.emit_opcode(OpCode::SetIndex);
+                }
+
+                AssignmentTarget::Member { object, name } => {
+                    self.compile_expression(object)?;
+                    self.compile_expression(value)?;
+
+                    let name_constant = self.identifier_constant(name)?;
+
+                    // Même convention que SetIndex : SetProperty consomme
+                    // l'objet et la valeur sans rien repousser.
+                    self.emit_bytes(OpCode::SetProperty, name_constant);
                 }
             },
 
@@ -1457,6 +1611,20 @@ impl Compiler {
 
             Statement::While { condition, body } => {
                 self.compile_while(condition, body)?;
+            }
+
+            Statement::For {
+                init,
+                condition,
+                increment,
+                body,
+            } => {
+                self.compile_for(
+                    init.as_deref(),
+                    condition.as_ref(),
+                    increment.as_deref(),
+                    body,
+                )?;
             }
 
             Statement::Function { name, params, body } => {

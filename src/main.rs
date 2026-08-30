@@ -8,6 +8,6 @@ mod module;
 mod runtime;
 mod vm;
 
-fn main() {
-    Application::run();
+fn main() -> std::process::ExitCode {
+    Application::run()
 }

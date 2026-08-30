@@ -576,6 +576,30 @@ impl VirtualMachine {
                     self.push(value);
                 }
 
+                x if x == OpCode::SetProperty.into() => {
+                    let constant = self.read_byte();
+
+                    let property = self.read_constant(constant);
+
+                    let _name = match property {
+                        Value::String(name) => name,
+
+                        _ => {
+                            return Err(RuntimeError::TypeError);
+                        }
+                    };
+
+                    let _value = self.pop();
+                    let _object = self.pop();
+
+                    // Kastel n'a pas encore de type "objet"/structure à champs
+                    // mutables : GetProperty ne fonctionne aujourd'hui que sur
+                    // les modules (accès en lecture à un export). Tant que ce
+                    // type n'existe pas, une affectation `obj.champ = valeur`
+                    // ne peut rien faire de valide à l'exécution.
+                    return Err(RuntimeError::TypeError);
+                }
+
                 // =================================================
                 // ARRAYS
                 // =================================================

@@ -147,6 +147,12 @@ impl Lexer {
                 '|' => {
                     if self.match_char('|') {
                         tokens.push(self.make_token(TokenKind::Or, "||"));
+                    } else {
+                        self.errors.push(LexerError {
+                            message: "Opérateur '|' invalide, utilisez '||'".to_string(),
+                            line: self.line,
+                            column: self.column - 1,
+                        });
                     }
                 }
                 _ => {

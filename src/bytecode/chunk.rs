@@ -63,6 +63,7 @@ pub enum OpCode {
     Return,
     Halt,
     GetProperty,
+    SetProperty,
 }
 
 impl From<OpCode> for u8 {
@@ -147,6 +148,10 @@ impl Chunk {
 
             x if x == OpCode::GetProperty.into() => {
                 self.constant_instruction("OP_GET_PROPERTY", offset)
+            }
+
+            x if x == OpCode::SetProperty.into() => {
+                self.constant_instruction("OP_SET_PROPERTY", offset)
             }
             // =====================================================
             // ARITHMETIC

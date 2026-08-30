@@ -168,11 +168,9 @@ impl Value {
             Value::Array(array) => {
                 let mut array = array.borrow_mut();
 
-                match array.pop() {
-                    Some(value) => Ok(value),
-
-                    None => Err(RuntimeError::ArrayEmpty),
-                }
+                // Convention JS-like : pop() sur un tableau vide renvoie nil
+                // plutôt que de lever une erreur.
+                Ok(array.pop().unwrap_or(Value::Nil))
             }
 
             _ => Err(RuntimeError::TypeError),
