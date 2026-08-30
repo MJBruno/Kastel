@@ -471,7 +471,17 @@ impl VirtualMachine {
                     let b = self.pop();
                     let a = self.pop();
 
-                    let result = Value::binary_numeric_op(a, b, NumericOp::Add)?;
+                    let result = match (&a, &b) {
+                        // Dès qu'un des deux opérandes est une chaîne, on
+                        // concatène les représentations texte des deux
+                        // valeurs (comportement permissif façon JS :
+                        // "Age: " + 25 fonctionne, pas seulement String+String).
+                        (Value::String(_), _) | (_, Value::String(_)) => {
+                            Value::String(format!("{a}{b}"))
+                        }
+
+                        _ => Value::binary_numeric_op(a, b, NumericOp::Add)?,
+                    };
 
                     self.push(result);
                 }

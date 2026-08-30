@@ -1,21 +1,9 @@
-function add(a, b) {
-    return a + b;
-}
+let nom = "Alice";
+let age = 30;
 
-print add(2, 3);   // 5
+println("Hello {}", nom);                    // Hello Alice
+println("Bonjour {}, tu as {} ans", nom, age); // Bonjour Alice, tu as 30 ans
+println("Age: " + age);                       // Age: 30  (concaténation, fonctionne aussi)
 
-function factorial(n) {
-    if (n <= 1) {
-        return 1;
-    }
-    return n * factorial(n - 1);   // récursion supportée
-}
-
-print factorial(5);   // 120
-
-// Une fonction sans "return" explicite se termine simplement
-function saluer(nom) {
-    print "Bonjour, " + nom;
-}
-
-saluer("Bruno");
+let message = format("Score: {}/{}", 8, 10);  // "Score: 8/10", sans l'afficher
+println(message);
