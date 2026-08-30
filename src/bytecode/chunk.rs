@@ -39,7 +39,6 @@ pub enum OpCode {
     Jump,
 
     Pop,
-    Print,
     Loop,
     Call,
 
@@ -208,8 +207,6 @@ impl Chunk {
             // STACK / CALL
             // =====================================================
             x if x == OpCode::Pop.into() => self.simple_instruction("OP_POP", offset),
-
-            x if x == OpCode::Print.into() => self.simple_instruction("OP_PRINT", offset),
 
             x if x == OpCode::Call.into() => self.byte_instruction("OP_CALL", offset),
 

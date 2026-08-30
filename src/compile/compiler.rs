@@ -2,12 +2,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::bytecode::chunk::*;
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
 use crate::runtime::function::Function;
 use crate::runtime::upvalue::Upvalue;
 use crate::runtime::value::Value;
+use crate::bytecode::chunk::*;
 
 #[derive(Clone, Debug)]
 /// # Local
@@ -969,6 +969,7 @@ impl Compiler {
                     UnaryOp::Not => self.emit_opcode(OpCode::Not),
                 }
             }
+            
 
             Expression::Call { callee, arguments } => {
                 if let Expression::Member { object, name } = callee.as_ref() {
@@ -1594,12 +1595,6 @@ impl Compiler {
                     self.emit_bytes(OpCode::SetProperty, name_constant);
                 }
             },
-
-            Statement::Print(expression) => {
-                self.compile_expression(expression)?;
-
-                self.emit_opcode(OpCode::Print);
-            }
 
             Statement::If {
                 condition,

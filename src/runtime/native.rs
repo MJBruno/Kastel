@@ -1,6 +1,7 @@
 use crate::{compile::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value};
  
 
+use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub type NativeFn = fn(&[Value]) -> Result<Value, RuntimeError>;
@@ -91,14 +92,39 @@ fn format_string(format: &str, args: &[Value]) -> Result<String, RuntimeError> {
 }
 
 // ================================================================
-// PRINT
+// PRINT / PRINTLN
 //
-// println(valeur)                         -> comportement historique
-// println("Bonjour {}", nom)               -> formatage façon Rust
-// println("Score: {}/{}", points, total)   -> plusieurs placeholders
+// println(valeur)                          -> comportement historique, AVEC saut de ligne
+// println("Bonjour {}", nom)                -> formatage façon Rust
+// print("Bonjour {}", nom)                  -> identique, SANS saut de ligne (comme print! en Rust)
 // ================================================================
 
+pub fn native_println(args: &[Value]) -> Result<Value, RuntimeError> {
+    let formatted = render_arguments(args)?;
+
+    println!("{formatted}");
+
+    Ok(Value::String(formatted))
+}
+
 pub fn native_print(args: &[Value]) -> Result<Value, RuntimeError> {
+    let formatted = render_arguments(args)?;
+
+    print!("{formatted}");
+
+    // print! (contrairement à println!) n'envoie pas de \n, qui déclenche
+    // habituellement le flush de stdout en mode ligne. Sans flush explicite,
+    // le texte peut rester bloqué dans le buffer et ne jamais s'afficher
+    // avant, par exemple, un prochain input().
+    io::stdout().flush().ok();
+
+    Ok(Value::String(formatted))
+}
+
+/// Factorise la logique commune à print() et println() : un seul argument
+/// non-chaîne affiché tel quel, ou un premier argument "chaîne de format"
+/// avec des placeholders "{}" à combler avec les arguments suivants.
+fn render_arguments(args: &[Value]) -> Result<String, RuntimeError> {
     let Some(first) = args.first() else {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -106,29 +132,54 @@ pub fn native_print(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     };
 
-    // Un seul argument qui n'est pas une chaîne : comportement historique,
-    // on affiche simplement sa représentation (println(42), println(true)...).
     if args.len() == 1 {
         if let Value::String(text) = first {
-            println!("{text}");
-            return Ok(Value::String(text.clone()));
+            return Ok(text.clone());
         }
 
-        println!("{first}");
-        return Ok(first.clone());
+        return Ok(first.to_string());
     }
 
-    // Plusieurs arguments : le premier DOIT être la chaîne de format.
     let format = match first {
         Value::String(text) => text,
         _ => return Err(RuntimeError::TypeError),
     };
 
-    let formatted = format_string(format, &args[1..])?;
+    format_string(format, &args[1..])
+}
 
-    println!("{formatted}");
+// ================================================================
+// INPUT
+//
+// input()               -> lit une ligne sur stdin, sans invite
+// input("Nom : ")       -> affiche l'invite (sans saut de ligne) puis lit
+//
+// Le saut de ligne final (et le \r sous Windows) est retiré du résultat.
+// ================================================================
 
-    Ok(Value::String(formatted))
+pub fn native_input(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() > 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    if let Some(prompt) = args.first() {
+        print!("{prompt}");
+
+        io::stdout().flush().map_err(|_| RuntimeError::NativeError)?;
+    }
+
+    let mut buffer = String::new();
+
+    io::stdin()
+        .read_line(&mut buffer)
+        .map_err(|_| RuntimeError::NativeError)?;
+
+    let trimmed = buffer.trim_end_matches(['\n', '\r']).to_string();
+
+    Ok(Value::String(trimmed))
 }
 
 // ================================================================
@@ -280,7 +331,11 @@ pub fn register_natives(globals: &mut std::collections::HashMap<String, Value>) 
 
     globals.insert("native_add".to_string(), Value::NativeFunction(native_add));
 
-    globals.insert("println".to_string(), Value::NativeFunction(native_print));
+    globals.insert("println".to_string(), Value::NativeFunction(native_println));
+
+    globals.insert("print".to_string(), Value::NativeFunction(native_print));
+
+    globals.insert("input".to_string(), Value::NativeFunction(native_input));
 
     globals.insert("format".to_string(), Value::NativeFunction(native_format));
 
@@ -313,6 +368,10 @@ pub fn execute_native(compiler: &mut Compiler) {
     let _ = compiler.define_native("native_add");
 
     let _ = compiler.define_native("println");
+
+    let _ = compiler.define_native("print");
+
+    let _ = compiler.define_native("input");
 
     let _ = compiler.define_native("format");
 

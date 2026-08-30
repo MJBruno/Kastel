@@ -1,4 +1,5 @@
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum AssignmentTarget {
     Variable(String),
 
@@ -21,6 +22,14 @@ impl ModulePath {
     pub fn new(parts: Vec<String>) -> Self {
         Self { parts }
     }
+
+    // pub fn as_string(&self) -> String {
+    //     self.parts.join(".")
+    // }
+
+    // pub fn last(&self) -> Option<&str> {
+    //     self.parts.last().map(String::as_str)
+    // }
 }
 
 #[derive(Debug, Clone)]
@@ -28,7 +37,8 @@ pub struct ImportItem {
     pub name: String,
     pub alias: Option<String>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+
 pub enum Statement {
     Let {
         name: String,
@@ -46,8 +56,6 @@ pub enum Statement {
     },
 
     Block(Vec<Statement>),
-
-    Print(Expression),
 
     If {
         condition: Expression,

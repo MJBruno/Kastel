@@ -465,8 +465,6 @@ impl Parser {
             vec![self.parse_function_statement()?]
         } else if self.match_token(TokenKind::Return) {
             vec![self.parse_return_statement()?]
-        } else if self.match_token(TokenKind::Print) {
-            vec![self.parse_print_statement()?]
         } else if self.match_token(TokenKind::Break) {
             vec![Statement::Break]
         } else if self.match_token(TokenKind::Continue) {
@@ -475,7 +473,7 @@ impl Parser {
             vec![self.parse_if_statement()?]
         } else if self.match_token(TokenKind::While) {
             vec![self.parse_while_statement()?]
-        } else if self.match_token(TokenKind::For) {
+        }  else if self.match_token(TokenKind::For) {
             vec![self.parse_for_statement()?]
         } else if self.match_token(TokenKind::LeftBrace) {
             vec![Statement::Block(self.parse_block_statement()?)]
@@ -515,8 +513,6 @@ impl Parser {
             Expression::Variable(name) => Ok(AssignmentTarget::Variable(name)),
 
             Expression::Index { object, index } => Ok(AssignmentTarget::Index { object, index }),
-
-            Expression::Member { object, name } => Ok(AssignmentTarget::Member { object, name }),
 
             _ => {
                 let token = self.peek();
@@ -699,14 +695,70 @@ impl Parser {
         })
     }
 
-    // ============================================================
-    // PRINT
-    // ============================================================
+    fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
+        self.consume(TokenKind::LeftParen, "'(' attendu après for")?;
 
-    fn parse_print_statement(&mut self) -> Result<Statement, ParserError> {
-        let expression = self.parse_expression()?;
+        // --------------------------------------------------------
+        // Clause d'initialisation
+        // --------------------------------------------------------
+        let init: Option<Box<Statement>> = if self.match_token(TokenKind::Semicolon) {
+            None
+        } else if self.match_token(TokenKind::Let) {
+            let mut declarations = self.parse_variable_declaration(true)?;
 
-        Ok(Statement::Print(expression))
+            if declarations.len() != 1 {
+                return Err(ParserError {
+                    message: "'for' accepte une seule déclaration d'initialisation".to_string(),
+                    line: self.previous().line,
+                    column: self.previous().column,
+                });
+            }
+
+            self.consume(TokenKind::Semicolon, "';' attendu après l'initialisation")?;
+
+            Some(Box::new(declarations.remove(0)))
+        } else {
+            let statement = self.parse_expression_or_assignment()?;
+
+            self.consume(TokenKind::Semicolon, "';' attendu après l'initialisation")?;
+
+            Some(Box::new(statement))
+        };
+
+        // --------------------------------------------------------
+        // Clause de condition
+        // --------------------------------------------------------
+        let condition = if self.check(TokenKind::Semicolon) {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+
+        self.consume(TokenKind::Semicolon, "';' attendu après la condition")?;
+
+        // --------------------------------------------------------
+        // Clause d'incrément
+        // --------------------------------------------------------
+        let increment: Option<Box<Statement>> = if self.check(TokenKind::RightParen) {
+            None
+        } else {
+            Some(Box::new(self.parse_expression_or_assignment()?))
+        };
+
+        self.consume(
+            TokenKind::RightParen,
+            "')' attendu après les clauses du for",
+        )?;
+        self.consume(TokenKind::LeftBrace, "'{' attendu avant le corps du for")?;
+
+        let body = self.parse_block_statement()?;
+
+        Ok(Statement::For {
+            init,
+            condition,
+            increment,
+            body,
+        })
     }
 
     // ============================================================
@@ -790,82 +842,5 @@ impl Parser {
         let body = self.parse_block_statement()?;
 
         Ok(Statement::While { condition, body })
-    }
-
-    // ============================================================
-    // FOR
-    // ============================================================
-    //
-    // Syntaxe : for (init; condition; incrément) { corps }
-    // Chaque clause est optionnelle :
-    //   for (;;) { ... }                              // boucle infinie
-    //   for (let i = 0; i < 10; i = i + 1) { ... }     // forme classique
-    //   for (; condition;) { ... }
-    //
-    // Contrairement aux statements normaux (où le ';' final est optionnel),
-    // les deux ';' à l'intérieur des parenthèses du for sont obligatoires :
-    // ce sont des séparateurs de clauses, pas des terminateurs de statement.
-
-    fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
-        self.consume(TokenKind::LeftParen, "'(' attendu après for")?;
-
-        // --------------------------------------------------------
-        // Clause d'initialisation
-        // --------------------------------------------------------
-        let init: Option<Box<Statement>> = if self.match_token(TokenKind::Semicolon) {
-            None
-        } else if self.match_token(TokenKind::Let) {
-            let mut declarations = self.parse_variable_declaration(true)?;
-
-            if declarations.len() != 1 {
-                return Err(ParserError {
-                    message: "'for' accepte une seule déclaration d'initialisation".to_string(),
-                    line: self.previous().line,
-                    column: self.previous().column,
-                });
-            }
-
-            self.consume(TokenKind::Semicolon, "';' attendu après l'initialisation")?;
-
-            Some(Box::new(declarations.remove(0)))
-        } else {
-            let statement = self.parse_expression_or_assignment()?;
-
-            self.consume(TokenKind::Semicolon, "';' attendu après l'initialisation")?;
-
-            Some(Box::new(statement))
-        };
-
-        // --------------------------------------------------------
-        // Clause de condition
-        // --------------------------------------------------------
-        let condition = if self.check(TokenKind::Semicolon) {
-            None
-        } else {
-            Some(self.parse_expression()?)
-        };
-
-        self.consume(TokenKind::Semicolon, "';' attendu après la condition")?;
-
-        // --------------------------------------------------------
-        // Clause d'incrément
-        // --------------------------------------------------------
-        let increment: Option<Box<Statement>> = if self.check(TokenKind::RightParen) {
-            None
-        } else {
-            Some(Box::new(self.parse_expression_or_assignment()?))
-        };
-
-        self.consume(TokenKind::RightParen, "')' attendu après les clauses du for")?;
-        self.consume(TokenKind::LeftBrace, "'{' attendu avant le corps du for")?;
-
-        let body = self.parse_block_statement()?;
-
-        Ok(Statement::For {
-            init,
-            condition,
-            increment,
-            body,
-        })
     }
 }

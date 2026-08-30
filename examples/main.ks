@@ -1,9 +1,11 @@
-let nom = "Alice";
-let age = 30;
+from utils import value
 
-println("Hello {}", nom);                    // Hello Alice
-println("Bonjour {}, tu as {} ans", nom, age); // Bonjour Alice, tu as 30 ans
-println("Age: " + age);                       // Age: 30  (concaténation, fonctionne aussi)
+println(value)
 
-let message = format("Score: {}/{}", 8, 10);  // "Score: 8/10", sans l'afficher
-println(message);
+let coll=[4,5,6,7,1];
+
+
+const i=0;
+for( i=0; i<coll.length; i=i+1 ){
+    println(coll[i]);
+}

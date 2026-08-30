@@ -472,11 +472,10 @@ impl VirtualMachine {
                     let a = self.pop();
 
                     let result = match (&a, &b) {
-                        // Dès qu'un des deux opérandes est une chaîne, on
-                        // concatène les représentations texte des deux
-                        // valeurs (comportement permissif façon JS :
-                        // "Age: " + 25 fonctionne, pas seulement String+String).
-                        (Value::String(_), _) | (_, Value::String(_)) => {
+                        // Concaténation stricte : uniquement String + String.
+                        // "x" + 5 est désormais une erreur de type, pas une
+                        // coercion implicite.
+                        (Value::String(_), Value::String(_)) => {
                             Value::String(format!("{a}{b}"))
                         }
 
@@ -782,15 +781,6 @@ impl VirtualMachine {
                 // =================================================
                 x if x == OpCode::Pop.into() => {
                     let _ = self.pop();
-                }
-
-                // =================================================
-                // PRINT
-                // =================================================
-                x if x == OpCode::Print.into() => {
-                    let value = self.pop();
-
-                    print_value(value);
                 }
 
                 // =================================================
