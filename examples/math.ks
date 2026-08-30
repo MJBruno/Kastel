@@ -1,7 +1,7 @@
-import utils;
-
-export function add(a, b) {
-    return a + b;
+export function square(x) {
+    return x * x;
 }
 
-export const answer = utils.value;
+export const PI = 3.14159;
+
+let secret = "non exporté";   // reste privé au module
