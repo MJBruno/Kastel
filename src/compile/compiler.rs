@@ -2,12 +2,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::bytecode::chunk::*;
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
 use crate::runtime::function::Function;
 use crate::runtime::upvalue::Upvalue;
 use crate::runtime::value::Value;
-use crate::bytecode::chunk::*;
 
 #[derive(Clone, Debug)]
 /// # Local
@@ -969,7 +969,6 @@ impl Compiler {
                     UnaryOp::Not => self.emit_opcode(OpCode::Not),
                 }
             }
-            
 
             Expression::Call { callee, arguments } => {
                 if let Expression::Member { object, name } = callee.as_ref() {
@@ -1387,100 +1386,160 @@ impl Compiler {
         Ok(())
     }
 
-    // ============================================================
-    //                      FOR
-    // ============================================================
-    //
-    // Désucrage classique (à la clox) :
-    //
-    //   for (init; condition; increment) { body }
-    //
-    // équivaut à :
-    //
-    //   { init; while (condition) { body; increment; } }
-    //
-    // mais généré de façon à ce que `continue` saute directement à
-    // l'incrément plutôt que de re-tester la condition depuis le début.
-
-    fn compile_for(
+    fn compile_for_in(
         &mut self,
-        init: Option<&Statement>,
-        condition: Option<&Expression>,
-        increment: Option<&Statement>,
+        variable: &str,
+        iterable: &Expression,
         body: &[Statement],
     ) -> Result<(), CompileError> {
-        // Scope englobant : la variable déclarée dans `init` (ex. `let i = 0`)
-        // doit vivre pendant toute la boucle, y compris pendant l'évaluation
-        // de la condition et de l'incrément, donc on ouvre le scope ici et
-        // pas seulement autour du corps.
         self.begin_scope();
 
-        if let Some(init) = init {
-            self.compile_statement(init)?;
-        }
+        // ============================================================
+        // __for_iterable
+        // ============================================================
 
-        let mut loop_start = self.chunk.code.len();
+        let iterable_slot = self.context.borrow_mut().locals.declare_local(
+            "__for_iterable",
+            self.scope_depth,
+            false,
+        )?;
 
-        // --------------------------------------------------------
-        // Condition (optionnelle : "for (;;)" boucle sans fin)
-        // --------------------------------------------------------
-        let exit_jump = if let Some(condition) = condition {
-            self.compile_expression(condition)?;
+        self.compile_expression(iterable)?;
 
-            let jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.context
+            .borrow_mut()
+            .locals
+            .mark_initialized(self.scope_depth);
 
-            self.emit_opcode(OpCode::Pop); // dépile la condition (chemin "on continue")
+        // ============================================================
+        // __for_index = 0
+        // ============================================================
 
-            Some(jump)
-        } else {
-            None
-        };
+        let index_slot = self.context.borrow_mut().locals.declare_local(
+            "__for_index",
+            self.scope_depth,
+            true,
+        )?;
 
-        // --------------------------------------------------------
-        // Incrément (optionnel)
+        let zero = self.make_constant(Value::Number(0.0))?;
+        self.emit_bytes(OpCode::Constant, zero);
+
+        self.context
+            .borrow_mut()
+            .locals
+            .mark_initialized(self.scope_depth);
+
+        // ============================================================
+        // Variable implicite du for
         //
-        // Généré AVANT le corps mais on saute par-dessus au premier
-        // passage : le corps s'exécute d'abord, puis un `Loop` revient
-        // ici pour exécuter l'incrément, puis reboucle sur la condition.
-        // --------------------------------------------------------
-        let continue_target = if let Some(increment) = increment {
-            let body_jump = self.emit_jump(OpCode::Jump);
+        // for (i in range(5))
+        //
+        // i devient automatiquement une locale.
+        // ============================================================
 
-            let increment_start = self.chunk.code.len();
+        let variable_slot =
+            self.context
+                .borrow_mut()
+                .locals
+                .declare_local(variable, self.scope_depth, true)?;
 
-            self.compile_statement(increment)?;
+        self.emit_opcode(OpCode::Nil);
 
-            self.emit_loop(loop_start);
+        self.context
+            .borrow_mut()
+            .locals
+            .mark_initialized(self.scope_depth);
 
-            self.patch_jump(body_jump);
+        // ============================================================
+        // Premier passage -> condition
+        // ============================================================
 
-            increment_start
-        } else {
-            loop_start
-        };
+        let initial_jump = self.emit_jump(OpCode::Jump);
 
-        loop_start = continue_target;
+        // ============================================================
+        // CONTINUE -> INCREMENT
+        // ============================================================
+
+        let continue_target = self.chunk.code.len();
+
+        self.emit_bytes(OpCode::GetLocal, index_slot);
+
+        let one = self.make_constant(Value::Number(1.0))?;
+        self.emit_bytes(OpCode::Constant, one);
+
+        self.emit_opcode(OpCode::Add);
+
+        self.emit_bytes(OpCode::SetLocal, index_slot);
+        self.emit_opcode(OpCode::Pop);
+
+        // ============================================================
+        // INCREMENT -> CONDITION
+        // ============================================================
+
+        let condition_jump = self.emit_jump(OpCode::Jump);
+
+        // ============================================================
+        // CONDITION
+        // ============================================================
+
+        self.patch_jump(initial_jump);
+        self.patch_jump(condition_jump);
+
+        self.emit_bytes(OpCode::GetLocal, index_slot);
+        self.emit_bytes(OpCode::GetLocal, iterable_slot);
+        self.emit_opcode(OpCode::ArrayLength);
+        self.emit_opcode(OpCode::Less);
+
+        let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
+
+        self.emit_opcode(OpCode::Pop);
+
+        // ============================================================
+        // i = iterable[index]
+        // ============================================================
+
+        self.emit_bytes(OpCode::GetLocal, iterable_slot);
+        self.emit_bytes(OpCode::GetLocal, index_slot);
+        self.emit_opcode(OpCode::GetIndex);
+
+        self.emit_bytes(OpCode::SetLocal, variable_slot);
+        self.emit_opcode(OpCode::Pop);
+
+        // ============================================================
+        // LOOP CONTEXT
+        // ============================================================
 
         self.loops.push(LoopContext {
-            continue_target: loop_start,
+            continue_target,
             break_jumps: Vec::new(),
             scope_depth: self.scope_depth,
         });
 
-        self.begin_scope();
+        // ============================================================
+        // BODY
+        // ============================================================
 
         for statement in body {
             self.compile_statement(statement)?;
         }
 
-        self.end_scope();
+        // ============================================================
+        // BODY -> INCREMENT
+        // ============================================================
 
-        self.emit_loop(loop_start);
+        self.emit_loop(continue_target);
 
-        if let Some(exit_jump) = exit_jump {
-            self.patch_jump(exit_jump);
-            self.emit_opcode(OpCode::Pop); // dépile la condition (chemin "on sort")
-        }
+        // ============================================================
+        // SORTIE
+        // ============================================================
+
+        self.patch_jump(exit_jump);
+
+        self.emit_opcode(OpCode::Pop);
+
+        // ============================================================
+        // BREAK
+        // ============================================================
 
         let loop_context = self.loops.pop().expect("loop stack underflow");
 
@@ -1488,12 +1547,14 @@ impl Compiler {
             self.patch_jump(break_jump);
         }
 
-        // Referme le scope ouvert pour la variable d'initialisation.
+        // ============================================================
+        // FIN DU SCOPE
+        // ============================================================
+
         self.end_scope();
 
         Ok(())
     }
-
     // ============================================================
     //                      BREAK / CONTINUE
     // ============================================================
@@ -1608,18 +1669,12 @@ impl Compiler {
                 self.compile_while(condition, body)?;
             }
 
-            Statement::For {
-                init,
-                condition,
-                increment,
+            Statement::ForIn {
+                variable,
+                iterable,
                 body,
             } => {
-                self.compile_for(
-                    init.as_deref(),
-                    condition.as_ref(),
-                    increment.as_deref(),
-                    body,
-                )?;
+                self.compile_for_in(variable, iterable, body)?;
             }
 
             Statement::Function { name, params, body } => {

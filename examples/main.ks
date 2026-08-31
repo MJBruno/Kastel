@@ -1,11 +1,20 @@
-from utils import value
+ 
 
-println(value)
+// for (x in [10, 20, 30]) {
+//     println(x);
+// }
 
-let coll=[4,5,6,7,1];
+// for (i in range(5)) {
+//     println(i);           // 0 1 2 3 4
+// }
 
+// for (i in range(2, 10, 2)) {
+//     println(i);           // 2 4 6 8
+// }
 
-const i=0;
-for( i=0; i<coll.length; i=i+1 ){
-    println(coll[i]);
+for (i in range(10, 0, -1)) {
+    if (i == 5) { break; }
+    println(i);            // 10 9 8 7 6
 }
+
+ 

@@ -32,6 +32,7 @@ pub enum Value {
     String(String),
 
     Function(Rc<Function>),
+    
     Closure(Rc<RefCell<Closure>>),
 
     NativeFunction(NativeFn),

@@ -72,10 +72,11 @@ fn execute(source: &str, module_path: Option<PathBuf>) -> Result<(), KastelError
 }
 
 fn repl() {
-    println!("Crafted by nova.org, Madagascar: 2026 – 2027 ");
+    println!("Kastel 0.1.0 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)] on win32
+Type 'help', 'copyright', 'credits' or 'license' for more information: https://Kastel.org\n");
 
     loop {
-        print!("[Nova]👉  ");
+        print!(">>> ");
 
         if io::stdout().flush().is_err() {
             break;

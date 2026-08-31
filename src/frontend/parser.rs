@@ -473,7 +473,7 @@ impl Parser {
             vec![self.parse_if_statement()?]
         } else if self.match_token(TokenKind::While) {
             vec![self.parse_while_statement()?]
-        }  else if self.match_token(TokenKind::For) {
+        } else if self.match_token(TokenKind::For) {
             vec![self.parse_for_statement()?]
         } else if self.match_token(TokenKind::LeftBrace) {
             vec![Statement::Block(self.parse_block_statement()?)]
@@ -513,6 +513,8 @@ impl Parser {
             Expression::Variable(name) => Ok(AssignmentTarget::Variable(name)),
 
             Expression::Index { object, index } => Ok(AssignmentTarget::Index { object, index }),
+
+            Expression::Member { object, name } => Ok(AssignmentTarget::Member { object, name }),
 
             _ => {
                 let token = self.peek();
@@ -695,72 +697,6 @@ impl Parser {
         })
     }
 
-    fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
-        self.consume(TokenKind::LeftParen, "'(' attendu après for")?;
-
-        // --------------------------------------------------------
-        // Clause d'initialisation
-        // --------------------------------------------------------
-        let init: Option<Box<Statement>> = if self.match_token(TokenKind::Semicolon) {
-            None
-        } else if self.match_token(TokenKind::Let) {
-            let mut declarations = self.parse_variable_declaration(true)?;
-
-            if declarations.len() != 1 {
-                return Err(ParserError {
-                    message: "'for' accepte une seule déclaration d'initialisation".to_string(),
-                    line: self.previous().line,
-                    column: self.previous().column,
-                });
-            }
-
-            self.consume(TokenKind::Semicolon, "';' attendu après l'initialisation")?;
-
-            Some(Box::new(declarations.remove(0)))
-        } else {
-            let statement = self.parse_expression_or_assignment()?;
-
-            self.consume(TokenKind::Semicolon, "';' attendu après l'initialisation")?;
-
-            Some(Box::new(statement))
-        };
-
-        // --------------------------------------------------------
-        // Clause de condition
-        // --------------------------------------------------------
-        let condition = if self.check(TokenKind::Semicolon) {
-            None
-        } else {
-            Some(self.parse_expression()?)
-        };
-
-        self.consume(TokenKind::Semicolon, "';' attendu après la condition")?;
-
-        // --------------------------------------------------------
-        // Clause d'incrément
-        // --------------------------------------------------------
-        let increment: Option<Box<Statement>> = if self.check(TokenKind::RightParen) {
-            None
-        } else {
-            Some(Box::new(self.parse_expression_or_assignment()?))
-        };
-
-        self.consume(
-            TokenKind::RightParen,
-            "')' attendu après les clauses du for",
-        )?;
-        self.consume(TokenKind::LeftBrace, "'{' attendu avant le corps du for")?;
-
-        let body = self.parse_block_statement()?;
-
-        Ok(Statement::For {
-            init,
-            condition,
-            increment,
-            body,
-        })
-    }
-
     // ============================================================
     // RETURN
     // ============================================================
@@ -843,4 +779,62 @@ impl Parser {
 
         Ok(Statement::While { condition, body })
     }
+
+    // ============================================================
+    // FOR..IN
+    // ============================================================
+    //
+    // Syntaxe : for variable in iterable { corps }
+    //
+    //   for x in [1, 2, 3] { println(x); }
+    //   for i in range(10) { println(i); }
+    //
+    // Le for classique (style C : init; condition; incrément) n'existe
+    // plus dans Kastel — for..in est désormais la seule forme de boucle
+    // for, à la façon de Python.
+
+    fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
+        self.consume(TokenKind::LeftParen, "'(' attendu après for")?;
+        let variable =
+            self.consume(TokenKind::Identifier, "Nom de variable attendu après 'for'")?;
+
+        self.consume(TokenKind::In, "'in' attendu après le nom de variable")?;
+
+        let iterable = self.parse_expression()?;
+
+        self.consume(TokenKind::RightParen, "')' attendu après la condition")?;
+
+        self.consume(TokenKind::LeftBrace, "'{' attendu avant le corps du for")?;
+
+        let body = self.parse_block_statement()?;
+
+        Ok(Statement::ForIn {
+            variable: variable.lexeme,
+            iterable,
+            body,
+        })
+    }
+
+    //   fn parse_for_statement(&mut self) -> Result<Statement, ParseError> {
+
+    //     self.consume(TokenKind::For, "expected 'for'")?;
+
+    //     self.consume(TokenKind::LeftParen, "expected '(' after 'for'")?;
+
+    //     let variable = self.consume_identifier("expected identifier after 'for ('")?;
+
+    //     self.consume(TokenKind::In, "expected 'in' after loop variable")?;
+
+    //     let iterable = self.parse_expression()?;
+
+    //     self.consume(TokenKind::RightParen, "expected ')' after iterable")?;
+
+    //     let body = self.parse_block_statement()?;
+
+    //     Ok(Statement::ForIn {
+    //         variable,
+    //         iterable,
+    //         body,
+    //     })
+    // }
 }

@@ -26,6 +26,71 @@ pub fn native_clock(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ================================================================
+// RANGE (façon Python)
+//
+// range(stop)               -> 0, 1, ..., stop-1
+// range(start, stop)        -> start, start+1, ..., stop-1
+// range(start, stop, step)  -> start, start+step, ... (step != 0)
+//
+// Contrairement à Python, range() ici est ÉGER : elle construit
+// directement un tableau, car Kastel n'a pas encore de générateurs /
+// itérateurs paresseux. À éviter avec des bornes énormes.
+// ================================================================
+
+fn expect_integer(value: &Value) -> Result<i64, RuntimeError> {
+    match value {
+        Value::Number(n) => {
+            if n.fract() != 0.0 {
+                return Err(RuntimeError::TypeError);
+            }
+
+            Ok(*n as i64)
+        }
+
+        _ => Err(RuntimeError::TypeError),
+    }
+}
+
+pub fn native_range(args: &[Value]) -> Result<Value, RuntimeError> {
+    let (start, stop, step) = match args.len() {
+        1 => (0i64, expect_integer(&args[0])?, 1i64),
+
+        2 => (expect_integer(&args[0])?, expect_integer(&args[1])?, 1i64),
+
+        3 => (
+            expect_integer(&args[0])?,
+            expect_integer(&args[1])?,
+            expect_integer(&args[2])?,
+        ),
+
+        found => {
+            return Err(RuntimeError::WrongArgumentCount { expected: 3, found });
+        }
+    };
+
+    if step == 0 {
+        return Err(RuntimeError::TypeError);
+    }
+
+    let mut values = Vec::new();
+    let mut current = start;
+
+    if step > 0 {
+        while current < stop {
+            values.push(Value::Number(current as f64));
+            current += step;
+        }
+    } else {
+        while current > stop {
+            values.push(Value::Number(current as f64));
+            current += step;
+        }
+    }
+
+    Ok(Value::new_array(values))
+}
+
+// ================================================================
 // ADD
 // ================================================================
 
@@ -329,6 +394,8 @@ pub fn native_array_remove(args: &[Value]) -> Result<Value, RuntimeError> {
 pub fn register_natives(globals: &mut std::collections::HashMap<String, Value>) {
     globals.insert("clock".to_string(), Value::NativeFunction(native_clock));
 
+    globals.insert("range".to_string(), Value::NativeFunction(native_range));
+
     globals.insert("native_add".to_string(), Value::NativeFunction(native_add));
 
     globals.insert("println".to_string(), Value::NativeFunction(native_println));
@@ -364,6 +431,8 @@ pub fn register_natives(globals: &mut std::collections::HashMap<String, Value>) 
 
 pub fn execute_native(compiler: &mut Compiler) {
     let _ = compiler.define_native("clock");
+
+    let _ = compiler.define_native("range");
 
     let _ = compiler.define_native("native_add");
 

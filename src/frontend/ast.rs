@@ -37,7 +37,7 @@ pub struct ImportItem {
     pub name: String,
     pub alias: Option<String>,
 }
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 
 pub enum Statement {
     Let {
@@ -68,10 +68,9 @@ pub enum Statement {
         body: Vec<Statement>,
     },
 
-    For {
-        init: Option<Box<Statement>>,
-        condition: Option<Expression>,
-        increment: Option<Box<Statement>>,
+    ForIn {
+        variable: String,
+        iterable: Expression,
         body: Vec<Statement>,
     },
 

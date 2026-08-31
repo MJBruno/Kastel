@@ -52,7 +52,7 @@ impl VirtualMachine {
         }));
 
         let mut vm = Self {
-            stack: Vec::new(),
+            stack:  vec![Value::Nil],
             globals: HashMap::new(),
             natives: HashMap::new(),
             frames: vec![CallFrame {
@@ -430,6 +430,7 @@ impl VirtualMachine {
 
                     let frame = self.frames.last().expect("Aucun CallFrame");
 
+                    
                     let index = frame.slot_start + 1 + slot;
 
                     let value = self.stack[index].clone();
