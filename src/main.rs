@@ -1,7 +1,7 @@
 use crate::app::application::Application;
 mod app;
 mod bytecode;
-mod compile;
+mod compiler;
 mod error;
 mod frontend;
 mod module;

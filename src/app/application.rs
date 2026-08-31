@@ -1,4 +1,4 @@
-use crate::compile::compiler::Compiler;
+use crate::compiler::compiler::Compiler;
 use crate::error::kastel_error::KastelError;
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::Parser;

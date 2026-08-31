@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{  compile::compiler::Compiler, runtime::value::Value};
+use crate::{  compiler::compiler::Compiler, runtime::value::Value};
 use crate::runtime::native::execute_native;
 use crate::vm::machine::VirtualMachine;
 use crate::error::compile_error::CompileError;
