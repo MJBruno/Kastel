@@ -1,4 +1,4 @@
-![Architecture de Kastel](assets/ico/4.png)
+![Architecture de Kastel](assets/logo/4.png)
 
 # Kastel
 
