@@ -96,6 +96,8 @@ impl Compiler {
         Ok(function)
     }
 
+    
+
     /// Enregistre une fonction native dans la table des symboles globaux.
     pub fn define_native(&mut self, name: &str) -> Result<(), CompileError> {
         let constant = self.identifier_constant(name)?;

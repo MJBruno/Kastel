@@ -1,8 +1,8 @@
- 
 
 for (x in [10, 20, 30]) {
     println(x);
 }
+
 println("===========================");
 for (i in range(5)) {
     println(i);           // 0 1 2 3 4

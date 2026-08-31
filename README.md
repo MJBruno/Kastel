@@ -1,3 +1,5 @@
+![Architecture de Kastel](assets/ico/4.png)
+
 # Kastel
 
 **Kastel** est un langage de programmation moderne, dynamique et interprété, conçu pour offrir une syntaxe simple et expressive tout en reposant sur une architecture d’exécution basée sur une **machine virtuelle (VM)**.
