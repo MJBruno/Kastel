@@ -110,19 +110,39 @@ pub fn collect(roots: GcRoots) -> usize {
     let mut marked_upvalues: HashSet<usize> = HashSet::new();
 
     for value in roots.stack {
-        mark_value(value, &mut marked_arrays, &mut marked_closures, &mut marked_upvalues);
+        mark_value(
+            value,
+            &mut marked_arrays,
+            &mut marked_closures,
+            &mut marked_upvalues,
+        );
     }
 
     for value in roots.globals.values() {
-        mark_value(value, &mut marked_arrays, &mut marked_closures, &mut marked_upvalues);
+        mark_value(
+            value,
+            &mut marked_arrays,
+            &mut marked_closures,
+            &mut marked_upvalues,
+        );
     }
 
     for frame in roots.frames {
-        mark_closure(&frame.closure, &mut marked_arrays, &mut marked_closures, &mut marked_upvalues);
+        mark_closure(
+            &frame.closure,
+            &mut marked_arrays,
+            &mut marked_closures,
+            &mut marked_upvalues,
+        );
     }
 
     for upvalue in roots.open_upvalues {
-        mark_upvalue(upvalue, &mut marked_arrays, &mut marked_closures, &mut marked_upvalues);
+        mark_upvalue(
+            upvalue,
+            &mut marked_arrays,
+            &mut marked_closures,
+            &mut marked_upvalues,
+        );
     }
 
     REGISTRY.with(|registry| {
@@ -177,8 +197,23 @@ pub fn collect(roots: GcRoots) -> usize {
             None => false,
         });
 
+        // Heuristique proportionnelle à la taille du tas VIVANT après la
+        // collecte (mesurée juste après les .retain() ci-dessus, donc sans
+        // les entrées totalement libérées) plutôt qu'un doublement aveugle
+        // du seuil précédent :
+        // - beaucoup de mémoire libérée -> tas vivant petit -> seuil bas
+        //   -> prochaines collectes fréquentes mais très rapides (peu
+        //   d'objets à parcourir).
+        // - peu de mémoire libérée (gros jeu de données légitimement vivant)
+        //   -> seuil élevé -> on évite de repasser inutilement souvent sur
+        //   un tas qui ne contient presque jamais de cycles à casser.
+        // C'est le même principe que la croissance du tas dans V8/CPython :
+        // le rythme de collecte s'adapte à ce qui survit réellement, pas au
+        // nombre brut d'allocations.
+        let live_count = registry.arrays.len() + registry.closures.len() + registry.upvalues.len();
+
         registry.allocations_since_collect = 0;
-        registry.threshold = (registry.threshold * 2).max(256);
+        registry.threshold = (live_count * 2).max(256);
 
         broken
     })

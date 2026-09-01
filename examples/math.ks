@@ -1,4 +1,4 @@
-export function square(x) {
+export func square(x) {
     return x * x;
 }
 

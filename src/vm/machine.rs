@@ -7,7 +7,7 @@ use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
-use crate::runtime::gc;
+use crate::runtime::{gc, object};
 use crate::runtime::native::register_natives;
 use crate::runtime::value::*;
 use crate::bytecode::chunk::OpCode;
@@ -47,12 +47,7 @@ pub struct VirtualMachine {
 #[allow(dead_code)]
 impl VirtualMachine {
     pub fn new(function: Rc<Function>, module_path: Option<PathBuf>) -> Self {
-        let closure = Rc::new(RefCell::new(Closure {
-            function,
-            upvalues: Vec::new(),
-        }));
-
-        gc::register_closure(&closure);
+        let closure = object::new_closure(function, Vec::new());
 
         let mut vm = Self {
             stack:  vec![Value::Nil],
@@ -883,10 +878,9 @@ impl VirtualMachine {
             }
         };
 
-        let mut closure = Closure {
-            function: Rc::clone(&function),
-            upvalues: Vec::with_capacity(function.upvalue_count),
-        };
+        let function_ref = Rc::clone(&function);
+
+        let mut pending_upvalues = Vec::with_capacity(function.upvalue_count);
 
         for _ in 0..function.upvalue_count {
             let is_local = self.read_byte();
@@ -907,12 +901,10 @@ impl VirtualMachine {
                     .ok_or(RuntimeError::InvalidFunction)?
             };
 
-            closure.upvalues.push(upvalue);
+            pending_upvalues.push(upvalue);
         }
 
-        let closure = Rc::new(RefCell::new(closure));
-
-        gc::register_closure(&closure);
+        let closure = object::new_closure(function_ref, pending_upvalues);
 
         self.push(Value::Closure(closure));
 
@@ -932,12 +924,7 @@ impl VirtualMachine {
             }
         }
 
-        let upvalue = Rc::new(RefCell::new(ObjUpvalue {
-            slot: absolute_slot,
-            closed: None,
-        }));
-
-        gc::register_upvalue(&upvalue);
+        let upvalue = object::new_upvalue(absolute_slot);
 
         self.open_upvalues.push(Rc::clone(&upvalue));
 
@@ -950,8 +937,8 @@ impl VirtualMachine {
 
     /// Rassemble les racines actuelles de la VM et lance une collecte de
     /// cycles. Retourne le nombre de cycles cassés (0 si le tas était déjà
-    /// propre — ce qui est le cas la grande majorité du temps, puisque Rc
-    /// gère déjà tout seul les cas non cycliques).
+    /// propre — le cas la grande majorité du temps, Rc gérant déjà seul
+    /// tout ce qui n'est pas cyclique).
     pub fn collect_garbage(&mut self) -> usize {
         gc::collect(gc::GcRoots {
             stack: &self.stack,

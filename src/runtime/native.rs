@@ -26,7 +26,7 @@ pub fn native_clock(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ================================================================
-// RANGE (façon Python)
+// RANGE
 //
 // range(stop)               -> 0, 1, ..., stop-1
 // range(start, stop)        -> start, start+1, ..., stop-1

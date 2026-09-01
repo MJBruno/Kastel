@@ -1,21 +1,22 @@
+import math;
 
-for (x in [10, 20, 30]) {
-    println(x);
+const name = input("Comment tu t'appel?\n");
+
+let a = 25;
+
+if (a < 18) {
+    println("Mineur!!");
+} else {
+    println("Majeur!!");
 }
 
-println("===========================");
-for (i in range(5)) {
-    println(i);           // 0 1 2 3 4
-}
+let s = format("Bonjour {}, tu as {} ans", name, a);
 
-println("===========================");
-for (i in range(2, 10, 2)) {
-    println(i);           // 2 4 6 8
-}
+println(s);
 
-println("===========================");
-for (i in range(10, 0, -1)) {
-    if (i == 5) { break; }
-    println(i);            // 10 9 8 7 6
+for ( i in [2, 6, 7, 4, 1, 9]) {
+    if (i % 2 == 0) {
+        println("Item: {}", i);
+    }
 }
 
