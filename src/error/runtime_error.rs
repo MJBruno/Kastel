@@ -1,5 +1,3 @@
-
-
 // ================================================================
 // RUNTIME_ERROR
 // ================================================================
@@ -23,6 +21,7 @@ pub enum RuntimeError {
 
     ArrayIndexOutOfBounds { index: usize, length: usize },
     ModuleError(String),
+    ObjectFieldNotFound(String),
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -69,6 +68,9 @@ impl std::fmt::Display for RuntimeError {
             }
             RuntimeError::ModuleError(message) => {
                 write!(f, "Module error: {message}")
+            }
+            RuntimeError::ObjectFieldNotFound(name) => {
+                write!(f, "Champ '{name}' introuvable sur l'objet.")
             }
         }
     }

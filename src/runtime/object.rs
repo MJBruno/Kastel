@@ -175,6 +175,78 @@ impl Value {
             _ => Err(RuntimeError::TypeError),
         }
     }
+
+    // ============================================================
+    //                      OBJET
+    // ============================================================
+
+    pub fn new_object(fields: Vec<(String, Value)>) -> Self {
+        let handle = Rc::new(RefCell::new(fields));
+
+        gc::register_object(&handle);
+
+        Value::Object(handle)
+    }
+
+    pub fn object_get(&self, name: &str) -> Result<Value, RuntimeError> {
+        match self {
+            Value::Object(fields) => fields
+                .borrow()
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+                .ok_or_else(|| RuntimeError::ObjectFieldNotFound(name.to_string())),
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    /// Assigne un champ. Contrairement à `array_set` (qui exige un index
+    /// existant), une clé absente est simplement ajoutée — comportement
+    /// dynamique façon JS plutôt qu'une erreur "champ inconnu".
+    pub fn object_set(&self, name: &str, value: Value) -> Result<(), RuntimeError> {
+        match self {
+            Value::Object(fields) => {
+                let mut fields = fields.borrow_mut();
+
+                match fields.iter_mut().find(|(key, _)| key == name) {
+                    Some((_, slot)) => *slot = value,
+                    None => fields.push((name.to_string(), value)),
+                }
+
+                Ok(())
+            }
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    // ============================================================
+    //                      ACCÈS UNIFIÉ AUX PROPRIÉTÉS
+    // ============================================================
+    //
+    // Utilisé par les opcodes GetProperty/SetProperty : `user.name` et
+    // `module.export` partagent la même syntaxe (Expression::Member), donc
+    // la VM n'a pas besoin de savoir à la compilation lequel des deux
+    // c'est — elle demande juste "récupère/assigne la propriété `name`" et
+    // laisse le type réel de la valeur décider du comportement.
+
+    pub fn get_property(&self, name: &str) -> Result<Value, RuntimeError> {
+        match self {
+            Value::Module(_) => self.module_get(name),
+            Value::Object(_) => self.object_get(name),
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn set_property(&self, name: &str, value: Value) -> Result<(), RuntimeError> {
+        match self {
+            // Les modules restent en lecture seule : leurs exports sont
+            // figés à la compilation du module importé.
+            Value::Object(_) => self.object_set(name, value),
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
 }
 
 // ============================================================

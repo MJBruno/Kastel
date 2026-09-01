@@ -1,5 +1,4 @@
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum AssignmentTarget {
     Variable(String),
 
@@ -37,8 +36,7 @@ pub struct ImportItem {
     pub name: String,
     pub alias: Option<String>,
 }
-#[derive(Debug,Clone)]
-
+#[derive(Debug, Clone)]
 pub enum Statement {
     Let {
         name: String,
@@ -141,6 +139,11 @@ pub enum Expression {
     },
 
     Array(Vec<Expression>),
+
+    /// Littéral d'objet : { clé: expression, ... }
+    /// L'ordre des champs est préservé (Vec, pas HashMap) pour que
+    /// l'affichage et l'itération future respectent l'ordre d'écriture.
+    Object(Vec<(String, Expression)>),
 
     Ternary {
         condition: Box<Expression>,

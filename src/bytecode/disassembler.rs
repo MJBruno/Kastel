@@ -1,7 +1,7 @@
-use crate::{bytecode::opcode::OpCode, runtime::value::Value};
+use crate::runtime::value::Value;
 
 use super::chunk::Chunk;
- 
+use super::opcode::OpCode;
 
 impl Chunk {
     pub fn disassemble_instruction(&self, offset: usize) -> usize {
@@ -109,6 +109,8 @@ impl Chunk {
             // ARRAYS
             // =====================================================
             x if x == OpCode::Array.into() => self.byte_instruction("OP_ARRAY", offset),
+
+            x if x == OpCode::Object.into() => self.byte_instruction("OP_OBJECT", offset),
 
             x if x == OpCode::GetIndex.into() => self.simple_instruction("OP_GET_INDEX", offset),
 

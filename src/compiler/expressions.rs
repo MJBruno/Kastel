@@ -90,6 +90,26 @@ impl Compiler {
                 self.emit_bytes(OpCode::Array, elements.len() as u8);
             }
 
+            Expression::Object(fields) => {
+                if fields.len() > u8::MAX as usize {
+                    return Err(CompileError::TooManyArrayElements);
+                }
+
+                for (key, value) in fields {
+                    // La clé est poussée comme une constante String, au
+                    // même titre qu'une expression normale — même schéma
+                    // que le tableau (push N valeurs, puis un opcode qui
+                    // les consomme toutes), mais en alternant clé/valeur.
+                    let key_constant = self.make_constant(Value::String(key.clone()))?;
+
+                    self.emit_bytes(OpCode::Constant, key_constant);
+
+                    self.compile_expression(value)?;
+                }
+
+                self.emit_bytes(OpCode::Object, fields.len() as u8);
+            }
+
             Expression::Index { object, index } => {
                 self.compile_expression(object)?;
                 self.compile_expression(index)?;

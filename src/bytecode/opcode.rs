@@ -50,6 +50,9 @@ pub enum OpCode {
     ArrayClear,
     ArrayContains,
 
+    //OBJECT
+    Object,
+
     // CLOSURES
     Closure,
     GetUpvalue,

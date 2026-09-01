@@ -23,6 +23,7 @@ struct GcRegistry {
     arrays: Vec<Weak<RefCell<Vec<Value>>>>,
     closures: Vec<Weak<RefCell<Closure>>>,
     upvalues: Vec<Weak<RefCell<ObjUpvalue>>>,
+    objects: Vec<Weak<RefCell<Vec<(String, Value)>>>>,
     allocations_since_collect: usize,
     threshold: usize,
 }
@@ -33,6 +34,7 @@ impl GcRegistry {
             arrays: Vec::new(),
             closures: Vec::new(),
             upvalues: Vec::new(),
+            objects: Vec::new(),
             allocations_since_collect: 0,
             // Seuil initial modeste ; doublé après chaque collecte (même
             // heuristique que `next_gc` dans clox) pour amortir le coût du
@@ -70,6 +72,17 @@ pub fn register_upvalue(handle: &Rc<RefCell<ObjUpvalue>>) {
     });
 }
 
+/// Enregistre un objet ({ clé: valeur, ... }) fraîchement alloué.
+/// Un objet peut désormais participer à un cycle (ex. `a.self = a;`),
+/// exactement comme un tableau — il doit donc être suivi de la même façon.
+pub fn register_object(handle: &Rc<RefCell<Vec<(String, Value)>>>) {
+    REGISTRY.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        registry.objects.push(Rc::downgrade(handle));
+        registry.allocations_since_collect += 1;
+    });
+}
+
 /// Indique si le nombre d'allocations depuis la dernière collecte dépasse
 /// le seuil courant. La VM appelle ceci entre deux instructions (jamais au
 /// milieu d'un opcode) pour décider de déclencher `collect`.
@@ -91,11 +104,25 @@ pub struct GcRoots<'a> {
     pub open_upvalues: &'a [Rc<RefCell<ObjUpvalue>>],
 }
 
+/// Regroupe les ensembles d'identités déjà marquées pendant un passage de
+/// collecte, par type d'objet. Une seule struct plutôt que 4 `HashSet`
+/// threadés séparément à travers chaque fonction `mark_*` : plus simple à
+/// lire, et plus facile à étendre si un futur type d'objet doit rejoindre
+/// le GC (il suffit d'ajouter un champ ici plutôt que de retoucher toutes
+/// les signatures existantes).
+#[derive(Default)]
+struct MarkState {
+    arrays: HashSet<usize>,
+    closures: HashSet<usize>,
+    upvalues: HashSet<usize>,
+    objects: HashSet<usize>,
+}
+
 /// Exécute un passage complet de collecte de cycles.
 ///
 /// 1. MARK : parcourt récursivement toutes les racines et marque (par
-///    identité de pointeur, via `Rc::as_ptr`) chaque tableau/closure/upvalue
-///    atteignable.
+///    identité de pointeur, via `Rc::as_ptr`) chaque tableau/closure/
+///    upvalue/objet atteignable.
 /// 2. SWEEP : tout objet toujours enregistré et toujours vivant
 ///    (`Weak::upgrade` réussit) mais jamais marqué ne peut être maintenu en
 ///    vie que par un cycle de références internes — on vide son contenu
@@ -105,44 +132,22 @@ pub struct GcRoots<'a> {
 ///
 /// Retourne le nombre de cycles cassés (utile pour du diagnostic).
 pub fn collect(roots: GcRoots) -> usize {
-    let mut marked_arrays: HashSet<usize> = HashSet::new();
-    let mut marked_closures: HashSet<usize> = HashSet::new();
-    let mut marked_upvalues: HashSet<usize> = HashSet::new();
+    let mut state = MarkState::default();
 
     for value in roots.stack {
-        mark_value(
-            value,
-            &mut marked_arrays,
-            &mut marked_closures,
-            &mut marked_upvalues,
-        );
+        mark_value(value, &mut state);
     }
 
     for value in roots.globals.values() {
-        mark_value(
-            value,
-            &mut marked_arrays,
-            &mut marked_closures,
-            &mut marked_upvalues,
-        );
+        mark_value(value, &mut state);
     }
 
     for frame in roots.frames {
-        mark_closure(
-            &frame.closure,
-            &mut marked_arrays,
-            &mut marked_closures,
-            &mut marked_upvalues,
-        );
+        mark_closure(&frame.closure, &mut state);
     }
 
     for upvalue in roots.open_upvalues {
-        mark_upvalue(
-            upvalue,
-            &mut marked_arrays,
-            &mut marked_closures,
-            &mut marked_upvalues,
-        );
+        mark_upvalue(upvalue, &mut state);
     }
 
     REGISTRY.with(|registry| {
@@ -153,7 +158,7 @@ pub fn collect(roots: GcRoots) -> usize {
             Some(rc) => {
                 let id = Rc::as_ptr(&rc) as usize;
 
-                if !marked_arrays.contains(&id) {
+                if !state.arrays.contains(&id) {
                     // Vivant (refcount > 0) mais inatteignable depuis les
                     // racines : ne peut être maintenu en vie que par un
                     // cycle. On casse le cycle en vidant son contenu.
@@ -171,7 +176,7 @@ pub fn collect(roots: GcRoots) -> usize {
             Some(rc) => {
                 let id = Rc::as_ptr(&rc) as usize;
 
-                if !marked_closures.contains(&id) {
+                if !state.closures.contains(&id) {
                     rc.borrow_mut().upvalues.clear();
                     broken += 1;
                 }
@@ -186,8 +191,23 @@ pub fn collect(roots: GcRoots) -> usize {
             Some(rc) => {
                 let id = Rc::as_ptr(&rc) as usize;
 
-                if !marked_upvalues.contains(&id) {
+                if !state.upvalues.contains(&id) {
                     rc.borrow_mut().closed = None;
+                    broken += 1;
+                }
+
+                true
+            }
+
+            None => false,
+        });
+
+        registry.objects.retain(|weak| match weak.upgrade() {
+            Some(rc) => {
+                let id = Rc::as_ptr(&rc) as usize;
+
+                if !state.objects.contains(&id) {
+                    rc.borrow_mut().clear();
                     broken += 1;
                 }
 
@@ -210,7 +230,10 @@ pub fn collect(roots: GcRoots) -> usize {
         // C'est le même principe que la croissance du tas dans V8/CPython :
         // le rythme de collecte s'adapte à ce qui survit réellement, pas au
         // nombre brut d'allocations.
-        let live_count = registry.arrays.len() + registry.closures.len() + registry.upvalues.len();
+        let live_count = registry.arrays.len()
+            + registry.closures.len()
+            + registry.upvalues.len()
+            + registry.objects.len();
 
         registry.allocations_since_collect = 0;
         registry.threshold = (live_count * 2).max(256);
@@ -219,68 +242,48 @@ pub fn collect(roots: GcRoots) -> usize {
     })
 }
 
-fn mark_value(
-    value: &Value,
-    marked_arrays: &mut HashSet<usize>,
-    marked_closures: &mut HashSet<usize>,
-    marked_upvalues: &mut HashSet<usize>,
-) {
+fn mark_value(value: &Value, state: &mut MarkState) {
     match value {
-        Value::Array(array) => mark_array(array, marked_arrays, marked_closures, marked_upvalues),
+        Value::Array(array) => mark_array(array, state),
 
-        Value::Closure(closure) => {
-            mark_closure(closure, marked_arrays, marked_closures, marked_upvalues)
-        }
+        Value::Closure(closure) => mark_closure(closure, state),
+
+        Value::Object(object) => mark_object(object, state),
 
         _ => {}
     }
 }
 
-fn mark_array(
-    array: &Rc<RefCell<Vec<Value>>>,
-    marked_arrays: &mut HashSet<usize>,
-    marked_closures: &mut HashSet<usize>,
-    marked_upvalues: &mut HashSet<usize>,
-) {
+fn mark_array(array: &Rc<RefCell<Vec<Value>>>, state: &mut MarkState) {
     let id = Rc::as_ptr(array) as usize;
 
     // `insert` retourne false si déjà présent : protège aussi contre une
     // boucle infinie si le tableau se contient (directement ou indirectement).
-    if !marked_arrays.insert(id) {
+    if !state.arrays.insert(id) {
         return;
     }
 
     for value in array.borrow().iter() {
-        mark_value(value, marked_arrays, marked_closures, marked_upvalues);
+        mark_value(value, state);
     }
 }
 
-fn mark_closure(
-    closure: &Rc<RefCell<Closure>>,
-    marked_arrays: &mut HashSet<usize>,
-    marked_closures: &mut HashSet<usize>,
-    marked_upvalues: &mut HashSet<usize>,
-) {
+fn mark_closure(closure: &Rc<RefCell<Closure>>, state: &mut MarkState) {
     let id = Rc::as_ptr(closure) as usize;
 
-    if !marked_closures.insert(id) {
+    if !state.closures.insert(id) {
         return;
     }
 
     for upvalue in &closure.borrow().upvalues {
-        mark_upvalue(upvalue, marked_arrays, marked_closures, marked_upvalues);
+        mark_upvalue(upvalue, state);
     }
 }
 
-fn mark_upvalue(
-    upvalue: &Rc<RefCell<ObjUpvalue>>,
-    marked_arrays: &mut HashSet<usize>,
-    marked_closures: &mut HashSet<usize>,
-    marked_upvalues: &mut HashSet<usize>,
-) {
+fn mark_upvalue(upvalue: &Rc<RefCell<ObjUpvalue>>, state: &mut MarkState) {
     let id = Rc::as_ptr(upvalue) as usize;
 
-    if !marked_upvalues.insert(id) {
+    if !state.upvalues.insert(id) {
         return;
     }
 
@@ -288,6 +291,18 @@ fn mark_upvalue(
     // (déjà couverte par le scan de `roots.stack`). Une fois fermée, elle
     // ne vit plus que dans `closed` : c'est là qu'un cycle peut se cacher.
     if let Some(value) = &upvalue.borrow().closed {
-        mark_value(value, marked_arrays, marked_closures, marked_upvalues);
+        mark_value(value, state);
+    }
+}
+
+fn mark_object(object: &Rc<RefCell<Vec<(String, Value)>>>, state: &mut MarkState) {
+    let id = Rc::as_ptr(object) as usize;
+
+    if !state.objects.insert(id) {
+        return;
+    }
+
+    for (_, value) in object.borrow().iter() {
+        mark_value(value, state);
     }
 }

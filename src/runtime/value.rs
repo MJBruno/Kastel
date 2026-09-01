@@ -39,6 +39,11 @@ pub enum Value {
 
     Array(ArrayRef),
 
+    /// Objet dynamique : liste ordonnée de (clé, valeur), comme un tableau
+    /// associatif à la JS. Ordonné (pas de HashMap) pour préserver l'ordre
+    /// d'écriture du littéral lors de l'affichage.
+    Object(Rc<RefCell<Vec<(String, Value)>>>),
+
     Module(Rc<ModuleInstance>),
 
     Nil,
@@ -92,6 +97,22 @@ impl Display for Value {
                 }
 
                 write!(f, "]")
+            }
+
+            Value::Object(fields) => {
+                let fields = fields.borrow();
+
+                write!(f, "{{ ")?;
+
+                for (index, (key, value)) in fields.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+
+                    write!(f, "{key}: {value}")?;
+                }
+
+                write!(f, " }}")
             }
 
             Value::Module(module) => {

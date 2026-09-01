@@ -7,7 +7,8 @@ use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
-use crate::runtime::{gc, object};
+use crate::runtime::gc;
+use crate::runtime::object;
 use crate::runtime::native::register_natives;
 use crate::runtime::value::*;
 use crate::bytecode::chunk::OpCode;
@@ -214,6 +215,37 @@ impl VirtualMachine {
         let values = self.stack.drain(start..).collect::<Vec<_>>();
 
         self.push(Value::new_array(values));
+
+        Ok(())
+    }
+
+    fn op_object(&mut self, pair_count: usize) -> Result<(), RuntimeError> {
+        let total = pair_count * 2;
+
+        if self.stack.len() < total {
+            return Err(RuntimeError::TypeError);
+        }
+
+        let start = self.stack.len() - total;
+
+        // drain() préserve l'ordre d'empilement (clé1, valeur1, clé2,
+        // valeur2, ...), donc l'ordre d'écriture du littéral source est
+        // conservé sans avoir besoin d'inverser quoi que ce soit.
+        let drained = self.stack.drain(start..).collect::<Vec<_>>();
+
+        let mut fields = Vec::with_capacity(pair_count);
+        let mut iter = drained.into_iter();
+
+        while let (Some(key), Some(value)) = (iter.next(), iter.next()) {
+            let key = match key {
+                Value::String(name) => name,
+                _ => return Err(RuntimeError::TypeError),
+            };
+
+            fields.push((key, value));
+        }
+
+        self.push(Value::new_object(fields));
 
         Ok(())
     }
@@ -586,7 +618,7 @@ impl VirtualMachine {
 
                     let object = self.pop();
 
-                    let value = object.module_get(&name)?;
+                    let value = object.get_property(&name)?;
 
                     self.push(value);
                 }
@@ -596,7 +628,7 @@ impl VirtualMachine {
 
                     let property = self.read_constant(constant);
 
-                    let _name = match property {
+                    let name = match property {
                         Value::String(name) => name,
 
                         _ => {
@@ -604,15 +636,14 @@ impl VirtualMachine {
                         }
                     };
 
-                    let _value = self.pop();
-                    let _object = self.pop();
+                    let value = self.pop();
+                    let object = self.pop();
 
-                    // Kastel n'a pas encore de type "objet"/structure à champs
-                    // mutables : GetProperty ne fonctionne aujourd'hui que sur
-                    // les modules (accès en lecture à un export). Tant que ce
-                    // type n'existe pas, une affectation `obj.champ = valeur`
-                    // ne peut rien faire de valide à l'exécution.
-                    return Err(RuntimeError::TypeError);
+                    // Fonctionne désormais réellement pour les objets
+                    // (Value::Object) ; reste une erreur pour tout le
+                    // reste, notamment les modules (exports en lecture
+                    // seule, figés à la compilation du module importé).
+                    object.set_property(&name, value)?;
                 }
 
                 // =================================================
@@ -622,6 +653,15 @@ impl VirtualMachine {
                     let count = self.read_byte() as usize;
 
                     self.op_array(count)?;
+                }
+
+                // =================================================
+                // OBJET
+                // =================================================
+                x if x == OpCode::Object.into() => {
+                    let pair_count = self.read_byte() as usize;
+
+                    self.op_object(pair_count)?;
                 }
 
                 x if x == OpCode::GetIndex.into() => {

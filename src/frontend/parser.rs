@@ -438,6 +438,52 @@ impl Parser {
                 Ok(Expression::Array(elements))
             }
 
+            // ----------------------------------------------------
+            // Objet : { clé: expression, clé2: expression2, ... }
+            //
+            // Aucune ambiguïté avec les blocs de statements : ceux-ci ne
+            // sont reconnus qu'au niveau statement() (en tout début de
+            // statement), jamais ici dans primary(), qui n'est atteint
+            // qu'en position d'expression (après '=', comme argument,
+            // comme élément de tableau, etc.).
+            // ----------------------------------------------------
+            TokenKind::LeftBrace => {
+                let mut fields: Vec<(String, Expression)> = Vec::new();
+
+                if !self.check(TokenKind::RightBrace) {
+                    loop {
+                        // La clé peut être un identifiant ({ name: ... })
+                        // ou une chaîne ({ "name": ... }), pratique pour
+                        // les clés qui ne sont pas des identifiants valides.
+                        let key = if self.check(TokenKind::String) {
+                            self.advance().lexeme.clone()
+                        } else {
+                            self.consume(TokenKind::Identifier, "nom de champ attendu")?
+                                .lexeme
+                        };
+
+                        self.consume(TokenKind::Colon, "':' attendu après le nom du champ")?;
+
+                        let value = self.parse_expression()?;
+
+                        fields.push((key, value));
+
+                        if !self.match_token(TokenKind::Comma) {
+                            break;
+                        }
+
+                        // Autorise la virgule finale : { a: 1, b: 2, }
+                        if self.check(TokenKind::RightBrace) {
+                            break;
+                        }
+                    }
+                }
+
+                self.consume(TokenKind::RightBrace, "'}' attendu après l'objet")?;
+
+                Ok(Expression::Object(fields))
+            }
+
             _ => Err(ParserError {
                 message: "Expression invalide".to_string(),
                 line: token.line,
@@ -794,15 +840,11 @@ impl Parser {
     // for, à la façon de Python.
 
     fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
-        self.consume(TokenKind::LeftParen, "'(' attendu après for")?;
-        let variable =
-            self.consume(TokenKind::Identifier, "Nom de variable attendu après 'for'")?;
+        let variable = self.consume(TokenKind::Identifier, "Nom de variable attendu après 'for'")?;
 
         self.consume(TokenKind::In, "'in' attendu après le nom de variable")?;
 
         let iterable = self.parse_expression()?;
-
-        self.consume(TokenKind::RightParen, "')' attendu après la condition")?;
 
         self.consume(TokenKind::LeftBrace, "'{' attendu avant le corps du for")?;
 
@@ -815,26 +857,4 @@ impl Parser {
         })
     }
 
-    //   fn parse_for_statement(&mut self) -> Result<Statement, ParseError> {
-
-    //     self.consume(TokenKind::For, "expected 'for'")?;
-
-    //     self.consume(TokenKind::LeftParen, "expected '(' after 'for'")?;
-
-    //     let variable = self.consume_identifier("expected identifier after 'for ('")?;
-
-    //     self.consume(TokenKind::In, "expected 'in' after loop variable")?;
-
-    //     let iterable = self.parse_expression()?;
-
-    //     self.consume(TokenKind::RightParen, "expected ')' after iterable")?;
-
-    //     let body = self.parse_block_statement()?;
-
-    //     Ok(Statement::ForIn {
-    //         variable,
-    //         iterable,
-    //         body,
-    //     })
-    // }
 }
