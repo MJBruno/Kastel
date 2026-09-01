@@ -108,7 +108,11 @@ impl Value {
     // ============================================================
 
     pub fn new_array(elements: Vec<Value>) -> Self {
-        Value::Array(Rc::new(RefCell::new(elements)))
+        let handle = Rc::new(RefCell::new(elements));
+
+        crate::runtime::gc::register_array(&handle);
+
+        Value::Array(handle)
     }
 
     pub fn array_get(&self, index: usize) -> Result<Value, RuntimeError> {

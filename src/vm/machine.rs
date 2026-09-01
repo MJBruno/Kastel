@@ -7,6 +7,7 @@ use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
+use crate::runtime::gc;
 use crate::runtime::native::register_natives;
 use crate::runtime::value::*;
 use crate::bytecode::chunk::OpCode;
@@ -50,6 +51,8 @@ impl VirtualMachine {
             function,
             upvalues: Vec::new(),
         }));
+
+        gc::register_closure(&closure);
 
         let mut vm = Self {
             stack:  vec![Value::Nil],
@@ -215,7 +218,7 @@ impl VirtualMachine {
 
         let values = self.stack.drain(start..).collect::<Vec<_>>();
 
-        self.push(Value::Array(Rc::new(RefCell::new(values))));
+        self.push(Value::new_array(values));
 
         Ok(())
     }
@@ -350,6 +353,13 @@ impl VirtualMachine {
         loop {
             if cfg!(feature = "debug_trace") {
                 self.debug_machine();
+            }
+
+            // Vérifié entre deux instructions seulement (jamais au milieu
+            // d'un opcode, où un RefCell pourrait déjà être emprunté) :
+            // c'est le seul moment où l'état de la VM est "au repos".
+            if gc::should_collect() {
+                self.collect_garbage();
             }
 
             let instruction = self.read_byte();
@@ -900,7 +910,11 @@ impl VirtualMachine {
             closure.upvalues.push(upvalue);
         }
 
-        self.push(Value::Closure(Rc::new(RefCell::new(closure))));
+        let closure = Rc::new(RefCell::new(closure));
+
+        gc::register_closure(&closure);
+
+        self.push(Value::Closure(closure));
 
         Ok(())
     }
@@ -923,9 +937,28 @@ impl VirtualMachine {
             closed: None,
         }));
 
+        gc::register_upvalue(&upvalue);
+
         self.open_upvalues.push(Rc::clone(&upvalue));
 
         upvalue
+    }
+
+    // ============================================================
+    // GARBAGE COLLECTION
+    // ============================================================
+
+    /// Rassemble les racines actuelles de la VM et lance une collecte de
+    /// cycles. Retourne le nombre de cycles cassés (0 si le tas était déjà
+    /// propre — ce qui est le cas la grande majorité du temps, puisque Rc
+    /// gère déjà tout seul les cas non cycliques).
+    pub fn collect_garbage(&mut self) -> usize {
+        gc::collect(gc::GcRoots {
+            stack: &self.stack,
+            globals: &self.globals,
+            frames: &self.frames,
+            open_upvalues: &self.open_upvalues,
+        })
     }
 
     fn get_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
