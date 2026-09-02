@@ -1,5 +1,6 @@
 use crate::module::module::ModuleInstance;
 use crate::runtime::closure::Closure;
+use crate::runtime::iterator::IteratorState;
 use crate::runtime::native::NativeFn;
 use crate::{error::runtime_error::RuntimeError, runtime::function::Function};
  
@@ -43,6 +44,17 @@ pub enum Value {
     /// associatif à la JS. Ordonné (pas de HashMap) pour préserver l'ordre
     /// d'écriture du littéral lors de l'affichage.
     Object(Rc<RefCell<Vec<(String, Value)>>>),
+
+    /// Intervalle numérique léger et RÉUTILISABLE, produit par range().
+    /// Aucune allocation sur le tas (juste 3 f64) — c'est ce qui rend
+    /// range() paresseux. Parcourir deux fois le même Range donne deux
+    /// fois la séquence complète, comme en Python.
+    Range { start: f64, stop: f64, step: f64 },
+
+    /// Curseur d'itération À ÉTAT, à usage unique. Créé fraîchement à
+    /// chaque `for..in` via `Value::to_iterator()` — jamais construit
+    /// directement par du code utilisateur.
+    Iterator(Rc<RefCell<IteratorState>>),
 
     Module(Rc<ModuleInstance>),
 
@@ -102,7 +114,7 @@ impl Display for Value {
             Value::Object(fields) => {
                 let fields = fields.borrow();
 
-                write!(f, "{{ ")?;
+                write!(f, "{{")?;
 
                 for (index, (key, value)) in fields.iter().enumerate() {
                     if index > 0 {
@@ -112,7 +124,19 @@ impl Display for Value {
                     write!(f, "{key}: {value}")?;
                 }
 
-                write!(f, " }}")
+                write!(f, "}}")
+            }
+
+            Value::Range { start, stop, step } => {
+                if *step == 1.0 {
+                    write!(f, "range({start}, {stop})")
+                } else {
+                    write!(f, "range({start}, {stop}, {step})")
+                }
+            }
+
+            Value::Iterator(_) => {
+                write!(f, "<iterator>")
             }
 
             Value::Module(module) => {

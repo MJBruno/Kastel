@@ -250,6 +250,40 @@ impl VirtualMachine {
         Ok(())
     }
 
+    // ============================================================
+    // ITERATOR
+    // ============================================================
+
+    fn op_get_iterator(&mut self) -> Result<(), RuntimeError> {
+        let value = self.pop();
+
+        let iterator = value.to_iterator()?;
+
+        self.push(iterator);
+
+        Ok(())
+    }
+
+    fn op_iterator_has_next(&mut self) -> Result<(), RuntimeError> {
+        let iterator = self.pop();
+
+        let has_next = iterator.iterator_has_next()?;
+
+        self.push(Value::Boolean(has_next));
+
+        Ok(())
+    }
+
+    fn op_iterator_next(&mut self) -> Result<(), RuntimeError> {
+        let iterator = self.pop();
+
+        let value = iterator.iterator_next()?;
+
+        self.push(value);
+
+        Ok(())
+    }
+
     fn array_index(value: Value) -> Result<usize, RuntimeError> {
         let index = match value {
             Value::Number(index) => index,
@@ -662,6 +696,21 @@ impl VirtualMachine {
                     let pair_count = self.read_byte() as usize;
 
                     self.op_object(pair_count)?;
+                }
+
+                // =================================================
+                // ITERATOR
+                // =================================================
+                x if x == OpCode::GetIterator.into() => {
+                    self.op_get_iterator()?;
+                }
+
+                x if x == OpCode::IteratorHasNext.into() => {
+                    self.op_iterator_has_next()?;
+                }
+
+                x if x == OpCode::IteratorNext.into() => {
+                    self.op_iterator_next()?;
                 }
 
                 x if x == OpCode::GetIndex.into() => {

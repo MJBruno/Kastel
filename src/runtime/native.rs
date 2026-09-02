@@ -32,9 +32,14 @@ pub fn native_clock(args: &[Value]) -> Result<Value, RuntimeError> {
 // range(start, stop)        -> start, start+1, ..., stop-1
 // range(start, stop, step)  -> start, start+step, ... (step != 0)
 //
-// Contrairement à Python, range() ici est ÉGER : elle construit
-// directement un tableau, car Kastel n'a pas encore de générateurs /
-// itérateurs paresseux. À éviter avec des bornes énormes.
+// range() est PARESSEUX : elle ne construit aucun tableau, quelle que soit
+// l'amplitude de l'intervalle. range(1_000_000_000) est en O(1) — elle
+// retourne un itérateur (3 f64 : position courante, borne, pas), qui ne
+// produit ses valeurs qu'au fur et à mesure qu'on les consomme (typiquement
+// via `for i in range(...)`).
+//
+// Pour obtenir un vrai tableau indexable/mutable, matérialiser
+// explicitement avec list() : `let arr = list(range(10));`
 // ================================================================
 
 fn expect_integer(value: &Value) -> Result<i64, RuntimeError> {
@@ -72,22 +77,33 @@ pub fn native_range(args: &[Value]) -> Result<Value, RuntimeError> {
         return Err(RuntimeError::TypeError);
     }
 
-    let mut values = Vec::new();
-    let mut current = start;
+    Ok(Value::new_range(start as f64, stop as f64, step as f64))
+}
 
-    if step > 0 {
-        while current < stop {
-            values.push(Value::Number(current as f64));
-            current += step;
-        }
-    } else {
-        while current > stop {
-            values.push(Value::Number(current as f64));
-            current += step;
-        }
+// ================================================================
+// LIST (façon Python)
+//
+// list(x) matérialise n'importe quel itérable (Range paresseux, tableau
+// existant) en un vrai tableau, indexable et mutable.
+//
+//   let arr = list(range(10));   // [0, 1, 2, ..., 9]
+//   arr[0] = 100;                // possible : arr est un vrai tableau
+//   println(arr.length);         // 10
+//
+// range(10) seul ne permet ni indexation ni .length — c'est justement le
+// compromis d'un itérateur paresseux (aucune allocation tant qu'on n'en a
+// pas explicitement besoin).
+// ================================================================
+
+pub fn native_list(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
     }
 
-    Ok(Value::new_array(values))
+    crate::runtime::iterator::drain_to_array(&args[0])
 }
 
 // ================================================================
@@ -488,6 +504,8 @@ pub fn register_natives(globals: &mut std::collections::HashMap<String, Value>) 
 
     globals.insert("range".to_string(), Value::NativeFunction(native_range));
 
+    globals.insert("list".to_string(), Value::NativeFunction(native_list));
+
     globals.insert("native_add".to_string(), Value::NativeFunction(native_add));
 
     globals.insert("println".to_string(), Value::NativeFunction(native_println));
@@ -533,6 +551,8 @@ pub fn execute_native(compiler: &mut Compiler) {
     let _ = compiler.define_native("bool");
 
     let _ = compiler.define_native("range");
+
+    let _ = compiler.define_native("list");
 
     let _ = compiler.define_native("native_add");
 

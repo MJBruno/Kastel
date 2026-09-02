@@ -22,6 +22,8 @@ pub enum RuntimeError {
     ArrayIndexOutOfBounds { index: usize, length: usize },
     ModuleError(String),
     ObjectFieldNotFound(String),
+    IteratorExhausted,
+    NotIterable,
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -45,6 +47,10 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::NotCallable => {
                 write!(f, "Value is not callable.")
+            }
+
+            RuntimeError::NotIterable => {
+                write!(f, "Value is not iterable.")
             }
 
             RuntimeError::InvalidFunction => {
@@ -72,6 +78,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::ObjectFieldNotFound(name) => {
                 write!(f, "Champ '{name}' introuvable sur l'objet.")
             }
+            RuntimeError::IteratorExhausted => write!(f, "Iterator exhausted"),
         }
     }
 }

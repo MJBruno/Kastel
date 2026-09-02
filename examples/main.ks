@@ -1,16 +1,12 @@
-println(int(3.9));        // 3   (tronqué vers zéro, pas arrondi)
-println(int(-3.9));       // -3  (comme Python : truncation, pas floor)
-println(int("42"));       // 42
-println(int(true));       // 1
+let r = range(5);
 
-println(float("3.14"));   // 3.14
-println(float(false));    // 0
-let a= [1, 2, 3];
-println(str(42));         // "42"
-println(str(a));            // "[1, 2, 3]"
-println(str({ a: 1 }));   // "{a: 1}"
+for x in r { 
+    println(x); // 0 1 2 3 4
+}   
+for x in r { 
+    println(x); // 0 1 2 3 4  <- rejoué en entier, comme en Python
+}   
 
-println(bool(0));         // false
-println(bool(""));        // false
-println(bool([]));        // true   (tableau vide reste "truthy" en Kastel)
-println(bool(nil));       // false
+for x in [10, 20, 30] { 
+    println(x); // marche aussi, même bytecode générique
+}   

@@ -1,7 +1,6 @@
 use crate::bytecode::chunk::OpCode;
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::{Expression, Statement};
-use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
 
@@ -67,6 +66,27 @@ impl Compiler {
     // ============================================================
     //                      FOR..IN
     // ============================================================
+    //
+    // Désucrage générique via le protocole d'itération, PLUS AUCUNE
+    // dépendance codée en dur sur les tableaux (ArrayLength/GetIndex) :
+    //
+    //   { iterable } -> GetIterator -> @for_iterator
+    //
+    //   while (@for_iterator.has_next()) {
+    //       let variable = @for_iterator.next();
+    //       body
+    //   }
+    //
+    // Fonctionne donc identiquement pour un tableau, pour un Range
+    // paresseux issu de range() (aucune allocation de tableau, même pour
+    // range(1_000_000_000)), et pour tout futur type itérable — sans
+    // toucher à cette fonction.
+    //
+    // Bonus architectural : plus besoin du hack "émettre l'incrément avant
+    // le corps mais sauter par-dessus au premier passage" qu'exigeait
+    // l'ancien désucrage façon for-C. IteratorNext EST l'avancement ; il
+    // n'a lieu qu'une fois par itération, au bon endroit naturellement.
+    // `continue` peut donc sauter directement au test has_next().
 
     pub(crate) fn compile_for_in(
         &mut self,
@@ -76,129 +96,62 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         self.begin_scope();
 
-        // ============================================================
-        // __for_iterable
-        // ============================================================
+        // ------------------------------------------------------------
+        // @for_iterator = GetIterator(iterable)
+        // ------------------------------------------------------------
 
-        let iterable_slot = self.context.borrow_mut().locals.declare_local(
-            "__for_iterable",
+        self.compile_expression(iterable)?;
+
+        self.emit_opcode(OpCode::GetIterator);
+
+        let iterator_slot = self.context.borrow_mut().locals.declare_local(
+            "@for_iterator",
             self.scope_depth,
             false,
         )?;
 
-        self.compile_expression(iterable)?;
-
         self.context
             .borrow_mut()
             .locals
             .mark_initialized(self.scope_depth);
 
-        // ============================================================
-        // __for_index = 0
-        // ============================================================
+        // ------------------------------------------------------------
+        // CONDITION : @for_iterator.has_next()
+        // ------------------------------------------------------------
 
-        let index_slot = self.context.borrow_mut().locals.declare_local(
-            "__for_index",
-            self.scope_depth,
-            true,
-        )?;
+        let loop_start = self.chunk.code.len();
 
-        let zero = self.make_constant(Value::Number(0.0))?;
-        self.emit_bytes(OpCode::Constant, zero);
-
-        self.context
-            .borrow_mut()
-            .locals
-            .mark_initialized(self.scope_depth);
-
-        // ============================================================
-        // Variable implicite du for
-        //
-        // for i in range(5) { ... }
-        //
-        // i devient automatiquement une locale.
-        // ============================================================
-
-        let variable_slot =
-            self.context
-                .borrow_mut()
-                .locals
-                .declare_local(variable, self.scope_depth, true)?;
-
-        self.emit_opcode(OpCode::Nil);
-
-        self.context
-            .borrow_mut()
-            .locals
-            .mark_initialized(self.scope_depth);
-
-        // ============================================================
-        // Premier passage -> condition
-        // ============================================================
-
-        let initial_jump = self.emit_jump(OpCode::Jump);
-
-        // ============================================================
-        // CONTINUE -> INCREMENT
-        // ============================================================
-
-        let continue_target = self.chunk.code.len();
-
-        self.emit_bytes(OpCode::GetLocal, index_slot);
-
-        let one = self.make_constant(Value::Number(1.0))?;
-        self.emit_bytes(OpCode::Constant, one);
-
-        self.emit_opcode(OpCode::Add);
-
-        self.emit_bytes(OpCode::SetLocal, index_slot);
-        self.emit_opcode(OpCode::Pop);
-
-        // ============================================================
-        // INCREMENT -> CONDITION
-        // ============================================================
-
-        let condition_jump = self.emit_jump(OpCode::Jump);
-
-        // ============================================================
-        // CONDITION
-        // ============================================================
-
-        self.patch_jump(initial_jump);
-        self.patch_jump(condition_jump);
-
-        self.emit_bytes(OpCode::GetLocal, index_slot);
-        self.emit_bytes(OpCode::GetLocal, iterable_slot);
-        self.emit_opcode(OpCode::ArrayLength);
-        self.emit_opcode(OpCode::Less);
+        self.emit_bytes(OpCode::GetLocal, iterator_slot);
+        self.emit_opcode(OpCode::IteratorHasNext);
 
         let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-        self.emit_opcode(OpCode::Pop);
-
-        // ============================================================
-        // i = iterable[index]
-        // ============================================================
-
-        self.emit_bytes(OpCode::GetLocal, iterable_slot);
-        self.emit_bytes(OpCode::GetLocal, index_slot);
-        self.emit_opcode(OpCode::GetIndex);
-
-        self.emit_bytes(OpCode::SetLocal, variable_slot);
-        self.emit_opcode(OpCode::Pop);
-
-        // ============================================================
-        // LOOP CONTEXT
-        // ============================================================
+        self.emit_opcode(OpCode::Pop); // dépile le booléen "true"
 
         self.loops.push(LoopContext {
-            continue_target,
+            continue_target: loop_start,
             break_jumps: Vec::new(),
             scope_depth: self.scope_depth,
         });
 
-
         self.begin_scope();
+
+        // ------------------------------------------------------------
+        // variable = @for_iterator.next()
+        // ------------------------------------------------------------
+
+        self.emit_bytes(OpCode::GetLocal, iterator_slot);
+        self.emit_opcode(OpCode::IteratorNext);
+
+        self.context
+            .borrow_mut()
+            .locals
+            .declare_local(variable, self.scope_depth, true)?;
+
+        self.context
+            .borrow_mut()
+            .locals
+            .mark_initialized(self.scope_depth);
 
         for statement in body {
             self.compile_statement(statement)?;
@@ -206,33 +159,17 @@ impl Compiler {
 
         self.end_scope();
 
-        // ============================================================
-        // BODY -> INCREMENT
-        // ============================================================
-
-        self.emit_loop(continue_target);
-
-        // ============================================================
-        // SORTIE
-        // ============================================================
+        self.emit_loop(loop_start);
 
         self.patch_jump(exit_jump);
 
-        self.emit_opcode(OpCode::Pop);
-
-        // ============================================================
-        // BREAK
-        // ============================================================
+        self.emit_opcode(OpCode::Pop); // dépile le booléen "false"
 
         let loop_context = self.loops.pop().expect("loop stack underflow");
 
         for break_jump in loop_context.break_jumps {
             self.patch_jump(break_jump);
         }
-
-        // ============================================================
-        // FIN DU SCOPE
-        // ============================================================
 
         self.end_scope();
 

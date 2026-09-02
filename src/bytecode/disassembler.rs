@@ -112,6 +112,18 @@ impl Chunk {
 
             x if x == OpCode::Object.into() => self.byte_instruction("OP_OBJECT", offset),
 
+            x if x == OpCode::GetIterator.into() => {
+                self.simple_instruction("OP_GET_ITERATOR", offset)
+            }
+
+            x if x == OpCode::IteratorHasNext.into() => {
+                self.simple_instruction("OP_ITERATOR_HAS_NEXT", offset)
+            }
+
+            x if x == OpCode::IteratorNext.into() => {
+                self.simple_instruction("OP_ITERATOR_NEXT", offset)
+            }
+
             x if x == OpCode::GetIndex.into() => self.simple_instruction("OP_GET_INDEX", offset),
 
             x if x == OpCode::SetIndex.into() => self.simple_instruction("OP_SET_INDEX", offset),

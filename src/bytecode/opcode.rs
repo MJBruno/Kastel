@@ -53,6 +53,11 @@ pub enum OpCode {
     //OBJECT
     Object,
 
+    //ITERATOR
+    GetIterator,
+    IteratorHasNext,
+    IteratorNext,
+
     // CLOSURES
     Closure,
     GetUpvalue,

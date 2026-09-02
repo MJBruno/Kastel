@@ -4,29 +4,26 @@ use std::rc::{Rc, Weak};
 use std::time::Instant;
 
 use crate::runtime::closure::Closure;
+use crate::runtime::iterator::IteratorState;
 use crate::runtime::value::Value;
 use crate::vm::machine::{CallFrame, ObjUpvalue};
 
 // ================================================================
 // TRAÇAGE DU GC
 //
-// Activé via la variable d'environnement KASTEL_TRACE_GC (n'importe quelle
-// valeur non vide suffit), plutôt qu'un flag Cargo : évite d'avoir à
-// modifier Cargo.toml, et s'active/se désactive sans recompiler.
+// Feature Cargo `trace_gc`, symétrique à `debug_trace` (qui trace les
+// instructions de la VM) : même mécanisme, même endroit (Cargo.toml),
+// pour que les deux traçages restent cohérents et faciles à combiner :
 //
-//   KASTEL_TRACE_GC=1 ./kastel script.ks
+//   cargo build --features trace_gc                    # GC seul
+//   cargo build --features debug_trace                 # VM seule
+//   cargo build --features "debug_trace,trace_gc"       # les deux
 //
 // Inspiré du DEBUG_LOG_GC de clox (Crafting Interpreters, ch. 26).
 // ================================================================
 
-thread_local! {
-    static TRACE_ENABLED: bool = std::env::var("KASTEL_TRACE_GC")
-        .map(|value| !value.is_empty())
-        .unwrap_or(false);
-}
-
 fn trace_enabled() -> bool {
-    TRACE_ENABLED.with(|enabled| *enabled)
+    cfg!(feature = "trace_gc")
 }
 
 // ================================================================
@@ -47,6 +44,7 @@ struct GcRegistry {
     closures: Vec<Weak<RefCell<Closure>>>,
     upvalues: Vec<Weak<RefCell<ObjUpvalue>>>,
     objects: Vec<Weak<RefCell<Vec<(String, Value)>>>>,
+    iterators: Vec<Weak<RefCell<IteratorState>>>,
     allocations_since_collect: usize,
     threshold: usize,
 }
@@ -58,6 +56,7 @@ impl GcRegistry {
             closures: Vec::new(),
             upvalues: Vec::new(),
             objects: Vec::new(),
+            iterators: Vec::new(),
             allocations_since_collect: 0,
             // Seuil initial modeste ; doublé après chaque collecte (même
             // heuristique que `next_gc` dans clox) pour amortir le coût du
@@ -106,6 +105,19 @@ pub fn register_object(handle: &Rc<RefCell<Vec<(String, Value)>>>) {
     });
 }
 
+/// Enregistre un itérateur fraîchement créé (Range paresseux ou itérateur
+/// de tableau). Un itérateur Array retient une référence vers son
+/// tableau : rare mais possible qu'il participe à un cycle si l'itérateur
+/// lui-même est stocké quelque part de durable — d'où le suivi, comme
+/// pour les autres types du tas.
+pub fn register_iterator(handle: &Rc<RefCell<IteratorState>>) {
+    REGISTRY.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        registry.iterators.push(Rc::downgrade(handle));
+        registry.allocations_since_collect += 1;
+    });
+}
+
 /// Indique si le nombre d'allocations depuis la dernière collecte dépasse
 /// le seuil courant. La VM appelle ceci entre deux instructions (jamais au
 /// milieu d'un opcode) pour décider de déclencher `collect`.
@@ -139,6 +151,7 @@ struct MarkState {
     closures: HashSet<usize>,
     upvalues: HashSet<usize>,
     objects: HashSet<usize>,
+    iterators: HashSet<usize>,
 }
 
 /// Exécute un passage complet de collecte de cycles.
@@ -276,6 +289,26 @@ pub fn collect(roots: GcRoots) -> usize {
 
         broken += objects_broken;
 
+        let iterators_before = registry.iterators.len();
+        let mut iterators_broken = 0;
+
+        registry.iterators.retain(|weak| match weak.upgrade() {
+            Some(rc) => {
+                let id = Rc::as_ptr(&rc) as usize;
+
+                if !state.iterators.contains(&id) {
+                    rc.borrow_mut().reset_for_gc();
+                    iterators_broken += 1;
+                }
+
+                true
+            }
+
+            None => false,
+        });
+
+        broken += iterators_broken;
+
         // Heuristique proportionnelle à la taille du tas VIVANT après la
         // collecte (mesurée juste après les .retain() ci-dessus, donc sans
         // les entrées totalement libérées) plutôt qu'un doublement aveugle
@@ -292,7 +325,8 @@ pub fn collect(roots: GcRoots) -> usize {
         let live_count = registry.arrays.len()
             + registry.closures.len()
             + registry.upvalues.len()
-            + registry.objects.len();
+            + registry.objects.len()
+            + registry.iterators.len();
 
         registry.allocations_since_collect = 0;
         registry.threshold = (live_count * 2).max(256);
@@ -315,6 +349,10 @@ pub fn collect(roots: GcRoots) -> usize {
                 registry.objects.len()
             );
             eprintln!(
+                "          itérateurs {iterators_before} -> {} ({iterators_broken} cycles cassés)",
+                registry.iterators.len()
+            );
+            eprintln!(
                 "-- gc end (total: {broken} cycles cassés, {:.3}ms, prochain seuil: {})",
                 started_at.elapsed().as_secs_f64() * 1000.0,
                 registry.threshold
@@ -332,6 +370,8 @@ fn mark_value(value: &Value, state: &mut MarkState) {
         Value::Closure(closure) => mark_closure(closure, state),
 
         Value::Object(object) => mark_object(object, state),
+
+        Value::Iterator(iterator) => mark_iterator(iterator, state),
 
         _ => {}
     }
@@ -387,5 +427,21 @@ fn mark_object(object: &Rc<RefCell<Vec<(String, Value)>>>, state: &mut MarkState
 
     for (_, value) in object.borrow().iter() {
         mark_value(value, state);
+    }
+}
+
+fn mark_iterator(iterator: &Rc<RefCell<IteratorState>>, state: &mut MarkState) {
+    let id = Rc::as_ptr(iterator) as usize;
+
+    if !state.iterators.insert(id) {
+        return;
+    }
+
+    // Un itérateur Range ne référence aucune Value (juste 3 f64) : rien à
+    // marquer. Un itérateur Array référence son tableau source : il faut
+    // le marquer explicitement, sinon un tableau uniquement gardé en vie
+    // par un itérateur stocké quelque part serait collecté à tort.
+    if let IteratorState::Array { array, .. } = &*iterator.borrow() {
+        mark_array(array, state);
     }
 }
