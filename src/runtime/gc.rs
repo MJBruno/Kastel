@@ -1,10 +1,33 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
+use std::time::Instant;
 
 use crate::runtime::closure::Closure;
 use crate::runtime::value::Value;
 use crate::vm::machine::{CallFrame, ObjUpvalue};
+
+// ================================================================
+// TRAÇAGE DU GC
+//
+// Activé via la variable d'environnement KASTEL_TRACE_GC (n'importe quelle
+// valeur non vide suffit), plutôt qu'un flag Cargo : évite d'avoir à
+// modifier Cargo.toml, et s'active/se désactive sans recompiler.
+//
+//   KASTEL_TRACE_GC=1 ./kastel script.ks
+//
+// Inspiré du DEBUG_LOG_GC de clox (Crafting Interpreters, ch. 26).
+// ================================================================
+
+thread_local! {
+    static TRACE_ENABLED: bool = std::env::var("KASTEL_TRACE_GC")
+        .map(|value| !value.is_empty())
+        .unwrap_or(false);
+}
+
+fn trace_enabled() -> bool {
+    TRACE_ENABLED.with(|enabled| *enabled)
+}
 
 // ================================================================
 // REGISTRE GLOBAL
@@ -132,6 +155,12 @@ struct MarkState {
 ///
 /// Retourne le nombre de cycles cassés (utile pour du diagnostic).
 pub fn collect(roots: GcRoots) -> usize {
+    let started_at = Instant::now();
+
+    if trace_enabled() {
+        eprintln!("-- gc begin");
+    }
+
     let mut state = MarkState::default();
 
     for value in roots.stack {
@@ -150,9 +179,22 @@ pub fn collect(roots: GcRoots) -> usize {
         mark_upvalue(upvalue, &mut state);
     }
 
+    if trace_enabled() {
+        eprintln!(
+            "   mark: {} tableaux, {} closures, {} upvalues, {} objets atteignables",
+            state.arrays.len(),
+            state.closures.len(),
+            state.upvalues.len(),
+            state.objects.len(),
+        );
+    }
+
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         let mut broken = 0;
+
+        let arrays_before = registry.arrays.len();
+        let mut arrays_broken = 0;
 
         registry.arrays.retain(|weak| match weak.upgrade() {
             Some(rc) => {
@@ -163,7 +205,7 @@ pub fn collect(roots: GcRoots) -> usize {
                     // racines : ne peut être maintenu en vie que par un
                     // cycle. On casse le cycle en vidant son contenu.
                     rc.borrow_mut().clear();
-                    broken += 1;
+                    arrays_broken += 1;
                 }
 
                 true // toujours vivant (même vidé) : on le garde en registre
@@ -172,13 +214,18 @@ pub fn collect(roots: GcRoots) -> usize {
             None => false, // complètement libéré : on peut l'oublier
         });
 
+        broken += arrays_broken;
+
+        let closures_before = registry.closures.len();
+        let mut closures_broken = 0;
+
         registry.closures.retain(|weak| match weak.upgrade() {
             Some(rc) => {
                 let id = Rc::as_ptr(&rc) as usize;
 
                 if !state.closures.contains(&id) {
                     rc.borrow_mut().upvalues.clear();
-                    broken += 1;
+                    closures_broken += 1;
                 }
 
                 true
@@ -186,6 +233,11 @@ pub fn collect(roots: GcRoots) -> usize {
 
             None => false,
         });
+
+        broken += closures_broken;
+
+        let upvalues_before = registry.upvalues.len();
+        let mut upvalues_broken = 0;
 
         registry.upvalues.retain(|weak| match weak.upgrade() {
             Some(rc) => {
@@ -193,7 +245,7 @@ pub fn collect(roots: GcRoots) -> usize {
 
                 if !state.upvalues.contains(&id) {
                     rc.borrow_mut().closed = None;
-                    broken += 1;
+                    upvalues_broken += 1;
                 }
 
                 true
@@ -201,6 +253,11 @@ pub fn collect(roots: GcRoots) -> usize {
 
             None => false,
         });
+
+        broken += upvalues_broken;
+
+        let objects_before = registry.objects.len();
+        let mut objects_broken = 0;
 
         registry.objects.retain(|weak| match weak.upgrade() {
             Some(rc) => {
@@ -208,7 +265,7 @@ pub fn collect(roots: GcRoots) -> usize {
 
                 if !state.objects.contains(&id) {
                     rc.borrow_mut().clear();
-                    broken += 1;
+                    objects_broken += 1;
                 }
 
                 true
@@ -216,6 +273,8 @@ pub fn collect(roots: GcRoots) -> usize {
 
             None => false,
         });
+
+        broken += objects_broken;
 
         // Heuristique proportionnelle à la taille du tas VIVANT après la
         // collecte (mesurée juste après les .retain() ci-dessus, donc sans
@@ -237,6 +296,30 @@ pub fn collect(roots: GcRoots) -> usize {
 
         registry.allocations_since_collect = 0;
         registry.threshold = (live_count * 2).max(256);
+
+        if trace_enabled() {
+            eprintln!(
+                "   sweep: tableaux {arrays_before} -> {} ({arrays_broken} cycles cassés)",
+                registry.arrays.len()
+            );
+            eprintln!(
+                "          closures {closures_before} -> {} ({closures_broken} cycles cassés)",
+                registry.closures.len()
+            );
+            eprintln!(
+                "          upvalues {upvalues_before} -> {} ({upvalues_broken} cycles cassés)",
+                registry.upvalues.len()
+            );
+            eprintln!(
+                "          objets   {objects_before} -> {} ({objects_broken} cycles cassés)",
+                registry.objects.len()
+            );
+            eprintln!(
+                "-- gc end (total: {broken} cycles cassés, {:.3}ms, prochain seuil: {})",
+                started_at.elapsed().as_secs_f64() * 1000.0,
+                registry.threshold
+            );
+        }
 
         broken
     })

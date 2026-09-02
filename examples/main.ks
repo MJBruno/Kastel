@@ -1,32 +1,16 @@
-// import math;
+println(int(3.9));        // 3   (tronqué vers zéro, pas arrondi)
+println(int(-3.9));       // -3  (comme Python : truncation, pas floor)
+println(int("42"));       // 42
+println(int(true));       // 1
 
-// const name = input("Comment tu t'appel?\n");
+println(float("3.14"));   // 3.14
+println(float(false));    // 0
+let a= [1, 2, 3];
+println(str(42));         // "42"
+println(str(a));            // "[1, 2, 3]"
+println(str({ a: 1 }));   // "{a: 1}"
 
-// let a = 25;
-
-// if (a < 18) {
-//     println("Mineur!!");
-// } else {
-//     println("Majeur!!");
-// }
-
-// let s = format("Bonjour {}, tu as {} ans", name, a);
-
-// println(s);
-
-// for ( i in [2, 6, 7, 4, 1, 9]) {
-//     if (i % 2 == 0) {
-//         println("Item: {}", i);
-//     }
-// }
-
-let user = { name: "Bruno", age: 25 };
-
-println(user.name);   // Bruno
-println(user.age);    // 25
-
-user.age = 26;
-println(user.age);    // 26
-
-user.city = "Antananarivo";   // nouveau champ, ajouté dynamiquement
-println(user);                 // {name: Bruno, age: 26, city: Antananarivo}
+println(bool(0));         // false
+println(bool(""));        // false
+println(bool([]));        // true   (tableau vide reste "truthy" en Kastel)
+println(bool(nil));       // false

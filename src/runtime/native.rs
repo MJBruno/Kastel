@@ -26,7 +26,7 @@ pub fn native_clock(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ================================================================
-// RANGE
+// RANGE (façon Python)
 //
 // range(stop)               -> 0, 1, ..., stop-1
 // range(start, stop)        -> start, start+1, ..., stop-1
@@ -119,6 +119,90 @@ pub fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
     };
 
     Ok(Value::Number(a + b))
+}
+
+// ================================================================
+// CONVERSIONS DE TYPE (façon Python)
+//
+// int(x)   : Number -> tronque vers zéro (comme Python, pas floor())
+//            String -> parsée comme nombre puis tronquée
+//            Bool   -> 1 ou 0
+// float(x) : mêmes sources, mais sans troncature
+// str(x)   : n'importe quelle valeur -> sa représentation textuelle
+//            (réutilise Display, déjà défini pour tous les types)
+// bool(x)  : n'importe quelle valeur -> sa "vérité" (réutilise is_truthy,
+//            déjà défini pour tous les types — logique déjà centralisée,
+//            on ne fait que l'exposer comme fonction appelable)
+//
+// Note : pas de complex(x) — Kastel n'a qu'un seul type numérique (Number,
+// un f64), pas de type nombre complexe. L'ajouter proprement demanderait
+// une nouvelle variante Value::Complex avec ses propres opérateurs
+// arithmétiques (+, -, *, / définis pour des paires (réel, imaginaire)) :
+// un vrai ajout de langage, pas une simple fonction de conversion. Dispo
+// si tu veux qu'on le fasse en tant que fonctionnalité à part entière.
+// ================================================================
+
+fn parse_number_like(value: &Value) -> Result<f64, RuntimeError> {
+    match value {
+        Value::Number(n) => Ok(*n),
+
+        Value::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
+
+        Value::String(s) => s.trim().parse::<f64>().map_err(|_| RuntimeError::TypeError),
+
+        _ => Err(RuntimeError::TypeError),
+    }
+}
+
+pub fn native_int(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    let value = parse_number_like(&args[0])?;
+
+    // Troncature vers zéro, pas floor() : int(-5.7) == -5 en Python,
+    // pas -6. Kastel n'a pas de type entier séparé — le résultat reste un
+    // Number, mais avec une valeur entière garantie.
+    Ok(Value::Number(value.trunc()))
+}
+
+pub fn native_float(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    let value = parse_number_like(&args[0])?;
+
+    Ok(Value::Number(value))
+}
+
+pub fn native_str(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    Ok(Value::String(args[0].to_string()))
+}
+
+pub fn native_bool(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    Ok(Value::Boolean(args[0].is_truthy()))
 }
 
 // ================================================================
@@ -394,6 +478,14 @@ pub fn native_array_remove(args: &[Value]) -> Result<Value, RuntimeError> {
 pub fn register_natives(globals: &mut std::collections::HashMap<String, Value>) {
     globals.insert("clock".to_string(), Value::NativeFunction(native_clock));
 
+    globals.insert("int".to_string(), Value::NativeFunction(native_int));
+
+    globals.insert("float".to_string(), Value::NativeFunction(native_float));
+
+    globals.insert("str".to_string(), Value::NativeFunction(native_str));
+
+    globals.insert("bool".to_string(), Value::NativeFunction(native_bool));
+
     globals.insert("range".to_string(), Value::NativeFunction(native_range));
 
     globals.insert("native_add".to_string(), Value::NativeFunction(native_add));
@@ -431,6 +523,14 @@ pub fn register_natives(globals: &mut std::collections::HashMap<String, Value>) 
 
 pub fn execute_native(compiler: &mut Compiler) {
     let _ = compiler.define_native("clock");
+
+    let _ = compiler.define_native("int");
+
+    let _ = compiler.define_native("float");
+
+    let _ = compiler.define_native("str");
+
+    let _ = compiler.define_native("bool");
 
     let _ = compiler.define_native("range");
 
