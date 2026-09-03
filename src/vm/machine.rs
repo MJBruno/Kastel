@@ -304,6 +304,20 @@ impl VirtualMachine {
         Ok(index as usize)
     }
 
+    /// Tronque une valeur numérique en entier 64 bits pour les opérations
+    /// bitwise. Refuse NaN/Infinity explicitement plutôt que de les
+    /// tronquer vers une valeur arbitraire (`as i64` sur NaN/Infinity a un
+    /// comportement peu intuitif : 0 pour NaN, i64::MAX/MIN pour
+    /// Infinity — mieux vaut une erreur claire qu'un résultat silencieux
+    /// et surprenant).
+    fn to_bitwise_int(value: &Value) -> Result<i64, RuntimeError> {
+        match value {
+            Value::Number(n) if n.is_finite() => Ok(n.trunc() as i64),
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
     fn op_get_index(&mut self) -> Result<(), RuntimeError> {
         let index = self.pop();
         let array = self.pop();
@@ -596,9 +610,87 @@ impl VirtualMachine {
                 x if x == OpCode::Negate.into() => {
                     let value = self.pop();
 
-                    let result = Value::negate_values(value).expect("Opérand must be value");
+                    let result = Value::negate_values(value)?;
 
                     self.push(result);
+                }
+
+                // =================================================
+                // BITWISE
+                //
+                // Kastel n'a qu'un seul type numérique (Number = f64) ;
+                // les opérateurs bitwise tronquent vers un entier i64,
+                // comme int(), puis reconvertissent le résultat en f64.
+                // Les décalages sont bornés explicitement à [0, 63] :
+                // Rust panique nativement sur un décalage >= la largeur
+                // du type (`1i64 << 64` plante le processus), donc on
+                // valide AVANT d'utiliser l'opérateur natif plutôt que de
+                // laisser Rust paniquer à notre place.
+                // =================================================
+                x if x == OpCode::BitAnd.into() => {
+                    let b = self.pop();
+                    let a = self.pop();
+
+                    let a = Self::to_bitwise_int(&a)?;
+                    let b = Self::to_bitwise_int(&b)?;
+
+                    self.push(Value::Number((a & b) as f64));
+                }
+
+                x if x == OpCode::BitOr.into() => {
+                    let b = self.pop();
+                    let a = self.pop();
+
+                    let a = Self::to_bitwise_int(&a)?;
+                    let b = Self::to_bitwise_int(&b)?;
+
+                    self.push(Value::Number((a | b) as f64));
+                }
+
+                x if x == OpCode::BitXor.into() => {
+                    let b = self.pop();
+                    let a = self.pop();
+
+                    let a = Self::to_bitwise_int(&a)?;
+                    let b = Self::to_bitwise_int(&b)?;
+
+                    self.push(Value::Number((a ^ b) as f64));
+                }
+
+                x if x == OpCode::BitNot.into() => {
+                    let a = self.pop();
+
+                    let a = Self::to_bitwise_int(&a)?;
+
+                    self.push(Value::Number((!a) as f64));
+                }
+
+                x if x == OpCode::ShiftLeft.into() => {
+                    let b = self.pop();
+                    let a = self.pop();
+
+                    let a = Self::to_bitwise_int(&a)?;
+                    let shift = Self::to_bitwise_int(&b)?;
+
+                    if !(0..64).contains(&shift) {
+                        return Err(RuntimeError::InvalidShiftAmount);
+                    }
+
+                    self.push(Value::Number((a << shift) as f64));
+                }
+
+                x if x == OpCode::ShiftRight.into() => {
+                    let b = self.pop();
+                    let a = self.pop();
+
+                    let a = Self::to_bitwise_int(&a)?;
+                    let shift = Self::to_bitwise_int(&b)?;
+
+                    if !(0..64).contains(&shift) {
+                        return Err(RuntimeError::InvalidShiftAmount);
+                    }
+
+                    self.push(Value::Number((a >> shift) as f64));
                 }
 
                 // =================================================

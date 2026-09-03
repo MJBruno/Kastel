@@ -22,13 +22,6 @@ impl ModulePath {
         Self { parts }
     }
 
-    // pub fn as_string(&self) -> String {
-    //     self.parts.join(".")
-    // }
-
-    // pub fn last(&self) -> Option<&str> {
-    //     self.parts.last().map(String::as_str)
-    // }
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +31,19 @@ pub struct ImportItem {
 }
 #[derive(Debug, Clone)]
 pub enum Statement {
+    /// Enveloppe posée systématiquement par `Parser::statement()` autour de
+    /// CHAQUE statement produit, quel que soit son type. Permet au
+    /// compilateur de connaître la position source exacte d'un statement
+    /// (pour remplir `chunk.lines`/`chunk.columns` et enrichir les erreurs
+    /// de compilation) SANS avoir à ajouter un champ `line`/`column` à
+    /// chacune des variantes ci-dessous — un seul point de câblage dans le
+    /// parser (statement()) et un seul dans le compilateur
+    /// (compile_statement), plutôt que des dizaines.
+    Positioned {
+   
+        statement: Box<Statement>,
+    },
+
     Let {
         name: String,
         value: Expression,
@@ -156,6 +162,7 @@ pub enum Expression {
 pub enum UnaryOp {
     Negate,
     Not,
+    BitNot,
 }
 
 #[derive(Debug, Clone)]
@@ -177,4 +184,10 @@ pub enum BinaryOp {
 
     And,
     Or,
+
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
 }

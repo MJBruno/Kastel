@@ -90,19 +90,45 @@ impl Lexer {
                 '?' => tokens.push(self.make_token(TokenKind::Question, "?")),
 
                 // Opérateurs
-                '+' => tokens.push(self.make_token(TokenKind::Plus, "+")),
-                '-' => tokens.push(self.make_token(TokenKind::Minus, "-")),
-                '*' => tokens.push(self.make_token(TokenKind::Star, "*")),
+                '+' => {
+                    if self.match_char('=') {
+                        tokens.push(self.make_token(TokenKind::PlusEqual, "+="));
+                    } else {
+                        tokens.push(self.make_token(TokenKind::Plus, "+"));
+                    }
+                }
+                '-' => {
+                    if self.match_char('=') {
+                        tokens.push(self.make_token(TokenKind::MinusEqual, "-="));
+                    } else {
+                        tokens.push(self.make_token(TokenKind::Minus, "-"));
+                    }
+                }
+                '*' => {
+                    if self.match_char('=') {
+                        tokens.push(self.make_token(TokenKind::StarEqual, "*="));
+                    } else {
+                        tokens.push(self.make_token(TokenKind::Star, "*"));
+                    }
+                }
                 '/' => {
                     if self.match_char('/') {
                         self.skip_comment();
                     } else if self.match_char('*') {
                         self.skip_multiline_comment();
+                    } else if self.match_char('=') {
+                        tokens.push(self.make_token(TokenKind::SlashEqual, "/="));
                     } else {
                         tokens.push(self.make_token(TokenKind::Slash, "/"));
                     }
                 }
-                '%' => tokens.push(self.make_token(TokenKind::Percent, "%")),
+                '%' => {
+                    if self.match_char('=') {
+                        tokens.push(self.make_token(TokenKind::PercentEqual, "%="));
+                    } else {
+                        tokens.push(self.make_token(TokenKind::Percent, "%"));
+                    }
+                }
                 '=' => {
                     if self.match_char('=') {
                         tokens.push(self.make_token(TokenKind::EqualEqual, "=="));
@@ -120,6 +146,8 @@ impl Lexer {
                 '<' => {
                     if self.match_char('=') {
                         tokens.push(self.make_token(TokenKind::LessEqual, "<="));
+                    } else if self.match_char('<') {
+                        tokens.push(self.make_token(TokenKind::LeftShift, "<<"));
                     } else {
                         tokens.push(self.make_token(TokenKind::Less, "<"));
                     }
@@ -128,6 +156,8 @@ impl Lexer {
                 '>' => {
                     if self.match_char('=') {
                         tokens.push(self.make_token(TokenKind::GreaterEqual, ">="));
+                    } else if self.match_char('>') {
+                        tokens.push(self.make_token(TokenKind::RightShift, ">>"));
                     } else {
                         tokens.push(self.make_token(TokenKind::Greater, ">"));
                     }
@@ -136,11 +166,9 @@ impl Lexer {
                     if self.match_char('&') {
                         tokens.push(self.make_token(TokenKind::And, "&&"));
                     } else {
-                        self.errors.push(LexerError {
-                            message: "Opérateur '&' invalide, utilisez '&&'".to_string(),
-                            line: self.line,
-                            column: self.column - 1,
-                        });
+                        // '&' seul = ET bitwise (plus une erreur, comme
+                        // avant l'introduction des opérateurs bitwise).
+                        tokens.push(self.make_token(TokenKind::Ampersand, "&"));
                     }
                 }
 
@@ -148,13 +176,14 @@ impl Lexer {
                     if self.match_char('|') {
                         tokens.push(self.make_token(TokenKind::Or, "||"));
                     } else {
-                        self.errors.push(LexerError {
-                            message: "Opérateur '|' invalide, utilisez '||'".to_string(),
-                            line: self.line,
-                            column: self.column - 1,
-                        });
+                        // '|' seul = OU bitwise.
+                        tokens.push(self.make_token(TokenKind::Pipe, "|"));
                     }
                 }
+
+                '^' => tokens.push(self.make_token(TokenKind::Caret, "^")),
+
+                '~' => tokens.push(self.make_token(TokenKind::Tilde, "~")),
                 _ => {
                     self.errors.push(LexerError {
                         message: format!("Caractère inattendu '{}'", c),

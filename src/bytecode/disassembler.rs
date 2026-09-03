@@ -62,6 +62,15 @@ impl Chunk {
 
             x if x == OpCode::Negate.into() => self.simple_instruction("OP_NEGATE", offset),
 
+            x if x == OpCode::BitAnd.into() => self.simple_instruction("OP_BIT_AND", offset),
+            x if x == OpCode::BitOr.into() => self.simple_instruction("OP_BIT_OR", offset),
+            x if x == OpCode::BitXor.into() => self.simple_instruction("OP_BIT_XOR", offset),
+            x if x == OpCode::BitNot.into() => self.simple_instruction("OP_BIT_NOT", offset),
+            x if x == OpCode::ShiftLeft.into() => self.simple_instruction("OP_SHIFT_LEFT", offset),
+            x if x == OpCode::ShiftRight.into() => {
+                self.simple_instruction("OP_SHIFT_RIGHT", offset)
+            }
+
             // =====================================================
             // COMPARISON
             // =====================================================

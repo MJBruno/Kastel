@@ -1,4 +1,5 @@
 use crate::bytecode::chunk::OpCode;
+// use crate::compiler::statements;
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
 use crate::runtime::value::Value;
@@ -119,6 +120,13 @@ impl Compiler {
             }
             Statement::Export { statement } => {
                 self.compile_export(statement)?;
+            }
+
+            Statement::Positioned {
+              
+                statement,
+            } => {
+                self.compile_statement(statement)?;
             }
         }
 

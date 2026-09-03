@@ -1,12 +1,16 @@
+let flags = 0b1010;
+let mask  = 0xFF;
 
-let count = 10;        // a mutable variable (int)
-const PI = 3.14159;    // a constant — reassigning it is a compile error
-let ratio = 3.0;       // float
-let big = 1_000_000;   // underscores group digits
-let hex = 0xFF;        // 255
-let bin = 0b1010;      // 10
-let sci = 1.5e-3;       // 1500.0
+println(flags & mask);   // ET bitwise
+println(flags | mask);   // OU bitwise
+println(flags ^ mask);   // XOR bitwise
+println(~flags);         // NON bitwise
+println(1 << 4);         // 16
+println(256 >> 4);       // 16
 
-let s= "Hello";
-
-println(type(s));
+let x = 10;
+x += 5;   // 15
+x -= 3;   // 12
+x *= 2;   // 24
+x /= 4;   // 6
+x %= 4;   // 2

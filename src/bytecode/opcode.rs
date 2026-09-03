@@ -20,6 +20,14 @@ pub enum OpCode {
     Modulo,
     Negate,
 
+    // BITWISE
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNot,
+    ShiftLeft,
+    ShiftRight,
+
     // SCOPE
     DefineGlobal,
     SetGlobal,

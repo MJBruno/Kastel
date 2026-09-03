@@ -198,11 +198,11 @@ impl Value {
         }
     }
 
-    pub fn negate_values(a: Value) -> Result<Value, String> {
+    pub fn negate_values(a: Value) -> Result<Value, RuntimeError> {
         match a {
             Value::Number(a) => Ok(Value::Number(-a)),
 
-            _ => Err("Operand must be number".into()),
+            _ => Err(RuntimeError::TypeError),
         }
     }
 

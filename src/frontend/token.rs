@@ -13,10 +13,10 @@ pub enum TokenKind {
     Function,
     Return,
     If,
-    In,
     Else,
     While,
     For,
+    In,
     True,
     False,
     Nil,
@@ -35,6 +35,12 @@ pub enum TokenKind {
     Percent,
     Question,
 
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+    PercentEqual,
+
     Equal,
 
     EqualEqual,
@@ -49,6 +55,14 @@ pub enum TokenKind {
     And,
     Or,
     Not,
+
+    // Bitwise
+    Ampersand,
+    Pipe,
+    Caret,
+    Tilde,
+    LeftShift,
+    RightShift,
 
     // Ponctuation
     LeftParen,

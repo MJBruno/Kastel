@@ -172,10 +172,10 @@ impl Parser {
     }
 
     fn logical_and(&mut self) -> Result<Expression, ParserError> {
-        let mut expr = self.comparison()?;
+        let mut expr = self.bitwise_or()?;
 
         while self.match_token(TokenKind::And) {
-            let right = self.comparison()?;
+            let right = self.bitwise_or()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
@@ -187,8 +187,60 @@ impl Parser {
         Ok(expr)
     }
 
+    // Précédence bitwise façon C : | plus lâche que ^, plus lâche que &.
+    // Placés entre logique (&&/||) et comparaison, comme dans la plupart
+    // des langages qui ont les deux familles d'opérateurs.
+
+    fn bitwise_or(&mut self) -> Result<Expression, ParserError> {
+        let mut expr = self.bitwise_xor()?;
+
+        while self.match_token(TokenKind::Pipe) {
+            let right = self.bitwise_xor()?;
+
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator: BinaryOp::BitOr,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn bitwise_xor(&mut self) -> Result<Expression, ParserError> {
+        let mut expr = self.bitwise_and()?;
+
+        while self.match_token(TokenKind::Caret) {
+            let right = self.bitwise_and()?;
+
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator: BinaryOp::BitXor,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn bitwise_and(&mut self) -> Result<Expression, ParserError> {
+        let mut expr = self.comparison()?;
+
+        while self.match_token(TokenKind::Ampersand) {
+            let right = self.comparison()?;
+
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator: BinaryOp::BitAnd,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
     fn comparison(&mut self) -> Result<Expression, ParserError> {
-        let mut expr = self.term()?;
+        let mut expr = self.shift()?;
 
         while self.match_any(&[
             TokenKind::EqualEqual,
@@ -205,6 +257,31 @@ impl Parser {
                 TokenKind::LessEqual => BinaryOp::LessEqual,
                 TokenKind::Greater => BinaryOp::Greater,
                 TokenKind::GreaterEqual => BinaryOp::GreaterEqual,
+
+                _ => unreachable!(),
+            };
+
+            let right = self.shift()?;
+
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    // << et >> : plus serrés que la comparaison, plus lâches que +/-
+    // (précédence C standard).
+    fn shift(&mut self) -> Result<Expression, ParserError> {
+        let mut expr = self.term()?;
+
+        while self.match_any(&[TokenKind::LeftShift, TokenKind::RightShift]) {
+            let operator = match self.previous().kind {
+                TokenKind::LeftShift => BinaryOp::ShiftLeft,
+                TokenKind::RightShift => BinaryOp::ShiftRight,
 
                 _ => unreachable!(),
             };
@@ -283,6 +360,15 @@ impl Parser {
 
             return Ok(Expression::Unary {
                 operator: UnaryOp::Not,
+                right: Box::new(operand),
+            });
+        }
+
+        if self.match_token(TokenKind::Tilde) {
+            let operand = self.unary()?;
+
+            return Ok(Expression::Unary {
+                operator: UnaryOp::BitNot,
                 right: Box::new(operand),
             });
         }
@@ -497,6 +583,12 @@ impl Parser {
     // ============================================================
 
     fn statement(&mut self) -> Result<Vec<Statement>, ParserError> {
+        // Position du premier token de CE statement, capturée avant tout
+        // dispatch — c'est elle qui enveloppera chaque statement produit
+        // ci-dessous, quel que soit son type.
+        // let line = self.peek().line;
+        // let column = self.peek().column;
+
         let statements = if self.match_token(TokenKind::Import) {
             vec![self.parse_import_statement()?]
         } else if self.match_token(TokenKind::From) {
@@ -530,7 +622,19 @@ impl Parser {
         // ';' optionnel
         self.match_token(TokenKind::Semicolon);
 
-        Ok(statements)
+        // Enveloppe CHAQUE statement produit (un `let a = 1, b = 2;`
+        // produit plusieurs statements pour un seul point de départ — ils
+        // partagent tous la même position, ce qui est correct : c'est la
+        // ligne où la déclaration commence qui importe pour le diagnostic).
+        let positioned = statements
+            .into_iter()
+            .map(|statement| Statement::Positioned {
+               
+                statement: Box::new(statement),
+            })
+            .collect();
+
+        Ok(positioned)
     }
 
     // ============================================================
@@ -548,7 +652,64 @@ impl Parser {
             return Ok(Statement::Assignment { target, value });
         }
 
+        // Affectations composées : x += v  ==  x = x + v
+        //
+        // ⚠️ Pour une cible Index ou Member, `object`/`index` sont évalués
+        // DEUX FOIS dans le bytecode généré (une fois pour lire l'ancienne
+        // valeur, une fois pour écrire la nouvelle) : `arr[f()] += 1`
+        // appelle f() deux fois. Sans effet pour une variable simple.
+        if let Some(operator) = self.match_compound_assignment() {
+            let value_expr = self.parse_expression()?;
+
+            let target = self.expression_to_assignment_target(expression.clone())?;
+
+            let left = Self::assignment_target_to_expression(&target);
+
+            let value = Expression::Binary {
+                left: Box::new(left),
+                operator,
+                right: Box::new(value_expr),
+            };
+
+            return Ok(Statement::Assignment { target, value });
+        }
+
         Ok(Statement::Expression { expression })
+    }
+
+    /// Consomme le token courant s'il s'agit d'une affectation composée
+    /// (+=, -=, *=, /=, %=) et retourne l'opérateur binaire équivalent.
+    fn match_compound_assignment(&mut self) -> Option<BinaryOp> {
+        let operator = match self.peek().kind {
+            TokenKind::PlusEqual => BinaryOp::Add,
+            TokenKind::MinusEqual => BinaryOp::Subtract,
+            TokenKind::StarEqual => BinaryOp::Multiply,
+            TokenKind::SlashEqual => BinaryOp::Divide,
+            TokenKind::PercentEqual => BinaryOp::Modulo,
+            _ => return None,
+        };
+
+        self.advance();
+
+        Some(operator)
+    }
+
+    /// Reconstruit l'expression correspondant à une cible d'affectation,
+    /// pour former le côté gauche de la désucrisation `x op= v -> x = x op v`.
+    fn assignment_target_to_expression(target: &AssignmentTarget) -> Expression {
+        match target {
+            AssignmentTarget::Variable(name) => Expression::Variable(name.clone()),
+
+            AssignmentTarget::Index { object, index } => Expression::Index {
+                object: object.clone(),
+                index: index.clone(),
+            },
+
+            AssignmentTarget::Member { object, name } => Expression::Member {
+                object: object.clone(),
+                name: name.clone(),
+            },
+        }
     }
 
     fn expression_to_assignment_target(

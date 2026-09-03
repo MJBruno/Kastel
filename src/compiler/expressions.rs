@@ -61,6 +61,8 @@ impl Compiler {
                     UnaryOp::Negate => self.emit_opcode(OpCode::Negate),
 
                     UnaryOp::Not => self.emit_opcode(OpCode::Not),
+
+                    UnaryOp::BitNot => self.emit_opcode(OpCode::BitNot),
                 }
             }
 
@@ -384,6 +386,12 @@ impl Compiler {
 
                 return;
             }
+
+            BinaryOp::BitAnd => OpCode::BitAnd,
+            BinaryOp::BitOr => OpCode::BitOr,
+            BinaryOp::BitXor => OpCode::BitXor,
+            BinaryOp::ShiftLeft => OpCode::ShiftLeft,
+            BinaryOp::ShiftRight => OpCode::ShiftRight,
 
             _ => unreachable!(),
         };
