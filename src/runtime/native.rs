@@ -222,6 +222,46 @@ pub fn native_bool(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ================================================================
+// TYPE (introspection façon Python)
+//
+// Kastel n'a qu'un seul type numérique en interne (Number = f64) — pas de
+// distinction int/float au niveau de Value. type() la simule en testant
+// si la partie décimale est nulle, uniquement pour l'affichage : ça ne
+// change rien au comportement des opérations arithmétiques.
+// ================================================================
+
+pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    let name = match &args[0] {
+        Value::Number(n) => {
+            if n.fract() == 0.0 && n.is_finite() {
+                "int"
+            } else {
+                "float"
+            }
+        }
+
+        Value::Boolean(_) => "bool",
+        Value::String(_) => "string",
+        Value::Nil => "nil",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+        Value::Range { .. } => "range",
+        Value::Iterator(_) => "iterator",
+        Value::Function(_) | Value::Closure(_) | Value::NativeFunction(_) => "function",
+        Value::Module(_) => "module",
+    };
+
+    Ok(Value::String(name.to_string()))
+}
+
+// ================================================================
 // FORMAT STRING (façon Rust : "{}" comme placeholder positionnel)
 // ================================================================
 //
@@ -502,6 +542,8 @@ pub fn register_natives(globals: &mut std::collections::HashMap<String, Value>) 
 
     globals.insert("bool".to_string(), Value::NativeFunction(native_bool));
 
+    globals.insert("type".to_string(), Value::NativeFunction(native_type));
+
     globals.insert("range".to_string(), Value::NativeFunction(native_range));
 
     globals.insert("list".to_string(), Value::NativeFunction(native_list));
@@ -549,6 +591,8 @@ pub fn execute_native(compiler: &mut Compiler) {
     let _ = compiler.define_native("str");
 
     let _ = compiler.define_native("bool");
+
+    let _ = compiler.define_native("type");
 
     let _ = compiler.define_native("range");
 

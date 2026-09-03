@@ -41,7 +41,7 @@ Kastel cherche à conserver une syntaxe lisible avec une complexité syntaxique 
 
 Exemple :
 
-```kastel
+```JavaScript
 let name = "Kastel";
 let version = 1;
 

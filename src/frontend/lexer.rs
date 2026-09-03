@@ -213,23 +213,100 @@ impl Lexer {
     }
 
     fn number(&mut self, first: char) -> Token {
+        let start_column = self.column - 1;
+
+        // ------------------------------------------------------------
+        // Hexadécimal (0xFF) / binaire (0b1010)
+        //
+        // Convertis directement en décimal ICI, au lex : le lexeme produit
+        // est une chaîne décimale normale ("255", "10"), donc le parser
+        // n'a besoin d'AUCUN changement — token.lexeme.parse::<f64>()
+        // fonctionne tel quel, comme pour n'importe quel autre nombre.
+        // ------------------------------------------------------------
+        if first == '0' && (self.peek() == 'x' || self.peek() == 'X') {
+            self.advance(); // consomme 'x'/'X'
+
+            let mut digits = String::new();
+
+            while self.peek().is_ascii_hexdigit() || self.peek() == '_' {
+                let c = self.advance();
+
+                if c != '_' {
+                    digits.push(c);
+                }
+            }
+
+            let value = u64::from_str_radix(&digits, 16).unwrap_or(0);
+
+            return Token::new(TokenKind::Number, value.to_string(), self.line, start_column);
+        }
+
+        if first == '0' && (self.peek() == 'b' || self.peek() == 'B') {
+            self.advance(); // consomme 'b'/'B'
+
+            let mut digits = String::new();
+
+            while self.peek() == '0' || self.peek() == '1' || self.peek() == '_' {
+                let c = self.advance();
+
+                if c != '_' {
+                    digits.push(c);
+                }
+            }
+
+            let value = u64::from_str_radix(&digits, 2).unwrap_or(0);
+
+            return Token::new(TokenKind::Number, value.to_string(), self.line, start_column);
+        }
+
+        // ------------------------------------------------------------
+        // Décimal normal, avec underscores optionnels comme séparateurs
+        // visuels (1_000_000) et notation scientifique optionnelle (1.5e3)
+        // ------------------------------------------------------------
         let mut text = String::new();
 
         text.push(first);
 
-        while self.peek().is_ascii_digit() {
-            text.push(self.advance());
-        }
+        while self.peek().is_ascii_digit() || self.peek() == '_' {
+            let c = self.advance();
 
-        if self.peek() == '.' && self.peek_next().is_ascii_digit() {
-            text.push(self.advance());
-
-            while self.peek().is_ascii_digit() {
-                text.push(self.advance());
+            if c != '_' {
+                text.push(c);
             }
         }
 
-        Token::new(TokenKind::Number, text, self.line, self.column)
+        if self.peek() == '.' && self.peek_next().is_ascii_digit() {
+            text.push(self.advance()); // '.'
+
+            while self.peek().is_ascii_digit() || self.peek() == '_' {
+                let c = self.advance();
+
+                if c != '_' {
+                    text.push(c);
+                }
+            }
+        }
+
+        // Exposant : 'e'/'E' suivi d'un chiffre, ou d'un signe puis un chiffre.
+        if self.peek() == 'e' || self.peek() == 'E' {
+            let exponent_starts_number = self.peek_next().is_ascii_digit()
+                || self.peek_next() == '+'
+                || self.peek_next() == '-';
+
+            if exponent_starts_number {
+                text.push(self.advance()); // 'e'/'E'
+
+                if self.peek() == '+' || self.peek() == '-' {
+                    text.push(self.advance());
+                }
+
+                while self.peek().is_ascii_digit() {
+                    text.push(self.advance());
+                }
+            }
+        }
+
+        Token::new(TokenKind::Number, text, self.line, start_column)
     }
 
     fn string(&mut self) -> Token {
