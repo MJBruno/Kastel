@@ -14,7 +14,9 @@ impl Compiler {
         match expr {
             Expression::Literal(value) => {
                 let value = match value {
-                    Literal::Number(v) => Value::Number(*v),
+                    Literal::Integer(v) => Value::Integer(*v),
+
+                    Literal::Float(v) => Value::Float(*v),
 
                     Literal::String(v) => Value::String(v.clone()),
 

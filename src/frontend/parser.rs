@@ -110,13 +110,27 @@ impl Parser {
     }
 
     fn parse_number(&self, token: Token) -> Result<Expression, ParserError> {
-        let value = token.lexeme.parse::<f64>().map_err(|_| ParserError {
-            message: format!("Nombre invalide '{}'", token.lexeme),
-            line: token.line,
-            column: token.column,
-        })?;
+        // Un '.' ou un 'e'/'E' dans le lexème signale un littéral flottant
+        // (1.5, 1.5e3) ; sinon c'est un entier (42, 0xFF -> "255", 0b1010 -> "10").
+        let is_float = token.lexeme.contains('.') || token.lexeme.contains(['e', 'E']);
 
-        Ok(Expression::Literal(Literal::Number(value)))
+        if is_float {
+            let value = token.lexeme.parse::<f64>().map_err(|_| ParserError {
+                message: format!("Nombre flottant invalide '{}'", token.lexeme),
+                line: token.line,
+                column: token.column,
+            })?;
+
+            Ok(Expression::Literal(Literal::Float(value)))
+        } else {
+            let value = token.lexeme.parse::<i64>().map_err(|_| ParserError {
+                message: format!("Nombre entier invalide '{}'", token.lexeme),
+                line: token.line,
+                column: token.column,
+            })?;
+
+            Ok(Expression::Literal(Literal::Integer(value)))
+        }
     }
 
     fn parse_string(&self, token: Token) -> Result<Expression, ParserError> {
@@ -629,7 +643,8 @@ impl Parser {
         let positioned = statements
             .into_iter()
             .map(|statement| Statement::Positioned {
-               
+                // line,
+                // column,
                 statement: Box::new(statement),
             })
             .collect();

@@ -1,4 +1,7 @@
-use crate::{compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value};
+use crate::{
+    compiler::compiler::Compiler, error::runtime_error::RuntimeError,
+    runtime::value::{NumericOp, Value},
+};
  
 
 use std::io::{self, Write};
@@ -22,7 +25,7 @@ pub fn native_clock(args: &[Value]) -> Result<Value, RuntimeError> {
         .duration_since(UNIX_EPOCH)
         .map_err(|_| RuntimeError::TypeError)?;
 
-    Ok(Value::Number(duration.as_secs_f64()))
+    Ok(Value::Float(duration.as_secs_f64()))
 }
 
 // ================================================================
@@ -44,7 +47,9 @@ pub fn native_clock(args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn expect_integer(value: &Value) -> Result<i64, RuntimeError> {
     match value {
-        Value::Number(n) => {
+        Value::Integer(n) => Ok(*n),
+
+        Value::Float(n) => {
             if n.fract() != 0.0 {
                 return Err(RuntimeError::TypeError);
             }
@@ -118,23 +123,7 @@ pub fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    let a = match &args[0] {
-        Value::Number(value) => *value,
-
-        _ => {
-            return Err(RuntimeError::TypeError);
-        }
-    };
-
-    let b = match &args[1] {
-        Value::Number(value) => *value,
-
-        _ => {
-            return Err(RuntimeError::TypeError);
-        }
-    };
-
-    Ok(Value::Number(a + b))
+    Value::binary_numeric_op(args[0].clone(), args[1].clone(), NumericOp::Add)
 }
 
 // ================================================================
@@ -160,7 +149,9 @@ pub fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
 
 fn parse_number_like(value: &Value) -> Result<f64, RuntimeError> {
     match value {
-        Value::Number(n) => Ok(*n),
+        Value::Integer(n) => Ok(*n as f64),
+
+        Value::Float(n) => Ok(*n),
 
         Value::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
 
@@ -178,12 +169,15 @@ pub fn native_int(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
+    // Cas rapide : déjà un entier, rien à convertir.
+    if let Value::Integer(n) = &args[0] {
+        return Ok(Value::Integer(*n));
+    }
+
     let value = parse_number_like(&args[0])?;
 
-    // Troncature vers zéro, pas floor() : int(-5.7) == -5 en Python,
-    // pas -6. Kastel n'a pas de type entier séparé — le résultat reste un
-    // Number, mais avec une valeur entière garantie.
-    Ok(Value::Number(value.trunc()))
+    // Troncature vers zéro, pas floor() : int(-5.7) == -5 en Python, pas -6.
+    Ok(Value::Integer(value.trunc() as i64))
 }
 
 pub fn native_float(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -196,7 +190,7 @@ pub fn native_float(args: &[Value]) -> Result<Value, RuntimeError> {
 
     let value = parse_number_like(&args[0])?;
 
-    Ok(Value::Number(value))
+    Ok(Value::Float(value))
 }
 
 pub fn native_str(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -239,13 +233,8 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     let name = match &args[0] {
-        Value::Number(n) => {
-            if n.fract() == 0.0 && n.is_finite() {
-                "int"
-            } else {
-                "float"
-            }
-        }
+        Value::Integer(_) => "int",
+        Value::Float(_) => "float",
 
         Value::Boolean(_) => "bool",
         Value::String(_) => "string",
@@ -433,7 +422,7 @@ pub fn native_array_push(args: &[Value]) -> Result<Value, RuntimeError> {
 
     let length = array.array_push(value)?;
 
-    Ok(Value::Number(length as f64))
+    Ok(Value::Integer(length as i64))
 }
 
 // ================================================================
@@ -472,7 +461,7 @@ pub fn native_array_length(args: &[Value]) -> Result<Value, RuntimeError> {
 
     let length = args[0].array_len()?;
 
-    Ok(Value::Number(length as f64))
+    Ok(Value::Integer(length as i64))
 }
 
 pub fn native_array_insert(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -483,23 +472,11 @@ pub fn native_array_insert(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    let index = match args[1] {
-        Value::Number(value) => {
-            if value < 0.0 || value.fract() != 0.0 {
-                return Err(RuntimeError::TypeError);
-            }
-
-            value as usize
-        }
-
-        _ => {
-            return Err(RuntimeError::TypeError);
-        }
-    };
+    let index = expect_array_index(&args[1])?;
 
     let length = args[0].array_insert(index, args[2].clone())?;
 
-    Ok(Value::Number(length as f64))
+    Ok(Value::Integer(length as i64))
 }
 
 pub fn native_array_remove(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -510,21 +487,22 @@ pub fn native_array_remove(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    let index = match args[1] {
-        Value::Number(value) => {
-            if value < 0.0 || value.fract() != 0.0 {
-                return Err(RuntimeError::TypeError);
-            }
-
-            value as usize
-        }
-
-        _ => {
-            return Err(RuntimeError::TypeError);
-        }
-    };
+    let index = expect_array_index(&args[1])?;
 
     args[0].array_remove(index)
+}
+
+/// Valide un index de tableau : Integer non-négatif directement, ou Float
+/// à valeur entière non-négative (cohérent avec l'indexation `arr[i]`,
+/// qui accepte aussi les deux — voir `array_index` côté VM).
+fn expect_array_index(value: &Value) -> Result<usize, RuntimeError> {
+    match value {
+        Value::Integer(n) if *n >= 0 => Ok(*n as usize),
+
+        Value::Float(n) if *n >= 0.0 && n.fract() == 0.0 => Ok(*n as usize),
+
+        _ => Err(RuntimeError::TypeError),
+    }
 }
 
 // ================================================================

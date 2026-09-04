@@ -1,16 +1,23 @@
-let flags = 0b1010;
-let mask  = 0xFF;
+let a = 7;
+let b = 2;
 
-println(flags & mask);   // ET bitwise
-println(flags | mask);   // OU bitwise
-println(flags ^ mask);   // XOR bitwise
-println(~flags);         // NON bitwise
-println(1 << 4);         // 16
-println(256 >> 4);       // 16
+println(type(a));    // "int"
+println(a + b);       // 9   (int + int -> int)
+println(a / b);        // 3.5 (division toujours "vraie", façon Python 3)
+println(a % b);         // 1   (int)
 
-let x = 10;
-x += 5;   // 15
-x -= 3;   // 12
-x *= 2;   // 24
-x /= 4;   // 6
-x %= 4;   // 2
+let c = 2.5;
+println(type(c));        // "float"
+println(a + c);           // 9.5 (int + float -> float, promotion)
+
+println(5 == 5.0);         // true (comparables entre types)
+
+let x = 5.0;
+println(x);                 // "5.0" (jamais "5" — distingue visuellement du int)
+
+println(3 & 5);              // 1 (bitwise exige un vrai Integer désormais)
+// println(3.0 & 5);             // 🚨 Erreur de type — plus de troncature implicite
+
+for i in range(3) {
+    println(type(i));          // "int", trois fois
+}

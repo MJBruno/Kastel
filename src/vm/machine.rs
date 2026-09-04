@@ -285,34 +285,38 @@ impl VirtualMachine {
     }
 
     fn array_index(value: Value) -> Result<usize, RuntimeError> {
-        let index = match value {
-            Value::Number(index) => index,
+        match value {
+            Value::Integer(index) => {
+                if index < 0 {
+                    return Err(RuntimeError::ArrayIndexNotInteger);
+                }
 
-            _ => {
-                return Err(RuntimeError::ArrayIndexNotInteger);
+                Ok(index as usize)
             }
-        };
 
-        if !index.is_finite() || index < 0.0 || index.fract() != 0.0 {
-            return Err(RuntimeError::ArrayIndexNotInteger);
+            Value::Float(index) => {
+                if !index.is_finite() || index < 0.0 || index.fract() != 0.0 {
+                    return Err(RuntimeError::ArrayIndexNotInteger);
+                }
+
+                if index > usize::MAX as f64 {
+                    return Err(RuntimeError::ArrayIndexNotInteger);
+                }
+
+                Ok(index as usize)
+            }
+
+            _ => Err(RuntimeError::ArrayIndexNotInteger),
         }
-
-        if index > usize::MAX as f64 {
-            return Err(RuntimeError::ArrayIndexNotInteger);
-        }
-
-        Ok(index as usize)
     }
 
-    /// Tronque une valeur numérique en entier 64 bits pour les opérations
-    /// bitwise. Refuse NaN/Infinity explicitement plutôt que de les
-    /// tronquer vers une valeur arbitraire (`as i64` sur NaN/Infinity a un
-    /// comportement peu intuitif : 0 pour NaN, i64::MAX/MIN pour
-    /// Infinity — mieux vaut une erreur claire qu'un résultat silencieux
-    /// et surprenant).
+    /// Extrait un entier 64 bits pour les opérations bitwise. Exige
+    /// STRICTEMENT un Integer — contrairement à array_index, pas de
+    /// tolérance pour un Float à valeur entière (`1.0 & 2` est une erreur
+    /// de type, comme en Python `1.0 & 2` lève TypeError).
     fn to_bitwise_int(value: &Value) -> Result<i64, RuntimeError> {
         match value {
-            Value::Number(n) if n.is_finite() => Ok(n.trunc() as i64),
+            Value::Integer(n) => Ok(*n),
 
             _ => Err(RuntimeError::TypeError),
         }
@@ -348,7 +352,7 @@ impl VirtualMachine {
 
         let length = array.array_len()?;
 
-        self.push(Value::Number(length as f64));
+        self.push(Value::Integer(length as i64));
 
         Ok(())
     }
@@ -359,7 +363,7 @@ impl VirtualMachine {
 
         let length = array.array_push(value)?;
 
-        self.push(Value::Number(length as f64));
+        self.push(Value::Integer(length as i64));
 
         Ok(())
     }
@@ -383,7 +387,7 @@ impl VirtualMachine {
 
         let length = array.array_insert(index, value)?;
 
-        self.push(Value::Number(length as f64));
+        self.push(Value::Integer(length as i64));
 
         Ok(())
     }
@@ -634,7 +638,7 @@ impl VirtualMachine {
                     let a = Self::to_bitwise_int(&a)?;
                     let b = Self::to_bitwise_int(&b)?;
 
-                    self.push(Value::Number((a & b) as f64));
+                    self.push(Value::Integer(a & b));
                 }
 
                 x if x == OpCode::BitOr.into() => {
@@ -644,7 +648,7 @@ impl VirtualMachine {
                     let a = Self::to_bitwise_int(&a)?;
                     let b = Self::to_bitwise_int(&b)?;
 
-                    self.push(Value::Number((a | b) as f64));
+                    self.push(Value::Integer(a | b));
                 }
 
                 x if x == OpCode::BitXor.into() => {
@@ -654,7 +658,7 @@ impl VirtualMachine {
                     let a = Self::to_bitwise_int(&a)?;
                     let b = Self::to_bitwise_int(&b)?;
 
-                    self.push(Value::Number((a ^ b) as f64));
+                    self.push(Value::Integer(a ^ b));
                 }
 
                 x if x == OpCode::BitNot.into() => {
@@ -662,7 +666,7 @@ impl VirtualMachine {
 
                     let a = Self::to_bitwise_int(&a)?;
 
-                    self.push(Value::Number((!a) as f64));
+                    self.push(Value::Integer(!a));
                 }
 
                 x if x == OpCode::ShiftLeft.into() => {
@@ -676,7 +680,7 @@ impl VirtualMachine {
                         return Err(RuntimeError::InvalidShiftAmount);
                     }
 
-                    self.push(Value::Number((a << shift) as f64));
+                    self.push(Value::Integer(a << shift));
                 }
 
                 x if x == OpCode::ShiftRight.into() => {
@@ -690,7 +694,7 @@ impl VirtualMachine {
                         return Err(RuntimeError::InvalidShiftAmount);
                     }
 
-                    self.push(Value::Number((a >> shift) as f64));
+                    self.push(Value::Integer(a >> shift));
                 }
 
                 // =================================================

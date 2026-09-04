@@ -22,6 +22,13 @@ impl ModulePath {
         Self { parts }
     }
 
+    // pub fn as_string(&self) -> String {
+    //     self.parts.join(".")
+    // }
+
+    // pub fn last(&self) -> Option<&str> {
+    //     self.parts.last().map(String::as_str)
+    // }
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +47,8 @@ pub enum Statement {
     /// parser (statement()) et un seul dans le compilateur
     /// (compile_statement), plutôt que des dizaines.
     Positioned {
-   
+        // line: usize,
+        // column: usize,
         statement: Box<Statement>,
     },
 
@@ -105,7 +113,8 @@ pub enum Statement {
 
 #[derive(Debug, Clone)]
 pub enum Literal {
-    Number(f64),
+    Integer(i64),
+    Float(f64),
     String(String),
     Bool(bool),
     Nil,

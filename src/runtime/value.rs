@@ -28,7 +28,8 @@ pub enum ComparisonOp {
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code, unpredictable_function_pointer_comparisons)]
 pub enum Value {
-    Number(f64),
+    Integer(i64),
+    Float(f64),
     Boolean(bool),
     String(String),
 
@@ -65,8 +66,20 @@ pub enum Value {
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Number(value) => {
+            Value::Integer(value) => {
                 write!(f, "{value}")
+            }
+
+            Value::Float(value) => {
+                // Toujours au moins un point décimal, même pour une valeur
+                // entière (5.0, pas 5) : c'est ce qui permet de distinguer
+                // visuellement un Float d'un Integer, comme repr() en
+                // Python. NaN/Infinity gardent leur affichage naturel.
+                if value.fract() == 0.0 && value.is_finite() {
+                    write!(f, "{value:.1}")
+                } else {
+                    write!(f, "{value}")
+                }
             }
 
             Value::Boolean(value) => {
@@ -158,7 +171,9 @@ impl Value {
 
             Value::Boolean(value) => *value,
 
-            Value::Number(value) => *value != 0.0 && !value.is_nan(),
+            Value::Integer(value) => *value != 0,
+
+            Value::Float(value) => *value != 0.0 && !value.is_nan(),
 
             Value::String(value) => !value.is_empty(),
 
@@ -172,35 +187,65 @@ impl Value {
 
     pub fn binary_numeric_op(a: Value, b: Value, op: NumericOp) -> Result<Value, RuntimeError> {
         match (a, b) {
-            (Value::Number(a), Value::Number(b)) => Self::number_op(a, b, op),
+            // Int op Int -> Int (sauf division, toujours "vraie division"
+            // façon Python 3 : 7 / 2 == 3.5, pas 3 — Kastel n'a pas
+            // d'opérateur de division entière séparé).
+            (Value::Integer(a), Value::Integer(b)) => match op {
+                NumericOp::Add => Ok(Value::Integer(a.wrapping_add(b))),
+                NumericOp::Subtract => Ok(Value::Integer(a.wrapping_sub(b))),
+                NumericOp::Multiply => Ok(Value::Integer(a.wrapping_mul(b))),
+
+                NumericOp::Divide => {
+                    if b == 0 {
+                        return Err(RuntimeError::DivisionByZero);
+                    }
+
+                    Ok(Value::Float(a as f64 / b as f64))
+                }
+
+                NumericOp::Modulo => {
+                    if b == 0 {
+                        return Err(RuntimeError::DivisionByZero);
+                    }
+
+                    Ok(Value::Integer(a.wrapping_rem(b)))
+                }
+            },
+
+            // Toute combinaison impliquant un Float est promue en Float.
+            (Value::Integer(a), Value::Float(b)) => Self::number_op(a as f64, b, op),
+            (Value::Float(a), Value::Integer(b)) => Self::number_op(a, b as f64, op),
+            (Value::Float(a), Value::Float(b)) => Self::number_op(a, b, op),
 
             _ => Err(RuntimeError::TypeError),
         }
     }
 
-    pub fn number_op(a: f64, b: f64, op: NumericOp) -> Result<Value, RuntimeError> {
+    fn number_op(a: f64, b: f64, op: NumericOp) -> Result<Value, RuntimeError> {
         match op {
-            NumericOp::Add => Ok(Value::Number(a + b)),
+            NumericOp::Add => Ok(Value::Float(a + b)),
 
-            NumericOp::Subtract => Ok(Value::Number(a - b)),
+            NumericOp::Subtract => Ok(Value::Float(a - b)),
 
-            NumericOp::Multiply => Ok(Value::Number(a * b)),
+            NumericOp::Multiply => Ok(Value::Float(a * b)),
 
             NumericOp::Divide => {
                 if b == 0.0 {
                     return Err(RuntimeError::DivisionByZero);
                 }
 
-                Ok(Value::Number(a / b))
+                Ok(Value::Float(a / b))
             }
 
-            NumericOp::Modulo => Ok(Value::Number(a % b)),
+            NumericOp::Modulo => Ok(Value::Float(a % b)),
         }
     }
 
     pub fn negate_values(a: Value) -> Result<Value, RuntimeError> {
         match a {
-            Value::Number(a) => Ok(Value::Number(-a)),
+            Value::Integer(a) => Ok(Value::Integer(a.wrapping_neg())),
+
+            Value::Float(a) => Ok(Value::Float(-a)),
 
             _ => Err(RuntimeError::TypeError),
         }
@@ -210,9 +255,32 @@ impl Value {
     // COMPARISON
     // ============================================================
 
+    /// Compare deux valeurs numériques, Integer et Float mélangeables
+    /// (5 < 5.5 doit fonctionner). Passe par f64 pour la comparaison
+    /// inter-types — limite connue : au-delà de 2^53, deux i64 distincts
+    /// peuvent devenir "égaux" une fois convertis en f64. Kastel n'a pas
+    /// vocation à manipuler des entiers de cette taille pour l'instant.
     pub fn compare_numeric(a: Value, b: Value, op: ComparisonOp) -> Result<Value, RuntimeError> {
         match (a, b) {
-            (Value::Number(a), Value::Number(b)) => {
+            (Value::Integer(a), Value::Integer(b)) => {
+                let result = match op {
+                    ComparisonOp::Equal => a == b,
+                    ComparisonOp::Greater => a > b,
+                    ComparisonOp::Less => a < b,
+                };
+
+                Ok(Value::Boolean(result))
+            }
+
+            (Value::Integer(a), Value::Float(b)) => {
+                Ok(Value::Boolean(Self::compare_number(a as f64, b, op)))
+            }
+
+            (Value::Float(a), Value::Integer(b)) => {
+                Ok(Value::Boolean(Self::compare_number(a, b as f64, op)))
+            }
+
+            (Value::Float(a), Value::Float(b)) => {
                 Ok(Value::Boolean(Self::compare_number(a, b, op)))
             }
 
@@ -234,7 +302,10 @@ impl Value {
 
     pub fn equals(a: Value, b: Value) -> bool {
         match (a, b) {
-            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Integer(a), Value::Integer(b)) => a == b,
+            (Value::Integer(a), Value::Float(b)) => a as f64 == b,
+            (Value::Float(a), Value::Integer(b)) => a == b as f64,
+            (Value::Float(a), Value::Float(b)) => a == b,
 
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
 

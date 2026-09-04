@@ -158,7 +158,7 @@ impl Value {
 
                         *current += *step;
 
-                        Ok(Value::Number(value))
+                        Ok(Value::Integer(value as i64))
                     }
 
                     IteratorState::Array { array, index } => {
