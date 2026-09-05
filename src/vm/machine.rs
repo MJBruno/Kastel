@@ -114,7 +114,7 @@ impl VirtualMachine {
 
         Ok(values)
     }
-
+#[allow(dead_code)]
     pub fn get_global(&self, name: &str) -> Option<Value> {
         self.globals.get(name).cloned()
     }
@@ -1117,70 +1117,70 @@ impl VirtualMachine {
         })
     }
 
-    fn get_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
-        let upvalue = {
-            let frame = self.current_frame();
+   fn get_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
+    let upvalue = {
+        let frame = self.current_frame();
+        let closure = frame_closure(&frame.closure);
 
-            frame
-                .closure
-                .borrow()
-                .upvalues
-                .get(index)
+        closure
+            .upvalues
+            .get(index)
+            .cloned()
+            .ok_or(RuntimeError::InvalidFunction)?
+    };
+
+    let value = {
+        let upvalue_ref = upvalue.borrow();
+
+        match &upvalue_ref.closed {
+            Some(value) => value.clone(),
+
+            None => self
+                .stack
+                .get(upvalue_ref.slot)
                 .cloned()
-                .ok_or(RuntimeError::InvalidFunction)?
-        };
+                .ok_or(RuntimeError::InvalidFunction)?,
+        }
+    };
 
-        let value = {
-            let upvalue = upvalue.borrow();
+    self.push(value);
 
-            match &upvalue.closed {
-                Some(value) => value.clone(),
+    Ok(())
+}
 
-                None => self
-                    .stack
-                    .get(upvalue.slot)
-                    .cloned()
-                    .ok_or(RuntimeError::InvalidFunction)?,
-            }
-        };
+fn set_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
+    let upvalue = {
+        let frame = self.current_frame();
+        let closure = frame_closure(&frame.closure);
 
-        self.push(value);
+        closure
+            .upvalues
+            .get(index)
+            .cloned()
+            .ok_or(RuntimeError::InvalidFunction)?
+    };
 
-        Ok(())
+    let value = self.peek().clone();
+
+    let slot = {
+        let mut upvalue_ref = upvalue.borrow_mut();
+
+        if let Some(closed) = &mut upvalue_ref.closed {
+            *closed = value;
+            return Ok(());
+        }
+
+        upvalue_ref.slot
+    };
+
+    if slot >= self.stack.len() {
+        return Err(RuntimeError::InvalidFunction);
     }
 
-    fn set_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
-        let upvalue = {
-            let frame = self.current_frame();
+    self.stack[slot] = value;
 
-            frame
-                .closure
-                .borrow()
-                .upvalues
-                .get(index)
-                .cloned()
-                .ok_or(RuntimeError::InvalidFunction)?
-        };
-
-        let value = self.peek().clone();
-
-        let slot = {
-            let mut upvalue_ref = upvalue.borrow_mut();
-
-            if let Some(closed) = &mut upvalue_ref.closed {
-                *closed = value;
-
-                return Ok(());
-            }
-
-            upvalue_ref.slot
-        };
-
-        self.stack[slot] = value;
-
-        Ok(())
-    }
-
+    Ok(())
+}
     fn close_upvalues(&mut self, last: usize) {
         let mut i = 0;
 

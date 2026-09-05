@@ -7,7 +7,6 @@ use crate::frontend::ast::Statement;
 use crate::runtime::function::Function;
 use crate::runtime::objet;
 use crate::runtime::upvalue::Upvalue;
-use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
 use super::variables::Global;

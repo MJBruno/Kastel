@@ -1,6 +1,5 @@
+let a = {
+    name:"Bruno"
+}
 
-let a = {}
-
-let result = type(a)=="object"
-
-println(result)
+print(a.name)

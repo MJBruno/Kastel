@@ -40,6 +40,7 @@ impl<T> Gc<T> {
     /// que le mark & sweep utilise pour savoir si un objet déjà visité a
     /// été rencontré à nouveau (protection contre les cycles pendant le
     /// marquage lui-même).
+    #[allow(dead_code)]
     pub fn ptr_eq(a: &Gc<T>, b: &Gc<T>) -> bool {
         Rc::ptr_eq(&a.0, &b.0)
     }

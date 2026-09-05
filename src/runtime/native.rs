@@ -1,8 +1,9 @@
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError,
+    compiler::compiler::Compiler,
+    error::runtime_error::RuntimeError,
+    runtime::object::Object,
     runtime::value::{NumericOp, Value},
 };
- 
 
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -155,9 +156,13 @@ fn parse_number_like(value: &Value) -> Result<f64, RuntimeError> {
 
         Value::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
 
-        Value::String(s) => s.trim().parse::<f64>().map_err(|_| RuntimeError::TypeError),
-
-        _ => Err(RuntimeError::TypeError),
+        _ => {
+            if let Some(s) = value.as_string_value() {
+                s.trim().parse::<f64>().map_err(|_| RuntimeError::TypeError)
+            } else {
+                Err(RuntimeError::TypeError)
+            }
+        }
     }
 }
 
@@ -201,7 +206,7 @@ pub fn native_str(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    Ok(Value::String(args[0].to_string()))
+    Ok(Value::new_string(args[0].to_string()))
 }
 
 pub fn native_bool(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -237,17 +242,21 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
         Value::Float(_) => "float",
 
         Value::Boolean(_) => "bool",
-        Value::String(_) => "string",
         Value::Nil => "nil",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
         Value::Range { .. } => "range",
-        Value::Iterator(_) => "iterator",
-        Value::Function(_) | Value::Closure(_) | Value::NativeFunction(_) => "function",
-        Value::Module(_) => "module",
+        Value::NativeFunction(_) => "function",
+
+        Value::Object(handle) => match &*handle.borrow() {
+            Object::String(_) => "string",
+            Object::Array(_) => "array",
+            Object::Dict(_) => "object",
+            Object::Function(_) | Object::Closure(_) => "function",
+            Object::Iterator(_) => "iterator",
+            Object::Module(_) => "module",
+        },
     };
 
-    Ok(Value::String(name.to_string()))
+    Ok(Value::new_string(name.to_string()))
 }
 
 // ================================================================
@@ -269,10 +278,12 @@ fn format_string(format: &str, args: &[Value]) -> Result<String, RuntimeError> {
         if c == '{' && chars.peek() == Some(&'}') {
             chars.next(); // consomme le '}'
 
-            let value = args.get(arg_index).ok_or(RuntimeError::WrongArgumentCount {
-                expected: arg_index + 1,
-                found: args.len(),
-            })?;
+            let value = args
+                .get(arg_index)
+                .ok_or(RuntimeError::WrongArgumentCount {
+                    expected: arg_index + 1,
+                    found: args.len(),
+                })?;
 
             result.push_str(&value.to_string());
 
@@ -298,7 +309,7 @@ pub fn native_println(args: &[Value]) -> Result<Value, RuntimeError> {
 
     println!("{formatted}");
 
-    Ok(Value::String(formatted))
+    Ok(Value::new_string(formatted))
 }
 
 pub fn native_print(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -312,7 +323,7 @@ pub fn native_print(args: &[Value]) -> Result<Value, RuntimeError> {
     // avant, par exemple, un prochain input().
     io::stdout().flush().ok();
 
-    Ok(Value::String(formatted))
+    Ok(Value::new_string(formatted))
 }
 
 /// Factorise la logique commune à print() et println() : un seul argument
@@ -327,19 +338,16 @@ fn render_arguments(args: &[Value]) -> Result<String, RuntimeError> {
     };
 
     if args.len() == 1 {
-        if let Value::String(text) = first {
-            return Ok(text.clone());
+        if let Some(text) = first.as_string_value() {
+            return Ok(text);
         }
 
         return Ok(first.to_string());
     }
 
-    let format = match first {
-        Value::String(text) => text,
-        _ => return Err(RuntimeError::TypeError),
-    };
+    let format = first.as_string_value().ok_or(RuntimeError::TypeError)?;
 
-    format_string(format, &args[1..])
+    format_string(&format, &args[1..])
 }
 
 // ================================================================
@@ -362,7 +370,9 @@ pub fn native_input(args: &[Value]) -> Result<Value, RuntimeError> {
     if let Some(prompt) = args.first() {
         print!("{prompt}");
 
-        io::stdout().flush().map_err(|_| RuntimeError::NativeError)?;
+        io::stdout()
+            .flush()
+            .map_err(|_| RuntimeError::NativeError)?;
     }
 
     let mut buffer = String::new();
@@ -373,7 +383,7 @@ pub fn native_input(args: &[Value]) -> Result<Value, RuntimeError> {
 
     let trimmed = buffer.trim_end_matches(['\n', '\r']).to_string();
 
-    Ok(Value::String(trimmed))
+    Ok(Value::new_string(trimmed))
 }
 
 // ================================================================
@@ -391,14 +401,11 @@ pub fn native_format(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     };
 
-    let format = match first {
-        Value::String(text) => text,
-        _ => return Err(RuntimeError::TypeError),
-    };
+    let format = first.as_string_value().ok_or(RuntimeError::TypeError)?;
 
-    let formatted = format_string(format, &args[1..])?;
+    let formatted = format_string(&format, &args[1..])?;
 
-    Ok(Value::String(formatted))
+    Ok(Value::new_string(formatted))
 }
 
 // ================================================================
@@ -593,6 +600,6 @@ pub fn execute_native(compiler: &mut Compiler) {
     let _ = compiler.define_native("length");
 
     let _ = compiler.define_native("insert");
-    
+
     let _ = compiler.define_native("remove");
 }
