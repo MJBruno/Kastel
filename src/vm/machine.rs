@@ -8,7 +8,9 @@ use crate::module::module::ModuleLoader;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
 use crate::runtime::gc;
-use crate::runtime::object;
+use crate::runtime::gc_handle::Gc;
+use crate::runtime::object::Object;
+use crate::runtime::objet;
 use crate::runtime::native::register_natives;
 use crate::runtime::value::*;
 use crate::bytecode::chunk::OpCode;
@@ -29,7 +31,7 @@ impl ObjUpvalue {
 
 #[allow(dead_code)]
 pub struct CallFrame {
-    pub closure: Rc<RefCell<Closure>>,
+    pub closure: Gc<Object>,
     pub ip: usize,
     pub slot_start: usize,
 }
@@ -46,9 +48,22 @@ pub struct VirtualMachine {
 }
 
 #[allow(dead_code)]
+/// Extrait la `Closure` portée par le `Gc<Object>` d'un `CallFrame`.
+/// Invariant garanti par construction : `CallFrame.closure` n'est jamais
+/// assigné qu'à un `Object::Closure` (voir `VirtualMachine::new` et
+/// `VirtualMachine::call`, les deux seuls points de construction d'un
+/// `CallFrame`) — `unreachable!` n'est donc atteignable que par un bug
+/// interne à la VM elle-même, jamais par du code Kastel malformé.
+fn frame_closure(handle: &Gc<Object>) -> std::cell::Ref<'_, Closure> {
+    std::cell::Ref::map(handle.borrow(), |object| match object {
+        Object::Closure(closure) => closure,
+        _ => unreachable!("CallFrame.closure est toujours un Object::Closure par construction"),
+    })
+}
+
 impl VirtualMachine {
     pub fn new(function: Rc<Function>, module_path: Option<PathBuf>) -> Self {
-        let closure = object::new_closure(function, Vec::new());
+        let closure = objet::new_closure(function, Vec::new());
 
         let mut vm = Self {
             stack:  vec![Value::Nil],
@@ -127,7 +142,7 @@ impl VirtualMachine {
         let frame = self.frames.last_mut().expect("No call frame");
 
         let byte = {
-            let closure = frame.closure.borrow();
+            let closure = frame_closure(&frame.closure);
 
             closure.function.chunk.code[frame.ip]
         };
@@ -147,7 +162,7 @@ impl VirtualMachine {
     fn read_constant(&self, index: u8) -> Value {
         let frame = self.current_frame();
 
-        frame.closure.borrow().function.chunk.constants[index as usize].clone()
+        frame_closure(&frame.closure).function.chunk.constants[index as usize].clone()
     }
 
     fn read_constant_byte(&mut self) -> Value {
@@ -193,7 +208,7 @@ impl VirtualMachine {
 
         let (ip, chunk) = {
             let frame = self.current_frame();
-            let closure = frame.closure.borrow();
+            let closure = frame_closure(&frame.closure);
 
             (frame.ip, closure.function.chunk.clone())
         };
@@ -237,10 +252,7 @@ impl VirtualMachine {
         let mut iter = drained.into_iter();
 
         while let (Some(key), Some(value)) = (iter.next(), iter.next()) {
-            let key = match key {
-                Value::String(name) => name,
-                _ => return Err(RuntimeError::TypeError),
-            };
+            let key = key.as_string_value().ok_or(RuntimeError::TypeError)?;
 
             fields.push((key, value));
         }
@@ -456,13 +468,7 @@ impl VirtualMachine {
                 x if x == OpCode::DefineGlobal.into() => {
                     let constant = self.read_constant_byte();
 
-                    let name = match constant {
-                        Value::String(name) => name,
-
-                        _ => {
-                            return Err(RuntimeError::TypeError);
-                        }
-                    };
+                    let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
                     let value = self.pop();
 
@@ -472,13 +478,7 @@ impl VirtualMachine {
                 x if x == OpCode::GetGlobal.into() => {
                     let constant = self.read_constant_byte();
 
-                    let name = match constant {
-                        Value::String(name) => name,
-
-                        _ => {
-                            return Err(RuntimeError::TypeError);
-                        }
-                    };
+                    let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
                     let value = match self.globals.get(&name) {
                         Some(value) => value.clone(),
@@ -494,13 +494,7 @@ impl VirtualMachine {
                 x if x == OpCode::SetGlobal.into() => {
                     let constant = self.read_constant_byte();
 
-                    let name = match constant {
-                        Value::String(name) => name,
-
-                        _ => {
-                            return Err(RuntimeError::TypeError);
-                        }
-                    };
+                    let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
                     if !self.globals.contains_key(&name) {
                         return Err(RuntimeError::TypeError);
@@ -561,13 +555,11 @@ impl VirtualMachine {
                     let b = self.pop();
                     let a = self.pop();
 
-                    let result = match (&a, &b) {
+                    let result = match (a.as_string_value(), b.as_string_value()) {
                         // Concaténation stricte : uniquement String + String.
                         // "x" + 5 est désormais une erreur de type, pas une
                         // coercion implicite.
-                        (Value::String(_), Value::String(_)) => {
-                            Value::String(format!("{a}{b}"))
-                        }
+                        (Some(a_str), Some(b_str)) => Value::new_string(format!("{a_str}{b_str}")),
 
                         _ => Value::binary_numeric_op(a, b, NumericOp::Add)?,
                     };
@@ -738,13 +730,7 @@ impl VirtualMachine {
 
                     let property = self.read_constant(constant);
 
-                    let name = match property {
-                        Value::String(name) => name,
-
-                        _ => {
-                            return Err(RuntimeError::TypeError);
-                        }
-                    };
+                    let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
 
                     let object = self.pop();
 
@@ -758,13 +744,7 @@ impl VirtualMachine {
 
                     let property = self.read_constant(constant);
 
-                    let name = match property {
-                        Value::String(name) => name,
-
-                        _ => {
-                            return Err(RuntimeError::TypeError);
-                        }
-                    };
+                    let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
 
                     let value = self.pop();
                     let object = self.pop();
@@ -850,13 +830,7 @@ impl VirtualMachine {
 
                     let value = self.read_constant(constant);
 
-                    let module_name = match value {
-                        Value::String(name) => name,
-
-                        _ => {
-                            return Err(RuntimeError::TypeError);
-                        }
-                    };
+                    let module_name = value.as_string_value().ok_or(RuntimeError::TypeError)?;
 
                     let current_file = match &self.module_path {
                         Some(path) => path.clone(),
@@ -882,7 +856,7 @@ impl VirtualMachine {
                         .load_from(&current_file, &parts)
                         .map_err(|error| RuntimeError::ModuleError(error.to_string()))?;
 
-                    self.push(Value::Module(module));
+                    self.push(Value::new_module(module));
                 }
                 // =================================================
                 // CLOSURES
@@ -943,8 +917,14 @@ impl VirtualMachine {
                     let callee = self.stack[callee_index].clone();
 
                     match callee {
-                        Value::Closure(function) => {
-                            self.call(function, arg_count)?;
+                        Value::Object(handle) => {
+                            let is_closure = matches!(&*handle.borrow(), Object::Closure(_));
+
+                            if is_closure {
+                                self.call(handle, arg_count)?;
+                            } else {
+                                return Err(RuntimeError::NotCallable);
+                            }
                         }
 
                         Value::NativeFunction(function) => {
@@ -1013,10 +993,10 @@ impl VirtualMachine {
 
     fn call(
         &mut self,
-        closure: Rc<RefCell<Closure>>,
+        closure: Gc<Object>,
         arg_count: usize,
     ) -> Result<(), RuntimeError> {
-        let arity = closure.borrow().function.arity;
+        let arity = frame_closure(&closure).function.arity;
 
         if arg_count != arity {
             return Err(RuntimeError::WrongArgumentCount {
@@ -1046,16 +1026,22 @@ impl VirtualMachine {
         let function = {
             let frame = self.current_frame();
 
-            let closure = frame.closure.borrow();
+            let closure = frame_closure(&frame.closure);
 
-            match closure
-                .function
-                .chunk
-                .constants
-                .get(constant_index)
-                .cloned()
-            {
-                Some(Value::Function(function)) => function,
+            let constant = closure.function.chunk.constants.get(constant_index).cloned();
+
+            match constant {
+                Some(Value::Object(handle)) => {
+                    let extracted = match &*handle.borrow() {
+                        Object::Function(function) => Some(Rc::clone(function)),
+                        _ => None,
+                    };
+
+                    match extracted {
+                        Some(function) => function,
+                        None => return Err(RuntimeError::InvalidFunction),
+                    }
+                }
 
                 _ => {
                     return Err(RuntimeError::InvalidFunction);
@@ -1077,9 +1063,7 @@ impl VirtualMachine {
             } else {
                 let frame = self.current_frame();
 
-                frame
-                    .closure
-                    .borrow()
+                frame_closure(&frame.closure)
                     .upvalues
                     .get(index)
                     .cloned()
@@ -1089,9 +1073,9 @@ impl VirtualMachine {
             pending_upvalues.push(upvalue);
         }
 
-        let closure = object::new_closure(function_ref, pending_upvalues);
+        let closure = objet::new_closure(function_ref, pending_upvalues);
 
-        self.push(Value::Closure(closure));
+        self.push(Value::Object(closure));
 
         Ok(())
     }
@@ -1109,7 +1093,7 @@ impl VirtualMachine {
             }
         }
 
-        let upvalue = object::new_upvalue(absolute_slot);
+        let upvalue = objet::new_upvalue(absolute_slot);
 
         self.open_upvalues.push(Rc::clone(&upvalue));
 

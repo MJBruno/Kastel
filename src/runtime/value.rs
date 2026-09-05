@@ -1,14 +1,7 @@
-use crate::module::module::ModuleInstance;
-use crate::runtime::closure::Closure;
-use crate::runtime::iterator::IteratorState;
+use crate::error::runtime_error::RuntimeError;
+use crate::runtime::gc_handle::Gc;
 use crate::runtime::native::NativeFn;
-use crate::{error::runtime_error::RuntimeError, runtime::function::Function};
- 
- 
-
-use std::{cell::RefCell, fmt::Display, rc::Rc};
-
-pub type ArrayRef = Rc<RefCell<Vec<Value>>>;
+use crate::runtime::object::Object;
 
 pub enum NumericOp {
     Add,
@@ -31,39 +24,73 @@ pub enum Value {
     Integer(i64),
     Float(f64),
     Boolean(bool),
-    String(String),
 
-    Function(Rc<Function>),
-    
-    Closure(Rc<RefCell<Closure>>),
-
+    /// Pointeur de fonction native : `Copy`, aucune allocation, ne peut
+    /// jamais former de cycle — reste un Value primitif, hors du système
+    /// `Object`/`Gc` (voir object.rs pour la justification complète).
     NativeFunction(NativeFn),
-
-    Array(ArrayRef),
-
-    /// Objet dynamique : liste ordonnée de (clé, valeur), comme un tableau
-    /// associatif à la JS. Ordonné (pas de HashMap) pour préserver l'ordre
-    /// d'écriture du littéral lors de l'affichage.
-    Object(Rc<RefCell<Vec<(String, Value)>>>),
 
     /// Intervalle numérique léger et RÉUTILISABLE, produit par range().
     /// Aucune allocation sur le tas (juste 3 f64) — c'est ce qui rend
-    /// range() paresseux. Parcourir deux fois le même Range donne deux
-    /// fois la séquence complète, comme en Python.
+    /// range() paresseux. Reste hors du système `Object`/`Gc` pour la
+    /// même raison que NativeFunction : l'y faire entrer ajouterait une
+    /// allocation à chaque appel de range(), ce qui va à l'encontre du
+    /// but recherché.
     Range { start: f64, stop: f64, step: f64 },
 
-    /// Curseur d'itération À ÉTAT, à usage unique. Créé fraîchement à
-    /// chaque `for..in` via `Value::to_iterator()` — jamais construit
-    /// directement par du code utilisateur.
-    Iterator(Rc<RefCell<IteratorState>>),
-
-    Module(Rc<ModuleInstance>),
+    /// TOUT ce qui est alloué sur le tas et suivi par le collecteur de
+    /// cycles passe par cette seule variante : chaînes, tableaux, objets
+    /// dynamiques, fonctions, closures, itérateurs à état, modules — voir
+    /// object.rs pour le détail de chaque variante d'`Object`. Le GC n'a
+    /// plus qu'UN SEUL registre à parcourir (voir gc.rs), au lieu d'un
+    /// par type comme avant cette refonte.
+    Object(Gc<Object>),
 
     Nil,
 }
 
 #[allow(dead_code)]
-impl Display for Value {
+impl Value {
+    // ============================================================
+    // CONSTRUCTEURS DE COMMODITÉ
+    // ============================================================
+    //
+    // Évitent d'avoir à écrire `Value::Object(Gc::new(Object::String(...)))`
+    // en toutes lettres à chaque site d'appel — c'est LE point de passage
+    // obligé pour créer chacun de ces types, exactement comme
+    // `objet::new_closure`/`new_upvalue` l'étaient déjà avant cette
+    // refonte pour Closure/ObjUpvalue.
+
+    pub fn new_string(value: String) -> Self {
+        let handle = Gc::new(Object::String(value));
+
+        crate::runtime::gc::register_object(&handle);
+
+        Value::Object(handle)
+    }
+
+    pub fn new_array(elements: Vec<Value>) -> Self {
+        let handle = Gc::new(Object::Array(elements));
+
+        crate::runtime::gc::register_object(&handle);
+
+        Value::Object(handle)
+    }
+
+    /// Extrait le `Gc<Object>` sous-jacent si cette valeur en est un.
+    /// Sert de point d'entrée générique pour tout code qui a besoin de
+    /// travailler avec la poignée elle-même plutôt qu'un accès typé
+    /// (ex. le marquage GC, ou le dispatch générique de propriétés).
+    pub fn as_object(&self) -> Option<&Gc<Object>> {
+        match self {
+            Value::Object(handle) => Some(handle),
+            _ => None,
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Integer(value) => {
@@ -86,58 +113,12 @@ impl Display for Value {
                 write!(f, "{value}")
             }
 
-            Value::String(value) => {
-                write!(f, "{value}")
-            }
-
             Value::Nil => {
                 write!(f, "nil")
             }
 
-            Value::Function(function) => {
-                write!(f, "<fun '{}'>", function.name)
-            }
-
-            Value::Closure(closure) => {
-                let closure = closure.borrow();
-
-                write!(f, "<closure '{}'>", closure.function.name)
-            }
-
             Value::NativeFunction(function) => {
                 write!(f, "<nativeFn '{:?}'>", function)
-            }
-
-            Value::Array(array) => {
-                let array = array.borrow();
-
-                write!(f, "[")?;
-
-                for (index, value) in array.iter().enumerate() {
-                    if index > 0 {
-                        write!(f, ", ")?;
-                    }
-
-                    write!(f, "{value}")?;
-                }
-
-                write!(f, "]")
-            }
-
-            Value::Object(fields) => {
-                let fields = fields.borrow();
-
-                write!(f, "{{")?;
-
-                for (index, (key, value)) in fields.iter().enumerate() {
-                    if index > 0 {
-                        write!(f, ", ")?;
-                    }
-
-                    write!(f, "{key}: {value}")?;
-                }
-
-                write!(f, "}}")
             }
 
             Value::Range { start, stop, step } => {
@@ -148,13 +129,53 @@ impl Display for Value {
                 }
             }
 
-            Value::Iterator(_) => {
-                write!(f, "<iterator>")
-            }
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::String(value) => write!(f, "{value}"),
 
-            Value::Module(module) => {
-                write!(f, "<module '{}'>", module.name)
-            }
+                Object::Array(array) => {
+                    write!(f, "[")?;
+
+                    for (index, value) in array.iter().enumerate() {
+                        if index > 0 {
+                            write!(f, ", ")?;
+                        }
+
+                        write!(f, "{value}")?;
+                    }
+
+                    write!(f, "]")
+                }
+
+                Object::Dict(fields) => {
+                    write!(f, "{{")?;
+
+                    for (index, (key, value)) in fields.iter().enumerate() {
+                        if index > 0 {
+                            write!(f, ", ")?;
+                        }
+
+                        write!(f, "{key}: {value}")?;
+                    }
+
+                    write!(f, "}}")
+                }
+
+                Object::Function(function) => {
+                    write!(f, "<fun '{}'>", function.name)
+                }
+
+                Object::Closure(closure) => {
+                    write!(f, "<closure '{}'>", closure.function.name)
+                }
+
+                Object::Iterator(_) => {
+                    write!(f, "<iterator>")
+                }
+
+                Object::Module(module) => {
+                    write!(f, "<module '{}'>", module.name)
+                }
+            },
         }
     }
 }
@@ -175,7 +196,10 @@ impl Value {
 
             Value::Float(value) => *value != 0.0 && !value.is_nan(),
 
-            Value::String(value) => !value.is_empty(),
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::String(value) => !value.is_empty(),
+                _ => true,
+            },
 
             _ => true,
         }
@@ -309,7 +333,16 @@ impl Value {
 
             (Value::Boolean(a), Value::Boolean(b)) => a == b,
 
-            (Value::String(a), Value::String(b)) => a == b,
+            // Seules les chaînes sont comparées PAR VALEUR ici, comme
+            // avant cette refonte (tableaux/objets/closures n'étaient déjà
+            // pas comparés structurellement par `==` : ce n'est pas une
+            // régression, c'est la même limite qu'avant, juste préservée).
+            (Value::Object(a), Value::Object(b)) => {
+                match (&*a.borrow(), &*b.borrow()) {
+                    (Object::String(a), Object::String(b)) => a == b,
+                    _ => false,
+                }
+            }
 
             (Value::Nil, Value::Nil) => true,
 

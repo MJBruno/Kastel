@@ -1,2 +1,6 @@
-let a = 45.0;
-println(a);
+
+let a = {}
+
+let result = type(a)=="object"
+
+println(result)

@@ -1,3 +1,6 @@
+use std::rc::Rc;
+
+use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 
 use super::chunk::Chunk;
@@ -263,7 +266,12 @@ impl Chunk {
         }
 
         let function = match self.constants.get(constant_index) {
-            Some(Value::Function(function)) => function,
+            Some(Value::Object(handle)) => match &*handle.borrow() {
+                Object::Function(function) => Rc::clone(function),
+                _ => {
+                    return offset + 2;
+                }
+            },
             _ => {
                 return offset + 2;
             }

@@ -21,7 +21,7 @@ impl Compiler {
     }
 
     pub(crate) fn identifier_constant(&mut self, name: &str) -> Result<u8, CompileError> {
-        self.make_constant(Value::String(name.to_string()))
+        self.make_constant(Value::new_string(name.to_string()))
     }
 
     // ============================================================

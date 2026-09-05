@@ -1,5 +1,4 @@
 use crate::bytecode::chunk::OpCode;
-// use crate::compiler::statements;
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
 use crate::runtime::value::Value;
@@ -8,12 +7,33 @@ use super::compiler::Compiler;
 use super::variables::Global;
 
 impl Compiler {
+    pub(crate) fn register_export(&mut self, name: &str) -> Result<(), CompileError> {
+        if self.exports.iter().any(|export| export == name) {
+            return Err(CompileError::DuplicateExport(name.to_string()));
+        }
+
+        self.exports.push(name.to_string());
+
+        Ok(())
+    }
+
     // ============================================================
     //                      STATEMENTS
     // ============================================================
 
     pub fn compile_statement(&mut self, stmt: &Statement) -> Result<(), CompileError> {
         match stmt {
+            Statement::Positioned {
+                // line,
+                // column,
+                statement,
+            } => {
+                // self.current_line = *line;
+                // self.current_column = *column;
+
+                self.compile_statement(statement)?;
+            }
+
             Statement::Expression { expression } => {
                 self.compile_expression(expression)?;
 
@@ -121,13 +141,6 @@ impl Compiler {
             Statement::Export { statement } => {
                 self.compile_export(statement)?;
             }
-
-            Statement::Positioned {
-              
-                statement,
-            } => {
-                self.compile_statement(statement)?;
-            }
         }
 
         Ok(())
@@ -158,7 +171,7 @@ impl Compiler {
             }
 
             // import module
-            let module_constant = self.make_constant(Value::String(module_name.clone()))?;
+            let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
 
             self.emit_bytes(OpCode::Import, module_constant);
 
@@ -201,7 +214,7 @@ impl Compiler {
             return Err(CompileError::VariableAlreadyDeclared(binding_name.clone()));
         }
 
-        let module_constant = self.make_constant(Value::String(module_name))?;
+        let module_constant = self.make_constant(Value::new_string(module_name))?;
 
         self.emit_bytes(OpCode::Import, module_constant);
 
@@ -236,16 +249,6 @@ impl Compiler {
                 return Err(CompileError::InvalidExport);
             }
         }
-
-        Ok(())
-    }
-
-    pub(crate) fn register_export(&mut self, name: &str) -> Result<(), CompileError> {
-        if self.exports.iter().any(|export| export == name) {
-            return Err(CompileError::DuplicateExport(name.to_string()));
-        }
-
-        self.exports.push(name.to_string());
 
         Ok(())
     }

@@ -2,6 +2,8 @@ pub mod closure;
 pub mod function;
 pub mod value;
 pub mod object;
+pub mod objet;
+pub mod gc_handle;
 pub mod native;
 pub mod upvalue;
 pub mod gc;

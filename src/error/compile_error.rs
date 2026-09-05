@@ -53,6 +53,7 @@ pub enum CompileError {
     ExportNotFound { module: String, name: String },
 
     InvalidExport,
+    
     InvalidImport,
 }
 

@@ -3,8 +3,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 use std::time::Instant;
 
-use crate::runtime::closure::Closure;
+use crate::runtime::gc_handle::Gc;
 use crate::runtime::iterator::IteratorState;
+use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 use crate::vm::machine::{CallFrame, ObjUpvalue};
 
@@ -29,10 +30,24 @@ fn trace_enabled() -> bool {
 // ================================================================
 // REGISTRE GLOBAL
 //
+// UN SEUL registre pour tout ce qui est `Gc<Object>` — String, Array,
+// Dict, Function, Closure, Iterator, Module confondus. C'est le bénéfice
+// direct de l'unification `Value::Object(Gc<Object>)` : avant cette
+// refonte, il fallait un `Vec<Weak<...>>` PAR TYPE (5 registres séparés,
+// 5 fonctions de marquage, 5 blocs de sweep dupliqués). Maintenant, une
+// seule identité de "ce que le GC suit" — `Gc<Object>` — et une seule
+// fonction de marquage qui distribue en interne selon la variante
+// rencontrée (voir `mark_object` plus bas).
+//
+// Les upvalues (`ObjUpvalue`, définies dans vm/machine.rs) restent
+// suivies séparément : ce sont des cellules internes au mécanisme de
+// capture des closures, pas des valeurs Kastel de première classe — elles
+// ne font pas partie du diagramme Value/Object voulu ici.
+//
 // Kastel est mono-thread (tout le code utilise Rc/RefCell, jamais
-// Arc/Mutex), donc un registre thread_local est sûr ici et évite de
-// devoir faire transiter un `&mut Gc` à travers toutes les fonctions qui
-// créent un tableau ou une closure (native.rs, value.rs, machine.rs...).
+// Arc/Mutex), donc un registre thread_local est sûr et évite de devoir
+// faire transiter un `&mut Gc` à travers toutes les fonctions qui créent
+// un objet (native.rs, value.rs, machine.rs...).
 // ================================================================
 
 thread_local! {
@@ -40,11 +55,8 @@ thread_local! {
 }
 
 struct GcRegistry {
-    arrays: Vec<Weak<RefCell<Vec<Value>>>>,
-    closures: Vec<Weak<RefCell<Closure>>>,
+    objects: Vec<Weak<RefCell<Object>>>,
     upvalues: Vec<Weak<RefCell<ObjUpvalue>>>,
-    objects: Vec<Weak<RefCell<Vec<(String, Value)>>>>,
-    iterators: Vec<Weak<RefCell<IteratorState>>>,
     allocations_since_collect: usize,
     threshold: usize,
 }
@@ -52,35 +64,27 @@ struct GcRegistry {
 impl GcRegistry {
     fn new() -> Self {
         Self {
-            arrays: Vec::new(),
-            closures: Vec::new(),
-            upvalues: Vec::new(),
             objects: Vec::new(),
-            iterators: Vec::new(),
+            upvalues: Vec::new(),
             allocations_since_collect: 0,
-            // Seuil initial modeste ; doublé après chaque collecte (même
-            // heuristique que `next_gc` dans clox) pour amortir le coût du
-            // mark & sweep sur les programmes qui allouent beaucoup.
+            // Seuil initial modeste ; recalculé après chaque collecte en
+            // fonction de ce qui survit réellement (voir plus bas), même
+            // heuristique que `next_gc` dans clox mais proportionnelle au
+            // tas vivant plutôt qu'un doublement aveugle.
             threshold: 256,
         }
     }
 }
 
-/// Enregistre un tableau fraîchement alloué. À appeler à chaque création
-/// d'un `Rc<RefCell<Vec<Value>>>` (voir `Value::new_array`).
-pub fn register_array(handle: &Rc<RefCell<Vec<Value>>>) {
+/// Enregistre un objet fraîchement alloué. Unique point d'entrée pour
+/// TOUT ce qui devient un `Gc<Object>` — appelé depuis `Gc::new` elle-même
+/// n'est pas possible sans coupler `gc_handle.rs` au registre, donc c'est
+/// aux constructeurs de haut niveau (`Value::new_string`, `new_array`,
+/// `objet::new_closure`, ...) d'appeler ceci juste après `Gc::new(...)`.
+pub fn register_object(handle: &Gc<Object>) {
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
-        registry.arrays.push(Rc::downgrade(handle));
-        registry.allocations_since_collect += 1;
-    });
-}
-
-/// Enregistre une closure fraîchement allouée.
-pub fn register_closure(handle: &Rc<RefCell<Closure>>) {
-    REGISTRY.with(|registry| {
-        let mut registry = registry.borrow_mut();
-        registry.closures.push(Rc::downgrade(handle));
+        registry.objects.push(handle.downgrade());
         registry.allocations_since_collect += 1;
     });
 }
@@ -90,30 +94,6 @@ pub fn register_upvalue(handle: &Rc<RefCell<ObjUpvalue>>) {
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         registry.upvalues.push(Rc::downgrade(handle));
-        registry.allocations_since_collect += 1;
-    });
-}
-
-/// Enregistre un objet ({ clé: valeur, ... }) fraîchement alloué.
-/// Un objet peut désormais participer à un cycle (ex. `a.self = a;`),
-/// exactement comme un tableau — il doit donc être suivi de la même façon.
-pub fn register_object(handle: &Rc<RefCell<Vec<(String, Value)>>>) {
-    REGISTRY.with(|registry| {
-        let mut registry = registry.borrow_mut();
-        registry.objects.push(Rc::downgrade(handle));
-        registry.allocations_since_collect += 1;
-    });
-}
-
-/// Enregistre un itérateur fraîchement créé (Range paresseux ou itérateur
-/// de tableau). Un itérateur Array retient une référence vers son
-/// tableau : rare mais possible qu'il participe à un cycle si l'itérateur
-/// lui-même est stocké quelque part de durable — d'où le suivi, comme
-/// pour les autres types du tas.
-pub fn register_iterator(handle: &Rc<RefCell<IteratorState>>) {
-    REGISTRY.with(|registry| {
-        let mut registry = registry.borrow_mut();
-        registry.iterators.push(Rc::downgrade(handle));
         registry.allocations_since_collect += 1;
     });
 }
@@ -139,32 +119,25 @@ pub struct GcRoots<'a> {
     pub open_upvalues: &'a [Rc<RefCell<ObjUpvalue>>],
 }
 
-/// Regroupe les ensembles d'identités déjà marquées pendant un passage de
-/// collecte, par type d'objet. Une seule struct plutôt que 4 `HashSet`
-/// threadés séparément à travers chaque fonction `mark_*` : plus simple à
-/// lire, et plus facile à étendre si un futur type d'objet doit rejoindre
-/// le GC (il suffit d'ajouter un champ ici plutôt que de retoucher toutes
-/// les signatures existantes).
+/// Identités déjà marquées pendant un passage de collecte. Deux
+/// ensembles seulement désormais (objets unifiés + upvalues), contre 5
+/// avant cette refonte.
 #[derive(Default)]
 struct MarkState {
-    arrays: HashSet<usize>,
-    closures: HashSet<usize>,
-    upvalues: HashSet<usize>,
     objects: HashSet<usize>,
-    iterators: HashSet<usize>,
+    upvalues: HashSet<usize>,
 }
 
 /// Exécute un passage complet de collecte de cycles.
 ///
 /// 1. MARK : parcourt récursivement toutes les racines et marque (par
-///    identité de pointeur, via `Rc::as_ptr`) chaque tableau/closure/
-///    upvalue/objet atteignable.
+///    identité de pointeur) chaque `Gc<Object>`/upvalue atteignable.
 /// 2. SWEEP : tout objet toujours enregistré et toujours vivant
 ///    (`Weak::upgrade` réussit) mais jamais marqué ne peut être maintenu en
-///    vie que par un cycle de références internes — on vide son contenu
-///    pour casser le cycle, ce qui laisse le comptage de références de Rc
-///    terminer normalement le nettoyage (potentiellement en cascade sur
-///    tout le reste du cycle).
+///    vie que par un cycle de références internes — `Object::break_cycle`
+///    vide son contenu pour casser le cycle, ce qui laisse le comptage de
+///    références de Rc terminer normalement le nettoyage (potentiellement
+///    en cascade sur tout le reste du cycle).
 ///
 /// Retourne le nombre de cycles cassés (utile pour du diagnostic).
 pub fn collect(roots: GcRoots) -> usize {
@@ -185,7 +158,7 @@ pub fn collect(roots: GcRoots) -> usize {
     }
 
     for frame in roots.frames {
-        mark_closure(&frame.closure, &mut state);
+        mark_object(&frame.closure, &mut state);
     }
 
     for upvalue in roots.open_upvalues {
@@ -194,31 +167,28 @@ pub fn collect(roots: GcRoots) -> usize {
 
     if trace_enabled() {
         eprintln!(
-            "   mark: {} tableaux, {} closures, {} upvalues, {} objets atteignables",
-            state.arrays.len(),
-            state.closures.len(),
-            state.upvalues.len(),
+            "   mark: {} objets, {} upvalues atteignables",
             state.objects.len(),
+            state.upvalues.len(),
         );
     }
 
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
-        let mut broken = 0;
 
-        let arrays_before = registry.arrays.len();
-        let mut arrays_broken = 0;
+        let objects_before = registry.objects.len();
+        let mut objects_broken = 0;
 
-        registry.arrays.retain(|weak| match weak.upgrade() {
+        registry.objects.retain(|weak| match weak.upgrade() {
             Some(rc) => {
                 let id = Rc::as_ptr(&rc) as usize;
 
-                if !state.arrays.contains(&id) {
+                if !state.objects.contains(&id) {
                     // Vivant (refcount > 0) mais inatteignable depuis les
                     // racines : ne peut être maintenu en vie que par un
                     // cycle. On casse le cycle en vidant son contenu.
-                    rc.borrow_mut().clear();
-                    arrays_broken += 1;
+                    rc.borrow_mut().break_cycle();
+                    objects_broken += 1;
                 }
 
                 true // toujours vivant (même vidé) : on le garde en registre
@@ -226,28 +196,6 @@ pub fn collect(roots: GcRoots) -> usize {
 
             None => false, // complètement libéré : on peut l'oublier
         });
-
-        broken += arrays_broken;
-
-        let closures_before = registry.closures.len();
-        let mut closures_broken = 0;
-
-        registry.closures.retain(|weak| match weak.upgrade() {
-            Some(rc) => {
-                let id = Rc::as_ptr(&rc) as usize;
-
-                if !state.closures.contains(&id) {
-                    rc.borrow_mut().upvalues.clear();
-                    closures_broken += 1;
-                }
-
-                true
-            }
-
-            None => false,
-        });
-
-        broken += closures_broken;
 
         let upvalues_before = registry.upvalues.len();
         let mut upvalues_broken = 0;
@@ -267,90 +215,26 @@ pub fn collect(roots: GcRoots) -> usize {
             None => false,
         });
 
-        broken += upvalues_broken;
-
-        let objects_before = registry.objects.len();
-        let mut objects_broken = 0;
-
-        registry.objects.retain(|weak| match weak.upgrade() {
-            Some(rc) => {
-                let id = Rc::as_ptr(&rc) as usize;
-
-                if !state.objects.contains(&id) {
-                    rc.borrow_mut().clear();
-                    objects_broken += 1;
-                }
-
-                true
-            }
-
-            None => false,
-        });
-
-        broken += objects_broken;
-
-        let iterators_before = registry.iterators.len();
-        let mut iterators_broken = 0;
-
-        registry.iterators.retain(|weak| match weak.upgrade() {
-            Some(rc) => {
-                let id = Rc::as_ptr(&rc) as usize;
-
-                if !state.iterators.contains(&id) {
-                    rc.borrow_mut().reset_for_gc();
-                    iterators_broken += 1;
-                }
-
-                true
-            }
-
-            None => false,
-        });
-
-        broken += iterators_broken;
+        let broken = objects_broken + upvalues_broken;
 
         // Heuristique proportionnelle à la taille du tas VIVANT après la
-        // collecte (mesurée juste après les .retain() ci-dessus, donc sans
-        // les entrées totalement libérées) plutôt qu'un doublement aveugle
-        // du seuil précédent :
-        // - beaucoup de mémoire libérée -> tas vivant petit -> seuil bas
-        //   -> prochaines collectes fréquentes mais très rapides (peu
-        //   d'objets à parcourir).
-        // - peu de mémoire libérée (gros jeu de données légitimement vivant)
-        //   -> seuil élevé -> on évite de repasser inutilement souvent sur
-        //   un tas qui ne contient presque jamais de cycles à casser.
-        // C'est le même principe que la croissance du tas dans V8/CPython :
-        // le rythme de collecte s'adapte à ce qui survit réellement, pas au
-        // nombre brut d'allocations.
-        let live_count = registry.arrays.len()
-            + registry.closures.len()
-            + registry.upvalues.len()
-            + registry.objects.len()
-            + registry.iterators.len();
+        // collecte (mesurée juste après les .retain() ci-dessus) plutôt
+        // qu'un doublement aveugle du seuil précédent : le rythme de
+        // collecte s'adapte à ce qui survit réellement, comme dans
+        // V8/CPython, pas au nombre brut d'allocations.
+        let live_count = registry.objects.len() + registry.upvalues.len();
 
         registry.allocations_since_collect = 0;
         registry.threshold = (live_count * 2).max(256);
 
         if trace_enabled() {
             eprintln!(
-                "   sweep: tableaux {arrays_before} -> {} ({arrays_broken} cycles cassés)",
-                registry.arrays.len()
-            );
-            eprintln!(
-                "          closures {closures_before} -> {} ({closures_broken} cycles cassés)",
-                registry.closures.len()
+                "   sweep: objets {objects_before} -> {} ({objects_broken} cycles cassés)",
+                registry.objects.len()
             );
             eprintln!(
                 "          upvalues {upvalues_before} -> {} ({upvalues_broken} cycles cassés)",
                 registry.upvalues.len()
-            );
-            eprintln!(
-                "          objets   {objects_before} -> {} ({objects_broken} cycles cassés)",
-                registry.objects.len()
-            );
-            eprintln!(
-                "          itérateurs {iterators_before} -> {} ({iterators_broken} cycles cassés)",
-                registry.iterators.len()
             );
             eprintln!(
                 "-- gc end (total: {broken} cycles cassés, {:.3}ms, prochain seuil: {})",
@@ -364,42 +248,62 @@ pub fn collect(roots: GcRoots) -> usize {
 }
 
 fn mark_value(value: &Value, state: &mut MarkState) {
-    match value {
-        Value::Array(array) => mark_array(array, state),
-
-        Value::Closure(closure) => mark_closure(closure, state),
-
-        Value::Object(object) => mark_object(object, state),
-
-        Value::Iterator(iterator) => mark_iterator(iterator, state),
-
-        _ => {}
+    if let Value::Object(handle) = value {
+        mark_object(handle, state);
     }
 }
 
-fn mark_array(array: &Rc<RefCell<Vec<Value>>>, state: &mut MarkState) {
-    let id = Rc::as_ptr(array) as usize;
+/// Marque un `Gc<Object>` et recurse dans son contenu selon sa variante
+/// réelle. C'est le SEUL endroit de tout le GC qui a besoin de connaître
+/// la forme interne d'`Object` — avant cette refonte, cette connaissance
+/// était éclatée entre `mark_array`/`mark_closure`/`mark_object`/
+/// `mark_iterator`, une fonction par type.
+fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
+    let id = handle.as_id();
 
-    // `insert` retourne false si déjà présent : protège aussi contre une
-    // boucle infinie si le tableau se contient (directement ou indirectement).
-    if !state.arrays.insert(id) {
+    // Protège aussi contre une boucle infinie si l'objet se contient
+    // (directement ou indirectement, ex. `arr.push(arr)`).
+    if !state.objects.insert(id) {
         return;
     }
 
-    for value in array.borrow().iter() {
-        mark_value(value, state);
-    }
-}
+    match &*handle.borrow() {
+        Object::String(_) => {}
 
-fn mark_closure(closure: &Rc<RefCell<Closure>>, state: &mut MarkState) {
-    let id = Rc::as_ptr(closure) as usize;
+        Object::Array(elements) => {
+            for value in elements {
+                mark_value(value, state);
+            }
+        }
 
-    if !state.closures.insert(id) {
-        return;
-    }
+        Object::Dict(fields) => {
+            for (_, value) in fields {
+                mark_value(value, state);
+            }
+        }
 
-    for upvalue in &closure.borrow().upvalues {
-        mark_upvalue(upvalue, state);
+        // Une fonction compilée est immuable et ne référence aucune
+        // Value de première classe directement (ses constantes vivent
+        // dans son propre Chunk, pas dans le graphe d'objets du GC).
+        Object::Function(_) => {}
+
+        Object::Closure(closure) => {
+            for upvalue in &closure.upvalues {
+                mark_upvalue(upvalue, state);
+            }
+        }
+
+        Object::Iterator(IteratorState::Range { .. }) => {}
+
+        Object::Iterator(IteratorState::Array { array, .. }) => {
+            mark_object(array, state);
+        }
+
+        Object::Module(module) => {
+            for value in module.exports.values() {
+                mark_value(value, state);
+            }
+        }
     }
 }
 
@@ -415,33 +319,5 @@ fn mark_upvalue(upvalue: &Rc<RefCell<ObjUpvalue>>, state: &mut MarkState) {
     // ne vit plus que dans `closed` : c'est là qu'un cycle peut se cacher.
     if let Some(value) = &upvalue.borrow().closed {
         mark_value(value, state);
-    }
-}
-
-fn mark_object(object: &Rc<RefCell<Vec<(String, Value)>>>, state: &mut MarkState) {
-    let id = Rc::as_ptr(object) as usize;
-
-    if !state.objects.insert(id) {
-        return;
-    }
-
-    for (_, value) in object.borrow().iter() {
-        mark_value(value, state);
-    }
-}
-
-fn mark_iterator(iterator: &Rc<RefCell<IteratorState>>, state: &mut MarkState) {
-    let id = Rc::as_ptr(iterator) as usize;
-
-    if !state.iterators.insert(id) {
-        return;
-    }
-
-    // Un itérateur Range ne référence aucune Value (juste 3 f64) : rien à
-    // marquer. Un itérateur Array référence son tableau source : il faut
-    // le marquer explicitement, sinon un tableau uniquement gardé en vie
-    // par un itérateur stocké quelque part serait collecté à tort.
-    if let IteratorState::Array { array, .. } = &*iterator.borrow() {
-        mark_array(array, state);
     }
 }

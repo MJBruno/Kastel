@@ -18,7 +18,7 @@ impl Compiler {
 
                     Literal::Float(v) => Value::Float(*v),
 
-                    Literal::String(v) => Value::String(v.clone()),
+                    Literal::String(v) => Value::new_string(v.clone()),
 
                     Literal::Bool(v) => Value::Boolean(*v),
 
@@ -104,7 +104,7 @@ impl Compiler {
                     // même titre qu'une expression normale — même schéma
                     // que le tableau (push N valeurs, puis un opcode qui
                     // les consomme toutes), mais en alternant clé/valeur.
-                    let key_constant = self.make_constant(Value::String(key.clone()))?;
+                    let key_constant = self.make_constant(Value::new_string(key.clone()))?;
 
                     self.emit_bytes(OpCode::Constant, key_constant);
 

@@ -5,13 +5,12 @@ use std::{
     rc::Rc,
 };
 
-use crate::{  compiler::compiler::Compiler, runtime::value::Value};
-use crate::runtime::native::execute_native;
-use crate::vm::machine::VirtualMachine;
 use crate::error::compile_error::CompileError;
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::Parser;
- 
+use crate::runtime::native::execute_native;
+use crate::vm::machine::VirtualMachine;
+use crate::{compiler::compiler::Compiler, runtime::value::Value};
 
 #[derive(Debug, PartialEq)]
 pub struct ModuleInstance {
@@ -152,8 +151,9 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         // 5. Exécuter le module dans une VM isolée
         // ------------------------------------------------------------
-        let values = VirtualMachine::execute_module(Rc::clone(&function), &exports, path.to_path_buf())
-            .map_err(CompileError::ModuleRuntimeError)?;
+        let values =
+            VirtualMachine::execute_module(Rc::clone(&function), &exports, path.to_path_buf())
+                .map_err(CompileError::ModuleRuntimeError)?;
         // ------------------------------------------------------------
         // 6. Nom du module
         // ------------------------------------------------------------
