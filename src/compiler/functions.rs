@@ -5,8 +5,8 @@ use crate::error::compile_error::CompileError;
 use crate::frontend::ast::Expression;
 use crate::frontend::ast::Statement;
 use crate::runtime::function::Function;
-use crate::runtime::objet;
 use crate::runtime::upvalue::Upvalue;
+use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
 use super::variables::Global;
@@ -55,7 +55,7 @@ impl Compiler {
             let function = self.compile_function(name, params, body)?;
 
             let function_constant =
-                self.make_constant(objet::new_function(Rc::new(function.clone())))?;
+                self.make_constant(Value::new_function(Rc::new(function.clone())))?;
 
             self.emit_closure(function_constant, &function.upvalues);
 
@@ -70,7 +70,7 @@ impl Compiler {
 
         let function = self.compile_function(name, params, body)?;
 
-        let function_constant = self.make_constant(objet::new_function(Rc::new(function.clone())))?;
+        let function_constant = self.make_constant(Value::new_function(Rc::new(function.clone())))?;
 
         self.emit_closure(function_constant, &function.upvalues);
 

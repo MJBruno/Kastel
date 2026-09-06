@@ -1,10 +1,9 @@
 pub mod closure;
 pub mod function;
-pub mod value;
-pub mod object;
-pub mod objet;
 pub mod gc_handle;
+pub mod object;
+pub mod value;
+pub mod iterator;
 pub mod native;
 pub mod upvalue;
 pub mod gc;
-pub mod iterator;

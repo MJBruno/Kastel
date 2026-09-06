@@ -15,11 +15,13 @@
 //   c'est précisément ce qui rend `range()` paresseux — le faire passer
 //   par `Gc` lui ferait perdre cette propriété.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::module::module::ModuleInstance;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
+use crate::runtime::gc_handle::Gc;
 use crate::runtime::iterator::IteratorState;
 use crate::runtime::value::Value;
 
@@ -56,6 +58,22 @@ pub enum Object {
 }
 
 impl Object {
+    /// Construit une closure et l'enregistre immédiatement auprès du GC.
+    /// Point de passage unique pour toute création de closure dans la VM —
+    /// impossible d'en créer une sans qu'elle soit suivie par le collecteur
+    /// (contrairement à un `Gc::new(...)` construit à la main ailleurs, où
+    /// l'enregistrement pourrait être oublié).
+    pub fn new_closure(
+        function: Rc<Function>,
+        upvalues: Vec<Rc<RefCell<crate::vm::machine::ObjUpvalue>>>,
+    ) -> Gc<Object> {
+        let handle = Gc::new(Object::Closure(Closure { function, upvalues }));
+
+        crate::runtime::gc::register_object(&handle);
+
+        handle
+    }
+
     /// Casse un cycle de références en vidant le contenu qui pourrait
     /// pointer vers d'autres objets. Utilisé par le sweep du GC (voir
     /// gc.rs) sur tout `Object` vivant mais inatteignable depuis les

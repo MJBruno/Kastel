@@ -10,7 +10,6 @@ use crate::runtime::function::Function;
 use crate::runtime::gc;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
-use crate::runtime::objet;
 use crate::runtime::native::register_natives;
 use crate::runtime::value::*;
 use crate::bytecode::chunk::OpCode;
@@ -63,7 +62,7 @@ fn frame_closure(handle: &Gc<Object>) -> std::cell::Ref<'_, Closure> {
 
 impl VirtualMachine {
     pub fn new(function: Rc<Function>, module_path: Option<PathBuf>) -> Self {
-        let closure = objet::new_closure(function, Vec::new());
+        let closure = Object::new_closure(function, Vec::new());
 
         let mut vm = Self {
             stack:  vec![Value::Nil],
@@ -114,10 +113,10 @@ impl VirtualMachine {
 
         Ok(values)
     }
-#[allow(dead_code)]
-    pub fn get_global(&self, name: &str) -> Option<Value> {
-        self.globals.get(name).cloned()
-    }
+
+    // pub fn get_global(&self, name: &str) -> Option<Value> {
+    //     self.globals.get(name).cloned()
+    // }
     // ============================================================
     // STACK
     // ============================================================
@@ -1073,7 +1072,7 @@ impl VirtualMachine {
             pending_upvalues.push(upvalue);
         }
 
-        let closure = objet::new_closure(function_ref, pending_upvalues);
+        let closure = Object::new_closure(function_ref, pending_upvalues);
 
         self.push(Value::Object(closure));
 
@@ -1093,7 +1092,9 @@ impl VirtualMachine {
             }
         }
 
-        let upvalue = objet::new_upvalue(absolute_slot);
+        let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(absolute_slot)));
+
+        gc::register_upvalue(&upvalue);
 
         self.open_upvalues.push(Rc::clone(&upvalue));
 
@@ -1203,3 +1204,11 @@ fn set_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
         }
     }
 }
+
+
+
+
+
+
+
+  
