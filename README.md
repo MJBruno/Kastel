@@ -5,7 +5,6 @@
   <img src="https://img.shields.io/badge/Bytecode-VM-brightgreen?style=for-the-badge" alt="Bytecode VM">
 </p>
 
-![Architecture de Kastel](assets/logo/4.png)
 
 # 🏰 Kastel
 
