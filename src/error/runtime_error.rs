@@ -8,22 +8,28 @@ pub enum RuntimeError {
     TypeError,
     DivisionByZero,
 
-    WrongArgumentCount { expected: usize, found: usize },
+    WrongArgumentCount {
+        expected: usize,
+        found: usize,
+    },
 
     NotCallable,
     InvalidFunction,
     NativeError,
+
     IndexOutOfBounds,
-
     ArrayEmpty,
-
     ArrayIndexNotInteger,
+    ArrayIndexOutOfBounds {
+        index: usize,
+        length: usize,
+    },
 
-    ArrayIndexOutOfBounds { index: usize, length: usize },
+    NotIndexable,
+    NotObject,
+
     ModuleError(String),
 
-    /// `suggestion` : nom de champ existant le plus proche, si un match
-    /// assez proche a été trouvé (voir error::suggest::closest_match).
     ObjectFieldNotFound {
         name: String,
         suggestion: Option<String>,
@@ -33,9 +39,6 @@ pub enum RuntimeError {
     IteratorExhausted,
     InvalidShiftAmount,
 
-    /// Enveloppe posée une seule fois, au moment où l'erreur s'échappe de
-    /// `VirtualMachine::run()`, pour lui attacher la position source de
-    /// l'instruction qui a échoué (voir `Chunk::position_at`).
     WithLocation {
         line: usize,
         column: usize,
@@ -97,7 +100,10 @@ impl std::fmt::Display for RuntimeError {
                 None => write!(f, "Champ '{name}' introuvable sur l'objet."),
             },
             RuntimeError::NotIterable => {
-                write!(f, "Cette valeur n'est pas itérable (utilisable dans un 'for..in').")
+                write!(
+                    f,
+                    "Cette valeur n'est pas itérable (utilisable dans un 'for..in')."
+                )
             }
             RuntimeError::IteratorExhausted => {
                 write!(f, "Itérateur déjà épuisé.")
@@ -105,8 +111,20 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::InvalidShiftAmount => {
                 write!(f, "Décalage invalide : doit être compris entre 0 et 63.")
             }
-            RuntimeError::WithLocation { line, column, source } => {
+            RuntimeError::WithLocation {
+                line,
+                column,
+                source,
+            } => {
                 write!(f, "ligne {line}, colonne {column} : {source}")
+            }
+
+            RuntimeError::NotIndexable => {
+                write!(f, "Value is not indexable.")
+            }
+
+            RuntimeError::NotObject => {
+                write!(f, "Value is not an object.")
             }
         }
     }

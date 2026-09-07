@@ -40,7 +40,11 @@ pub enum Value {
     /// même raison que NativeFunction : l'y faire entrer ajouterait une
     /// allocation à chaque appel de range(), ce qui va à l'encontre du
     /// but recherché.
-    Range { start: f64, stop: f64, step: f64 },
+    Range {
+        start: f64,
+        stop: f64,
+        step: f64,
+    },
 
     /// TOUT ce qui est alloué sur le tas et suivi par le collecteur de
     /// cycles passe par cette seule variante : chaînes, tableaux, objets
@@ -114,7 +118,10 @@ impl Value {
 
     pub fn array_get(&self, index: usize) -> Result<Value, RuntimeError> {
         self.with_array(|array| {
-            array.get(index).cloned().ok_or(RuntimeError::IndexOutOfBounds)
+            array
+                .get(index)
+                .cloned()
+                .ok_or(RuntimeError::IndexOutOfBounds)
         })
     }
 
@@ -186,14 +193,17 @@ impl Value {
     /// bien un tableau, sinon `TypeError`. Centralise le "déballage"
     /// `Value::Object -> Object::Array` commun à toutes les méthodes
     /// `array_*` ci-dessus.
-    fn with_array<R>(&self, f: impl FnOnce(&Vec<Value>) -> Result<R, RuntimeError>) -> Result<R, RuntimeError> {
+    fn with_array<R>(
+        &self,
+        f: impl FnOnce(&Vec<Value>) -> Result<R, RuntimeError>,
+    ) -> Result<R, RuntimeError> {
         match self {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::Array(array) => f(array),
-                _ => Err(RuntimeError::TypeError),
+                _ => Err(RuntimeError::NotIndexable),
             },
 
-            _ => Err(RuntimeError::TypeError),
+            _ => Err(RuntimeError::NotIndexable),
         }
     }
 
@@ -204,10 +214,10 @@ impl Value {
         match self {
             Value::Object(handle) => match &mut *handle.borrow_mut() {
                 Object::Array(array) => f(array),
-                _ => Err(RuntimeError::TypeError),
+                _ => Err(RuntimeError::NotIndexable),
             },
 
-            _ => Err(RuntimeError::TypeError),
+            _ => Err(RuntimeError::NotIndexable),
         }
     }
 
@@ -322,10 +332,10 @@ impl Value {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::Module(_) => self.module_get(name),
                 Object::Dict(_) => self.object_get(name),
-                _ => Err(RuntimeError::TypeError),
+                _ => Err(RuntimeError::NotObject),
             },
 
-            _ => Err(RuntimeError::TypeError),
+            _ => Err(RuntimeError::NotObject),
         }
     }
 
@@ -343,11 +353,11 @@ impl Value {
                 if is_dict {
                     self.object_set(name, value)
                 } else {
-                    Err(RuntimeError::TypeError)
+                    Err(RuntimeError::NotObject)
                 }
             }
 
-            _ => Err(RuntimeError::TypeError),
+            _ => Err(RuntimeError::NotObject),
         }
     }
 
@@ -390,7 +400,7 @@ impl std::fmt::Display for Value {
             }
 
             Value::Nil => {
-                write!(f, "nil")
+                write!(f, "null")
             }
 
             Value::NativeFunction(function) => {
@@ -614,10 +624,12 @@ impl Value {
             // pas comparés structurellement par `==` : ce n'est pas une
             // régression, c'est la même limite qu'avant, juste préservée).
             (Value::Object(a), Value::Object(b)) => {
-                match (&*a.borrow(), &*b.borrow()) {
-                    (Object::String(a), Object::String(b)) => a == b,
-                    _ => false,
+                if let (Object::String(a_str), Object::String(b_str)) = (&*a.borrow(), &*b.borrow())
+                {
+                    return a_str == b_str;
                 }
+
+                Gc::<Object>::ptr_eq(&a, &b)
             }
 
             (Value::Nil, Value::Nil) => true,
