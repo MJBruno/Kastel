@@ -23,6 +23,7 @@ use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::iterator::IteratorState;
+use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,7 +66,7 @@ impl Object {
     /// l'enregistrement pourrait être oublié).
     pub fn new_closure(
         function: Rc<Function>,
-        upvalues: Vec<Rc<RefCell<crate::vm::machine::ObjUpvalue>>>,
+        upvalues: Vec<Rc<RefCell< ObjUpvalue>>>,
     ) -> Gc<Object> {
         let handle = Gc::new(Object::Closure(Closure { function, upvalues }));
 

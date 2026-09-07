@@ -12,21 +12,9 @@ use crate::runtime::gc;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::native::register_natives;
 use crate::runtime::object::Object;
+use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::*;
 
-#[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-pub struct ObjUpvalue {
-    pub slot: usize,
-    pub closed: Option<Value>,
-}
-
-#[allow(dead_code)]
-impl ObjUpvalue {
-    pub fn new(slot: usize) -> Self {
-        Self { slot, closed: None }
-    }
-}
 
 #[allow(dead_code)]
 pub struct CallFrame {

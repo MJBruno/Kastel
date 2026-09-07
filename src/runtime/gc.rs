@@ -7,8 +7,8 @@ use crate::runtime::gc_handle::Gc;
 use crate::runtime::iterator::IteratorState;
 use crate::runtime::object::Object;
 use crate::runtime::value::Value;
-use crate::vm::machine::{CallFrame, ObjUpvalue};
-
+use crate::runtime::upvalue::ObjUpvalue;
+use crate::vm::machine::CallFrame;
 // ================================================================
 // TRAÇAGE DU GC
 //
