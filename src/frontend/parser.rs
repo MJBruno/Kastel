@@ -600,8 +600,8 @@ impl Parser {
         // Position du premier token de CE statement, capturée avant tout
         // dispatch — c'est elle qui enveloppera chaque statement produit
         // ci-dessous, quel que soit son type.
-        // let line = self.peek().line;
-        // let column = self.peek().column;
+        let line = self.peek().line;
+        let column = self.peek().column;
 
         let statements = if self.match_token(TokenKind::Import) {
             vec![self.parse_import_statement()?]
@@ -643,8 +643,8 @@ impl Parser {
         let positioned = statements
             .into_iter()
             .map(|statement| Statement::Positioned {
-                // line,
-                // column,
+                line,
+                column,
                 statement: Box::new(statement),
             })
             .collect();

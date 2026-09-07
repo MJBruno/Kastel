@@ -47,8 +47,8 @@ pub enum Statement {
     /// parser (statement()) et un seul dans le compilateur
     /// (compile_statement), plutôt que des dizaines.
     Positioned {
-        // line: usize,
-        // column: usize,
+        line: usize,
+        column: usize,
         statement: Box<Statement>,
     },
 

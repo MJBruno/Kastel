@@ -1,1 +1,5 @@
-println(int(0xffff));
+let x = 10;
+
+if (true) {
+    let y = unknown;
+}

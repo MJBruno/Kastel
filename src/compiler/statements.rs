@@ -24,12 +24,12 @@ impl Compiler {
     pub fn compile_statement(&mut self, stmt: &Statement) -> Result<(), CompileError> {
         match stmt {
             Statement::Positioned {
-                // line,
-                // column,
+                line,
+                column,
                 statement,
             } => {
-                // self.current_line = *line;
-                // self.current_column = *column;
+                self.current_line = *line;
+                self.current_column = *column;
 
                 self.compile_statement(statement)?;
             }
