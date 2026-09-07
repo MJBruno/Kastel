@@ -306,11 +306,27 @@ Sortie attendue (sur stderr), à chaque passage de collecte :
 
 ## Ce qui n'est toujours pas supporté
 
-| Fonctionnalité | Statut |
-|---|---|
-| Fonctions anonymes / lambdas (`let f = function(x) {...};`) | AST/parser à étendre (VM déjà prête) |
-| `else if` sans accolades imbriquées | Sucre syntaxique non implémenté |
-| Opérateurs composés (`+=`, `-=`, etc.) | Non implémentés |
-| `for key in obj` (itération sur les clés d'un objet) | `for..in` ne parcourt que des tableaux actuellement |
-| Suppression de champ (`delete obj.x`) | Non implémenté |
-| REPL avec état persistant entre les lignes | Chaque ligne repart de zéro |
+```javascript
+let n = 5;
+
+for i in range(1, n + 1) {
+    let line = "";
+
+    for j in range(i) {
+        line = line + str(j + 1) + " ";
+    }
+
+    println(line);
+}
+
+/*
+
+1 
+1 2 
+1 2 3 
+1 2 3 4 
+1 2 3 4 5
+
+*/
+
+```

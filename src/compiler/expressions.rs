@@ -333,27 +333,38 @@ impl Compiler {
         Ok(())
     }
 
-    pub(crate) fn compile_logical_or(
-        &mut self,
-        left: &Expression,
-        right: &Expression,
-    ) -> Result<(), CompileError> {
-        self.compile_expression(left)?;
+ pub(crate) fn compile_logical_or(
+    &mut self,
+    left: &Expression,
+    right: &Expression,
+) -> Result<(), CompileError> {
+    self.compile_expression(left)?;
 
-        self.emit_opcode(OpCode::Not);
+    // !left
+    self.emit_opcode(OpCode::Not);
 
-        let end_jump = self.emit_jump(OpCode::JumpIfFalse);
+    // Si !left est false, alors left était truthy.
+    let end_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-        self.emit_opcode(OpCode::Not);
+    // left était falsy : restaurer la valeur originale de left.
+    self.emit_opcode(OpCode::Not);
+    self.emit_opcode(OpCode::Pop);
 
-        self.emit_opcode(OpCode::Pop);
+    // Évaluer right.
+    self.compile_expression(right)?;
 
-        self.compile_expression(right)?;
+    // Ne pas exécuter la restauration destinée au chemin left=true.
+    let right_jump = self.emit_jump(OpCode::Jump);
 
-        self.patch_jump(end_jump);
+    // left était truthy : restaurer left.
+    self.patch_jump(end_jump);
+    self.emit_opcode(OpCode::Not);
 
-        Ok(())
-    }
+    // Fin du OR.
+    self.patch_jump(right_jump);
+
+    Ok(())
+}
 
     pub(crate) fn compile_binary(&mut self, operator: BinaryOp) {
         let opcode = match operator {

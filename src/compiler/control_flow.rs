@@ -15,30 +15,52 @@ impl Compiler {
         then_branch: &[Statement],
         else_branch: Option<&Vec<Statement>>,
     ) -> Result<(), CompileError> {
+        // Évalue la condition.
         self.compile_expression(condition)?;
 
-        let then_jump = self.emit_jump(OpCode::JumpIfFalse);
+        // Si la condition est false, aller au bloc else.
+        let else_jump = self.emit_jump(OpCode::JumpIfFalse);
+
+        // --------------------------------------------------------
+        // THEN
+        // --------------------------------------------------------
 
         for statement in then_branch {
             self.compile_statement(statement)?;
         }
 
+        // La condition est encore sur la pile lorsque le THEN
+        // est exécuté : on la retire.
+        self.emit_opcode(OpCode::Pop);
+
+        // S'il existe un ELSE, sauter par-dessus après le THEN.
+        let end_jump = if else_branch.is_some() {
+            Some(self.emit_jump(OpCode::Jump))
+        } else {
+            None
+        };
+
+        // --------------------------------------------------------
+        // ELSE
+        // --------------------------------------------------------
+
+        self.patch_jump(else_jump);
+
+        // La condition false est toujours sur la pile.
+        self.emit_opcode(OpCode::Pop);
+
         if let Some(else_branch) = else_branch {
-            let else_jump = self.emit_jump(OpCode::Jump);
-
-            self.patch_jump(then_jump);
-
-            self.emit_opcode(OpCode::Pop);
-
             for statement in else_branch {
                 self.compile_statement(statement)?;
             }
+        }
 
-            self.patch_jump(else_jump);
-        } else {
-            self.patch_jump(then_jump);
+        // --------------------------------------------------------
+        // END
+        // --------------------------------------------------------
 
-            self.emit_opcode(OpCode::Pop);
+        if let Some(end_jump) = end_jump {
+            self.patch_jump(end_jump);
         }
 
         Ok(())

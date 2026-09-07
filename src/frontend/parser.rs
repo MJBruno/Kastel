@@ -959,11 +959,11 @@ impl Parser {
     // ============================================================
 
     fn parse_if_statement(&mut self) -> Result<Statement, ParserError> {
-        self.consume(TokenKind::LeftParen, "'(' attendu après if")?;
+        // self.consume(TokenKind::LeftParen, "'(' attendu après if")?;
 
         let condition = self.parse_expression()?;
 
-        self.consume(TokenKind::RightParen, "')' attendu après la condition")?;
+        // self.consume(TokenKind::RightParen, "')' attendu après la condition")?;
 
         self.consume(TokenKind::LeftBrace, "'{' attendu après la condition")?;
 
@@ -989,11 +989,11 @@ impl Parser {
     // ============================================================
 
     fn parse_while_statement(&mut self) -> Result<Statement, ParserError> {
-        self.consume(TokenKind::LeftParen, "'(' attendu après while")?;
+        // self.consume(TokenKind::LeftParen, "'(' attendu après while")?;
 
         let condition = self.parse_expression()?;
 
-        self.consume(TokenKind::RightParen, "')' attendu après la condition")?;
+        // self.consume(TokenKind::RightParen, "')' attendu après la condition")?;
 
         self.consume(TokenKind::LeftBrace, "'{' attendu après la condition")?;
 

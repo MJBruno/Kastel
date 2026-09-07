@@ -1,5 +1,7 @@
-let x = 10;
+for value in [1, 2, 3, 4, 5] {
+    if value == 3 {
+        continue;
+    }
 
-if (true) {
-    let y = unknown;
+    println(value);
 }
