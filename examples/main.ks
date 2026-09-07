@@ -1,24 +1,11 @@
-println("TEST IDENTITE CLOSURES");
+println("TEST FONCTIONS IMBRIQUEES");
 
-function make_counter() {
-    let count = 0;
-
-    function increment() {
-        count += 1;
-        return count;
+function outer() {
+    function inner() {
+        return 42;
     }
 
-    return increment;
+    return inner();
 }
 
-let a = make_counter();
-let b = make_counter();
-let c = a;
-
-println(a == b);
-println(a == c);
-
-println(a());
-println(b());
-println(a());
-println(b());
+println(outer());

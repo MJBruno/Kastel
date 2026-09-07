@@ -169,10 +169,13 @@ impl Compiler {
 
         self.emit_opcode(OpCode::Halt);
 
+        let local_count = self.context.borrow().locals.max_slots() as u8;
+
         let function = Function {
             name: "<script>".to_string(),
             arity: 0,
             chunk: self.chunk,
+            local_count,
             upvalue_count: 0,
             upvalues: Vec::new(),
         };

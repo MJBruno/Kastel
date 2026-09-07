@@ -1156,31 +1156,52 @@ impl VirtualMachine {
     // UPVALUES
     // ============================================================
 
-    fn capture_upvalue(&mut self, slot: usize) -> Result<Rc<RefCell<ObjUpvalue>>, RuntimeError> {
-        let slot_start = self.current_frame()?.slot_start;
+   fn capture_upvalue(
+    &mut self,
+    slot: usize,
+) -> Result<Rc<RefCell<ObjUpvalue>>, RuntimeError> {
+    let (slot_start, local_count) = {
+        let frame = self.current_frame()?;
+        let closure = frame_closure(&frame.closure);
 
-        let absolute_slot = slot_start
-            .checked_add(1)
-            .and_then(|index| index.checked_add(slot))
-            .ok_or(RuntimeError::InvalidFunction)?;
+        (
+            frame.slot_start,
+            closure.function.local_count as usize,
+        )
+    };
 
-        if absolute_slot >= self.stack.len() {
-            return Err(RuntimeError::InvalidFunction);
-        }
-
-        for upvalue in &self.open_upvalues {
-            if upvalue.borrow().slot == absolute_slot {
-                return Ok(Rc::clone(upvalue));
-            }
-        }
-
-        let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(absolute_slot)));
-
-        gc::register_upvalue(&upvalue);
-        self.open_upvalues.push(Rc::clone(&upvalue));
-
-        Ok(upvalue)
+    // Le bytecode ne peut capturer qu'un slot appartenant
+    // aux locals de la fonction courante.
+    if slot >= local_count {
+        return Err(RuntimeError::InvalidFunction);
     }
+
+    let absolute_slot = slot_start
+        .checked_add(1)
+        .and_then(|index| index.checked_add(slot))
+        .ok_or(RuntimeError::InvalidFunction)?;
+
+    // Le slot local doit exister réellement dans la pile.
+    if absolute_slot >= self.stack.len() {
+        return Err(RuntimeError::InvalidFunction);
+    }
+
+    // Une seule ObjUpvalue doit exister pour une position de pile donnée.
+    // Cela garantit que plusieurs closures capturant la même variable
+    // partagent bien la même cellule.
+    for upvalue in &self.open_upvalues {
+        if upvalue.borrow().slot == absolute_slot {
+            return Ok(Rc::clone(upvalue));
+        }
+    }
+
+    let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(absolute_slot)));
+
+    gc::register_upvalue(&upvalue);
+    self.open_upvalues.push(Rc::clone(&upvalue));
+
+    Ok(upvalue)
+}
 
     // ============================================================
     // GARBAGE COLLECTION

@@ -90,9 +90,9 @@ impl Compiler {
         Ok(())
     }
 
-    // ========================================================
+  // ============================================================
     //                      COMPILE_FONCTION
-    // ========================================================
+    // ============================================================
 
     pub(crate) fn compile_function(
         &mut self,
@@ -102,33 +102,43 @@ impl Compiler {
     ) -> Result<Function, CompileError> {
         let enclosing = Rc::clone(&self.context);
 
-        let mut compiler =
-            Compiler::new_function(name.to_string(), Rc::clone(&self.globals), enclosing);
+        let mut compiler = Compiler::new_function(
+            name.to_string(),
+            Rc::clone(&self.globals),
+            enclosing,
+        );
 
         for param in params {
             compiler.add_parametre(param)?;
         }
 
         for statement in body {
-            if let Err(error) = compiler.compile_statement(statement) {
-                return Err(compiler.attach_location(error));
-            }
+            compiler.compile_statement(statement)?;
         }
 
         compiler.emit_opcode(OpCode::Nil);
-
         compiler.emit_opcode(OpCode::Return);
 
-        let upvalues = compiler.context.borrow().upvalues.clone();
+        let (upvalue_count, upvalues, local_count) = {
+            let context = compiler.context.borrow();
+
+            (
+                context.upvalues.len(),
+                context.upvalues.clone(),
+                context.locals.max_slots() as u8,
+            )
+        };
 
         Ok(Function {
             name: name.to_string(),
             arity: compiler.function_arity as usize,
             chunk: compiler.chunk,
-            upvalue_count: upvalues.len(),
+            local_count,
+            upvalue_count,
             upvalues,
         })
     }
+
 
     // ============================================================
     //                      RETURN

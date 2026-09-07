@@ -9,11 +9,14 @@ use crate::error::compile_error::CompileError;
 pub struct Local {
     /// Nom de la variable tel qu'il apparaît dans le programme source.
     pub name: String,
+
     /// Profondeur de portée où la variable a été initialisée.
     /// `None` signifie que la variable est encore en cours d'initialisation.
     pub depth: Option<usize>,
+
     /// Emplacement de la variable dans la pile des variables locales.
     pub slot: u8,
+
     /// Pour distinguer une déclaration `const` ou `let`.
     pub mutable: bool,
 }
@@ -22,17 +25,34 @@ pub struct Local {
 /// Table des variables locales actuellement visibles par le compilateur.
 pub struct LocalTable {
     locals: Vec<Local>,
+
+    /// Nombre maximal de slots locaux simultanément utilisés depuis
+    /// la création de cette table.
+    ///
+    /// Contrairement à `locals.len()`, cette valeur ne diminue jamais
+    /// lorsque `pop_scope()` retire des variables. Elle représente donc
+    /// correctement la taille maximale nécessaire au frame runtime.
+    max_slots: usize,
 }
 
 impl LocalTable {
     /// Crée une table locale vide.
     pub fn new() -> Self {
-        Self { locals: Vec::new() }
+        Self {
+            locals: Vec::new(),
+            max_slots: 0,
+        }
     }
 
     /// Retourne le nombre de variables locales actuellement enregistrées.
     pub fn len(&self) -> usize {
         self.locals.len()
+    }
+
+    /// Retourne le nombre maximal de slots locaux utilisés pendant
+    /// toute la compilation de cette fonction.
+    pub fn max_slots(&self) -> usize {
+        self.max_slots
     }
 
     /// Noms de toutes les variables locales actuellement visibles — utilisé
@@ -58,7 +78,9 @@ impl LocalTable {
                 }
 
                 if local.name == name {
-                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+                    return Err(CompileError::VariableAlreadyDeclared(
+                        name.to_string(),
+                    ));
                 }
             }
         }
@@ -76,6 +98,8 @@ impl LocalTable {
             mutable,
         });
 
+        self.max_slots = self.max_slots.max(self.locals.len());
+
         Ok(slot)
     }
 
@@ -86,7 +110,9 @@ impl LocalTable {
             }
 
             if local.depth.is_none() {
-                return Err(CompileError::VariableUseInInitializer(name.to_string()));
+                return Err(CompileError::VariableUseInInitializer(
+                    name.to_string(),
+                ));
             }
 
             return Ok(Some(local.mutable));
@@ -111,7 +137,9 @@ impl LocalTable {
             }
 
             if local.depth.is_none() {
-                return Err(CompileError::VariableUseInInitializer(name.to_string()));
+                return Err(CompileError::VariableUseInInitializer(
+                    name.to_string(),
+                ));
             }
 
             return Ok(Some(local.slot));
