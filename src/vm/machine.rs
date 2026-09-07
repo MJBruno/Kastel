@@ -130,9 +130,6 @@ impl VirtualMachine {
         Ok(values)
     }
 
-    // pub fn get_global(&self, name: &str) -> Option<Value> {
-    //     self.globals.get(name).cloned()
-    // }
     // ============================================================
     // STACK
     // ============================================================
@@ -141,47 +138,62 @@ impl VirtualMachine {
         self.stack.push(value);
     }
 
-    fn pop(&mut self) -> Value {
-        self.stack.pop().expect("Stack underflow")
+    fn pop(&mut self) -> Result<Value, RuntimeError> {
+        self.stack.pop().ok_or(RuntimeError::StackUnderflow)
     }
 
-    fn peek(&self) -> &Value {
-        self.stack.last().expect("Stack underflow")
+    fn peek(&self) -> Result<&Value, RuntimeError> {
+        self.stack.last().ok_or(RuntimeError::StackUnderflow)
     }
 
     // ============================================================
     // BYTECODE READER
     // ============================================================
 
-    fn read_byte(&mut self) -> u8 {
-        let frame = self.frames.last_mut().expect("No call frame");
+    fn read_byte(&mut self) -> Result<u8, RuntimeError> {
+        let frame = self.frames.last_mut().ok_or(RuntimeError::StackUnderflow)?;
 
         let byte = {
             let closure = frame_closure(&frame.closure);
 
-            closure.function.chunk.code[frame.ip]
+            closure
+                .function
+                .chunk
+                .code
+                .get(frame.ip)
+                .copied()
+                .ok_or(RuntimeError::InvalidFunction)?
         };
 
-        frame.ip += 1;
+        frame.ip = frame
+            .ip
+            .checked_add(1)
+            .ok_or(RuntimeError::InvalidFunction)?;
 
-        byte
+        Ok(byte)
     }
 
-    fn read_short(&mut self) -> u16 {
-        let high = self.read_byte() as u16;
-        let low = self.read_byte() as u16;
+    fn read_short(&mut self) -> Result<u16, RuntimeError> {
+        let high = self.read_byte()? as u16;
+        let low = self.read_byte()? as u16;
 
-        (high << 8) | low
+        Ok((high << 8) | low)
     }
 
-    fn read_constant(&self, index: u8) -> Value {
-        let frame = self.current_frame();
+    fn read_constant(&self, index: u8) -> Result<Value, RuntimeError> {
+        let frame = self.current_frame()?;
 
-        frame_closure(&frame.closure).function.chunk.constants[index as usize].clone()
+        frame_closure(&frame.closure)
+            .function
+            .chunk
+            .constants
+            .get(index as usize)
+            .cloned()
+            .ok_or(RuntimeError::InvalidFunction)
     }
 
-    fn read_constant_byte(&mut self) -> Value {
-        let index = self.read_byte();
+    fn read_constant_byte(&mut self) -> Result<Value, RuntimeError> {
+        let index = self.read_byte()?;
 
         self.read_constant(index)
     }
@@ -190,16 +202,12 @@ impl VirtualMachine {
     // FRAME
     // ============================================================
 
-    fn current_frame(&self) -> &CallFrame {
-        self.frames.last().expect("No current CallFrame")
+    fn current_frame(&self) -> Result<&CallFrame, RuntimeError> {
+        self.frames.last().ok_or(RuntimeError::InvalidFunction)
     }
 
-    fn current_frame_mut(&mut self) -> &mut CallFrame {
-        self.frames.last_mut().expect("No current CallFrame")
-    }
-
-    fn current_ip(&self) -> usize {
-        self.frames.last().expect("Aucun CallFrame").ip
+    fn current_frame_mut(&mut self) -> Result<&mut CallFrame, RuntimeError> {
+        self.frames.last_mut().ok_or(RuntimeError::InvalidFunction)
     }
 
     // ============================================================
@@ -216,19 +224,19 @@ impl VirtualMachine {
         println!();
     }
 
-    fn debug_machine(&mut self) {
+    fn debug_machine(&mut self) -> Result<(), RuntimeError> {
         self.print_stack();
 
-        let _ip = self.current_ip();
-
         let (ip, chunk) = {
-            let frame = self.current_frame();
+            let frame = self.current_frame()?;
             let closure = frame_closure(&frame.closure);
 
             (frame.ip, closure.function.chunk.clone())
         };
 
         chunk.disassemble_instruction(ip);
+
+        Ok(())
     }
 
     // ============================================================
@@ -237,11 +245,10 @@ impl VirtualMachine {
 
     fn op_array(&mut self, count: usize) -> Result<(), RuntimeError> {
         if self.stack.len() < count {
-            return Err(RuntimeError::TypeError);
+            return Err(RuntimeError::StackUnderflow);
         }
 
         let start = self.stack.len() - count;
-
         let values = self.stack.drain(start..).collect::<Vec<_>>();
 
         self.push(Value::new_array(values));
@@ -253,7 +260,7 @@ impl VirtualMachine {
         let total = pair_count * 2;
 
         if self.stack.len() < total {
-            return Err(RuntimeError::TypeError);
+            return Err(RuntimeError::StackUnderflow);
         }
 
         let start = self.stack.len() - total;
@@ -282,7 +289,7 @@ impl VirtualMachine {
     // ============================================================
 
     fn op_get_iterator(&mut self) -> Result<(), RuntimeError> {
-        let value = self.pop();
+        let value = self.pop()?;
 
         let iterator = value.to_iterator()?;
 
@@ -292,7 +299,7 @@ impl VirtualMachine {
     }
 
     fn op_iterator_has_next(&mut self) -> Result<(), RuntimeError> {
-        let iterator = self.pop();
+        let iterator = self.pop()?;
 
         let has_next = iterator.iterator_has_next()?;
 
@@ -302,7 +309,7 @@ impl VirtualMachine {
     }
 
     fn op_iterator_next(&mut self) -> Result<(), RuntimeError> {
-        let iterator = self.pop();
+        let iterator = self.pop()?;
 
         let value = iterator.iterator_next()?;
 
@@ -350,8 +357,8 @@ impl VirtualMachine {
     }
 
     fn op_get_index(&mut self) -> Result<(), RuntimeError> {
-        let index = self.pop();
-        let array = self.pop();
+        let index = self.pop()?;
+        let array = self.pop()?;
 
         let index = Self::array_index(index)?;
 
@@ -363,9 +370,9 @@ impl VirtualMachine {
     }
 
     fn op_set_index(&mut self) -> Result<(), RuntimeError> {
-        let value = self.pop();
-        let index = self.pop();
-        let array = self.pop();
+        let value = self.pop()?;
+        let index = self.pop()?;
+        let array = self.pop()?;
 
         let index = Self::array_index(index)?;
 
@@ -375,7 +382,7 @@ impl VirtualMachine {
     }
 
     fn op_array_length(&mut self) -> Result<(), RuntimeError> {
-        let array = self.pop();
+        let array = self.pop()?;
 
         let length = array.array_len()?;
 
@@ -385,8 +392,8 @@ impl VirtualMachine {
     }
 
     fn op_array_push(&mut self) -> Result<(), RuntimeError> {
-        let value = self.pop();
-        let array = self.pop();
+        let value = self.pop()?;
+        let array = self.pop()?;
 
         let length = array.array_push(value)?;
 
@@ -396,7 +403,7 @@ impl VirtualMachine {
     }
 
     fn op_array_pop(&mut self) -> Result<(), RuntimeError> {
-        let array = self.pop();
+        let array = self.pop()?;
 
         let value = array.array_pop()?;
 
@@ -406,9 +413,9 @@ impl VirtualMachine {
     }
 
     fn op_array_insert(&mut self) -> Result<(), RuntimeError> {
-        let value = self.pop();
-        let index = self.pop();
-        let array = self.pop();
+        let value = self.pop()?;
+        let index = self.pop()?;
+        let array = self.pop()?;
 
         let index = Self::array_index(index)?;
 
@@ -420,8 +427,8 @@ impl VirtualMachine {
     }
 
     fn op_array_remove(&mut self) -> Result<(), RuntimeError> {
-        let index = self.pop();
-        let array = self.pop();
+        let index = self.pop()?;
+        let array = self.pop()?;
 
         let index = Self::array_index(index)?;
 
@@ -433,7 +440,7 @@ impl VirtualMachine {
     }
 
     fn op_array_clear(&mut self) -> Result<(), RuntimeError> {
-        let array = self.pop();
+        let array = self.pop()?;
 
         array.array_clear()?;
 
@@ -441,8 +448,8 @@ impl VirtualMachine {
     }
 
     fn op_array_contains(&mut self) -> Result<(), RuntimeError> {
-        let value = self.pop();
-        let array = self.pop();
+        let value = self.pop()?;
+        let array = self.pop()?;
 
         let contains = array.array_contains(&value)?;
 
@@ -450,11 +457,11 @@ impl VirtualMachine {
 
         Ok(())
     }
-    fn current_position(&self) -> (usize, usize) {
-        let frame = self.current_frame();
+    fn current_position(&self) -> Result<(usize, usize), RuntimeError> {
+        let frame = self.current_frame()?;
         let closure = frame_closure(&frame.closure);
 
-        closure.function.chunk.position_at(frame.ip)
+        Ok(closure.function.chunk.position_at(frame.ip))
     }
     // ============================================================
     // VM
@@ -463,7 +470,7 @@ impl VirtualMachine {
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
             if cfg!(feature = "debug_trace") {
-                self.debug_machine();
+                self.debug_machine()?;
             }
 
             // Vérifié entre deux instructions seulement (jamais au milieu
@@ -477,34 +484,34 @@ impl VirtualMachine {
             // toujours juste si une erreur survient pendant l'instruction
             // qui suit) — c'est ce que lit l'appelant de run() en cas
             // d'erreur pour construire RuntimeError::WithLocation.
-            let (line, column) = self.current_position();
+            let (line, column) = self.current_position()?;
 
             self.current_line = line;
             self.current_column = column;
-            let instruction = self.read_byte();
+            let instruction = self.read_byte()?;
 
             match instruction {
                 // =================================================
                 // CONSTANTS
                 // =================================================
                 x if x == OpCode::Constant.into() => {
-                    let constant = self.read_constant_byte();
+                    let constant = self.read_constant_byte()?;
 
                     self.push(constant);
                 }
 
                 x if x == OpCode::DefineGlobal.into() => {
-                    let constant = self.read_constant_byte();
+                    let constant = self.read_constant_byte()?;
 
                     let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
-                    let value = self.pop();
+                    let value = self.pop()?;
 
                     self.globals.insert(name, value);
                 }
 
                 x if x == OpCode::GetGlobal.into() => {
-                    let constant = self.read_constant_byte();
+                    let constant = self.read_constant_byte()?;
 
                     let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
@@ -520,7 +527,7 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::SetGlobal.into() => {
-                    let constant = self.read_constant_byte();
+                    let constant = self.read_constant_byte()?;
 
                     let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
@@ -528,7 +535,7 @@ impl VirtualMachine {
                         return Err(RuntimeError::TypeError);
                     }
 
-                    let value = self.peek().clone();
+                    let value = self.peek()?.clone();
 
                     self.globals.insert(name, value);
                 }
@@ -537,27 +544,47 @@ impl VirtualMachine {
                 // LOCALS
                 // =================================================
                 x if x == OpCode::GetLocal.into() => {
-                    let slot = self.read_byte() as usize;
+                    let slot = self.read_byte()? as usize;
 
-                    let frame = self.frames.last().expect("Aucun CallFrame");
+                    let frame = self.frames.last().ok_or(RuntimeError::StackUnderflow);
 
-                    let index = frame.slot_start + 1 + slot;
+                    let index = frame?
+                        .slot_start
+                        .checked_add(1)
+                        .and_then(|index| index.checked_add(slot))
+                        .ok_or(RuntimeError::InvalidFunction)?;
 
-                    let value = self.stack[index].clone();
+                    let value = self
+                        .stack
+                        .get(index)
+                        .cloned()
+                        .ok_or(RuntimeError::StackUnderflow)?;
 
                     self.push(value);
                 }
 
                 x if x == OpCode::SetLocal.into() => {
-                    let slot = self.read_byte() as usize;
+                    let slot = self.read_byte()? as usize;
 
-                    let value = self.peek().clone();
+                    let value = self.peek()?.clone();
 
-                    let slot_start = self.frames.last().expect("Aucun CallFrame").slot_start;
+                    let slot_start = self
+                        .frames
+                        .last()
+                        .ok_or(RuntimeError::StackUnderflow)?
+                        .slot_start;
 
-                    let index = slot_start + 1 + slot;
+                    let index = slot_start
+                        .checked_add(1)
+                        .and_then(|index| index.checked_add(slot))
+                        .ok_or(RuntimeError::InvalidFunction)?;
 
-                    self.stack[index] = value;
+                    let target = self
+                        .stack
+                        .get_mut(index)
+                        .ok_or(RuntimeError::StackUnderflow)?;
+
+                    *target = value;
                 }
 
                 // =================================================
@@ -579,8 +606,8 @@ impl VirtualMachine {
                 // ARITHMETIC
                 // =================================================
                 x if x == OpCode::Add.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let result = match (a.as_string_value(), b.as_string_value()) {
                         // Concaténation stricte : uniquement String + String.
@@ -595,8 +622,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Subtract.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let result = Value::binary_numeric_op(a, b, NumericOp::Subtract)?;
 
@@ -604,8 +631,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Multiply.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let result = Value::binary_numeric_op(a, b, NumericOp::Multiply)?;
 
@@ -613,8 +640,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Divide.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let result = Value::binary_numeric_op(a, b, NumericOp::Divide)?;
 
@@ -622,8 +649,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Modulo.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let result = Value::binary_numeric_op(a, b, NumericOp::Modulo)?;
 
@@ -631,7 +658,7 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Negate.into() => {
-                    let value = self.pop();
+                    let value = self.pop()?;
 
                     let result = Value::negate_values(value)?;
 
@@ -651,8 +678,8 @@ impl VirtualMachine {
                 // laisser Rust paniquer à notre place.
                 // =================================================
                 x if x == OpCode::BitAnd.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let a = Self::to_bitwise_int(&a)?;
                     let b = Self::to_bitwise_int(&b)?;
@@ -661,8 +688,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::BitOr.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let a = Self::to_bitwise_int(&a)?;
                     let b = Self::to_bitwise_int(&b)?;
@@ -671,8 +698,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::BitXor.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let a = Self::to_bitwise_int(&a)?;
                     let b = Self::to_bitwise_int(&b)?;
@@ -681,7 +708,7 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::BitNot.into() => {
-                    let a = self.pop();
+                    let a = self.pop()?;
 
                     let a = Self::to_bitwise_int(&a)?;
 
@@ -689,8 +716,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::ShiftLeft.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let a = Self::to_bitwise_int(&a)?;
                     let shift = Self::to_bitwise_int(&b)?;
@@ -703,8 +730,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::ShiftRight.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let a = Self::to_bitwise_int(&a)?;
                     let shift = Self::to_bitwise_int(&b)?;
@@ -720,8 +747,8 @@ impl VirtualMachine {
                 // COMPARISON
                 // =================================================
                 x if x == OpCode::Equal.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let result = Value::equals(a, b);
 
@@ -729,8 +756,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Greater.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let result = Value::compare_numeric(a, b, ComparisonOp::Greater)?;
 
@@ -738,8 +765,8 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Less.into() => {
-                    let b = self.pop();
-                    let a = self.pop();
+                    let b = self.pop()?;
+                    let a = self.pop()?;
 
                     let result = Value::compare_numeric(a, b, ComparisonOp::Less)?;
 
@@ -747,19 +774,19 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Not.into() => {
-                    let value = self.pop();
+                    let value = self.pop()?;
 
                     self.push(Value::Boolean(!value.is_truthy()));
                 }
 
                 x if x == OpCode::GetProperty.into() => {
-                    let constant = self.read_byte();
+                    let constant = self.read_byte()?;
 
-                    let property = self.read_constant(constant);
+                    let property = self.read_constant(constant)?;
 
                     let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
 
-                    let object = self.pop();
+                    let object = self.pop()?;
 
                     let value = object.get_property(&name)?;
 
@@ -767,14 +794,14 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::SetProperty.into() => {
-                    let constant = self.read_byte();
+                    let constant = self.read_byte()?;
 
-                    let property = self.read_constant(constant);
+                    let property = self.read_constant(constant)?;
 
                     let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
 
-                    let value = self.pop();
-                    let object = self.pop();
+                    let value = self.pop()?;
+                    let object = self.pop()?;
 
                     // Fonctionne désormais réellement pour les objets
                     // (Value::Object) ; reste une erreur pour tout le
@@ -787,7 +814,7 @@ impl VirtualMachine {
                 // ARRAYS
                 // =================================================
                 x if x == OpCode::Array.into() => {
-                    let count = self.read_byte() as usize;
+                    let count = self.read_byte()? as usize;
 
                     self.op_array(count)?;
                 }
@@ -796,7 +823,7 @@ impl VirtualMachine {
                 // OBJET
                 // =================================================
                 x if x == OpCode::Object.into() => {
-                    let pair_count = self.read_byte() as usize;
+                    let pair_count = self.read_byte()? as usize;
 
                     self.op_object(pair_count)?;
                 }
@@ -853,9 +880,9 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::Import.into() => {
-                    let constant = self.read_byte();
+                    let constant = self.read_byte()?;
 
-                    let value = self.read_constant(constant);
+                    let value = self.read_constant(constant)?;
 
                     let module_name = value.as_string_value().ok_or(RuntimeError::TypeError)?;
 
@@ -893,13 +920,13 @@ impl VirtualMachine {
                 }
 
                 x if x == OpCode::SetUpvalue.into() => {
-                    let index = self.read_byte() as usize;
+                    let index = self.read_byte()? as usize;
 
                     self.set_upvalue(index)?;
                 }
 
                 x if x == OpCode::GetUpvalue.into() => {
-                    let index = self.read_byte() as usize;
+                    let index = self.read_byte()? as usize;
 
                     self.get_upvalue(index)?;
                 }
@@ -908,38 +935,55 @@ impl VirtualMachine {
                 // CONTROL FLOW
                 // =================================================
                 x if x == OpCode::Jump.into() => {
-                    let offset = self.read_short() as usize;
+                    let offset = self.read_short()? as usize;
 
-                    let frame = self.current_frame_mut();
+                    let frame = self.current_frame_mut()?;
 
-                    frame.ip += offset;
+                    frame.ip = frame
+                        .ip
+                        .checked_add(offset)
+                        .ok_or(RuntimeError::InvalidFunction)?;
                 }
 
                 x if x == OpCode::JumpIfFalse.into() => {
-                    let offset = self.read_short() as usize;
+                    let offset = self.read_short()? as usize;
 
-                    if !self.peek().is_truthy() {
-                        let frame = self.current_frame_mut();
+                    if !self.peek()?.is_truthy() {
+                        let frame = self.current_frame_mut()?;
 
-                        frame.ip += offset;
+                        frame.ip = frame
+                            .ip
+                            .checked_add(offset)
+                            .ok_or(RuntimeError::InvalidFunction)?;
                     }
                 }
 
                 x if x == OpCode::Loop.into() => {
-                    let offset = self.read_short() as usize;
+                    let offset = self.read_short()? as usize;
 
-                    let frame = self.current_frame_mut();
+                    let frame = self.current_frame_mut()?;
 
-                    frame.ip -= offset;
+                    frame.ip = frame
+                        .ip
+                        .checked_sub(offset)
+                        .ok_or(RuntimeError::InvalidFunction)?;
                 }
 
                 // =================================================
                 // CALL
                 // =================================================
                 x if x == OpCode::Call.into() => {
-                    let arg_count = self.read_byte() as usize;
+                    let arg_count = self.read_byte()? as usize;
 
-                    let callee_index = self.stack.len() - arg_count - 1;
+                    let required = arg_count
+                        .checked_add(1)
+                        .ok_or(RuntimeError::InvalidFunction)?;
+
+                    if self.stack.len() < required {
+                        return Err(RuntimeError::StackUnderflow);
+                    }
+
+                    let callee_index = self.stack.len() - required;
 
                     let callee = self.stack[callee_index].clone();
 
@@ -978,18 +1022,22 @@ impl VirtualMachine {
                 // STACK
                 // =================================================
                 x if x == OpCode::Pop.into() => {
-                    let _ = self.pop();
+                    self.pop()?;
                 }
 
                 // =================================================
                 // RETURN
                 // =================================================
                 x if x == OpCode::Return.into() => {
-                    let result = self.pop();
+                    let result = self.pop()?;
 
-                    let frame = self.frames.pop().expect("Aucun CallFrame");
+                    let frame = self.frames.pop().ok_or(RuntimeError::InvalidFunction)?;
 
-                    self.close_upvalues(frame.slot_start);
+                    if frame.slot_start > self.stack.len() {
+                        return Err(RuntimeError::InvalidFunction);
+                    }
+
+                    self.close_upvalues(frame.slot_start)?;
 
                     self.stack.truncate(frame.slot_start);
 
@@ -1008,7 +1056,7 @@ impl VirtualMachine {
                 }
 
                 _ => {
-                    panic!("Unknown opcode: {instruction}");
+                    return Err(RuntimeError::InvalidOpcode(instruction));
                 }
             }
         }
@@ -1028,7 +1076,15 @@ impl VirtualMachine {
             });
         }
 
-        let callee_index = self.stack.len() - arg_count - 1;
+        let required = arg_count
+            .checked_add(1)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if self.stack.len() < required {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let callee_index = self.stack.len() - required;
 
         self.frames.push(CallFrame {
             closure,
@@ -1044,10 +1100,10 @@ impl VirtualMachine {
     // ============================================================
 
     fn op_closure(&mut self) -> Result<(), RuntimeError> {
-        let constant_index = self.read_byte() as usize;
+        let constant_index = self.read_byte()? as usize;
 
         let function = {
-            let frame = self.current_frame();
+            let frame = self.current_frame()?;
 
             let closure = frame_closure(&frame.closure);
 
@@ -1082,14 +1138,14 @@ impl VirtualMachine {
         let mut pending_upvalues = Vec::with_capacity(function.upvalue_count);
 
         for _ in 0..function.upvalue_count {
-            let is_local = self.read_byte();
+            let is_local = self.read_byte()?;
 
-            let index = self.read_byte() as usize;
+            let index = self.read_byte()? as usize;
 
             let upvalue = if is_local != 0 {
-                self.capture_upvalue(index)
+                self.capture_upvalue(index)?
             } else {
-                let frame = self.current_frame();
+                let frame = self.current_frame()?;
 
                 frame_closure(&frame.closure)
                     .upvalues
@@ -1112,22 +1168,30 @@ impl VirtualMachine {
     // UPVALUES
     // ============================================================
 
-    fn capture_upvalue(&mut self, slot: usize) -> Rc<RefCell<ObjUpvalue>> {
-        let absolute_slot = self.current_frame().slot_start + 1 + slot;
+    fn capture_upvalue(&mut self, slot: usize) -> Result<Rc<RefCell<ObjUpvalue>>, RuntimeError> {
+        let slot_start = self.current_frame()?.slot_start;
+
+        let absolute_slot = slot_start
+            .checked_add(1)
+            .and_then(|index| index.checked_add(slot))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if absolute_slot >= self.stack.len() {
+            return Err(RuntimeError::InvalidFunction);
+        }
 
         for upvalue in &self.open_upvalues {
             if upvalue.borrow().slot == absolute_slot {
-                return Rc::clone(upvalue);
+                return Ok(Rc::clone(upvalue));
             }
         }
 
         let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(absolute_slot)));
 
         gc::register_upvalue(&upvalue);
-
         self.open_upvalues.push(Rc::clone(&upvalue));
 
-        upvalue
+        Ok(upvalue)
     }
 
     // ============================================================
@@ -1149,7 +1213,7 @@ impl VirtualMachine {
 
     fn get_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
         let upvalue = {
-            let frame = self.current_frame();
+            let frame = self.current_frame()?;
             let closure = frame_closure(&frame.closure);
 
             closure
@@ -1180,7 +1244,7 @@ impl VirtualMachine {
 
     fn set_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
         let upvalue = {
-            let frame = self.current_frame();
+            let frame = self.current_frame()?;
             let closure = frame_closure(&frame.closure);
 
             closure
@@ -1190,7 +1254,7 @@ impl VirtualMachine {
                 .ok_or(RuntimeError::InvalidFunction)?
         };
 
-        let value = self.peek().clone();
+        let value = self.peek()?.clone();
 
         let slot = {
             let mut upvalue_ref = upvalue.borrow_mut();
@@ -1211,18 +1275,21 @@ impl VirtualMachine {
 
         Ok(())
     }
-    fn close_upvalues(&mut self, last: usize) {
+    fn close_upvalues(&mut self, last: usize) -> Result<(), RuntimeError> {
         let mut i = 0;
 
         while i < self.open_upvalues.len() {
             let slot = self.open_upvalues[i].borrow().slot;
 
             if slot >= last {
-                let value = self.stack[slot].clone();
+                let value = self
+                    .stack
+                    .get(slot)
+                    .cloned()
+                    .ok_or(RuntimeError::InvalidFunction)?;
 
                 {
                     let mut upvalue = self.open_upvalues[i].borrow_mut();
-
                     upvalue.closed = Some(value);
                 }
 
@@ -1231,5 +1298,7 @@ impl VirtualMachine {
                 i += 1;
             }
         }
+
+        Ok(())
     }
 }
