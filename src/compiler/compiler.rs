@@ -6,10 +6,10 @@ use crate::bytecode::chunk::{Chunk, OpCode};
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::Statement;
 use crate::runtime::function::Function;
-// use crate::runtime::upvalue::Upvalue;
+use crate::runtime::upvalue::Upvalue;
 
 use super::context::{CompilerContext, CompilerContextRef};
-// use super::locals::LocalTable;
+use super::locals::LocalTable;
 use super::loops::LoopContext;
 use super::variables::Global;
 
@@ -42,9 +42,19 @@ pub struct Compiler {
     pub(crate) in_function: bool,
 
     pub(crate) exports: Vec<String>,
+
+    /// Position source (ligne, colonne) du statement en cours de
+    /// compilation. Mise à jour uniquement au passage d'un
+    /// `Statement::Positioned` (voir statements.rs) — c'est ce que lit
+    /// `emit_byte` pour alimenter `chunk.lines`/`chunk.columns`, et ce que
+    /// `compile()`/`compile_module()`/`compile_function()` utilisent pour
+    /// enrichir un `CompileError` avec sa position au moment où il
+    /// s'échappe vers l'appelant.
+    pub(crate) current_line: usize,
+    pub(crate) current_column: usize,
 }
 
-// #[allow(dead_code)]
+#[allow(dead_code)]
 impl Compiler {
     /// Crée un compilateur racine prêt à compiler un script.
     pub fn new() -> Self {
@@ -60,6 +70,9 @@ impl Compiler {
             function_arity: 0,
             in_function: false,
             exports: Vec::new(),
+
+            current_line: 0,
+            current_column: 0,
         }
     }
 
@@ -83,6 +96,9 @@ impl Compiler {
             function_arity: 0,
             in_function: true,
             exports: Vec::new(),
+
+            current_line: 0,
+            current_column: 0,
         }
     }
 
@@ -95,8 +111,6 @@ impl Compiler {
 
         Ok(function)
     }
-
-    
 
     /// Enregistre une fonction native dans la table des symboles globaux.
     pub fn define_native(&mut self, name: &str) -> Result<(), CompileError> {
@@ -117,22 +131,40 @@ impl Compiler {
     //                      CONTEXTE
     // ============================================================
 
-    // /// Retourne une copie de la table des variables locales courantes.
-    // pub(crate) fn locals(&self) -> LocalTable {
-    //     self.context.borrow().locals.clone()
-    // }
+    /// Retourne une copie de la table des variables locales courantes.
+    pub(crate) fn locals(&self) -> LocalTable {
+        self.context.borrow().locals.clone()
+    }
 
-    // /// Retourne une copie des upvalues du contexte courant.
-    // pub(crate) fn upvalues(&self) -> Vec<Upvalue> {
-    //     self.context.borrow().upvalues.clone()
-    // }
+    /// Retourne une copie des upvalues du contexte courant.
+    pub(crate) fn upvalues(&self) -> Vec<Upvalue> {
+        self.context.borrow().upvalues.clone()
+    }
+
+    /// Enveloppe une erreur avec la position source courante — sauf si
+    /// elle est déjà enveloppée (une erreur remontant d'une fonction
+    /// imbriquée compilée séparément, voir functions.rs::compile_function,
+    /// porte déjà sa position, plus précise que celle de l'appelant).
+    pub(crate) fn attach_location(&self, error: CompileError) -> CompileError {
+        match error {
+            CompileError::WithLocation { .. } => error,
+
+            other => CompileError::WithLocation {
+                line: self.current_line,
+                column: self.current_column,
+                source: Box::new(other),
+            },
+        }
+    }
 
     pub fn compile_module(
         mut self,
         statements: &[Statement],
     ) -> Result<(Function, Vec<String>), CompileError> {
         for statement in statements {
-            self.compile_statement(statement)?;
+            if let Err(error) = self.compile_statement(statement) {
+                return Err(self.attach_location(error));
+            }
         }
 
         self.emit_opcode(OpCode::Halt);

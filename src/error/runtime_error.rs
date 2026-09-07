@@ -21,10 +21,26 @@ pub enum RuntimeError {
 
     ArrayIndexOutOfBounds { index: usize, length: usize },
     ModuleError(String),
-    ObjectFieldNotFound(String),
+
+    /// `suggestion` : nom de champ existant le plus proche, si un match
+    /// assez proche a été trouvé (voir error::suggest::closest_match).
+    ObjectFieldNotFound {
+        name: String,
+        suggestion: Option<String>,
+    },
+
     NotIterable,
     IteratorExhausted,
     InvalidShiftAmount,
+
+    /// Enveloppe posée une seule fois, au moment où l'erreur s'échappe de
+    /// `VirtualMachine::run()`, pour lui attacher la position source de
+    /// l'instruction qui a échoué (voir `Chunk::position_at`).
+    WithLocation {
+        line: usize,
+        column: usize,
+        source: Box<RuntimeError>,
+    },
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -72,9 +88,14 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::ModuleError(message) => {
                 write!(f, "Module error: {message}")
             }
-            RuntimeError::ObjectFieldNotFound(name) => {
-                write!(f, "Champ '{name}' introuvable sur l'objet.")
-            }
+            RuntimeError::ObjectFieldNotFound { name, suggestion } => match suggestion {
+                Some(suggestion) => write!(
+                    f,
+                    "Champ '{name}' introuvable sur l'objet. Vouliez-vous dire '{suggestion}' ?"
+                ),
+
+                None => write!(f, "Champ '{name}' introuvable sur l'objet."),
+            },
             RuntimeError::NotIterable => {
                 write!(f, "Cette valeur n'est pas itérable (utilisable dans un 'for..in').")
             }
@@ -83,6 +104,9 @@ impl std::fmt::Display for RuntimeError {
             }
             RuntimeError::InvalidShiftAmount => {
                 write!(f, "Décalage invalide : doit être compris entre 0 et 63.")
+            }
+            RuntimeError::WithLocation { line, column, source } => {
+                write!(f, "ligne {line}, colonne {column} : {source}")
             }
         }
     }

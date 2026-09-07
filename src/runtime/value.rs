@@ -266,7 +266,17 @@ impl Value {
                     .iter()
                     .find(|(key, _)| key == name)
                     .map(|(_, value)| value.clone())
-                    .ok_or_else(|| RuntimeError::ObjectFieldNotFound(name.to_string())),
+                    .ok_or_else(|| {
+                        let suggestion = crate::error::suggest::closest_match(
+                            name,
+                            fields.iter().map(|(key, _)| key.as_str()),
+                        );
+
+                        RuntimeError::ObjectFieldNotFound {
+                            name: name.to_string(),
+                            suggestion,
+                        }
+                    }),
 
                 _ => Err(RuntimeError::TypeError),
             },

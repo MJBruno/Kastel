@@ -111,7 +111,7 @@ impl Token {
             "in" => Some(TokenKind::In),
             "true" => Some(TokenKind::True),
             "false" => Some(TokenKind::False),
-            "nil" => Some(TokenKind::Nil),
+            "null" => Some(TokenKind::Nil),
             "break" => Some(TokenKind::Break),
             "continue" => Some(TokenKind::Continue),
             "import" => Some(TokenKind::Import),

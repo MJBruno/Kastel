@@ -5,13 +5,28 @@ use crate::error::runtime_error::RuntimeError;
 // ================================================================
 // COMPILE_ERROR
 // ================================================================
+//
+// Un seul type, comme avant — AUCUN changement de signature nécessaire
+// dans tout le reste du compilateur (compile_expression, compile_var,
+// resolve_variable, etc. gardent tous `Result<_, CompileError>`).
+//
+// La position (ligne, colonne) est ajoutée via UNE SEULE variante
+// enveloppante, `WithLocation`, posée UNE SEULE FOIS au tout dernier
+// moment — juste avant que l'erreur ne s'échappe vers l'appelant, dans
+// les 3 points d'entrée du compilateur (`compile`, `compile_module`,
+// `compile_function`). Le reste du compilateur continue de construire et
+// de propager des `CompileError` bruts via `?`, exactement comme avant :
+// zéro ripple sur les ~40 signatures existantes.
 
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum CompileError {
     VariableAlreadyDeclared(String),
     VariableUseInInitializer(String),
-    UndefinedVariable(String),
+    UndefinedVariable {
+        name: String,
+        suggestion: Option<String>,
+    },
 
     AssignmentToConstant(String),
 
@@ -31,6 +46,12 @@ pub enum CompileError {
 
     InvalidMemberAccess { name: String },
 
+    /// Incohérence interne du compilateur (ex. pile de boucles
+    /// désynchronisée) — ne devrait jamais se produire si le compilateur
+    /// est correct, mais on préfère un message d'erreur clair à un panic
+    /// qui tue tout le processus si un futur bug en introduit une.
+    InternalCompilerError(String),
+
     // ============================================================
     // MODULE / IMPORT / EXPORT
     // ============================================================
@@ -48,118 +69,155 @@ pub enum CompileError {
 
     ModuleParserError(ParserError),
 
-    ModuleRuntimeError(RuntimeError),
+    ModuleRuntimeError {
+        path: String,
+        source: RuntimeError,
+    },
+
+    /// Erreur de compilation À L'INTÉRIEUR d'un module importé (avant même
+    /// son exécution) — porte le chemin du module concerné, pour qu'un
+    /// `CompileError::WithLocation` remonté depuis sa compilation indique
+    /// clairement DANS QUEL FICHIER se trouve la ligne/colonne fautive.
+    #[allow(clippy::enum_variant_names)]
+    ModuleCompileError {
+        path: String,
+        source: Box<CompileError>,
+    },
 
     ExportNotFound { module: String, name: String },
 
     InvalidExport,
-    
     InvalidImport,
+
+    /// Enveloppe posée une seule fois, au tout dernier moment, autour de
+    /// n'importe quelle autre variante — voir le commentaire d'en-tête.
+    WithLocation {
+        line: usize,
+        column: usize,
+        source: Box<CompileError>,
+    },
 }
 
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            CompileError::WithLocation { line, column, source } => {
+                write!(f, "ligne {line}, colonne {column} : {source}")
+            }
+
             CompileError::VariableAlreadyDeclared(e) => {
-                write!(f, "Variable {e} already declared")
+                write!(f, "Variable '{e}' déjà déclarée")
             }
 
             CompileError::VariableUseInInitializer(e) => {
-                write!(f, "Variable {e} not initialized")
+                write!(f, "Variable '{e}' utilisée dans son propre initialiseur")
             }
 
-            CompileError::UndefinedVariable(e) => {
-                write!(f, "Variable {e} not defined")
-            }
+            CompileError::UndefinedVariable { name, suggestion } => match suggestion {
+                Some(suggestion) => write!(
+                    f,
+                    "Variable '{name}' non définie. Vouliez-vous dire '{suggestion}' ?"
+                ),
+
+                None => write!(f, "Variable '{name}' non définie"),
+            },
 
             CompileError::AssignmentToConstant(e) => {
-                write!(f, "Assignment to constant variable '{e}'")
+                write!(f, "Affectation à la constante '{e}'")
             }
 
             CompileError::TooManyConstants => {
-                write!(f, "Too many constants")
+                write!(f, "Trop de constantes dans ce fragment de code")
             }
             CompileError::TooManyArguments => {
-                write!(f, "Too many arguments")
+                write!(f, "Trop d'arguments")
             }
             CompileError::TooManyArrayElements => {
-                write!(f, "Too many array elements")
+                write!(f, "Trop d'éléments dans le tableau")
             }
             CompileError::TooManyLocals => {
-                write!(f, "Too many local variables")
+                write!(f, "Trop de variables locales dans cette portée")
             }
 
             CompileError::BreakOutsideLoop => {
-                write!(f, "Break outside loop")
+                write!(f, "'break' en dehors d'une boucle")
             }
 
             CompileError::ContinueOutsideLoop => {
-                write!(f, "Continue outside loop")
+                write!(f, "'continue' en dehors d'une boucle")
             }
 
             CompileError::ReturnOutsidFunction => {
-                write!(f, "Return outside function")
+                write!(f, "'return' en dehors d'une fonction")
             }
 
             CompileError::TooManyUpvalues => {
-                write!(f, "Too many upvalues")
+                write!(f, "Trop de variables capturées par cette closure")
             }
 
             CompileError::WrongArgumentCount { expected, found } => {
-                write!(f, "Expected {expected} arguments but found {found}.")
+                write!(f, "{expected} argument(s) attendu(s), {found} fourni(s)")
             }
 
             CompileError::InvalidMemberAccess { name } => {
-                write!(f, "Invalid member access '{name}'")
+                write!(f, "Accès de membre invalide : '{name}'")
+            }
+
+            CompileError::InternalCompilerError(message) => {
+                write!(f, "Erreur interne du compilateur : {message}")
             }
 
             // ====================================================
             // MODULE / IMPORT / EXPORT
             // ====================================================
             CompileError::DuplicateExport(name) => {
-                write!(f, "Export '{name}' is already declared")
+                write!(f, "L'export '{name}' est déjà déclaré")
             }
 
             CompileError::CircularImport(path) => {
-                write!(f, "Circular module import: {path}")
+                write!(f, "Import de module circulaire : {path}")
             }
 
             CompileError::ModuleNotFound(path) => {
-                write!(f, "Module not found: {path}")
+                write!(f, "Module introuvable : {path}")
             }
 
             CompileError::ModuleInvalidPath(path) => {
-                write!(f, "Invalid module path: {path}")
+                write!(f, "Chemin de module invalide : {path}")
             }
 
             CompileError::ModuleReadError { path, message } => {
-                write!(f, "Unable to read module '{path}': {message}")
+                write!(f, "Impossible de lire le module '{path}' : {message}")
             }
 
-            CompileError::ModuleLexerError(message) => {
-                write!(f, "Lexer error in module: {}", message.message)
+            CompileError::ModuleLexerError(error) => {
+                write!(f, "Erreur lexicale dans le module : {}", error.message)
             }
 
             CompileError::ModuleParserError(error) => {
-                write!(f, "Parser error in module: {}", error.message)
+                write!(f, "Erreur de syntaxe dans le module : {}", error.message)
             }
 
-            CompileError::ModuleRuntimeError(message) => {
-                write!(f, "Runtime error in module: {message}")
+            CompileError::ModuleRuntimeError { path, source } => {
+                write!(f, "Erreur d'exécution dans le module '{path}' : {source}")
+            }
+
+            CompileError::ModuleCompileError { path, source } => {
+                write!(f, "Erreur de compilation dans le module '{path}' : {source}")
             }
 
             CompileError::ExportNotFound { module, name } => {
-                write!(f, "Module '{module}' does not export '{name}'")
+                write!(f, "Le module '{module}' n'exporte pas '{name}'")
             }
 
             CompileError::InvalidExport => {
-                write!(f, "Invalid export declaration")
+                write!(f, "Déclaration d'export invalide")
             }
             CompileError::InvalidImport => {
-                write!(f, "Invalid import declaration")
+                write!(f, "Déclaration d'import invalide")
             }
             CompileError::ExpectedDeclarationAfterExport => {
-                write!(f, "Expected declaration after export")
+                write!(f, "Déclaration attendue après 'export'")
             }
             CompileError::ModuleParserErrors(errors) => {
                 for (index, error) in errors.iter().enumerate() {
@@ -169,7 +227,7 @@ impl std::fmt::Display for CompileError {
 
                     write!(
                         f,
-                        "Parser error in module at {}:{}: {}",
+                        "Erreur de syntaxe dans le module à {}:{} : {}",
                         error.line, error.column, error.message
                     )?;
                 }
@@ -184,7 +242,7 @@ impl std::fmt::Display for CompileError {
 
                     write!(
                         f,
-                        "Parser error in module at {}:{}: {}",
+                        "Erreur lexicale dans le module à {}:{} : {}",
                         error.line, error.column, error.message
                     )?;
                 }

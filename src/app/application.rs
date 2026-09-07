@@ -1,5 +1,6 @@
 use crate::compiler::compiler::Compiler;
 use crate::error::kastel_error::KastelError;
+use crate::error::runtime_error::RuntimeError;
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::Parser;
 use crate::runtime::native::execute_native;
@@ -40,9 +41,10 @@ impl Application {
                 }
             };
 
-            match execute(&src, Some(path)) {
+            match execute(&src, Some(path.clone())) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
+                    eprintln!("Erreur dans '{}' :", path.display());
                     eprintln!("{error}");
                     ExitCode::FAILURE
                 }
@@ -66,17 +68,25 @@ fn execute(source: &str, module_path: Option<PathBuf>) -> Result<(), KastelError
 
     let function = Rc::new(compiler.compile(&statements)?);
 
-    VirtualMachine::new(function, module_path).run()?;
+    let mut vm = VirtualMachine::new(function, module_path);
+
+    if let Err(error) = vm.run() {
+        return Err(RuntimeError::WithLocation {
+            line: vm.current_line,
+            column: vm.current_column,
+            source: Box::new(error),
+        }
+        .into());
+    }
 
     Ok(())
 }
 
 fn repl() {
-    println!("Kastel 0.1.0 (tags/v3.14.5:5607950, May 10 2026, 10:43:50) [MSC v.1944 64 bit (AMD64)] on win32
-Type 'help', 'copyright', 'credits' or 'license' for more information: https://Kastel.org\n");
+    println!("Crafted by nova.org, Madagascar: 2026 – 2027 ");
 
     loop {
-        print!(">>> ");
+        print!("[Nova]👉  ");
 
         if io::stdout().flush().is_err() {
             break;

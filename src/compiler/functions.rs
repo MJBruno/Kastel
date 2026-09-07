@@ -110,7 +110,9 @@ impl Compiler {
         }
 
         for statement in body {
-            compiler.compile_statement(statement)?;
+            if let Err(error) = compiler.compile_statement(statement) {
+                return Err(compiler.attach_location(error));
+            }
         }
 
         compiler.emit_opcode(OpCode::Nil);

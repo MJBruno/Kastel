@@ -55,7 +55,20 @@ impl Compiler {
         // 4. INEXISTANTE
         // ============================================================
 
-        Err(CompileError::UndefinedVariable(name.to_string()))
+        let suggestion = {
+            let context = self.context.borrow();
+            let globals = self.globals.borrow();
+
+            crate::error::suggest::closest_match(
+                name,
+                context.locals.names().chain(globals.keys().map(String::as_str)),
+            )
+        };
+
+        Err(CompileError::UndefinedVariable {
+            name: name.to_string(),
+            suggestion,
+        })
     }
 
     pub(crate) fn compile_variable_get(&mut self, name: &str) -> Result<(), CompileError> {

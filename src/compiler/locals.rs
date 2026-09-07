@@ -35,6 +35,13 @@ impl LocalTable {
         self.locals.len()
     }
 
+    /// Noms de toutes les variables locales actuellement visibles — utilisé
+    /// uniquement pour construire des suggestions "vouliez-vous dire ?" en
+    /// cas de variable non définie, jamais pour de la résolution réelle.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.locals.iter().map(|local| local.name.as_str())
+    }
+
     /// Déclare une nouvelle variable locale et lui attribue un slot.
     /// La fonction vérifie également les redéclarations dans la portée courante
     /// et refuse de dépasser la capacité représentable par un `u8`.

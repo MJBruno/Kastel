@@ -3,16 +3,16 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use crate::bytecode::chunk::OpCode;
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
 use crate::runtime::gc;
 use crate::runtime::gc_handle::Gc;
-use crate::runtime::object::Object;
 use crate::runtime::native::register_natives;
+use crate::runtime::object::Object;
 use crate::runtime::value::*;
-use crate::bytecode::chunk::OpCode;
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
@@ -44,6 +44,14 @@ pub struct VirtualMachine {
     natives: HashMap<String, Value>,
     pub module_loader: ModuleLoader,
     pub module_path: Option<PathBuf>,
+
+    /// Position source de l'instruction en cours d'exécution, mise à jour
+    /// au début de chaque tour de boucle dans `run()` — AVANT dispatch,
+    /// donc toujours à jour au moment où une erreur est levée. C'est ce
+    /// que lit l'appelant de `run()` (application.rs, module.rs) pour
+    /// enrichir un `RuntimeError` avec sa position au moment de l'échec.
+    pub current_line: usize,
+    pub current_column: usize,
 }
 
 #[allow(dead_code)]
@@ -65,7 +73,7 @@ impl VirtualMachine {
         let closure = Object::new_closure(function, Vec::new());
 
         let mut vm = Self {
-            stack:  vec![Value::Nil],
+            stack: vec![Value::Nil],
             globals: HashMap::new(),
             natives: HashMap::new(),
             frames: vec![CallFrame {
@@ -76,6 +84,8 @@ impl VirtualMachine {
             open_upvalues: Vec::new(),
             module_loader: ModuleLoader::new(),
             module_path,
+            current_line: 0,
+            current_column: 0,
         };
 
         register_natives(&mut vm.globals);
@@ -94,7 +104,13 @@ impl VirtualMachine {
     ) -> Result<HashMap<String, Value>, RuntimeError> {
         let mut vm = Self::new(function, Some(module_path));
 
-        vm.run()?;
+        if let Err(error) = vm.run() {
+            return Err(RuntimeError::WithLocation {
+                line: vm.current_line,
+                column: vm.current_column,
+                source: Box::new(error),
+            });
+        }
 
         let mut values = HashMap::with_capacity(exports.len());
 
@@ -434,7 +450,12 @@ impl VirtualMachine {
 
         Ok(())
     }
+    fn current_position(&self) -> (usize, usize) {
+        let frame = self.current_frame();
+        let closure = frame_closure(&frame.closure);
 
+        closure.function.chunk.position_at(frame.ip)
+    }
     // ============================================================
     // VM
     // ============================================================
@@ -452,6 +473,14 @@ impl VirtualMachine {
                 self.collect_garbage();
             }
 
+            // Mise à jour de la position courante AVANT dispatch (donc
+            // toujours juste si une erreur survient pendant l'instruction
+            // qui suit) — c'est ce que lit l'appelant de run() en cas
+            // d'erreur pour construire RuntimeError::WithLocation.
+            let (line, column) = self.current_position();
+
+            self.current_line = line;
+            self.current_column = column;
             let instruction = self.read_byte();
 
             match instruction {
@@ -512,7 +541,6 @@ impl VirtualMachine {
 
                     let frame = self.frames.last().expect("Aucun CallFrame");
 
-                    
                     let index = frame.slot_start + 1 + slot;
 
                     let value = self.stack[index].clone();
@@ -990,11 +1018,7 @@ impl VirtualMachine {
     // CALL
     // ============================================================
 
-    fn call(
-        &mut self,
-        closure: Gc<Object>,
-        arg_count: usize,
-    ) -> Result<(), RuntimeError> {
+    fn call(&mut self, closure: Gc<Object>, arg_count: usize) -> Result<(), RuntimeError> {
         let arity = frame_closure(&closure).function.arity;
 
         if arg_count != arity {
@@ -1027,7 +1051,12 @@ impl VirtualMachine {
 
             let closure = frame_closure(&frame.closure);
 
-            let constant = closure.function.chunk.constants.get(constant_index).cloned();
+            let constant = closure
+                .function
+                .chunk
+                .constants
+                .get(constant_index)
+                .cloned();
 
             match constant {
                 Some(Value::Object(handle)) => {
@@ -1118,70 +1147,70 @@ impl VirtualMachine {
         })
     }
 
-   fn get_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
-    let upvalue = {
-        let frame = self.current_frame();
-        let closure = frame_closure(&frame.closure);
+    fn get_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
+        let upvalue = {
+            let frame = self.current_frame();
+            let closure = frame_closure(&frame.closure);
 
-        closure
-            .upvalues
-            .get(index)
-            .cloned()
-            .ok_or(RuntimeError::InvalidFunction)?
-    };
-
-    let value = {
-        let upvalue_ref = upvalue.borrow();
-
-        match &upvalue_ref.closed {
-            Some(value) => value.clone(),
-
-            None => self
-                .stack
-                .get(upvalue_ref.slot)
+            closure
+                .upvalues
+                .get(index)
                 .cloned()
-                .ok_or(RuntimeError::InvalidFunction)?,
-        }
-    };
+                .ok_or(RuntimeError::InvalidFunction)?
+        };
 
-    self.push(value);
+        let value = {
+            let upvalue_ref = upvalue.borrow();
 
-    Ok(())
-}
+            match &upvalue_ref.closed {
+                Some(value) => value.clone(),
 
-fn set_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
-    let upvalue = {
-        let frame = self.current_frame();
-        let closure = frame_closure(&frame.closure);
+                None => self
+                    .stack
+                    .get(upvalue_ref.slot)
+                    .cloned()
+                    .ok_or(RuntimeError::InvalidFunction)?,
+            }
+        };
 
-        closure
-            .upvalues
-            .get(index)
-            .cloned()
-            .ok_or(RuntimeError::InvalidFunction)?
-    };
+        self.push(value);
 
-    let value = self.peek().clone();
-
-    let slot = {
-        let mut upvalue_ref = upvalue.borrow_mut();
-
-        if let Some(closed) = &mut upvalue_ref.closed {
-            *closed = value;
-            return Ok(());
-        }
-
-        upvalue_ref.slot
-    };
-
-    if slot >= self.stack.len() {
-        return Err(RuntimeError::InvalidFunction);
+        Ok(())
     }
 
-    self.stack[slot] = value;
+    fn set_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
+        let upvalue = {
+            let frame = self.current_frame();
+            let closure = frame_closure(&frame.closure);
 
-    Ok(())
-}
+            closure
+                .upvalues
+                .get(index)
+                .cloned()
+                .ok_or(RuntimeError::InvalidFunction)?
+        };
+
+        let value = self.peek().clone();
+
+        let slot = {
+            let mut upvalue_ref = upvalue.borrow_mut();
+
+            if let Some(closed) = &mut upvalue_ref.closed {
+                *closed = value;
+                return Ok(());
+            }
+
+            upvalue_ref.slot
+        };
+
+        if slot >= self.stack.len() {
+            return Err(RuntimeError::InvalidFunction);
+        }
+
+        self.stack[slot] = value;
+
+        Ok(())
+    }
     fn close_upvalues(&mut self, last: usize) {
         let mut i = 0;
 
@@ -1204,11 +1233,3 @@ fn set_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
         }
     }
 }
-
-
-
-
-
-
-
-  

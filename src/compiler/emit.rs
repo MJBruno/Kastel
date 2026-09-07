@@ -29,8 +29,8 @@ impl Compiler {
     // ============================================================
 
     pub(crate) fn emit_byte(&mut self, byte: u8) {
-        self.chunk.write(byte);
-    }
+        self.chunk.write(byte, self.current_line, self.current_column);
+    } 
 
     pub(crate) fn emit_opcode(&mut self, opcode: OpCode) {
         self.emit_byte(opcode.into());
