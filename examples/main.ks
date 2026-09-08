@@ -1,11 +1,17 @@
-println("TEST FONCTIONS IMBRIQUEES");
+function make_counter() {
+    let value = 42;
 
-function outer() {
-    function inner() {
-        return 42;
+    function get_value() {
+        return value;
     }
 
-    return inner();
+    return get_value;
 }
 
-println(outer());
+let get = make_counter();
+
+for i in range(500) {
+    let temp = [i, i + 1, i + 2, i + 3];
+}
+
+println(get());

@@ -24,7 +24,7 @@ use std::rc::{Rc, Weak};
 pub struct Gc<T>(Rc<RefCell<T>>);
 
 impl<T> Gc<T> {
-    pub fn new(value: T) -> Self {
+    pub(crate) fn new(value: T) -> Self {
         Gc(Rc::new(RefCell::new(value)))
     }
 

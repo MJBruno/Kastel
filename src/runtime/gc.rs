@@ -3,11 +3,12 @@ use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 use std::time::Instant;
 
+use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::iterator::IteratorState;
 use crate::runtime::object::Object;
-use crate::runtime::value::Value;
 use crate::runtime::upvalue::ObjUpvalue;
+use crate::runtime::value::Value;
 use crate::vm::machine::CallFrame;
 // ================================================================
 // TRAÇAGE DU GC
@@ -261,8 +262,7 @@ fn mark_value(value: &Value, state: &mut MarkState) {
 fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
     let id = handle.as_id();
 
-    // Protège aussi contre une boucle infinie si l'objet se contient
-    // (directement ou indirectement, ex. `arr.push(arr)`).
+    // Évite les boucles infinies dans le graphe d'objets.
     if !state.objects.insert(id) {
         return;
     }
@@ -282,12 +282,17 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
             }
         }
 
-        // Une fonction compilée est immuable et ne référence aucune
-        // Value de première classe directement (ses constantes vivent
-        // dans son propre Chunk, pas dans le graphe d'objets du GC).
-        Object::Function(_) => {}
+        Object::Function(function) => {
+            for constant in &function.chunk.constants {
+                mark_value(constant, state);
+            }
+        }
 
         Object::Closure(closure) => {
+            for constant in &closure.function.chunk.constants {
+                mark_value(constant, state);
+            }
+
             for upvalue in &closure.upvalues {
                 mark_upvalue(upvalue, state);
             }
@@ -304,6 +309,12 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
                 mark_value(value, state);
             }
         }
+    }
+}
+#[allow(dead_code)]
+fn mark_function(function: &Function, state: &mut MarkState) {
+    for constant in &function.chunk.constants {
+        mark_value(constant, state);
     }
 }
 
