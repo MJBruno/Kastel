@@ -70,7 +70,8 @@ impl Compiler {
 
         let function = self.compile_function(name, params, body)?;
 
-        let function_constant = self.make_constant(Value::new_function(Rc::new(function.clone())))?;
+        let function_constant =
+            self.make_constant(Value::new_function(Rc::new(function.clone())))?;
 
         self.emit_closure(function_constant, &function.upvalues);
 
@@ -90,7 +91,7 @@ impl Compiler {
         Ok(())
     }
 
-  // ============================================================
+    // ============================================================
     //                      COMPILE_FONCTION
     // ============================================================
 
@@ -102,11 +103,8 @@ impl Compiler {
     ) -> Result<Function, CompileError> {
         let enclosing = Rc::clone(&self.context);
 
-        let mut compiler = Compiler::new_function(
-            name.to_string(),
-            Rc::clone(&self.globals),
-            enclosing,
-        );
+        let mut compiler =
+            Compiler::new_function(name.to_string(), Rc::clone(&self.globals), enclosing);
 
         for param in params {
             compiler.add_parametre(param)?;
@@ -125,7 +123,8 @@ impl Compiler {
             (
                 context.upvalues.len(),
                 context.upvalues.clone(),
-                context.locals.max_slots() as u8,
+                u16::try_from(context.locals.max_slots())
+                    .map_err(|_| CompileError::TooManyLocals)?,
             )
         };
 
@@ -139,12 +138,14 @@ impl Compiler {
         })
     }
 
-
     // ============================================================
     //                      RETURN
     // ============================================================
 
-    pub(crate) fn compile_return(&mut self, value: Option<&Expression>) -> Result<(), CompileError> {
+    pub(crate) fn compile_return(
+        &mut self,
+        value: Option<&Expression>,
+    ) -> Result<(), CompileError> {
         if !self.in_function {
             return Err(CompileError::ReturnOutsidFunction);
         }

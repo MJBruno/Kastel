@@ -48,7 +48,22 @@ pub struct VirtualMachine {
 }
 
 impl VirtualMachine {
-    pub fn new(function: Rc<Function>, module_path: Option<PathBuf>) -> Self {
+    pub fn new(
+        function: Rc<Function>,
+        module_path: Option<PathBuf>,
+    ) -> Self {
+        Self::new_with_loader(
+            function,
+            module_path,
+            ModuleLoader::new(),
+        )
+    }
+
+    pub fn new_with_loader(
+        function: Rc<Function>,
+        module_path: Option<PathBuf>,
+        module_loader: ModuleLoader,
+    ) -> Self {
         let closure = Object::new_closure(function, Vec::new());
 
         let mut vm = Self {
@@ -61,13 +76,14 @@ impl VirtualMachine {
             }],
             open_upvalues: Vec::new(),
             natives: HashMap::new(),
-            module_loader: ModuleLoader::new(),
+            module_loader,
             module_path,
             current_line: 0,
             current_column: 0,
         };
 
         register_natives(&mut vm.globals);
+
         vm
     }
 
@@ -75,8 +91,13 @@ impl VirtualMachine {
         function: Rc<Function>,
         exports: &[String],
         module_path: PathBuf,
+        module_loader: ModuleLoader,
     ) -> Result<HashMap<String, Value>, RuntimeError> {
-        let mut vm = Self::new(function, Some(module_path));
+        let mut vm = Self::new_with_loader(
+            function,
+            Some(module_path),
+            module_loader,
+        );
 
         if let Err(error) = vm.run() {
             return Err(RuntimeError::WithLocation {
@@ -110,9 +131,13 @@ impl VirtualMachine {
     ) -> Result<Rc<RefCell<ObjUpvalue>>, RuntimeError> {
         let (slot_start, local_count) = {
             let frame = self.current_frame()?;
-            let closure = crate::vm::machine::bytecode::frame_closure(&frame.closure);
+            let closure =
+                crate::vm::machine::bytecode::frame_closure(&frame.closure);
 
-            (frame.slot_start, closure.function.local_count as usize)
+            (
+                frame.slot_start,
+                closure.function.local_count as usize,
+            )
         };
 
         if slot >= local_count {
@@ -134,7 +159,9 @@ impl VirtualMachine {
             }
         }
 
-        let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(absolute_slot)));
+        let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(
+            absolute_slot,
+        )));
 
         crate::runtime::gc::register_upvalue(&upvalue);
         self.open_upvalues.push(Rc::clone(&upvalue));
@@ -142,8 +169,12 @@ impl VirtualMachine {
         Ok(upvalue)
     }
 
-    pub(crate) fn close_upvalues(&mut self, last: usize) -> Result<(), RuntimeError> {
-        let mut remaining = Vec::with_capacity(self.open_upvalues.len());
+    pub(crate) fn close_upvalues(
+        &mut self,
+        last: usize,
+    ) -> Result<(), RuntimeError> {
+        let mut remaining =
+            Vec::with_capacity(self.open_upvalues.len());
 
         for upvalue in self.open_upvalues.drain(..) {
             let slot = upvalue.borrow().slot;

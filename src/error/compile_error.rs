@@ -109,6 +109,7 @@ pub enum CompileError {
     },
     InvalidJump,
     JumpTooLarge,
+    TooManyObjectFields,
 }
 
 impl std::fmt::Display for CompileError {
@@ -147,13 +148,13 @@ impl std::fmt::Display for CompileError {
                 write!(f, "Trop de constantes dans ce fragment de code")
             }
             CompileError::TooManyArguments => {
-                write!(f, "Trop d'arguments")
+                write!(f, "Trop d'arguments ou de paramètres")
             }
             CompileError::TooManyArrayElements => {
                 write!(f, "Trop d'éléments dans le tableau")
             }
             CompileError::TooManyLocals => {
-                write!(f, "Trop de variables locales dans cette portée")
+                write!(f, "Trop de variables locales dans cette fonction")
             }
 
             CompileError::BreakOutsideLoop => {
@@ -275,6 +276,9 @@ impl std::fmt::Display for CompileError {
 
             CompileError::JumpTooLarge => {
                 write!(f, "Saut de bytecode trop grand")
+            }
+            CompileError::TooManyObjectFields => {
+                write!(f, "Trop de champs dans cet objet")
             }
         }
     }

@@ -1,3 +1,1 @@
-export let value = [10, 20, 30];
-
- 
+export let value = 42;

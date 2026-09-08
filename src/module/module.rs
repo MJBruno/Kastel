@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
@@ -43,7 +44,12 @@ impl ModuleInstance {
     }
 }
 
+#[derive(Clone)]
 pub struct ModuleLoader {
+    state: Rc<RefCell<ModuleLoaderState>>,
+}
+
+struct ModuleLoaderState {
     cache: HashMap<PathBuf, Rc<ModuleInstance>>,
     loading: Vec<PathBuf>,
 }
@@ -51,8 +57,10 @@ pub struct ModuleLoader {
 impl ModuleLoader {
     pub fn new() -> Self {
         Self {
-            cache: HashMap::new(),
-            loading: Vec::new(),
+            state: Rc::new(RefCell::new(ModuleLoaderState {
+                cache: HashMap::new(),
+                loading: Vec::new(),
+            })),
         }
     }
 
@@ -90,26 +98,40 @@ impl ModuleLoader {
                 message: error.to_string(),
             })?;
 
-        if let Some(module) = self.cache.get(&path) {
-            return Ok(Rc::clone(module));
+        {
+            let state = self.state.borrow();
+
+            if let Some(module) = state.cache.get(&path) {
+                return Ok(Rc::clone(module));
+            }
         }
 
-        if let Some(index) = self.loading.iter().position(|p| p == &path) {
-            let mut cycle = self.loading[index..]
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>();
+        {
+            let mut state = self.state.borrow_mut();
 
-            cycle.push(path.display().to_string());
+            if let Some(index) = state.loading.iter().position(|p| p == &path) {
+                let mut cycle = state.loading[index..]
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>();
 
-            return Err(CompileError::CircularImport(cycle.join(" -> ")));
+                cycle.push(path.display().to_string());
+
+                return Err(CompileError::CircularImport(cycle.join(" -> ")));
+            }
+
+            state.loading.push(path.clone());
         }
-
-        self.loading.push(path.clone());
 
         let result = self.load_uncached(&path);
 
-        self.loading.pop();
+        {
+            let mut state = self.state.borrow_mut();
+
+            let last = state.loading.pop();
+
+            debug_assert_eq!(last.as_ref(), Some(&path));
+        }
 
         result
     }
@@ -156,12 +178,18 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         // 5. Exécuter le module dans une VM isolée
         // ------------------------------------------------------------
-        let values =
-            VirtualMachine::execute_module(Rc::clone(&function), &exports, path.to_path_buf())
-                .map_err(|error| CompileError::ModuleRuntimeError {
-                    path: path.display().to_string(),
-                    source: error,
-                })?;
+        let module_loader = self.clone();
+
+        let values = VirtualMachine::execute_module(
+            Rc::clone(&function),
+            &exports,
+            path.to_path_buf(),
+            module_loader,
+        )
+        .map_err(|error| CompileError::ModuleRuntimeError {
+            path: path.display().to_string(),
+            source: error,
+        })?;
         // ------------------------------------------------------------
         // 6. Nom du module
         // ------------------------------------------------------------
@@ -188,7 +216,10 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         let module = Rc::new(module);
 
-        self.cache.insert(path.to_path_buf(), Rc::clone(&module));
+        self.state
+            .borrow_mut()
+            .cache
+            .insert(path.to_path_buf(), Rc::clone(&module));
 
         Ok(module)
     }

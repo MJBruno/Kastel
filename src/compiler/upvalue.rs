@@ -20,7 +20,7 @@ impl Compiler {
             }
         }
 
-        if context.upvalues.len() >= u8::MAX as usize {
+        if context.upvalues.len() > u8::MAX as usize {
             return Err(CompileError::TooManyUpvalues);
         }
 

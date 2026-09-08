@@ -203,12 +203,11 @@ impl Compiler {
         }
 
         let module_name = path.join(".");
-
-        // Pour :
-        // import math;
-        //
-        // le nom disponible dans le scope est "math".
         let binding_name = path.first().ok_or(CompileError::InvalidImport)?;
+
+        if self.imported_modules.contains(binding_name) {
+            return Ok(());
+        }
 
         if self.globals.borrow().contains_key(binding_name) {
             return Err(CompileError::VariableAlreadyDeclared(binding_name.clone()));
@@ -230,10 +229,20 @@ impl Compiler {
             },
         );
 
+        self.imported_modules.insert(binding_name.clone());
+
         Ok(())
     }
 
     pub(crate) fn compile_export(&mut self, statement: &Statement) -> Result<(), CompileError> {
+        //Evite l'export dans un function ou objet
+        //      function outer() {
+        //          export let x = 10;
+        //      }
+        if self.in_function || self.scope_depth != 0 {
+            return Err(CompileError::InvalidExport);
+        }
+
         match statement {
             Statement::Let { name, .. } => {
                 self.register_export(name)?;

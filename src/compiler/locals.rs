@@ -85,7 +85,7 @@ impl LocalTable {
             }
         }
 
-        if self.locals.len() >= u8::MAX as usize {
+        if self.locals.len() > u8::MAX as usize {
             return Err(CompileError::TooManyLocals);
         }
 

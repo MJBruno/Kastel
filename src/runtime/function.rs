@@ -13,7 +13,7 @@ pub struct Function {
     pub chunk: Chunk,
 
      /// Nombre maximal de slots locaux utilisés par cette fonction.
-    pub local_count: u8,
+    pub local_count: u16,
     pub upvalue_count: usize,
     pub upvalues: Vec<Upvalue>,
 }

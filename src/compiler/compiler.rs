@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::bytecode::chunk::{Chunk, OpCode};
@@ -42,6 +42,7 @@ pub struct Compiler {
     pub(crate) in_function: bool,
 
     pub(crate) exports: Vec<String>,
+    pub(crate) imported_modules: HashSet<String>,
 
     /// Position source (ligne, colonne) du statement en cours de
     /// compilation. Mise à jour uniquement au passage d'un
@@ -70,6 +71,7 @@ impl Compiler {
             function_arity: 0,
             in_function: false,
             exports: Vec::new(),
+            imported_modules: HashSet::new(),
 
             current_line: 0,
             current_column: 0,
@@ -96,7 +98,7 @@ impl Compiler {
             function_arity: 0,
             in_function: true,
             exports: Vec::new(),
-
+imported_modules: HashSet::new(),
             current_line: 0,
             current_column: 0,
         }
@@ -169,13 +171,14 @@ impl Compiler {
 
         self.emit_opcode(OpCode::Halt);
 
-        let local_count = self.context.borrow().locals.max_slots() as u8;
+        let local_count = u8::try_from(self.context.borrow().locals.max_slots())
+            .map_err(|_| CompileError::TooManyLocals)?;
 
         let function = Function {
             name: "<script>".to_string(),
             arity: 0,
             chunk: self.chunk,
-            local_count,
+            local_count: local_count.into(),
             upvalue_count: 0,
             upvalues: Vec::new(),
         };

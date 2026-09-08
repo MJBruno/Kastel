@@ -95,6 +95,10 @@ impl Compiler {
     // ============================================================
 
     pub(crate) fn add_parametre(&mut self, name: &str) -> Result<(), CompileError> {
+        if self.function_arity == u8::MAX {
+            return Err(CompileError::TooManyArguments);
+        }
+
         let slot = self
             .context
             .borrow_mut()

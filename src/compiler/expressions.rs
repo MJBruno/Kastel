@@ -96,7 +96,7 @@ impl Compiler {
 
             Expression::Object(fields) => {
                 if fields.len() > u8::MAX as usize {
-                    return Err(CompileError::TooManyArrayElements);
+                    return Err(CompileError::TooManyObjectFields);
                 }
 
                 for (key, value) in fields {
@@ -300,14 +300,14 @@ impl Compiler {
         callee: &Expression,
         arguments: &[Expression],
     ) -> Result<(), CompileError> {
+        if arguments.len() > u8::MAX as usize {
+            return Err(CompileError::TooManyArguments);
+        }
+
         self.compile_expression(callee)?;
 
         for argument in arguments {
             self.compile_expression(argument)?;
-        }
-
-        if arguments.len() > u8::MAX as usize {
-            return Err(CompileError::TooManyArguments);
         }
 
         self.emit_bytes(OpCode::Call, arguments.len() as u8);
@@ -333,34 +333,24 @@ impl Compiler {
         Ok(())
     }
 
- pub(crate) fn compile_logical_or(
+  pub(crate) fn compile_logical_or(
     &mut self,
     left: &Expression,
     right: &Expression,
 ) -> Result<(), CompileError> {
     self.compile_expression(left)?;
 
-    // !left
-    self.emit_opcode(OpCode::Not);
-
-    // Si !left est false, alors left était truthy.
     let end_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-    // left était falsy : restaurer la valeur originale de left.
-    self.emit_opcode(OpCode::Not);
-    self.emit_opcode(OpCode::Pop);
-
-    // Évaluer right.
-    self.compile_expression(right)?;
-
-    // Ne pas exécuter la restauration destinée au chemin left=true.
+    // left est truthy : conserver sa valeur et ne pas évaluer right.
     let right_jump = self.emit_jump(OpCode::Jump);
 
-    // left était truthy : restaurer left.
+    // left est falsy : dépiler left puis évaluer right.
     self.patch_jump(end_jump)?;
-    self.emit_opcode(OpCode::Not);
+    self.emit_opcode(OpCode::Pop);
 
-    // Fin du OR.
+    self.compile_expression(right)?;
+
     self.patch_jump(right_jump)?;
 
     Ok(())
