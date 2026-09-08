@@ -9,7 +9,7 @@ mod frontend;
 mod module;
 mod runtime;
 mod vm;
-mod native;
+mod stdlib;
 
 fn main() -> std::process::ExitCode {
     let start = Instant::now();

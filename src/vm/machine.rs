@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
-use crate::native::register_natives;
+use crate::stdlib::register_natives;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;

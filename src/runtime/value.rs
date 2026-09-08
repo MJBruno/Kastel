@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleInstance;
-use crate::native::NativeFn;
+use crate::stdlib::NativeFn;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;

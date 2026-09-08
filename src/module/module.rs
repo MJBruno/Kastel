@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{error::compile_error::CompileError, native::execute_native};
+use crate::{error::compile_error::CompileError, stdlib::execute_native};
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::Parser;
 use crate::vm::machine::VirtualMachine;

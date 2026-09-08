@@ -1,7 +1,6 @@
 
-// ================================================================
-// src/native/io.rs
-// ================================================================
+use std::collections::HashMap;
+use std::io::{self, Write};
 
 use crate::{
     compiler::compiler::Compiler,
@@ -10,9 +9,6 @@ use crate::{
 };
 
 use super::string::format_string;
-
-use std::collections::HashMap;
-use std::io::{self, Write};
 
 fn render_arguments(args: &[Value]) -> Result<String, RuntimeError> {
     let Some(first) = args.first() else {
@@ -50,7 +46,9 @@ pub fn native_print(args: &[Value]) -> Result<Value, RuntimeError> {
 
     print!("{formatted}");
 
-    io::stdout().flush().ok();
+    io::stdout()
+        .flush()
+        .map_err(|_| RuntimeError::NativeError)?;
 
     Ok(Value::new_string(formatted))
 }
@@ -77,22 +75,22 @@ pub fn native_input(args: &[Value]) -> Result<Value, RuntimeError> {
         .read_line(&mut buffer)
         .map_err(|_| RuntimeError::NativeError)?;
 
-    let trimmed = buffer
+    let value = buffer
         .trim_end_matches(['\n', '\r'])
         .to_string();
 
-    Ok(Value::new_string(trimmed))
+    Ok(Value::new_string(value))
 }
 
 pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert(
-        "println".to_string(),
-        Value::NativeFunction(native_println),
+        "print".to_string(),
+        Value::NativeFunction(native_print),
     );
 
     globals.insert(
-        "print".to_string(),
-        Value::NativeFunction(native_print),
+        "println".to_string(),
+        Value::NativeFunction(native_println),
     );
 
     globals.insert(
@@ -102,8 +100,8 @@ pub fn register(globals: &mut HashMap<String, Value>) {
 }
 
 pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("println");
     let _ = compiler.define_native("print");
+    let _ = compiler.define_native("println");
     let _ = compiler.define_native("input");
 }
 

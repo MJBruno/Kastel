@@ -1,3 +1,5 @@
-from module_a import missing;
+let path = env("UNE_VARIABLE_INEXISTANTE");
 
-println(missing);
+if (path == null) {
+    println("Variable absente");
+}
