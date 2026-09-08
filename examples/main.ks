@@ -1,9 +1,3 @@
-function test() {
-    let value = 10;
+let a = [10, 20, 30];
 
-    value[0];
-
-    return 42;
-}
-
-println(test());
+a.remove(999999999999999999999999999999999999.0);

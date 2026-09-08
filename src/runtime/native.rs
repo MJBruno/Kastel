@@ -506,7 +506,11 @@ fn expect_array_index(value: &Value) -> Result<usize, RuntimeError> {
     match value {
         Value::Integer(n) if *n >= 0 => Ok(*n as usize),
 
-        Value::Float(n) if *n >= 0.0 && n.fract() == 0.0 => Ok(*n as usize),
+        Value::Float(n)
+            if n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= usize::MAX as f64 =>
+        {
+            Ok(*n as usize)
+        }
 
         _ => Err(RuntimeError::TypeError),
     }
