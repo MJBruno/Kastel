@@ -48,16 +48,16 @@ impl Compiler {
 
         self.end_scope();
 
-        self.emit_loop(loop_start);
+        self.emit_loop(loop_start)?;
 
-        self.patch_jump(exit_jump);
+        self.patch_jump(exit_jump)?;
 
         self.emit_opcode(OpCode::Pop);
 
         let loop_context = self.loops.pop().expect("loop stack underflow");
 
         for break_jump in loop_context.break_jumps {
-            self.patch_jump(break_jump);
+            self.patch_jump(break_jump)?;
         }
 
         Ok(())
@@ -159,16 +159,16 @@ impl Compiler {
 
         self.end_scope();
 
-        self.emit_loop(loop_start);
+        self.emit_loop(loop_start)?;
 
-        self.patch_jump(exit_jump);
+        self.patch_jump(exit_jump)?;
 
         self.emit_opcode(OpCode::Pop); // dépile le booléen "false"
 
         let loop_context = self.loops.pop().expect("loop stack underflow");
 
         for break_jump in loop_context.break_jumps {
-            self.patch_jump(break_jump);
+            self.patch_jump(break_jump)?;
         }
 
         self.end_scope();
@@ -205,7 +205,7 @@ impl Compiler {
 
         self.emit_scope_cleanup(loop_depth);
 
-        self.emit_loop(continue_target);
+        self.emit_loop(continue_target)?;
 
         Ok(())
     }

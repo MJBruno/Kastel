@@ -42,9 +42,14 @@ pub enum CompileError {
     ModuleParserErrors(Vec<ParserError>),
     ModuleLexerErrors(Vec<LexerError>),
 
-    WrongArgumentCount { expected: i32, found: usize },
+    WrongArgumentCount {
+        expected: i32,
+        found: usize,
+    },
 
-    InvalidMemberAccess { name: String },
+    InvalidMemberAccess {
+        name: String,
+    },
 
     /// Incohérence interne du compilateur (ex. pile de boucles
     /// désynchronisée) — ne devrait jamais se produire si le compilateur
@@ -63,7 +68,10 @@ pub enum CompileError {
 
     ModuleInvalidPath(String),
 
-    ModuleReadError { path: String, message: String },
+    ModuleReadError {
+        path: String,
+        message: String,
+    },
 
     ModuleLexerError(LexerError),
 
@@ -84,7 +92,10 @@ pub enum CompileError {
         source: Box<CompileError>,
     },
 
-    ExportNotFound { module: String, name: String },
+    ExportNotFound {
+        module: String,
+        name: String,
+    },
 
     InvalidExport,
     InvalidImport,
@@ -96,12 +107,18 @@ pub enum CompileError {
         column: usize,
         source: Box<CompileError>,
     },
+    InvalidJump,
+    JumpTooLarge,
 }
 
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CompileError::WithLocation { line, column, source } => {
+            CompileError::WithLocation {
+                line,
+                column,
+                source,
+            } => {
                 write!(f, "ligne {line}, colonne {column} : {source}")
             }
 
@@ -203,7 +220,10 @@ impl std::fmt::Display for CompileError {
             }
 
             CompileError::ModuleCompileError { path, source } => {
-                write!(f, "Erreur de compilation dans le module '{path}' : {source}")
+                write!(
+                    f,
+                    "Erreur de compilation dans le module '{path}' : {source}"
+                )
             }
 
             CompileError::ExportNotFound { module, name } => {
@@ -248,6 +268,13 @@ impl std::fmt::Display for CompileError {
                 }
 
                 Ok(())
+            }
+            CompileError::InvalidJump => {
+                write!(f, "Saut de bytecode invalide")
+            }
+
+            CompileError::JumpTooLarge => {
+                write!(f, "Saut de bytecode trop grand")
             }
         }
     }

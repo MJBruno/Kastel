@@ -35,7 +35,7 @@ impl Compiler {
         // --------------------------------------------------------
         // ELSE
         // --------------------------------------------------------
-        self.patch_jump(else_jump);
+        self.patch_jump(else_jump)?;
 
         // La condition false est toujours sur la pile.
         self.emit_opcode(OpCode::Pop);
@@ -49,7 +49,7 @@ impl Compiler {
         // --------------------------------------------------------
         // END
         // --------------------------------------------------------
-        self.patch_jump(end_jump);
+        self.patch_jump(end_jump)?;
 
         Ok(())
     }

@@ -147,12 +147,12 @@ impl Compiler {
 
                 let end_jump = self.emit_jump(OpCode::Jump);
 
-                self.patch_jump(else_jump);
+                self.patch_jump(else_jump)?;
                 self.emit_opcode(OpCode::Pop); // dépile la condition (chemin "faux")
 
                 self.compile_expression(else_expr)?;
 
-                self.patch_jump(end_jump);
+                self.patch_jump(end_jump)?;
             }
         }
 
@@ -328,7 +328,7 @@ impl Compiler {
 
         self.compile_expression(right)?;
 
-        self.patch_jump(end_jump);
+        self.patch_jump(end_jump)?;
 
         Ok(())
     }
@@ -357,11 +357,11 @@ impl Compiler {
     let right_jump = self.emit_jump(OpCode::Jump);
 
     // left était truthy : restaurer left.
-    self.patch_jump(end_jump);
+    self.patch_jump(end_jump)?;
     self.emit_opcode(OpCode::Not);
 
     // Fin du OR.
-    self.patch_jump(right_jump);
+    self.patch_jump(right_jump)?;
 
     Ok(())
 }
