@@ -3,7 +3,9 @@
   <img src="https://img.shields.io/badge/Status-En%20Développement-yellow?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Bytecode-VM-brightgreen?style=for-the-badge" alt="Bytecode VM">
 </p>
-[<img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License MIT">](LICENSE)
+
+[![License MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
+
 # 🏰 Kastel
 
 > Un langage de programmation dynamique, interprété par une machine virtuelle et compilé en bytecode.
