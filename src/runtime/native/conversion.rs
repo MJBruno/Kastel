@@ -6,11 +6,13 @@ use crate::{
 
 fn parse_number_like(value: &Value) -> Result<f64, RuntimeError> {
     match value {
-        Value::Integer(n) => Ok(*n as f64),
+        Value::Integer(n) => Ok(*n),
 
         Value::Float(n) => Ok(*n),
 
-        Value::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
+        Value::Boolean(b) => {
+            Ok(if *b { 1.0 } else { 0.0 })
+        }
 
         _ => {
             if let Some(s) = value.as_string_value() {
@@ -24,7 +26,9 @@ fn parse_number_like(value: &Value) -> Result<f64, RuntimeError> {
     }
 }
 
-pub fn native_int(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_int(
+    args: &[Value],
+) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -48,7 +52,9 @@ pub fn native_int(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::Integer(value.trunc() as i64))
 }
 
-pub fn native_float(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_float(
+    args: &[Value],
+) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -61,7 +67,9 @@ pub fn native_float(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::Float(value))
 }
 
-pub fn native_str(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_str(
+    args: &[Value],
+) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -72,7 +80,9 @@ pub fn native_str(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::new_string(args[0].to_string()))
 }
 
-pub fn native_bool(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_bool(
+    args: &[Value],
+) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -83,7 +93,9 @@ pub fn native_bool(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::Boolean(args[0].is_truthy()))
 }
 
-pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_type(
+    args: &[Value],
+) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
