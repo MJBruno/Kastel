@@ -1,4 +1,4 @@
-use std::{process::ExitCode, time::Instant};
+use std::time::Instant;
 
 use crate::app::application::Application;
 mod app;
@@ -13,14 +13,14 @@ mod vm;
 fn main() -> std::process::ExitCode {
     let start = Instant::now();
 
-    Application::run();
+    let exit_code = Application::run();
 
     let elapsed = start.elapsed();
 
     eprintln!(
-        "\n\x1b[32mProcess success... \x1b[0m {} \x1b[32mms\x1b[0m",
+        "\n\x1b[32mProcess finished... \x1b[0m {} \x1b[32mms\x1b[0m",
         elapsed.as_secs_f64() * 1000.0
     );
 
-    ExitCode::SUCCESS
+    exit_code
 }
