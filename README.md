@@ -476,6 +476,7 @@ Le projet privilégie maintenant la stabilité des mécanismes existants avant l
 ### Priorités actuelles
 
 ```text
+Priorités actuelles
 ✅ Sécurisation de la pile VM
 ✅ Validation des CallFrames
 ✅ Validation des accès bytecode
@@ -483,9 +484,9 @@ Le projet privilégie maintenant la stabilité des mécanismes existants avant l
 ✅ Validation des captures d'upvalues
 ✅ Séparation runtime / VM pour les upvalues
 ✅ Marquage des constantes de Function
-⬜ Audit approfondi du Garbage Collector
-⬜ Tests GC spécialisés
-⬜ Renforcement des invariants runtime
+✅ Audit approfondi du Garbage Collector
+✅ Tests GC spécialisés
+✅ Renforcement des invariants runtime
 ⬜ Extension progressive de la bibliothèque standard
 ```
 
