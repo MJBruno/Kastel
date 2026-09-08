@@ -90,30 +90,30 @@ impl VirtualMachine {
     }
 
     pub(crate) fn execute_return(&mut self) -> Result<(), RuntimeError> {
-        let result = self.pop()?;
+    let frame = self
+        .frames
+        .last()
+        .cloned()
+        .ok_or(RuntimeError::InvalidFunction)?;
 
-        let frame = self
-            .frames
-            .pop()
-            .ok_or(RuntimeError::InvalidFunction)?;
-
-        if frame.slot_start > self.stack.len() {
-            return Err(RuntimeError::InvalidFunction);
-        }
-
-        // IMPORTANT :
-        // les upvalues doivent être fermées avant de supprimer
-        // les slots du frame de la stack.
-        self.close_upvalues(frame.slot_start)?;
-
-        self.stack.truncate(frame.slot_start);
-
-        if self.frames.is_empty() {
-            return Ok(());
-        }
-
-        self.push(result);
-
-        Ok(())
+    if frame.slot_start > self.stack.len() {
+        return Err(RuntimeError::InvalidFunction);
     }
+
+    let result = self.pop()?;
+
+    self.close_upvalues(frame.slot_start)?;
+
+    self.frames.pop();
+
+    self.stack.truncate(frame.slot_start);
+
+    if self.frames.is_empty() {
+        return Ok(());
+    }
+
+    self.push(result);
+
+    Ok(())
+}
 }

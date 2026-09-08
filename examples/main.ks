@@ -1,11 +1,11 @@
-let sum = 0;
-
-for i in range(10) {
-    if (i == 5) {
-        continue;
-    }
-
-    sum += i;
+function add(a, b) {
+    return a + b;
 }
 
-println(sum);
+function test() {
+    let a = add(10, 20);
+    let b = add(a, 30);
+    return b;
+}
+
+println(test());

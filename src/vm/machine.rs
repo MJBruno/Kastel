@@ -27,6 +27,7 @@ pub mod modules;
 pub mod stack;
 pub mod variables;
 
+#[derive(Clone)]
 pub struct CallFrame {
     pub(crate) closure: Gc<Object>,
     pub(crate) ip: usize,
