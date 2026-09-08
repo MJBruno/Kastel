@@ -104,7 +104,7 @@ impl VirtualMachine {
         // IMPORTANT :
         // les upvalues doivent être fermées avant de supprimer
         // les slots du frame de la stack.
-        self.close_upvalues(frame.slot_start);
+        self.close_upvalues(frame.slot_start)?;
 
         self.stack.truncate(frame.slot_start);
 

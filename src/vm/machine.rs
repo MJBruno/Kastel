@@ -136,21 +136,27 @@ pub(crate) fn capture_upvalue(
 }
 
 
-    pub(crate) fn close_upvalues(&mut self, last: usize) {
-        let mut remaining = Vec::with_capacity(self.open_upvalues.len());
+    pub(crate) fn close_upvalues(&mut self, last: usize) -> Result<(), RuntimeError> {
+    let mut remaining = Vec::with_capacity(self.open_upvalues.len());
 
-        for upvalue in self.open_upvalues.drain(..) {
-            let slot = upvalue.borrow().slot;
+    for upvalue in self.open_upvalues.drain(..) {
+        let slot = upvalue.borrow().slot;
 
-            if slot >= last {
-                let value = self.stack.get(slot).cloned().unwrap_or(Value::Nil);
+        if slot >= last {
+            let value = self
+                .stack
+                .get(slot)
+                .cloned()
+                .ok_or(RuntimeError::InvalidFunction)?;
 
-                upvalue.borrow_mut().closed = Some(value);
-            } else {
-                remaining.push(upvalue);
-            }
+            upvalue.borrow_mut().closed = Some(value);
+        } else {
+            remaining.push(upvalue);
         }
-
-        self.open_upvalues = remaining;
     }
+
+    self.open_upvalues = remaining;
+
+    Ok(())
+}
 }
