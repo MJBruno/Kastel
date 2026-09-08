@@ -300,7 +300,7 @@ impl Value {
             Value::Object(handle) => {
                 let mut object = handle.borrow_mut();
 
-                match &mut *object { 
+                match &mut *object {
                     Object::Dict(fields) => {
                         if let Some(index) = fields.iter().position(|(key, _)| key == name) {
                             fields[index].1 = value;
@@ -520,7 +520,11 @@ impl Value {
                         return Err(RuntimeError::DivisionByZero);
                     }
 
-                    Ok(Value::Integer(a.wrapping_rem(b)))
+                    if a == i64::MIN && b == -1 {
+                        return Ok(Value::Integer(0));
+                    }
+
+                    Ok(Value::Integer(a % b))
                 }
             },
 

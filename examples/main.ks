@@ -1,9 +1,9 @@
-function factorial(n) {
-    if (n <= 1) {
-        return 1;
-    }
+function test() {
+    let value = 10;
 
-    return n * factorial(n - 1);
+    value[0];
+
+    return 42;
 }
 
-println(factorial(5));
+println(test());
