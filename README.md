@@ -4,8 +4,8 @@
   <img src="https://img.shields.io/badge/Bytecode-VM-brightgreen?style=for-the-badge" alt="Bytecode VM"> -->
 [![Rust Version](https://img.shields.io/badge/Rust-1.70%2B-orange?style=for-the-badge&logo=rust)](https://rust-lang.org/)
 [![License MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
-[![Bytecode](https://img.shields.io/badge/Bytecode-VM-brightgreen?style=for-the-badge)](src/bytecode/)
-[![VIRTUAL MACHINE](https://img.shields.io/badge/Bytecode-VM-brightwhite?style=for-the-badge)](src/vm/)
+[![Bytecode](https://img.shields.io/badge/Bytecode-Bytecode-brightgreen?style=for-the-badge)](src/bytecode/)
+[![VIRTUAL MACHINE](https://img.shields.io/badge/Bytecode-VIRTUAL MACHINE -brightwhite?style=for-the-badge)](src/vm/)
 
 
 
