@@ -1,3 +1,3 @@
-let a = [10, 20, 30];
+import module_a;
 
-a.remove(999999999999999999999999999999999999.0);
+println(module_a.value);
