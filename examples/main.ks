@@ -1,15 +1,11 @@
-function consume() {
-    let data = [10, 20, 30];
+let sum = 0;
 
-    for value in data {
-        println(value);
+for i in range(10) {
+    if (i == 5) {
+        continue;
     }
+
+    sum += i;
 }
 
-consume();
-
-for i in range(1000) {
-    let temp = [i, i + 1, i + 2];
-}
-
-println("iterator GC OK");
+println(sum);

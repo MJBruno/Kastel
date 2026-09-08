@@ -54,7 +54,9 @@ impl Compiler {
 
         self.emit_opcode(OpCode::Pop);
 
-        let loop_context = self.loops.pop().expect("loop stack underflow");
+        let loop_context = self.loops.pop().ok_or_else(|| {
+            CompileError::InternalCompilerError("pile des boucles désynchronisée".to_string())
+        })?;
 
         for break_jump in loop_context.break_jumps {
             self.patch_jump(break_jump)?;
@@ -165,7 +167,9 @@ impl Compiler {
 
         self.emit_opcode(OpCode::Pop); // dépile le booléen "false"
 
-        let loop_context = self.loops.pop().expect("loop stack underflow");
+        let loop_context = self.loops.pop().ok_or_else(|| {
+            CompileError::InternalCompilerError("pile des boucles désynchronisée".to_string())
+        })?;
 
         for break_jump in loop_context.break_jumps {
             self.patch_jump(break_jump)?;
@@ -191,7 +195,13 @@ impl Compiler {
 
         let jump = self.emit_jump(OpCode::Jump);
 
-        self.loops.last_mut().unwrap().break_jumps.push(jump);
+        self.loops
+            .last_mut()
+            .ok_or_else(|| {
+                CompileError::InternalCompilerError("pile des boucles désynchronisée".to_string())
+            })?
+            .break_jumps
+            .push(jump);
 
         Ok(())
     }
