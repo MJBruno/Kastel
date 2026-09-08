@@ -9,6 +9,9 @@ on:
     branches:
       - master
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Build and test
@@ -18,21 +21,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal
 
-      - name: Rust version
-        run: rustc --version
-
-      - name: Format check
+      - name: Format
         run: cargo fmt --all -- --check
 
-      - name: Cargo check
+      - name: Check
         run: cargo check
 
-      - name: Cargo test
+      - name: Rust tests
         run: cargo test
 
       - name: Kastel regression tests
