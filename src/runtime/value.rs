@@ -300,7 +300,7 @@ impl Value {
             Value::Object(handle) => {
                 let mut object = handle.borrow_mut();
 
-                match &mut *object {
+                match &mut *object { 
                     Object::Dict(fields) => {
                         if let Some(index) = fields.iter().position(|(key, _)| key == name) {
                             fields[index].1 = value;
