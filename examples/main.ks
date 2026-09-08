@@ -1,17 +1,15 @@
-function make_counter() {
-    let value = 42;
+function consume() {
+    let data = [10, 20, 30];
 
-    function get_value() {
-        return value;
+    for value in data {
+        println(value);
     }
-
-    return get_value;
 }
 
-let get = make_counter();
+consume();
 
-for i in range(500) {
-    let temp = [i, i + 1, i + 2, i + 3];
+for i in range(1000) {
+    let temp = [i, i + 1, i + 2];
 }
 
-println(get());
+println("iterator GC OK");

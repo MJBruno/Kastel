@@ -33,7 +33,7 @@ impl VirtualMachine {
             let index = self.read_byte()? as usize;
 
             let upvalue = if is_local != 0 {
-                self.capture_upvalue(index)
+                self.capture_upvalue(index)?
             } else {
                 let frame = self.current_frame()?;
                 frame_closure(&frame.closure)

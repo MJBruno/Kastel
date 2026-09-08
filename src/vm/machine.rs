@@ -103,22 +103,38 @@ impl VirtualMachine {
         Ok(values)
     }
 
-    pub(crate) fn capture_upvalue(&mut self, slot: usize) -> Rc<RefCell<ObjUpvalue>> {
-        if let Some(existing) = self
-            .open_upvalues
-            .iter()
-            .find(|upvalue| upvalue.borrow().slot == slot)
-        {
-            return Rc::clone(existing);
-        }
+   
+pub(crate) fn capture_upvalue(
+    &mut self,
+    slot: usize,
+) -> Result<Rc<RefCell<ObjUpvalue>>, RuntimeError> {
+    let slot_start = self.current_frame()?.slot_start;
 
-        let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(slot)));
+    let absolute_slot = slot_start
+        .checked_add(1)
+        .and_then(|value| value.checked_add(slot))
+        .ok_or(RuntimeError::InvalidFunction)?;
 
-        crate::runtime::gc::register_upvalue(&upvalue);
-        self.open_upvalues.push(Rc::clone(&upvalue));
-
-        upvalue
+    if absolute_slot >= self.stack.len() {
+        return Err(RuntimeError::InvalidFunction);
     }
+
+    for upvalue in &self.open_upvalues {
+        if upvalue.borrow().slot == absolute_slot {
+            return Ok(Rc::clone(upvalue));
+        }
+    }
+
+    let upvalue = Rc::new(
+        RefCell::new(ObjUpvalue::new(absolute_slot))
+    );
+
+    crate::runtime::gc::register_upvalue(&upvalue);
+    self.open_upvalues.push(Rc::clone(&upvalue));
+
+    Ok(upvalue)
+}
+
 
     pub(crate) fn close_upvalues(&mut self, last: usize) {
         let mut remaining = Vec::with_capacity(self.open_upvalues.len());
