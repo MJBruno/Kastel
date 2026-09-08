@@ -1,0 +1,6 @@
+TEST TRUTHINESS
+0 = false
+1 = true
+empty = false
+string = true
+nil = false
