@@ -4,6 +4,5 @@ pub mod gc_handle;
 pub mod object;
 pub mod value;
 pub mod iterator;
-pub mod native;
 pub mod upvalue;
 pub mod gc;

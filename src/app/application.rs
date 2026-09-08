@@ -1,9 +1,8 @@
-use crate::compiler::compiler::Compiler;
+use crate::{compiler::compiler::Compiler, native::execute_native};
 use crate::error::kastel_error::KastelError;
 use crate::error::runtime_error::RuntimeError;
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::Parser;
-use crate::runtime::native::execute_native;
 use crate::vm::machine::VirtualMachine;
 
 use std::{

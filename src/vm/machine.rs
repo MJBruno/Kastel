@@ -5,9 +5,9 @@ use std::rc::Rc;
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
+use crate::native::register_natives;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
-use crate::runtime::native::register_natives;
 use crate::runtime::object::Object;
 use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
