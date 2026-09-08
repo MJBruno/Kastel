@@ -58,6 +58,7 @@ impl Chunk {
     /// Ajoute une constante dans le pool de constantes.
     /// Retourne l'index de la constante ajoutée, pour faciliter
     /// `OP_CONSTANT <index>`.
+    #[allow(dead_code)]
     pub fn add_constant(&mut self, value: Value) -> usize {
         self.constants.push(value);
         self.constants.len() - 1
