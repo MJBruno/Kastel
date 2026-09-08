@@ -1,11 +1,9 @@
-function add(a, b) {
-    return a + b;
+function factorial(n) {
+    if (n <= 1) {
+        return 1;
+    }
+
+    return n * factorial(n - 1);
 }
 
-function test() {
-    let a = add(10, 20);
-    let b = add(a, 30);
-    return b;
-}
-
-println(test());
+println(factorial(5));

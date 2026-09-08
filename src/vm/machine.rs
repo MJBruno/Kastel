@@ -104,60 +104,65 @@ impl VirtualMachine {
         Ok(values)
     }
 
-   
-pub(crate) fn capture_upvalue(
-    &mut self,
-    slot: usize,
-) -> Result<Rc<RefCell<ObjUpvalue>>, RuntimeError> {
-    let slot_start = self.current_frame()?.slot_start;
+    pub(crate) fn capture_upvalue(
+        &mut self,
+        slot: usize,
+    ) -> Result<Rc<RefCell<ObjUpvalue>>, RuntimeError> {
+        let (slot_start, local_count) = {
+            let frame = self.current_frame()?;
+            let closure = crate::vm::machine::bytecode::frame_closure(&frame.closure);
 
-    let absolute_slot = slot_start
-        .checked_add(1)
-        .and_then(|value| value.checked_add(slot))
-        .ok_or(RuntimeError::InvalidFunction)?;
+            (frame.slot_start, closure.function.local_count as usize)
+        };
 
-    if absolute_slot >= self.stack.len() {
-        return Err(RuntimeError::InvalidFunction);
-    }
-
-    for upvalue in &self.open_upvalues {
-        if upvalue.borrow().slot == absolute_slot {
-            return Ok(Rc::clone(upvalue));
+        if slot >= local_count {
+            return Err(RuntimeError::InvalidFunction);
         }
+
+        let absolute_slot = slot_start
+            .checked_add(1)
+            .and_then(|value| value.checked_add(slot))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if absolute_slot >= self.stack.len() {
+            return Err(RuntimeError::InvalidFunction);
+        }
+
+        for upvalue in &self.open_upvalues {
+            if upvalue.borrow().slot == absolute_slot {
+                return Ok(Rc::clone(upvalue));
+            }
+        }
+
+        let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(absolute_slot)));
+
+        crate::runtime::gc::register_upvalue(&upvalue);
+        self.open_upvalues.push(Rc::clone(&upvalue));
+
+        Ok(upvalue)
     }
-
-    let upvalue = Rc::new(
-        RefCell::new(ObjUpvalue::new(absolute_slot))
-    );
-
-    crate::runtime::gc::register_upvalue(&upvalue);
-    self.open_upvalues.push(Rc::clone(&upvalue));
-
-    Ok(upvalue)
-}
-
 
     pub(crate) fn close_upvalues(&mut self, last: usize) -> Result<(), RuntimeError> {
-    let mut remaining = Vec::with_capacity(self.open_upvalues.len());
+        let mut remaining = Vec::with_capacity(self.open_upvalues.len());
 
-    for upvalue in self.open_upvalues.drain(..) {
-        let slot = upvalue.borrow().slot;
+        for upvalue in self.open_upvalues.drain(..) {
+            let slot = upvalue.borrow().slot;
 
-        if slot >= last {
-            let value = self
-                .stack
-                .get(slot)
-                .cloned()
-                .ok_or(RuntimeError::InvalidFunction)?;
+            if slot >= last {
+                let value = self
+                    .stack
+                    .get(slot)
+                    .cloned()
+                    .ok_or(RuntimeError::InvalidFunction)?;
 
-            upvalue.borrow_mut().closed = Some(value);
-        } else {
-            remaining.push(upvalue);
+                upvalue.borrow_mut().closed = Some(value);
+            } else {
+                remaining.push(upvalue);
+            }
         }
+
+        self.open_upvalues = remaining;
+
+        Ok(())
     }
-
-    self.open_upvalues = remaining;
-
-    Ok(())
-}
 }
