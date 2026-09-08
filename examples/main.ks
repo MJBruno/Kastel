@@ -1,3 +1,3 @@
-import module_a;
+let a = [1, 2, 3];
 
-println(module_a.value);
+a.remove(999);
