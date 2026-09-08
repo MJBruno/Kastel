@@ -51,7 +51,7 @@ fn expect_integer(value: &Value) -> Result<i64, RuntimeError> {
         Value::Integer(n) => Ok(*n),
 
         Value::Float(n) => {
-            if n.fract() != 0.0 {
+            if !n.is_finite() || n.fract() != 0.0 || *n < i64::MIN as f64 || *n > i64::MAX as f64 {
                 return Err(RuntimeError::TypeError);
             }
 
@@ -174,14 +174,16 @@ pub fn native_int(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    // Cas rapide : déjà un entier, rien à convertir.
     if let Value::Integer(n) = &args[0] {
         return Ok(Value::Integer(*n));
     }
 
     let value = parse_number_like(&args[0])?;
 
-    // Troncature vers zéro, pas floor() : int(-5.7) == -5 en Python, pas -6.
+    if !value.is_finite() || value < i64::MIN as f64 || value > i64::MAX as f64 {
+        return Err(RuntimeError::TypeError);
+    }
+
     Ok(Value::Integer(value.trunc() as i64))
 }
 
