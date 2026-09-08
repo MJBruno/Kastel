@@ -295,23 +295,25 @@ impl Value {
         }
     }
 
-    /// Assigne un champ. Contrairement à `array_set` (qui exige un index
-    /// existant), une clé absente est simplement ajoutée — comportement
-    /// dynamique façon JS plutôt qu'une erreur "champ inconnu".
     pub fn object_set(&self, name: &str, value: Value) -> Result<(), RuntimeError> {
         match self {
-            Value::Object(handle) => match &mut *handle.borrow_mut() {
-                Object::Dict(fields) => {
-                    match fields.iter_mut().find(|(key, _)| key == name) {
-                        Some((_, slot)) => *slot = value,
-                        None => fields.push((name.to_string(), value)),
+            Value::Object(handle) => {
+                let mut object = handle.borrow_mut();
+
+                match &mut *object {
+                    Object::Dict(fields) => {
+                        if let Some(index) = fields.iter().position(|(key, _)| key == name) {
+                            fields[index].1 = value;
+                        } else {
+                            fields.push((name.to_string(), value));
+                        }
+
+                        Ok(())
                     }
 
-                    Ok(())
+                    _ => Err(RuntimeError::TypeError),
                 }
-
-                _ => Err(RuntimeError::TypeError),
-            },
+            }
 
             _ => Err(RuntimeError::TypeError),
         }
