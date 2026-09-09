@@ -67,7 +67,12 @@ pub struct MatchArm {
     pub guard: Option<Expression>,
     pub body: Vec<Statement>,
 }
-
+#[derive(Debug, Clone)]
+pub struct FunctionMethod {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: Vec<Statement>,
+}
 #[derive(Debug, Clone)]
 pub enum Statement {
     Positioned {
@@ -113,7 +118,6 @@ pub enum Statement {
     // ========================================================
     // MATCH
     // ========================================================
-
     Match {
         value: Expression,
         arms: Vec<MatchArm>,
@@ -122,13 +126,12 @@ pub enum Statement {
     // ========================================================
     // EXCEPTIONS
     // ========================================================
-
     /// `throw expression;`
     Throw {
         value: Expression,
     },
 
-    /// 
+    ///
     /// try {
     ///     ...
     /// } catch (error) {
@@ -167,7 +170,10 @@ pub enum Statement {
     Export {
         statement: Box<Statement>,
     },
-
+    Class {
+        name: String,
+        methods: Vec<FunctionMethod>,
+    },
     Break,
     Continue,
 }
@@ -217,7 +223,12 @@ pub enum Expression {
         object: Box<Expression>,
         index: Box<Expression>,
     },
+    New {
+        class_name: String,
+        arguments: Vec<Expression>,
+    },
 
+    This,
     Array(Vec<Expression>),
 
     Object(Vec<(String, Expression)>),

@@ -98,11 +98,7 @@ impl Parser {
         self.tokens[self.current + 1].kind == kind
     }
 
-    fn consume(
-        &mut self,
-        kind: TokenKind,
-        message: &str,
-    ) -> Result<Token, ParserError> {
+    fn consume(&mut self, kind: TokenKind, message: &str) -> Result<Token, ParserError> {
         if self.check(kind.clone()) {
             return Ok(self.advance().clone());
         }
@@ -115,16 +111,11 @@ impl Parser {
     }
 
     fn parse_number(&self, token: Token) -> Result<Expression, ParserError> {
-        let is_float =
-            token.lexeme.contains('.')
-                || token.lexeme.contains(['e', 'E']);
+        let is_float = token.lexeme.contains('.') || token.lexeme.contains(['e', 'E']);
 
         if is_float {
             let value = token.lexeme.parse::<f64>().map_err(|_| ParserError {
-                message: format!(
-                    "Nombre flottant invalide '{}'",
-                    token.lexeme
-                ),
+                message: format!("Nombre flottant invalide '{}'", token.lexeme),
                 line: token.line,
                 column: token.column,
             })?;
@@ -132,10 +123,7 @@ impl Parser {
             Ok(Expression::Literal(Literal::Float(value)))
         } else {
             let value = token.lexeme.parse::<i64>().map_err(|_| ParserError {
-                message: format!(
-                    "Nombre entier invalide '{}'",
-                    token.lexeme
-                ),
+                message: format!("Nombre entier invalide '{}'", token.lexeme),
                 line: token.line,
                 column: token.column,
             })?;
@@ -144,10 +132,7 @@ impl Parser {
         }
     }
 
-    fn parse_string(
-        &self,
-        token: Token,
-    ) -> Result<Expression, ParserError> {
+    fn parse_string(&self, token: Token) -> Result<Expression, ParserError> {
         let value = token.lexeme.trim_matches('"').to_string();
 
         Ok(Expression::Literal(Literal::String(value)))
@@ -190,9 +175,7 @@ impl Parser {
     }
 
     fn is_arrow_function_start(&self) -> bool {
-        if self.check(TokenKind::Identifier)
-            && self.check_next(TokenKind::FatArrow)
-        {
+        if self.check(TokenKind::Identifier) && self.check_next(TokenKind::FatArrow) {
             return true;
         }
 
@@ -202,18 +185,13 @@ impl Parser {
 
         let mut index = self.current + 1;
 
-        if index < self.tokens.len()
-            && self.tokens[index].kind == TokenKind::RightParen
-        {
+        if index < self.tokens.len() && self.tokens[index].kind == TokenKind::RightParen {
             return index + 1 < self.tokens.len()
-                && self.tokens[index + 1].kind
-                    == TokenKind::FatArrow;
+                && self.tokens[index + 1].kind == TokenKind::FatArrow;
         }
 
         loop {
-            if index >= self.tokens.len()
-                || self.tokens[index].kind != TokenKind::Identifier
-            {
+            if index >= self.tokens.len() || self.tokens[index].kind != TokenKind::Identifier {
                 return false;
             }
 
@@ -227,15 +205,12 @@ impl Parser {
                 TokenKind::Comma => {
                     index += 1;
 
-                    if index < self.tokens.len()
-                        && self.tokens[index].kind
-                            == TokenKind::RightParen
+                    if index < self.tokens.len() && self.tokens[index].kind == TokenKind::RightParen
                     {
                         index += 1;
 
                         return index < self.tokens.len()
-                            && self.tokens[index].kind
-                                == TokenKind::FatArrow;
+                            && self.tokens[index].kind == TokenKind::FatArrow;
                     }
                 }
 
@@ -243,8 +218,7 @@ impl Parser {
                     index += 1;
 
                     return index < self.tokens.len()
-                        && self.tokens[index].kind
-                            == TokenKind::FatArrow;
+                        && self.tokens[index].kind == TokenKind::FatArrow;
                 }
 
                 _ => return false,
@@ -252,12 +226,8 @@ impl Parser {
         }
     }
 
-    fn parse_arrow_parameters(
-        &mut self,
-    ) -> Result<Vec<String>, ParserError> {
-        if self.check(TokenKind::Identifier)
-            && self.check_next(TokenKind::FatArrow)
-        {
+    fn parse_arrow_parameters(&mut self) -> Result<Vec<String>, ParserError> {
+        if self.check(TokenKind::Identifier) && self.check_next(TokenKind::FatArrow) {
             let parameter = self.advance().clone();
 
             return Ok(vec![parameter.lexeme]);
@@ -303,10 +273,7 @@ impl Parser {
         if self.match_token(TokenKind::Question) {
             let then_expr = self.parse_expression()?;
 
-            self.consume(
-                TokenKind::Colon,
-                "':' attendu dans l'expression ternaire",
-            )?;
+            self.consume(TokenKind::Colon, "':' attendu dans l'expression ternaire")?;
 
             let else_expr = self.ternary()?;
 
@@ -437,10 +404,7 @@ impl Parser {
     fn shift(&mut self) -> Result<Expression, ParserError> {
         let mut expr = self.term()?;
 
-        while self.match_any(&[
-            TokenKind::LeftShift,
-            TokenKind::RightShift,
-        ]) {
+        while self.match_any(&[TokenKind::LeftShift, TokenKind::RightShift]) {
             let operator = match self.previous().kind {
                 TokenKind::LeftShift => BinaryOp::ShiftLeft,
                 TokenKind::RightShift => BinaryOp::ShiftRight,
@@ -463,10 +427,7 @@ impl Parser {
     fn term(&mut self) -> Result<Expression, ParserError> {
         let mut expr = self.factor()?;
 
-        while self.match_any(&[
-            TokenKind::Plus,
-            TokenKind::Minus,
-        ]) {
+        while self.match_any(&[TokenKind::Plus, TokenKind::Minus]) {
             let operator = match self.previous().kind {
                 TokenKind::Plus => BinaryOp::Add,
                 TokenKind::Minus => BinaryOp::Subtract,
@@ -489,11 +450,7 @@ impl Parser {
     fn factor(&mut self) -> Result<Expression, ParserError> {
         let mut expr = self.unary()?;
 
-        while self.match_any(&[
-            TokenKind::Star,
-            TokenKind::Slash,
-            TokenKind::Percent,
-        ]) {
+        while self.match_any(&[TokenKind::Star, TokenKind::Slash, TokenKind::Percent]) {
             let operator = match self.previous().kind {
                 TokenKind::Star => BinaryOp::Multiply,
                 TokenKind::Slash => BinaryOp::Divide,
@@ -561,10 +518,7 @@ impl Parser {
             if self.match_token(TokenKind::LeftBracket) {
                 let index = self.parse_expression()?;
 
-                self.consume(
-                    TokenKind::RightBracket,
-                    "']' attendu après l'index",
-                )?;
+                self.consume(TokenKind::RightBracket, "']' attendu après l'index")?;
 
                 expression = Expression::Index {
                     object: Box::new(expression),
@@ -575,10 +529,8 @@ impl Parser {
             }
 
             if self.match_token(TokenKind::Dot) {
-                let name = self.consume(
-                    TokenKind::Identifier,
-                    "Nom de membre attendu après '.'",
-                )?;
+                let name =
+                    self.consume(TokenKind::Identifier, "Nom de membre attendu après '.'")?;
 
                 expression = Expression::Member {
                     object: Box::new(expression),
@@ -594,10 +546,7 @@ impl Parser {
         Ok(expression)
     }
 
-    fn parse_call(
-        &mut self,
-        callee: Expression,
-    ) -> Result<Expression, ParserError> {
+    fn parse_call(&mut self, callee: Expression) -> Result<Expression, ParserError> {
         let mut arguments = Vec::new();
 
         if !self.check(TokenKind::RightParen) {
@@ -610,10 +559,7 @@ impl Parser {
             }
         }
 
-        self.consume(
-            TokenKind::RightParen,
-            "')' attendu après les arguments",
-        )?;
+        self.consume(TokenKind::RightParen, "')' attendu après les arguments")?;
 
         Ok(Expression::Call {
             callee: Box::new(callee),
@@ -633,31 +579,24 @@ impl Parser {
 
             TokenKind::String => self.parse_string(token),
 
-            TokenKind::Identifier => {
-                Ok(Expression::Variable(token.lexeme))
-            }
+            TokenKind::Identifier => Ok(Expression::Variable(token.lexeme)),
 
-            TokenKind::True => {
-                Ok(Expression::Literal(Literal::Bool(true)))
-            }
+            TokenKind::True => Ok(Expression::Literal(Literal::Bool(true))),
 
-            TokenKind::False => {
-                Ok(Expression::Literal(Literal::Bool(false)))
-            }
+            TokenKind::False => Ok(Expression::Literal(Literal::Bool(false))),
 
-            TokenKind::Nil => {
-                Ok(Expression::Literal(Literal::Nil))
-            }
+            TokenKind::Nil => Ok(Expression::Literal(Literal::Nil)),
+
+            TokenKind::This => Ok(Expression::This),
+
+            TokenKind::New => self.parse_new_expression(),
 
             TokenKind::Function => self.parse_function_expression(),
 
             TokenKind::LeftParen => {
                 let expression = self.parse_expression()?;
 
-                self.consume(
-                    TokenKind::RightParen,
-                    "')' attendu après l'expression",
-                )?;
+                self.consume(TokenKind::RightParen, "')' attendu après l'expression")?;
 
                 Ok(expression)
             }
@@ -679,34 +618,24 @@ impl Parser {
                     }
                 }
 
-                self.consume(
-                    TokenKind::RightBracket,
-                    "']' attendu après le tableau",
-                )?;
+                self.consume(TokenKind::RightBracket, "']' attendu après le tableau")?;
 
                 Ok(Expression::Array(elements))
             }
 
             TokenKind::LeftBrace => {
-                let mut fields: Vec<(String, Expression)> =
-                    Vec::new();
+                let mut fields: Vec<(String, Expression)> = Vec::new();
 
                 if !self.check(TokenKind::RightBrace) {
                     loop {
                         let key = if self.check(TokenKind::String) {
                             self.advance().lexeme.clone()
                         } else {
-                            self.consume(
-                                TokenKind::Identifier,
-                                "nom de champ attendu",
-                            )?
-                            .lexeme
+                            self.consume(TokenKind::Identifier, "nom de champ attendu")?
+                                .lexeme
                         };
 
-                        self.consume(
-                            TokenKind::Colon,
-                            "':' attendu après le nom du champ",
-                        )?;
+                        self.consume(TokenKind::Colon, "':' attendu après le nom du champ")?;
 
                         let value = self.parse_expression()?;
 
@@ -722,10 +651,7 @@ impl Parser {
                     }
                 }
 
-                self.consume(
-                    TokenKind::RightBrace,
-                    "'}' attendu après l'objet",
-                )?;
+                self.consume(TokenKind::RightBrace, "'}' attendu après l'objet")?;
 
                 Ok(Expression::Object(fields))
             }
@@ -737,25 +663,17 @@ impl Parser {
             }),
         }
     }
+    fn parse_new_expression(&mut self) -> Result<Expression, ParserError> {
+        let class_name =
+            self.consume(TokenKind::Identifier, "Nom de classe attendu après 'new'")?;
 
-    fn parse_function_expression(
-        &mut self,
-    ) -> Result<Expression, ParserError> {
-        self.consume(
-            TokenKind::LeftParen,
-            "'(' attendu après 'function' dans une fonction anonyme",
-        )?;
+        self.consume(TokenKind::LeftParen, "'(' attendu après le nom de classe")?;
 
-        let mut params = Vec::new();
+        let mut arguments = Vec::new();
 
         if !self.check(TokenKind::RightParen) {
             loop {
-                let param = self.consume(
-                    TokenKind::Identifier,
-                    "Nom de paramètre attendu",
-                )?;
-
-                params.push(param.lexeme);
+                arguments.push(self.parse_expression()?);
 
                 if !self.match_token(TokenKind::Comma) {
                     break;
@@ -765,8 +683,35 @@ impl Parser {
 
         self.consume(
             TokenKind::RightParen,
-            "')' attendu après les paramètres",
+            "')' attendu après les arguments de construction",
         )?;
+
+        Ok(Expression::New {
+            class_name: class_name.lexeme,
+            arguments,
+        })
+    }
+    fn parse_function_expression(&mut self) -> Result<Expression, ParserError> {
+        self.consume(
+            TokenKind::LeftParen,
+            "'(' attendu après 'function' dans une fonction anonyme",
+        )?;
+
+        let mut params = Vec::new();
+
+        if !self.check(TokenKind::RightParen) {
+            loop {
+                let param = self.consume(TokenKind::Identifier, "Nom de paramètre attendu")?;
+
+                params.push(param.lexeme);
+
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(TokenKind::RightParen, "')' attendu après les paramètres")?;
 
         self.consume(
             TokenKind::LeftBrace,
@@ -798,6 +743,8 @@ impl Parser {
             self.parse_variable_declaration(false)?
         } else if self.match_token(TokenKind::Function) {
             vec![self.parse_function_statement()?]
+        } else if self.match_token(TokenKind::Class) {
+            vec![self.parse_class_statement()?]
         } else if self.match_token(TokenKind::Return) {
             vec![self.parse_return_statement()?]
         } else if self.match_token(TokenKind::Break) {
@@ -817,9 +764,7 @@ impl Parser {
         } else if self.match_token(TokenKind::For) {
             vec![self.parse_for_statement()?]
         } else if self.match_token(TokenKind::LeftBrace) {
-            vec![Statement::Block(
-                self.parse_block_statement()?,
-            )]
+            vec![Statement::Block(self.parse_block_statement()?)]
         } else {
             vec![self.parse_expression_or_assignment()?]
         };
@@ -842,12 +787,8 @@ impl Parser {
     // THROW
     // ============================================================
 
-    fn parse_throw_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
-        if self.check(TokenKind::Semicolon)
-            || self.check(TokenKind::RightBrace)
-            || self.is_at_end()
+    fn parse_throw_statement(&mut self) -> Result<Statement, ParserError> {
+        if self.check(TokenKind::Semicolon) || self.check(TokenKind::RightBrace) || self.is_at_end()
         {
             return Err(ParserError {
                 message: "Expression attendue après 'throw'".to_string(),
@@ -865,18 +806,13 @@ impl Parser {
     // TRY / CATCH / FINALLY
     // ============================================================
 
-    fn parse_try_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
+    fn parse_try_statement(&mut self) -> Result<Statement, ParserError> {
         /*
          * try {
          *     ...
          * }
          */
-        self.consume(
-            TokenKind::LeftBrace,
-            "'{' attendu après 'try'",
-        )?;
+        self.consume(TokenKind::LeftBrace, "'{' attendu après 'try'")?;
 
         let try_body = self.parse_block_statement()?;
 
@@ -891,10 +827,7 @@ impl Parser {
         let mut catch_body = None;
 
         if self.match_token(TokenKind::Catch) {
-            self.consume(
-                TokenKind::LeftParen,
-                "'(' attendu après 'catch'",
-            )?;
+            self.consume(TokenKind::LeftParen, "'(' attendu après 'catch'")?;
 
             let error_name = self.consume(
                 TokenKind::Identifier,
@@ -906,10 +839,7 @@ impl Parser {
                 "')' attendu après le nom de l'erreur",
             )?;
 
-            self.consume(
-                TokenKind::LeftBrace,
-                "'{' attendu après 'catch(...)'",
-            )?;
+            self.consume(TokenKind::LeftBrace, "'{' attendu après 'catch(...)'")?;
 
             let body = self.parse_block_statement()?;
 
@@ -925,10 +855,7 @@ impl Parser {
          * }
          */
         let finally_body = if self.match_token(TokenKind::Finally) {
-            self.consume(
-                TokenKind::LeftBrace,
-                "'{' attendu après 'finally'",
-            )?;
+            self.consume(TokenKind::LeftBrace, "'{' attendu après 'finally'")?;
 
             Some(self.parse_block_statement()?)
         } else {
@@ -946,9 +873,7 @@ impl Parser {
          */
         if catch_body.is_none() && finally_body.is_none() {
             return Err(ParserError {
-                message:
-                    "'try' doit être suivi de 'catch' ou 'finally'"
-                        .to_string(),
+                message: "'try' doit être suivi de 'catch' ou 'finally'".to_string(),
                 line: self.previous().line,
                 column: self.previous().column,
             });
@@ -966,16 +891,13 @@ impl Parser {
     // EXPRESSION / ASSIGNMENT
     // ============================================================
 
-    fn parse_expression_or_assignment(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
+    fn parse_expression_or_assignment(&mut self) -> Result<Statement, ParserError> {
         let expression = self.parse_expression()?;
 
         if self.match_token(TokenKind::Equal) {
             let value = self.parse_expression()?;
 
-            let target =
-                self.expression_to_assignment_target(expression)?;
+            let target = self.expression_to_assignment_target(expression)?;
 
             return Ok(Statement::Assignment { target, value });
         }
@@ -983,11 +905,9 @@ impl Parser {
         if let Some(operator) = self.match_compound_assignment() {
             let value_expr = self.parse_expression()?;
 
-            let target =
-                self.expression_to_assignment_target(expression.clone())?;
+            let target = self.expression_to_assignment_target(expression.clone())?;
 
-            let left =
-                Self::assignment_target_to_expression(&target);
+            let left = Self::assignment_target_to_expression(&target);
 
             let value = Expression::Binary {
                 left: Box::new(left),
@@ -1001,9 +921,7 @@ impl Parser {
         Ok(Statement::Expression { expression })
     }
 
-    fn match_compound_assignment(
-        &mut self,
-    ) -> Option<BinaryOp> {
+    fn match_compound_assignment(&mut self) -> Option<BinaryOp> {
         let operator = match self.peek().kind {
             TokenKind::PlusEqual => BinaryOp::Add,
             TokenKind::MinusEqual => BinaryOp::Subtract,
@@ -1018,27 +936,19 @@ impl Parser {
         Some(operator)
     }
 
-    fn assignment_target_to_expression(
-        target: &AssignmentTarget,
-    ) -> Expression {
+    fn assignment_target_to_expression(target: &AssignmentTarget) -> Expression {
         match target {
-            AssignmentTarget::Variable(name) => {
-                Expression::Variable(name.clone())
-            }
+            AssignmentTarget::Variable(name) => Expression::Variable(name.clone()),
 
-            AssignmentTarget::Index { object, index } => {
-                Expression::Index {
-                    object: object.clone(),
-                    index: index.clone(),
-                }
-            }
+            AssignmentTarget::Index { object, index } => Expression::Index {
+                object: object.clone(),
+                index: index.clone(),
+            },
 
-            AssignmentTarget::Member { object, name } => {
-                Expression::Member {
-                    object: object.clone(),
-                    name: name.clone(),
-                }
-            }
+            AssignmentTarget::Member { object, name } => Expression::Member {
+                object: object.clone(),
+                name: name.clone(),
+            },
         }
     }
 
@@ -1047,24 +957,17 @@ impl Parser {
         expression: Expression,
     ) -> Result<AssignmentTarget, ParserError> {
         match expression {
-            Expression::Variable(name) => {
-                Ok(AssignmentTarget::Variable(name))
-            }
+            Expression::Variable(name) => Ok(AssignmentTarget::Variable(name)),
 
-            Expression::Index { object, index } => {
-                Ok(AssignmentTarget::Index { object, index })
-            }
+            Expression::Index { object, index } => Ok(AssignmentTarget::Index { object, index }),
 
-            Expression::Member { object, name } => {
-                Ok(AssignmentTarget::Member { object, name })
-            }
+            Expression::Member { object, name } => Ok(AssignmentTarget::Member { object, name }),
 
             _ => {
                 let token = self.peek();
 
                 Err(ParserError {
-                    message:
-                        "Cible d'affectation invalide".to_string(),
+                    message: "Cible d'affectation invalide".to_string(),
                     line: token.line,
                     column: token.column,
                 })
@@ -1076,9 +979,7 @@ impl Parser {
     // IMPORT
     // ============================================================
 
-    fn parse_import_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
+    fn parse_import_statement(&mut self) -> Result<Statement, ParserError> {
         let mut path = Vec::new();
 
         let name = self.consume(
@@ -1089,10 +990,7 @@ impl Parser {
         path.push(name.lexeme);
 
         while self.match_token(TokenKind::Dot) {
-            let name = self.consume(
-                TokenKind::Identifier,
-                "Nom de module attendu après '.'",
-            )?;
+            let name = self.consume(TokenKind::Identifier, "Nom de module attendu après '.'")?;
 
             path.push(name.lexeme);
         }
@@ -1100,31 +998,20 @@ impl Parser {
         Ok(Statement::Import { path })
     }
 
-    fn parse_from_import_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
+    fn parse_from_import_statement(&mut self) -> Result<Statement, ParserError> {
         let module = self.parse_module_path()?;
 
-        self.consume(
-            TokenKind::Import,
-            "'import' attendu après le nom du module",
-        )?;
+        self.consume(TokenKind::Import, "'import' attendu après le nom du module")?;
 
         let mut items = Vec::new();
 
         loop {
-            let name = self.consume(
-                TokenKind::Identifier,
-                "Nom exporté attendu",
-            )?;
+            let name = self.consume(TokenKind::Identifier, "Nom exporté attendu")?;
 
             let alias = if self.match_token(TokenKind::As) {
                 Some(
-                    self.consume(
-                        TokenKind::Identifier,
-                        "Alias attendu après 'as'",
-                    )?
-                    .lexeme,
+                    self.consume(TokenKind::Identifier, "Alias attendu après 'as'")?
+                        .lexeme,
                 )
             } else {
                 None
@@ -1143,18 +1030,13 @@ impl Parser {
         Ok(Statement::FromImport { module, items })
     }
 
-    fn parse_export_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
+    fn parse_export_statement(&mut self) -> Result<Statement, ParserError> {
         let statement = if self.match_token(TokenKind::Let) {
-            let mut declarations =
-                self.parse_variable_declaration(true)?;
+            let mut declarations = self.parse_variable_declaration(true)?;
 
             if declarations.len() != 1 {
                 return Err(ParserError {
-                    message:
-                        "'export' accepte une seule déclaration"
-                            .to_string(),
+                    message: "'export' accepte une seule déclaration".to_string(),
                     line: self.previous().line,
                     column: self.previous().column,
                 });
@@ -1162,14 +1044,11 @@ impl Parser {
 
             declarations.remove(0)
         } else if self.match_token(TokenKind::Const) {
-            let mut declarations =
-                self.parse_variable_declaration(false)?;
+            let mut declarations = self.parse_variable_declaration(false)?;
 
             if declarations.len() != 1 {
                 return Err(ParserError {
-                    message:
-                        "'export' accepte une seule déclaration"
-                            .to_string(),
+                    message: "'export' accepte une seule déclaration".to_string(),
                     line: self.previous().line,
                     column: self.previous().column,
                 });
@@ -1180,9 +1059,7 @@ impl Parser {
             self.parse_function_statement()?
         } else {
             return Err(ParserError {
-                message:
-                    "'export' doit être suivi de let, const ou function"
-                        .to_string(),
+                message: "'export' doit être suivi de let, const ou function".to_string(),
                 line: self.peek().line,
                 column: self.peek().column,
             });
@@ -1193,21 +1070,13 @@ impl Parser {
         })
     }
 
-    fn parse_module_path(
-        &mut self,
-    ) -> Result<ModulePath, ParserError> {
-        let first = self.consume(
-            TokenKind::Identifier,
-            "Nom de module attendu",
-        )?;
+    fn parse_module_path(&mut self) -> Result<ModulePath, ParserError> {
+        let first = self.consume(TokenKind::Identifier, "Nom de module attendu")?;
 
         let mut parts = vec![first.lexeme];
 
         while self.match_token(TokenKind::Dot) {
-            let part = self.consume(
-                TokenKind::Identifier,
-                "Nom de module attendu après '.'",
-            )?;
+            let part = self.consume(TokenKind::Identifier, "Nom de module attendu après '.'")?;
 
             parts.push(part.lexeme);
         }
@@ -1219,22 +1088,13 @@ impl Parser {
     // DECLARATION
     // ============================================================
 
-    fn parse_variable_declaration(
-        &mut self,
-        mutable: bool,
-    ) -> Result<Vec<Statement>, ParserError> {
+    fn parse_variable_declaration(&mut self, mutable: bool) -> Result<Vec<Statement>, ParserError> {
         let mut declarations = Vec::new();
 
         loop {
-            let name = self.consume(
-                TokenKind::Identifier,
-                "Nom de variable attendu",
-            )?;
+            let name = self.consume(TokenKind::Identifier, "Nom de variable attendu")?;
 
-            self.consume(
-                TokenKind::Equal,
-                "'=' attendu après le nom",
-            )?;
+            self.consume(TokenKind::Equal, "'=' attendu après le nom")?;
 
             let value = self.parse_expression()?;
 
@@ -1251,32 +1111,85 @@ impl Parser {
 
         Ok(declarations)
     }
+    // ============================================================
+    // CLASS
+    // ============================================================
 
+    fn parse_class_statement(&mut self) -> Result<Statement, ParserError> {
+        let name = self.consume(TokenKind::Identifier, "Nom de classe attendu après 'class'")?;
+
+        self.consume(TokenKind::LeftBrace, "'{' attendu après le nom de classe")?;
+
+        let mut methods = Vec::new();
+
+        while !self.check(TokenKind::RightBrace) && !self.is_at_end() {
+            self.consume(
+                TokenKind::Function,
+                "'function' attendu dans le corps de la classe",
+            )?;
+
+            let method_name = self.consume(TokenKind::Identifier, "Nom de méthode attendu")?;
+
+            self.consume(TokenKind::LeftParen, "'(' attendu après le nom de méthode")?;
+
+            let mut params = Vec::new();
+
+            if !self.check(TokenKind::RightParen) {
+                loop {
+                    let param = self.consume(TokenKind::Identifier, "Nom de paramètre attendu")?;
+
+                    params.push(param.lexeme);
+
+                    if !self.match_token(TokenKind::Comma) {
+                        break;
+                    }
+
+                    if self.check(TokenKind::RightParen) {
+                        break;
+                    }
+                }
+            }
+
+            self.consume(TokenKind::RightParen, "')' attendu après les paramètres")?;
+
+            self.consume(
+                TokenKind::LeftBrace,
+                "'{' attendu avant le corps de la méthode",
+            )?;
+
+            let body = self.parse_block_statement()?;
+
+            methods.push(FunctionMethod {
+                name: method_name.lexeme,
+                params,
+                body,
+            });
+        }
+
+        self.consume(
+            TokenKind::RightBrace,
+            "'}' attendu après le corps de la classe",
+        )?;
+
+        Ok(Statement::Class {
+            name: name.lexeme,
+            methods,
+        })
+    }
     // ============================================================
     // FUNCTION
     // ============================================================
 
-    fn parse_function_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
-        let name = self.consume(
-            TokenKind::Identifier,
-            "Nom de fonction attendu",
-        )?;
+    fn parse_function_statement(&mut self) -> Result<Statement, ParserError> {
+        let name = self.consume(TokenKind::Identifier, "Nom de fonction attendu")?;
 
-        self.consume(
-            TokenKind::LeftParen,
-            "'(' attendu après le nom de fonction",
-        )?;
+        self.consume(TokenKind::LeftParen, "'(' attendu après le nom de fonction")?;
 
         let mut params = Vec::new();
 
         if !self.check(TokenKind::RightParen) {
             loop {
-                let param = self.consume(
-                    TokenKind::Identifier,
-                    "Nom de paramètre attendu",
-                )?;
+                let param = self.consume(TokenKind::Identifier, "Nom de paramètre attendu")?;
 
                 params.push(param.lexeme);
 
@@ -1286,15 +1199,9 @@ impl Parser {
             }
         }
 
-        self.consume(
-            TokenKind::RightParen,
-            "')' attendu après les paramètres",
-        )?;
+        self.consume(TokenKind::RightParen, "')' attendu après les paramètres")?;
 
-        self.consume(
-            TokenKind::LeftBrace,
-            "'{' attendu avant le corps",
-        )?;
+        self.consume(TokenKind::LeftBrace, "'{' attendu avant le corps")?;
 
         let body = self.parse_block_statement()?;
 
@@ -1309,9 +1216,7 @@ impl Parser {
     // RETURN
     // ============================================================
 
-    fn parse_return_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
+    fn parse_return_statement(&mut self) -> Result<Statement, ParserError> {
         let value = if self.check(TokenKind::Semicolon)
             || self.check(TokenKind::RightBrace)
             || self.is_at_end()
@@ -1328,23 +1233,16 @@ impl Parser {
     // BLOCK
     // ============================================================
 
-    fn parse_block_statement(
-        &mut self,
-    ) -> Result<Vec<Statement>, ParserError> {
+    fn parse_block_statement(&mut self) -> Result<Vec<Statement>, ParserError> {
         let mut statements = Vec::new();
 
-        while !self.check(TokenKind::RightBrace)
-            && !self.is_at_end()
-        {
+        while !self.check(TokenKind::RightBrace) && !self.is_at_end() {
             let parsed = self.statement()?;
 
             statements.extend(parsed);
         }
 
-        self.consume(
-            TokenKind::RightBrace,
-            "'}' attendu après le bloc",
-        )?;
+        self.consume(TokenKind::RightBrace, "'}' attendu après le bloc")?;
 
         Ok(statements)
     }
@@ -1353,29 +1251,20 @@ impl Parser {
     // IF
     // ============================================================
 
-    fn parse_if_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
+    fn parse_if_statement(&mut self) -> Result<Statement, ParserError> {
         let condition = self.parse_expression()?;
 
-        self.consume(
-            TokenKind::LeftBrace,
-            "'{' attendu après la condition",
-        )?;
+        self.consume(TokenKind::LeftBrace, "'{' attendu après la condition")?;
 
         let then_branch = self.parse_block_statement()?;
 
-        let else_branch =
-            if self.match_token(TokenKind::Else) {
-                self.consume(
-                    TokenKind::LeftBrace,
-                    "'{' attendu après else",
-                )?;
+        let else_branch = if self.match_token(TokenKind::Else) {
+            self.consume(TokenKind::LeftBrace, "'{' attendu après else")?;
 
-                Some(self.parse_block_statement()?)
-            } else {
-                None
-            };
+            Some(self.parse_block_statement()?)
+        } else {
+            None
+        };
 
         Ok(Statement::If {
             condition,
@@ -1388,15 +1277,10 @@ impl Parser {
     // WHILE
     // ============================================================
 
-    fn parse_while_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
+    fn parse_while_statement(&mut self) -> Result<Statement, ParserError> {
         let condition = self.parse_expression()?;
 
-        self.consume(
-            TokenKind::LeftBrace,
-            "'{' attendu après la condition",
-        )?;
+        self.consume(TokenKind::LeftBrace, "'{' attendu après la condition")?;
 
         let body = self.parse_block_statement()?;
 
@@ -1407,25 +1291,15 @@ impl Parser {
     // FOR..IN
     // ============================================================
 
-    fn parse_for_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
-        let variable = self.consume(
-            TokenKind::Identifier,
-            "Nom de variable attendu après 'for'",
-        )?;
+    fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
+        let variable =
+            self.consume(TokenKind::Identifier, "Nom de variable attendu après 'for'")?;
 
-        self.consume(
-            TokenKind::In,
-            "'in' attendu après le nom de variable",
-        )?;
+        self.consume(TokenKind::In, "'in' attendu après le nom de variable")?;
 
         let iterable = self.parse_expression()?;
 
-        self.consume(
-            TokenKind::LeftBrace,
-            "'{' attendu avant le corps du for",
-        )?;
+        self.consume(TokenKind::LeftBrace, "'{' attendu avant le corps du for")?;
 
         let body = self.parse_block_statement()?;
 
@@ -1440,21 +1314,14 @@ impl Parser {
     // MATCH
     // ============================================================
 
-    fn parse_match_statement(
-        &mut self,
-    ) -> Result<Statement, ParserError> {
+    fn parse_match_statement(&mut self) -> Result<Statement, ParserError> {
         let value = self.parse_expression()?;
 
-        self.consume(
-            TokenKind::LeftBrace,
-            "'{' attendu après l'expression match",
-        )?;
+        self.consume(TokenKind::LeftBrace, "'{' attendu après l'expression match")?;
 
         let mut arms = Vec::new();
 
-        while !self.check(TokenKind::RightBrace)
-            && !self.is_at_end()
-        {
+        while !self.check(TokenKind::RightBrace) && !self.is_at_end() {
             let pattern = self.parse_pattern()?;
 
             let guard = if self.match_token(TokenKind::If) {
@@ -1463,10 +1330,7 @@ impl Parser {
                 None
             };
 
-            self.consume(
-                TokenKind::FatArrow,
-                "'=>' attendu après le pattern",
-            )?;
+            self.consume(TokenKind::FatArrow, "'=>' attendu après le pattern")?;
 
             let body = if self.match_token(TokenKind::LeftBrace) {
                 self.parse_block_statement()?
@@ -1485,16 +1349,11 @@ impl Parser {
             self.match_token(TokenKind::Comma);
         }
 
-        self.consume(
-            TokenKind::RightBrace,
-            "'}' attendu après les arms du match",
-        )?;
+        self.consume(TokenKind::RightBrace, "'}' attendu après les arms du match")?;
 
         if arms.is_empty() {
             return Err(ParserError {
-                message:
-                    "Un match doit contenir au moins un arm"
-                        .to_string(),
+                message: "Un match doit contenir au moins un arm".to_string(),
                 line: self.previous().line,
                 column: self.previous().column,
             });
@@ -1503,9 +1362,7 @@ impl Parser {
         Ok(Statement::Match { value, arms })
     }
 
-    fn parse_pattern(
-        &mut self,
-    ) -> Result<Pattern, ParserError> {
+    fn parse_pattern(&mut self) -> Result<Pattern, ParserError> {
         let mut patterns = vec![self.parse_pattern_atom()?];
 
         while self.match_token(TokenKind::Pipe) {
@@ -1519,9 +1376,7 @@ impl Parser {
         }
     }
 
-    fn parse_pattern_atom(
-        &mut self,
-    ) -> Result<Pattern, ParserError> {
+    fn parse_pattern_atom(&mut self) -> Result<Pattern, ParserError> {
         let token = self.peek().clone();
 
         let mut pattern = match token.kind {
@@ -1544,36 +1399,22 @@ impl Parser {
             TokenKind::Number => {
                 let token = self.advance().clone();
 
-                let is_float =
-                    token.lexeme.contains('.')
-                        || token.lexeme.contains(['e', 'E']);
+                let is_float = token.lexeme.contains('.') || token.lexeme.contains(['e', 'E']);
 
                 if is_float {
-                    let value =
-                        token.lexeme.parse::<f64>().map_err(|_| {
-                            ParserError {
-                                message: format!(
-                                    "Nombre flottant invalide '{}'",
-                                    token.lexeme
-                                ),
-                                line: token.line,
-                                column: token.column,
-                            }
-                        })?;
+                    let value = token.lexeme.parse::<f64>().map_err(|_| ParserError {
+                        message: format!("Nombre flottant invalide '{}'", token.lexeme),
+                        line: token.line,
+                        column: token.column,
+                    })?;
 
                     Pattern::Literal(Literal::Float(value))
                 } else {
-                    let value =
-                        token.lexeme.parse::<i64>().map_err(|_| {
-                            ParserError {
-                                message: format!(
-                                    "Nombre entier invalide '{}'",
-                                    token.lexeme
-                                ),
-                                line: token.line,
-                                column: token.column,
-                            }
-                        })?;
+                    let value = token.lexeme.parse::<i64>().map_err(|_| ParserError {
+                        message: format!("Nombre entier invalide '{}'", token.lexeme),
+                        line: token.line,
+                        column: token.column,
+                    })?;
 
                     Pattern::Literal(Literal::Integer(value))
                 }
@@ -1641,10 +1482,7 @@ impl Parser {
 
                 let pattern = self.parse_pattern()?;
 
-                self.consume(
-                    TokenKind::RightParen,
-                    "')' attendu après le pattern",
-                )?;
+                self.consume(TokenKind::RightParen, "')' attendu après le pattern")?;
 
                 pattern
             }
@@ -1660,36 +1498,22 @@ impl Parser {
                     "Nombre attendu après '-' dans un pattern",
                 )?;
 
-                let is_float =
-                    token.lexeme.contains('.')
-                        || token.lexeme.contains(['e', 'E']);
+                let is_float = token.lexeme.contains('.') || token.lexeme.contains(['e', 'E']);
 
                 if is_float {
-                    let value =
-                        token.lexeme.parse::<f64>().map_err(|_| {
-                            ParserError {
-                                message: format!(
-                                    "Nombre flottant invalide '-{}'",
-                                    token.lexeme
-                                ),
-                                line: token.line,
-                                column: token.column,
-                            }
-                        })?;
+                    let value = token.lexeme.parse::<f64>().map_err(|_| ParserError {
+                        message: format!("Nombre flottant invalide '-{}'", token.lexeme),
+                        line: token.line,
+                        column: token.column,
+                    })?;
 
                     Pattern::Literal(Literal::Float(-value))
                 } else {
-                    let value =
-                        token.lexeme.parse::<i64>().map_err(|_| {
-                            ParserError {
-                                message: format!(
-                                    "Nombre entier invalide '-{}'",
-                                    token.lexeme
-                                ),
-                                line: token.line,
-                                column: token.column,
-                            }
-                        })?;
+                    let value = token.lexeme.parse::<i64>().map_err(|_| ParserError {
+                        message: format!("Nombre entier invalide '-{}'", token.lexeme),
+                        line: token.line,
+                        column: token.column,
+                    })?;
 
                     Pattern::Literal(Literal::Integer(-value))
                 }

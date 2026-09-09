@@ -160,4 +160,20 @@ impl Compiler {
         self.emit_opcode(OpCode::Return);
         Ok(())
     }
+
+    pub(crate) fn compile_method(
+        &mut self,
+        name: &str,
+        params: &[String],
+        body: &[Statement],
+    ) -> Result<Function, CompileError> {
+        let mut method_params = Vec::with_capacity(params.len() + 1);
+
+        // Slot 0 de toute méthode = this
+        method_params.push("this".to_string());
+
+        method_params.extend(params.iter().cloned());
+
+        self.compile_function(name, &method_params, body)
+    }
 }

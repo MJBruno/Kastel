@@ -308,6 +308,20 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
                 mark_value(value, state);
             }
         }
+
+        Object::Class { methods, .. } => {
+            for value in methods.values() {
+                mark_value(value, state);
+            }
+        }
+
+        Object::Instance { class, fields } => {
+            mark_object(class, state);
+
+            for value in fields.values() {
+                mark_value(value, state);
+            }
+        }
     }
 }
 #[allow(dead_code)]

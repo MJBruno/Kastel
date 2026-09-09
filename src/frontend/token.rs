@@ -29,7 +29,12 @@ pub enum TokenKind {
     From,
     As,
     Export,
-
+    // ============================================================
+    // CLASSES
+    // ============================================================
+    Class,
+    New,
+    This,
     // ============================================================
     // EXCEPTIONS
     // ============================================================
@@ -118,12 +123,7 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new(
-        kind: TokenKind,
-        lexeme: String,
-        line: usize,
-        column: usize,
-    ) -> Self {
+    pub fn new(kind: TokenKind, lexeme: String, line: usize, column: usize) -> Self {
         Self {
             kind,
             lexeme,
@@ -153,7 +153,12 @@ impl Token {
             "from" => Some(TokenKind::From),
             "as" => Some(TokenKind::As),
             "export" => Some(TokenKind::Export),
-
+            // ========================================================
+            // CLASSES
+            // ========================================================
+            "class" => Some(TokenKind::Class),
+            "new" => Some(TokenKind::New),
+            "this" => Some(TokenKind::This),
             // ========================================================
             // EXCEPTIONS
             // ========================================================

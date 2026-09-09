@@ -10,10 +10,7 @@ impl Compiler {
     //                      EXPRESSION
     // ============================================================
 
-    pub(crate) fn compile_expression(
-        &mut self,
-        expr: &Expression,
-    ) -> Result<(), CompileError> {
+    pub(crate) fn compile_expression(&mut self, expr: &Expression) -> Result<(), CompileError> {
         match expr {
             Expression::Literal(value) => {
                 let value = match value {
@@ -46,9 +43,8 @@ impl Compiler {
             Expression::Function { params, body } => {
                 let function = self.compile_function("", params, body)?;
 
-                let function_constant = self.make_constant(
-                    Value::new_function(std::rc::Rc::new(function.clone())),
-                )?;
+                let function_constant =
+                    self.make_constant(Value::new_function(std::rc::Rc::new(function.clone())))?;
 
                 self.emit_closure(function_constant, &function.upvalues);
             }
@@ -109,8 +105,7 @@ impl Compiler {
                 }
 
                 for (key, value) in fields {
-                    let key_constant =
-                        self.make_constant(Value::new_string(key.clone()))?;
+                    let key_constant = self.make_constant(Value::new_string(key.clone()))?;
 
                     self.emit_bytes(OpCode::Constant, key_constant);
 
@@ -161,6 +156,27 @@ impl Compiler {
                 self.compile_expression(else_expr)?;
 
                 self.patch_jump(end_jump)?;
+            }
+
+            Expression::This => {
+                self.compile_variable_get("this")?;
+            }
+
+            Expression::New {
+                class_name,
+                arguments,
+            } => {
+                if arguments.len() > u8::MAX as usize {
+                    return Err(CompileError::TooManyArguments);
+                }
+
+                self.compile_variable_get(class_name)?;
+
+                for argument in arguments {
+                    self.compile_expression(argument)?;
+                }
+
+                self.emit_bytes(OpCode::NewInstance, arguments.len() as u8);
             }
         }
 

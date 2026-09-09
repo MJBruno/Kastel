@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::error::runtime_error::RuntimeError;
@@ -76,7 +77,16 @@ impl Value {
     pub fn new_array(elements: Vec<Value>) -> Self {
         Self::new_heap_object(Object::Array(elements))
     }
+    pub fn new_class(name: String, methods: HashMap<String, Value>) -> Self {
+        Self::new_heap_object(Object::Class { name, methods })
+    }
 
+    pub fn new_instance(class: Gc<Object>) -> Self {
+        Self::new_heap_object(Object::Instance {
+            class,
+            fields: HashMap::new(),
+        })
+    }
     /// Extrait le `Gc<Object>` sous-jacent si cette valeur en est un.
     /// Sert de point d'entrée générique pour tout code qui a besoin de
     /// travailler avec la poignée elle-même plutôt qu'un accès typé
@@ -456,7 +466,26 @@ impl Value {
         match self {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::Module(_) => self.module_get(name),
+                Object::Instance { class, fields } => {
+                    if let Some(value) = fields.get(name) {
+                        return Ok(value.clone());
+                    }
 
+                    let class = class.borrow();
+
+                    match &*class {
+                        Object::Class { methods, .. } => {
+                            methods.get(name).cloned().ok_or_else(|| {
+                                RuntimeError::ObjectFieldNotFound {
+                                    name: name.to_string(),
+                                    suggestion: None,
+                                }
+                            })
+                        }
+
+                        _ => Err(RuntimeError::TypeError),
+                    }
+                }
                 Object::Dict(entries) => entries
                     .iter()
                     .find(|(key, _)| match key {
@@ -502,7 +531,10 @@ impl Value {
 
                         Ok(())
                     }
-
+                    Object::Instance { fields, .. } => {
+                        fields.insert(name.to_string(), value);
+                        Ok(())
+                    }
                     _ => Err(RuntimeError::NotObject),
                 }
             }
@@ -610,6 +642,23 @@ impl std::fmt::Display for Value {
 
                 Object::Module(module) => {
                     write!(f, "<module '{}'>", module.name)
+                }
+                Object::Class { name, .. } => {
+                    write!(f, "<class '{}'>", name)
+                }
+
+                Object::Instance { class, .. } => {
+                    let class = class.borrow();
+
+                    match &*class {
+                        Object::Class { name, .. } => {
+                            write!(f, "<{} instance>", name)
+                        }
+
+                        _ => {
+                            write!(f, "<instance>")
+                        }
+                    }
                 }
             },
         }

@@ -1,9 +1,9 @@
+use std::collections::HashMap;
+
 use super::VirtualMachine;
 
 use crate::{
-    bytecode::chunk::OpCode,
-    error::runtime_error::RuntimeError,
-    runtime::value::{ComparisonOp, NumericOp, Value},
+    bytecode::chunk::OpCode, error::runtime_error::RuntimeError, runtime::{object::Object, value::{ComparisonOp, NumericOp, Value}},
 };
 
 impl VirtualMachine {
@@ -240,7 +240,17 @@ impl VirtualMachine {
 
                 self.op_invoke_method(method_constant, arg_count)?;
             }
+            OpCode::Class => {
+                let method_count = self.read_byte()? as usize;
 
+                self.op_class(method_count)?;
+            }
+
+            OpCode::NewInstance => {
+                let arg_count = self.read_byte()? as usize;
+
+                self.op_new_instance(arg_count)?;
+            }
             // ========================================================
             // MODULES
             // ========================================================
@@ -313,16 +323,135 @@ impl VirtualMachine {
             }
             #[allow(clippy::single_match)]
             OpCode::FinallyEnd => match self.pending_exception.take() {
-                Some(pending) => {
-                    match pending.rethrow {
-                        true => return Err(RuntimeError::Thrown(pending.value)),
-                        false => (),
-                    }
-                }
+                Some(pending) => match pending.rethrow {
+                    true => return Err(RuntimeError::Thrown(pending.value)),
+                    false => (),
+                },
                 _ => (),
             },
         }
 
         Ok(false)
+    }
+
+    pub(crate) fn op_class(&mut self, method_count: usize) -> Result<(), RuntimeError> {
+        let total = method_count
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if self.stack.len() < total {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let start = self.stack.len() - total;
+
+        let class_name = self.stack[start]
+            .as_string_value()
+            .ok_or(RuntimeError::TypeError)?;
+
+        let mut methods = HashMap::with_capacity(method_count);
+
+        for index in 0..method_count {
+            let base = start + 1 + index * 2;
+
+            let method_name = self.stack[base]
+                .as_string_value()
+                .ok_or(RuntimeError::TypeError)?;
+
+            let method = self.stack[base + 1].clone();
+
+            match &method {
+                Value::Object(handle) if matches!(&*handle.borrow(), Object::Closure(_)) => {
+                    methods.insert(method_name, method);
+                }
+
+                _ => {
+                    return Err(RuntimeError::NotCallable);
+                }
+            }
+        }
+
+        self.stack.truncate(start);
+
+        self.push(Value::new_class(class_name, methods));
+
+        Ok(())
+    }
+
+    pub(crate) fn op_new_instance(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
+        let required = arg_count
+            .checked_add(1)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if self.stack.len() < required {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let class_index = self.stack.len() - required;
+
+        let class_value = self.stack[class_index].clone();
+
+        let class_handle = match &class_value {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Class { .. } => handle.clone(),
+
+                _ => {
+                    return Err(RuntimeError::NotCallable);
+                }
+            },
+
+            _ => {
+                return Err(RuntimeError::NotCallable);
+            }
+        };
+
+        let instance = Value::new_instance(class_handle.clone());
+
+        let args = self.stack[class_index + 1..].to_vec();
+
+        self.stack.truncate(class_index);
+
+        // L'instance reste une racine GC pendant l'appel
+        // du constructeur.
+        self.push(instance.clone());
+
+        let init = {
+            let class = class_handle.borrow();
+
+            match &*class {
+                Object::Class { methods, .. } => methods.get("init").cloned(),
+
+                _ => None,
+            }
+        };
+
+        match init {
+            Some(init) => {
+                let mut init_args = Vec::with_capacity(arg_count + 1);
+
+                init_args.push(instance.clone());
+                init_args.extend(args);
+
+                self.invoke_sync(init, &init_args)?;
+
+                self.pop()?;
+            }
+
+            None => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 0,
+                        found: args.len(),
+                    });
+                }
+
+                self.pop()?;
+            }
+        }
+
+        self.push(instance);
+
+        Ok(())
     }
 }

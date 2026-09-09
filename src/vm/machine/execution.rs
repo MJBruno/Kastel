@@ -58,35 +58,6 @@ impl VirtualMachine {
     }
 
    
-
-    
-    // // ============================================================
-    // // RUNTIME ERROR -> KASTEL VALUE
-    // // ============================================================
-
-    // fn runtime_error_to_value(error: &RuntimeError) -> Value {
-    //     Value::new_string(error.to_string())
-    // }
-
-    // // ============================================================
-    // // UNCAUGHT ERROR
-    // // ============================================================
-
-    // fn pending_runtime_error(&self) -> RuntimeError {
-    //     /*
-    //      * Cette méthode sert uniquement à conserver une erreur
-    //      * RuntimeError normale lorsque aucune exception Kastel
-    //      * n'a pu être capturée.
-    //      *
-    //      * Le système actuel ne conserve pas la RuntimeError originale
-    //      * séparément du Value généré par runtime_error_to_value().
-    //      *
-    //      * Pour une exception explicite `throw`, propagate_thrown()
-    //      * retourne directement la vraie Value.
-    //      */
-    //     RuntimeError::NativeError
-    // }
-
     // ============================================================
     // THROW PROPAGATION
     // ============================================================

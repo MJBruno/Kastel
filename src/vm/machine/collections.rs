@@ -366,6 +366,46 @@ impl VirtualMachine {
                 let object = handle.borrow();
 
                 match &*object {
+                    Object::Instance { class, .. } => {
+                        let method = {
+                            let class = class.borrow();
+
+                            match &*class {
+                                Object::Class { methods, .. } => methods.get(&method_name).cloned(),
+
+                                _ => None,
+                            }
+                        };
+
+                        let Some(method) = method else {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        };
+
+                        if !matches!(
+                            &method,
+                            Value::Object(handle)
+                                if matches!(
+                                    &*handle.borrow(),
+                                    Object::Closure(_)
+                                )
+                        ) {
+                            return Err(RuntimeError::NotCallable);
+                        }
+
+                        self.push(method);
+                        self.push(receiver.clone());
+
+                        for argument in args.iter().skip(1) {
+                            self.push(argument.clone());
+                        }
+
+                        self.execute_call(arg_count + 1)?;
+
+                        return Ok(());
+                    }
                     // ====================================================
                     // ITERATOR
                     // ====================================================

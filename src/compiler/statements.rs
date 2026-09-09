@@ -127,7 +127,9 @@ impl Compiler {
                     finally_body.as_deref(),
                 )?;
             }
-
+            Statement::Class { name, methods } => {
+                self.compile_class(name, methods)?;
+            }
             Statement::Function { name, params, body } => {
                 self.compile_function_statement(name, params, body)?;
             }
@@ -159,155 +161,219 @@ impl Compiler {
 
         Ok(())
     }
+    // ============================================================
+    // CLASS
+    // ============================================================
 
+    pub(crate) fn compile_class(
+        &mut self,
+        name: &str,
+        methods: &[FunctionMethod],
+    ) -> Result<(), CompileError> {
+        if methods.len() > u8::MAX as usize {
+            return Err(CompileError::TooManyObjectFields);
+        }
+
+        // Le nom de classe reste temporairement sur la stack.
+        let class_name_constant = self.identifier_constant(name)?;
+        self.emit_bytes(OpCode::Constant, class_name_constant);
+
+        for method in methods {
+            let method_name_constant = self.identifier_constant(&method.name)?;
+
+            self.emit_bytes(OpCode::Constant, method_name_constant);
+
+            let function = self.compile_method(&method.name, &method.params, &method.body)?;
+
+            let function_constant =
+                self.make_constant(Value::new_function(std::rc::Rc::new(function.clone())))?;
+
+            self.emit_closure(function_constant, &function.upvalues);
+        }
+
+        self.emit_bytes(OpCode::Class, methods.len() as u8);
+
+        if !self.in_function && self.scope_depth == 0 {
+            if self.globals.borrow().contains_key(name) {
+                return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+            }
+
+            let name_constant = self.identifier_constant(name)?;
+
+            self.emit_bytes(OpCode::DefineGlobal, name_constant);
+
+            self.globals.borrow_mut().insert(
+                name.to_string(),
+                Global {
+                    constant: name_constant,
+                    mutable: true,
+                },
+            );
+        } else {
+            let slot =
+                self.context
+                    .borrow_mut()
+                    .locals
+                    .declare_local(name, self.scope_depth, true)?;
+
+            self.context
+                .borrow_mut()
+                .locals
+                .mark_initialized(self.scope_depth);
+
+            debug_assert_eq!(self.context.borrow().locals.len() - 1, slot as usize);
+        }
+
+        Ok(())
+    }
     // ============================================================
     // TRY / CATCH / FINALLY
     // ============================================================
 
-fn compile_try(
-    &mut self,
-    try_body: &[Statement],
-    catch_name: Option<&str>,
-    catch_body: Option<&[Statement]>,
-    finally_body: Option<&[Statement]>,
-) -> Result<(), CompileError> {
-    if catch_body.is_none() && finally_body.is_none() {
-        return Err(CompileError::InternalCompilerError(
-            "try doit avoir catch ou finally".to_string(),
-        ));
-    }
+    fn compile_try(
+        &mut self,
+        try_body: &[Statement],
+        catch_name: Option<&str>,
+        catch_body: Option<&[Statement]>,
+        finally_body: Option<&[Statement]>,
+    ) -> Result<(), CompileError> {
+        if catch_body.is_none() && finally_body.is_none() {
+            return Err(CompileError::InternalCompilerError(
+                "try doit avoir catch ou finally".to_string(),
+            ));
+        }
 
-    if catch_name.is_some() && catch_body.is_none() {
-        return Err(CompileError::InternalCompilerError(
-            "catch_name present sans catch_body".to_string(),
-        ));
-    }
+        if catch_name.is_some() && catch_body.is_none() {
+            return Err(CompileError::InternalCompilerError(
+                "catch_name present sans catch_body".to_string(),
+            ));
+        }
 
-    // ========================================================
-    // HANDLER
-    // ========================================================
+        // ========================================================
+        // HANDLER
+        // ========================================================
 
-    self.emit_opcode(OpCode::PushExceptionHandler);
+        self.emit_opcode(OpCode::PushExceptionHandler);
 
-    let catch_operand = self.chunk.code.len();
-    self.emit_u16(u16::MAX);
+        let catch_operand = self.chunk.code.len();
+        self.emit_u16(u16::MAX);
 
-    let finally_operand = self.chunk.code.len();
-    self.emit_u16(u16::MAX);
+        let finally_operand = self.chunk.code.len();
+        self.emit_u16(u16::MAX);
 
-    // ========================================================
-    // TRY
-    // ========================================================
+        // ========================================================
+        // TRY
+        // ========================================================
 
-    if let Some(body) = finally_body {
-        self.push_finally_block(body);
-    }
-
-    self.begin_scope();
-
-    for statement in try_body {
-        self.compile_statement(statement)?;
-    }
-
-    self.emit_opcode(OpCode::PopExceptionHandler);
-
-    self.end_scope();
-
-    let normal_end_jump = self.emit_jump(OpCode::Jump);
-
-    // ========================================================
-    // CATCH
-    // ========================================================
-
-    let mut catch_end_jump = None;
-
-    let catch_ip;
-
-    if let Some(body) = catch_body {
-        catch_ip = self.chunk.code.len();
+        if let Some(body) = finally_body {
+            self.push_finally_block(body);
+        }
 
         self.begin_scope();
 
-        if let Some(name) = catch_name {
-            self.declare_existing_local(name, true)?;
-        }
-
-        for statement in body {
+        for statement in try_body {
             self.compile_statement(statement)?;
         }
 
+        self.emit_opcode(OpCode::PopExceptionHandler);
+
         self.end_scope();
 
-        let jump = self.emit_jump(OpCode::Jump);
-        catch_end_jump = Some(jump);
-    } else {
-        catch_ip = self.chunk.code.len();
-    }
+        let normal_end_jump = self.emit_jump(OpCode::Jump);
 
-    // ========================================================
-    // FINALLY
-    // ========================================================
+        // ========================================================
+        // CATCH
+        // ========================================================
 
-    if finally_body.is_some() {
-        self.pop_finally_block();
-    }
+        let mut catch_end_jump = None;
 
-    let finally_ip = if let Some(body) = finally_body {
-        let ip = self.chunk.code.len();
+        let catch_ip;
 
-        self.begin_scope();
+        if let Some(body) = catch_body {
+            catch_ip = self.chunk.code.len();
 
-        for statement in body {
-            self.compile_statement(statement)?;
+            self.begin_scope();
+
+            if let Some(name) = catch_name {
+                self.declare_existing_local(name, true)?;
+            }
+
+            for statement in body {
+                self.compile_statement(statement)?;
+            }
+
+            self.end_scope();
+
+            let jump = self.emit_jump(OpCode::Jump);
+            catch_end_jump = Some(jump);
+        } else {
+            catch_ip = self.chunk.code.len();
         }
 
-        self.end_scope();
+        // ========================================================
+        // FINALLY
+        // ========================================================
 
-        self.emit_opcode(OpCode::FinallyEnd);
+        if finally_body.is_some() {
+            self.pop_finally_block();
+        }
 
-        Some(ip)
-    } else {
-        None
-    };
+        let finally_ip = if let Some(body) = finally_body {
+            let ip = self.chunk.code.len();
 
-    // ========================================================
-    // PATCH CATCH
-    // ========================================================
+            self.begin_scope();
 
-    if catch_body.is_some() {
-        self.patch_u16(catch_operand, catch_ip)?;
-    } else {
-        self.patch_u16(catch_operand, u16::MAX as usize)?;
+            for statement in body {
+                self.compile_statement(statement)?;
+            }
+
+            self.end_scope();
+
+            self.emit_opcode(OpCode::FinallyEnd);
+
+            Some(ip)
+        } else {
+            None
+        };
+
+        // ========================================================
+        // PATCH CATCH
+        // ========================================================
+
+        if catch_body.is_some() {
+            self.patch_u16(catch_operand, catch_ip)?;
+        } else {
+            self.patch_u16(catch_operand, u16::MAX as usize)?;
+        }
+
+        // ========================================================
+        // PATCH FINALLY
+        // ========================================================
+
+        if let Some(ip) = finally_ip {
+            self.patch_u16(finally_operand, ip)?;
+        } else {
+            self.patch_u16(finally_operand, u16::MAX as usize)?;
+        }
+
+        // ========================================================
+        // CATCH -> FINALLY / END
+        // ========================================================
+
+        if let Some(jump) = catch_end_jump {
+            let target = finally_ip.unwrap_or(self.chunk.code.len());
+            self.patch_jump_to(jump, target)?;
+        }
+
+        // ========================================================
+        // TRY -> FINALLY / END
+        // ========================================================
+
+        let normal_target = finally_ip.unwrap_or(self.chunk.code.len());
+        self.patch_jump_to(normal_end_jump, normal_target)?;
+
+        Ok(())
     }
-
-    // ========================================================
-    // PATCH FINALLY
-    // ========================================================
-
-    if let Some(ip) = finally_ip {
-        self.patch_u16(finally_operand, ip)?;
-    } else {
-        self.patch_u16(finally_operand, u16::MAX as usize)?;
-    }
-
-    // ========================================================
-    // CATCH -> FINALLY / END
-    // ========================================================
-
-    if let Some(jump) = catch_end_jump {
-        let target = finally_ip.unwrap_or(self.chunk.code.len());
-        self.patch_jump_to(jump, target)?;
-    }
-
-    // ========================================================
-    // TRY -> FINALLY / END
-    // ========================================================
-
-    let normal_target = finally_ip.unwrap_or(self.chunk.code.len());
-    self.patch_jump_to(normal_end_jump, normal_target)?;
-
-    Ok(())
-}
 
     // ============================================================
     // PATCH ABSOLUTE JUMP

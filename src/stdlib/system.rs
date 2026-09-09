@@ -93,29 +93,45 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     let name = match &args[0] {
-        Value::Integer(_) => "int",
+        Value::Integer(_) => "int".to_string(),
 
-        Value::Float(_) => "float",
+        Value::Float(_) => "float".to_string(),
 
-        Value::Boolean(_) => "bool",
+        Value::Boolean(_) => "bool".to_string(),
 
-        Value::Nil => "nil",
+        Value::Nil => "nil".to_string(),
 
-        Value::Range { .. } => "range",
+        Value::Range { .. } => "range".to_string(),
 
-        Value::NativeFunction(_) => "function",
+        Value::NativeFunction(_) => "function".to_string(),
 
         Value::Object(handle) => match &*handle.borrow() {
-            Object::String(_) => "string",
-            Object::Array(_) => "array",
-            Object::Dict(_) => "object",
-            Object::Function(_) | Object::Closure(_) => "function",
-            Object::Iterator(_) => "iterator",
-            Object::Module(_) => "module",
+            Object::String(_) => "string".to_string(),
+
+            Object::Array(_) => "array".to_string(),
+
+            Object::Dict(_) => "object".to_string(),
+
+            Object::Function(_) | Object::Closure(_) => "function".to_string(),
+
+            Object::Iterator(_) => "iterator".to_string(),
+
+            Object::Module(_) => "module".to_string(),
+
+            Object::Class { .. } => "class".to_string(),
+
+            Object::Instance { class, .. } => {
+                let class = class.borrow();
+
+                match &*class {
+                    Object::Class { name, .. } => name.clone(),
+                    _ => "instance".to_string(),
+                }
+            }
         },
     };
 
-    Ok(Value::new_string(name.to_owned()))
+    Ok(Value::new_string(name))
 }
 
 pub fn native_clock(args: &[Value]) -> Result<Value, RuntimeError> {
