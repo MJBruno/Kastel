@@ -1,5 +1,7 @@
 use super::VirtualMachine;
+
 use crate::error::runtime_error::RuntimeError;
+use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 
 impl VirtualMachine {
@@ -52,10 +54,14 @@ impl VirtualMachine {
 
         self.stack.truncate(start);
 
-        self.push(Value::new_object(fields));
+        self.push(Value::new_dict(fields));
 
         Ok(())
     }
+
+    // ------------------------------------------------------------
+    // Indexation
+    // ------------------------------------------------------------
 
     pub(crate) fn op_get_index(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
@@ -64,12 +70,40 @@ impl VirtualMachine {
 
         let len = self.stack.len();
 
-        let array = self.stack[len - 2].clone();
-        let index_value = self.stack[len - 1].clone();
+        let collection = self.stack[len - 2].clone();
+        let index = self.stack[len - 1].clone();
 
-        let index = Self::array_index(index_value)?;
+        let value = match &collection {
+            // Array[index]
+            Value::Object(handle) => {
+                let object = handle.borrow();
 
-        let value = array.array_get(index)?;
+                match &*object {
+                    Object::Array(_) => {
+                        let index = Self::array_index(index)?;
+                        drop(object);
+
+                        collection.array_get(index)?
+                    }
+
+                    // Dict["key"]
+                    Object::Dict(_) => {
+                        let key = Self::dict_key(index)?;
+                        drop(object);
+
+                        collection.dict_get(&key)?
+                    }
+
+                    _ => {
+                        return Err(RuntimeError::NotIndexable);
+                    }
+                }
+            }
+
+            _ => {
+                return Err(RuntimeError::NotIndexable);
+            }
+        };
 
         self.stack.truncate(len - 2);
         self.push(value);
@@ -84,18 +118,50 @@ impl VirtualMachine {
 
         let len = self.stack.len();
 
-        let array = self.stack[len - 3].clone();
-        let index_value = self.stack[len - 2].clone();
+        let collection = self.stack[len - 3].clone();
+        let index = self.stack[len - 2].clone();
         let value = self.stack[len - 1].clone();
 
-        let index = Self::array_index(index_value)?;
+        match &collection {
+            // Array[index] = value
+            Value::Object(handle) => {
+                let object = handle.borrow();
 
-        array.array_set(index, value)?;
+                match &*object {
+                    Object::Array(_) => {
+                        let index = Self::array_index(index)?;
+                        drop(object);
+
+                        collection.array_set(index, value)?;
+                    }
+
+                    // Dict["key"] = value
+                    Object::Dict(_) => {
+                        let key = Self::dict_key(index)?;
+                        drop(object);
+
+                        collection.dict_set(&key, value)?;
+                    }
+
+                    _ => {
+                        return Err(RuntimeError::NotIndexable);
+                    }
+                }
+            }
+
+            _ => {
+                return Err(RuntimeError::NotIndexable);
+            }
+        }
 
         self.stack.truncate(len - 3);
 
         Ok(())
     }
+
+    // ------------------------------------------------------------
+    // Array
+    // ------------------------------------------------------------
 
     pub(crate) fn op_array_length(&mut self) -> Result<(), RuntimeError> {
         let array = self.peek()?.clone();
@@ -210,11 +276,18 @@ impl VirtualMachine {
         Ok(())
     }
 
+    // ------------------------------------------------------------
+    // Properties
+    // ------------------------------------------------------------
+
     pub(crate) fn get_property(&mut self) -> Result<(), RuntimeError> {
         let constant = self.read_byte()?;
+
         let property = self.read_constant(constant)?;
 
-        let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
+        let name = property
+            .as_string_value()
+            .ok_or(RuntimeError::TypeError)?;
 
         let object = self.peek()?.clone();
 
@@ -228,9 +301,12 @@ impl VirtualMachine {
 
     pub(crate) fn set_property(&mut self) -> Result<(), RuntimeError> {
         let constant = self.read_byte()?;
+
         let property = self.read_constant(constant)?;
 
-        let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
+        let name = property
+            .as_string_value()
+            .ok_or(RuntimeError::TypeError)?;
 
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
@@ -248,6 +324,10 @@ impl VirtualMachine {
         Ok(())
     }
 
+    // ------------------------------------------------------------
+    // Index helpers
+    // ------------------------------------------------------------
+
     fn array_index(value: Value) -> Result<usize, RuntimeError> {
         match value {
             Value::Integer(index) if index >= 0 => Ok(index as usize),
@@ -262,6 +342,22 @@ impl VirtualMachine {
             }
 
             _ => Err(RuntimeError::ArrayIndexNotInteger),
+        }
+    }
+
+    fn dict_key(value: Value) -> Result<String, RuntimeError> {
+        match value {
+            Value::Object(handle) => {
+                let object = handle.borrow();
+
+                match &*object {
+                    Object::String(value) => Ok(value.clone()),
+
+                    _ => Err(RuntimeError::TypeError),
+                }
+            }
+
+            _ => Err(RuntimeError::TypeError),
         }
     }
 }

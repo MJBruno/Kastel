@@ -15,7 +15,7 @@ pub mod debug;
 pub mod io;
 pub mod iterator;
 pub mod math;
-pub mod object;
+pub mod dict;
 pub mod string;
 pub mod system;
 
@@ -29,7 +29,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     math::register(globals);
     string::register(globals);
     array::register(globals);
-    object::register(globals);
+    dict::register(globals);
     iterator::register(globals);
     system::register(globals);
     debug::register(globals);
@@ -46,7 +46,7 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     math::register_compiler(compiler);
     string::register_compiler(compiler);
     array::register_compiler(compiler);
-    object::register_compiler(compiler);
+    dict::register_compiler(compiler);
     iterator::register_compiler(compiler);
     system::register_compiler(compiler);
     debug::register_compiler(compiler);
