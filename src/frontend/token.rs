@@ -2,12 +2,16 @@
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    // Littéraux
+    // ============================================================
+    // LITTÉRAUX
+    // ============================================================
     Identifier,
     Number,
     String,
 
-    // Mots-clés
+    // ============================================================
+    // MOTS-CLÉS
+    // ============================================================
     Let,
     Const,
     Function,
@@ -27,7 +31,9 @@ pub enum TokenKind {
     As,
     Export,
 
-    // Opérateurs
+    // ============================================================
+    // OPÉRATEURS
+    // ============================================================
     Plus,
     Minus,
     Star,
@@ -42,7 +48,6 @@ pub enum TokenKind {
     PercentEqual,
 
     Equal,
-
     EqualEqual,
     NotEqual,
 
@@ -52,11 +57,19 @@ pub enum TokenKind {
     Greater,
     GreaterEqual,
 
+    // Arrow function:
+    //
+    // x => x * 2
+    // (x, y) => x + y
+    FatArrow,
+
     And,
     Or,
     Not,
 
-    // Bitwise
+    // ============================================================
+    // BITWISE
+    // ============================================================
     Ampersand,
     Pipe,
     Caret,
@@ -64,7 +77,9 @@ pub enum TokenKind {
     LeftShift,
     RightShift,
 
-    // Ponctuation
+    // ============================================================
+    // PONCTUATION
+    // ============================================================
     LeftParen,
     RightParen,
 
@@ -73,10 +88,12 @@ pub enum TokenKind {
 
     LeftBracket,
     RightBracket,
+
     Dot,
     Comma,
     Colon,
     Semicolon,
+
     Eof,
 }
 
@@ -89,7 +106,12 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, lexeme: String, line: usize, column: usize) -> Self {
+    pub fn new(
+        kind: TokenKind,
+        lexeme: String,
+        line: usize,
+        column: usize,
+    ) -> Self {
         Self {
             kind,
             lexeme,
@@ -118,7 +140,6 @@ impl Token {
             "from" => Some(TokenKind::From),
             "as" => Some(TokenKind::As),
             "export" => Some(TokenKind::Export),
-
             _ => None,
         }
     }

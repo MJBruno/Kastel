@@ -525,7 +525,7 @@ impl VirtualMachine {
                     let keep =
                         self.invoke_sync(
                             callback.clone(),
-                            &[element.clone()],
+                            std::slice::from_ref(&element),
                         )?;
 
                     if keep.is_truthy() {

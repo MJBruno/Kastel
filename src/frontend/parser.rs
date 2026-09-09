@@ -142,9 +142,178 @@ impl Parser {
     // ============================================================
     // EXPRESSIONS
     // ============================================================
-
     fn parse_expression(&mut self) -> Result<Expression, ParserError> {
-        self.ternary()
+        self.arrow_function()
+    }
+    fn arrow_function(&mut self) -> Result<Expression, ParserError> {
+        if !self.is_arrow_function_start() {
+            return self.ternary();
+        }
+
+        let params = self.parse_arrow_parameters()?;
+
+        self.consume(
+            TokenKind::FatArrow,
+            "'=>' attendu après les paramètres de la fonction fléchée",
+        )?;
+
+        // ============================================================
+        // Corps bloc
+        //
+        // (x) => {
+        //     return x * 2;
+        // }
+        // ============================================================
+        if self.match_token(TokenKind::LeftBrace) {
+            let body = self.parse_block_statement()?;
+
+            return Ok(Expression::Function { params, body });
+        }
+
+        // ============================================================
+        // Corps expression
+        //
+        // x => x * 2
+        // (x, y) => x + y
+        //
+        // Désucrisation :
+        //
+        // x => x * 2
+        //
+        // devient :
+        //
+        // function(x) {
+        //     return x * 2;
+        // }
+        // ============================================================
+        let expression = self.parse_expression()?;
+
+        Ok(Expression::Function {
+            params,
+            body: vec![Statement::Return {
+                value: Some(expression),
+            }],
+        })
+    }
+
+    fn is_arrow_function_start(&self) -> bool {
+        // ============================================================
+        // x => ...
+        // ============================================================
+        if self.check(TokenKind::Identifier) && self.check_next(TokenKind::FatArrow) {
+            return true;
+        }
+
+        // ============================================================
+        // () => ...
+        // (x) => ...
+        // (x, y) => ...
+        // ============================================================
+        if !self.check(TokenKind::LeftParen) {
+            return false;
+        }
+
+        let mut index = self.current + 1;
+
+        // () => ...
+        if index < self.tokens.len() && self.tokens[index].kind == TokenKind::RightParen {
+            return index + 1 < self.tokens.len()
+                && self.tokens[index + 1].kind == TokenKind::FatArrow;
+        }
+
+        // Recherche :
+        //
+        // (identifier, identifier, ...) =>
+        //
+        // sans modifier le curseur du parser.
+        loop {
+            if index >= self.tokens.len() || self.tokens[index].kind != TokenKind::Identifier {
+                return false;
+            }
+
+            index += 1;
+
+            if index >= self.tokens.len() {
+                return false;
+            }
+
+            match self.tokens[index].kind {
+                TokenKind::Comma => {
+                    index += 1;
+
+                    // Autorise éventuellement :
+                    //
+                    // (x, y,) => ...
+                    //
+                    if index < self.tokens.len() && self.tokens[index].kind == TokenKind::RightParen
+                    {
+                        index += 1;
+
+                        return index < self.tokens.len()
+                            && self.tokens[index].kind == TokenKind::FatArrow;
+                    }
+                }
+
+                TokenKind::RightParen => {
+                    index += 1;
+
+                    return index < self.tokens.len()
+                        && self.tokens[index].kind == TokenKind::FatArrow;
+                }
+
+                _ => return false,
+            }
+        }
+    }
+
+    fn parse_arrow_parameters(&mut self) -> Result<Vec<String>, ParserError> {
+        // ============================================================
+        // x => ...
+        // ============================================================
+        if self.check(TokenKind::Identifier) && self.check_next(TokenKind::FatArrow) {
+            let parameter = self.advance().clone();
+
+            return Ok(vec![parameter.lexeme]);
+        }
+
+        // ============================================================
+        // (...) => ...
+        // ============================================================
+        self.consume(
+            TokenKind::LeftParen,
+            "'(' attendu pour les paramètres de la fonction fléchée",
+        )?;
+
+        let mut params = Vec::new();
+
+        if !self.check(TokenKind::RightParen) {
+            loop {
+                let parameter = self.consume(
+                    TokenKind::Identifier,
+                    "Nom de paramètre attendu dans la fonction fléchée",
+                )?;
+
+                params.push(parameter.lexeme);
+
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+
+                // Virgule finale :
+                //
+                // (x, y,) => ...
+                if self.check(TokenKind::RightParen) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(
+            TokenKind::RightParen,
+            "')' attendu après les paramètres de la fonction fléchée",
+        )?;
+
+        Ok(params)
     }
 
     fn ternary(&mut self) -> Result<Expression, ParserError> {
