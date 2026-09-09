@@ -116,6 +116,10 @@ impl Compiler {
                 self.compile_for_in(variable, iterable, body)?;
             }
 
+            Statement::Match { value, arms } => {
+                self.compile_match(value, arms)?;
+            }
+            
             Statement::Function { name, params, body } => {
                 self.compile_function_statement(name, params, body)?;
             }
@@ -259,6 +263,133 @@ impl Compiler {
             }
         }
 
+        Ok(())
+    }
+
+    pub(crate) fn compile_match(
+        &mut self,
+        value: &Expression,
+        arms: &[MatchArm],
+    ) -> Result<(), CompileError> {
+        /* * Le sujet du match est évalué une seule fois. * * On le place dans une variable locale temporaire afin de * pouvoir le relire pour chaque arm sans ajouter de DUP au VM. */
+        self.begin_scope();
+        let temporary_name = format!("__match_{}", self.context.borrow().locals.len());
+        self.compile_local_var(&temporary_name, Some(value), false)?;
+        let mut end_jumps = Vec::with_capacity(arms.len());
+        for arm in arms {
+            let next_arm_jump = self.compile_match_pattern(&temporary_name, &arm.pattern)?; /* * Le résultat du test est présent sur la pile. * * JumpIfFalse conserve la condition sur la pile : * on la retire donc avant de compiler le corps. */
+            self.emit_opcode(OpCode::Pop);
+            for statement in &arm.body {
+                self.compile_statement(statement)?;
+            } /* * Le body est terminé : ne pas tomber dans l'arm suivant. */
+            let end_jump = self.emit_jump(OpCode::Jump);
+            end_jumps.push(end_jump); /* * Ici on arrive seulement lorsque le pattern précédent * n'a pas correspondu. * * Le booléen de JumpIfFalse est encore sur la pile. */
+            self.patch_jump(next_arm_jump)?;
+            self.emit_opcode(OpCode::Pop);
+        } /* * Aucun arm ne correspond : * * À cette étape, on ne force pas encore l'exhaustivité statique * Rust. Le comportement sera complété avec le runtime match error. */
+        for jump in end_jumps {
+            self.patch_jump(jump)?;
+        }
+        self.end_scope();
+        Ok(())
+    }
+    fn compile_match_pattern(
+        &mut self,
+        value_name: &str,
+        pattern: &Pattern,
+    ) -> Result<usize, CompileError> {
+        match pattern {
+            Pattern::Wildcard => {
+                /* * Le wildcard correspond toujours. */
+                self.emit_opcode(OpCode::True); /* * Impossible d'avoir un prochain arm réellement * nécessaire puisque `_` capture tout. * * On émet tout de même un JumpIfFalse pour conserver * une représentation uniforme. */
+                let jump = self.emit_jump(OpCode::JumpIfFalse);
+                Ok(jump)
+            }
+            Pattern::Literal(literal) => {
+                /* * Stack : * * [ subject ] * * GetLocal ajoute : * * [ subject, pattern ] */
+                self.compile_variable_get(value_name)?;
+                self.compile_literal_pattern(literal)?; /* * Equal : * * [ subject, pattern ] * ↓ * [ bool ] */
+                self.emit_opcode(OpCode::Equal); /* * Résultat : * * true -> body * false -> arm suivant */
+                let jump = self.emit_jump(OpCode::JumpIfFalse);
+                Ok(jump)
+            }
+            Pattern::Or(patterns) => {
+                if patterns.is_empty() {
+                    return Err(CompileError::InternalCompilerError(
+                        "Pattern OR vide".to_string(),
+                    ));
+                } /* * Chaque alternative doit pouvoir réussir * indépendamment. * * Pour cette étape, on génère simplement : * * test1 * if true -> success * test2 * if true -> success * ... * * Le résultat final est un booléen unique. */
+                let mut success_jumps = Vec::new();
+                for (index, pattern) in patterns.iter().enumerate() {
+                    match pattern {
+                        Pattern::Literal(literal) => {
+                            self.compile_variable_get(value_name)?;
+                            self.compile_literal_pattern(literal)?;
+                            self.emit_opcode(OpCode::Equal);
+                            let false_jump = self.emit_jump(OpCode::JumpIfFalse);
+                            self.emit_opcode(OpCode::Pop);
+                            if index + 1 < patterns.len() {
+                                let success_jump = self.emit_jump(OpCode::Jump);
+                                success_jumps.push(success_jump);
+                                self.patch_jump(false_jump)?;
+                            } else {
+                                /* * Dernière alternative : * conserver son résultat pour le * JumpIfFalse du match principal. */
+                                self.patch_jump(false_jump)?;
+                            }
+                        }
+                        Pattern::Wildcard => {
+                            self.emit_opcode(OpCode::True);
+                            let success_jump = self.emit_jump(OpCode::JumpIfFalse);
+                            success_jumps.push(success_jump);
+                        }
+                        _ => {
+                            return Err(CompileError::InternalCompilerError(
+                                "Pattern imbriqué non supporté à cette étape".to_string(),
+                            ));
+                        }
+                    }
+                } /* * Tous les jumps de succès convergent ici. * * Pour cette première étape, on termine sur un booléen. */
+                let jump = self.emit_jump(OpCode::JumpIfFalse);
+                for success_jump in success_jumps {
+                    self.patch_jump(success_jump)?;
+                }
+                Ok(jump)
+            }
+            Pattern::Range { .. } => Err(CompileError::InternalCompilerError(
+                "Pattern range non encore compilé".to_string(),
+            )),
+            Pattern::Binding(_) => Err(CompileError::InternalCompilerError(
+                "Binding de pattern non encore compilé".to_string(),
+            )),
+            Pattern::Array(_) => Err(CompileError::InternalCompilerError(
+                "Pattern tableau non encore compilé".to_string(),
+            )),
+        }
+    }
+    fn compile_literal_pattern(&mut self, literal: &Literal) -> Result<(), CompileError> {
+        match literal {
+            Literal::Integer(value) => {
+                let constant = self.make_constant(Value::Integer(*value))?;
+                self.emit_bytes(OpCode::Constant, constant);
+            }
+            Literal::Float(value) => {
+                let constant = self.make_constant(Value::Float(*value))?;
+                self.emit_bytes(OpCode::Constant, constant);
+            }
+            Literal::String(value) => {
+                let constant = self.make_constant(Value::new_string(value.clone()))?;
+                self.emit_bytes(OpCode::Constant, constant);
+            }
+            Literal::Bool(true) => {
+                self.emit_opcode(OpCode::True);
+            }
+            Literal::Bool(false) => {
+                self.emit_opcode(OpCode::False);
+            }
+            Literal::Nil => {
+                self.emit_opcode(OpCode::Nil);
+            }
+        }
         Ok(())
     }
 }

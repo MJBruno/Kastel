@@ -1,3 +1,4 @@
+
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
     Variable(String),
@@ -12,6 +13,7 @@ pub enum AssignmentTarget {
         name: String,
     },
 }
+
 #[derive(Debug, Clone)]
 pub struct ModulePath {
     pub parts: Vec<String>,
@@ -21,14 +23,6 @@ impl ModulePath {
     pub fn new(parts: Vec<String>) -> Self {
         Self { parts }
     }
-
-    // pub fn as_string(&self) -> String {
-    //     self.parts.join(".")
-    // }
-
-    // pub fn last(&self) -> Option<&str> {
-    //     self.parts.last().map(String::as_str)
-    // }
 }
 
 #[derive(Debug, Clone)]
@@ -36,16 +30,47 @@ pub struct ImportItem {
     pub name: String,
     pub alias: Option<String>,
 }
+
+// ============================================================
+// PATTERN MATCHING
+// ============================================================
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum Pattern {
+    /// `_`
+    Wildcard,
+
+    /// `x`
+    Binding(String),
+
+    /// `1`, `"hello"`, true, false, null
+    Literal(Literal),
+
+    /// `1 | 2 | 3`
+    Or(Vec<Pattern>),
+
+    /// `1 .. 10`
+    Range {
+        start: Box<Pattern>,
+        end: Box<Pattern>,
+        inclusive: bool,
+    },
+
+    /// `[x, y, _]`
+    Array(Vec<Pattern>),
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Expression>,
+    pub body: Vec<Statement>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Statement {
-    /// Enveloppe posée systématiquement par `Parser::statement()` autour de
-    /// CHAQUE statement produit, quel que soit son type. Permet au
-    /// compilateur de connaître la position source exacte d'un statement
-    /// (pour remplir `chunk.lines`/`chunk.columns` et enrichir les erreurs
-    /// de compilation) SANS avoir à ajouter un champ `line`/`column` à
-    /// chacune des variantes ci-dessous — un seul point de câblage dans le
-    /// parser (statement()) et un seul dans le compilateur
-    /// (compile_statement), plutôt que des dizaines.
     Positioned {
         line: usize,
         column: usize,
@@ -86,6 +111,15 @@ pub enum Statement {
         body: Vec<Statement>,
     },
 
+    // ========================================================
+    // MATCH
+    // ========================================================
+
+    Match {
+        value: Expression,
+        arms: Vec<MatchArm>,
+    },
+
     Function {
         name: String,
         params: Vec<String>,
@@ -95,9 +129,11 @@ pub enum Statement {
     Return {
         value: Option<Expression>,
     },
+
     Import {
         path: Vec<String>,
     },
+
     FromImport {
         module: ModulePath,
         items: Vec<ImportItem>,
@@ -121,7 +157,6 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone)]
-
 pub enum Expression {
     Literal(Literal),
 
@@ -160,9 +195,6 @@ pub enum Expression {
 
     Array(Vec<Expression>),
 
-    /// Littéral d'objet : { clé: expression, ... }
-    /// L'ordre des champs est préservé (Vec, pas HashMap) pour que
-    /// l'affichage et l'itération future respectent l'ordre d'écriture.
     Object(Vec<(String, Expression)>),
 
     Ternary {
@@ -205,3 +237,4 @@ pub enum BinaryOp {
     ShiftLeft,
     ShiftRight,
 }
+

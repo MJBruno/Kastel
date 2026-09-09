@@ -22,12 +22,7 @@ impl Lexer {
     }
 
     fn make_token(&self, kind: TokenKind, lexeme: &str) -> Token {
-        Token::new(
-            kind,
-            lexeme.to_string(),
-            self.line,
-            self.column - 1,
-        )
+        Token::new(kind, lexeme.to_string(), self.line, self.column - 1)
     }
 
     fn is_identifier_start(c: char) -> bool {
@@ -151,13 +146,9 @@ impl Lexer {
                 // ====================================================
                 '+' => {
                     if self.match_char('=') {
-                        tokens.push(
-                            self.make_token(TokenKind::PlusEqual, "+="),
-                        );
+                        tokens.push(self.make_token(TokenKind::PlusEqual, "+="));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Plus, "+"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Plus, "+"));
                     }
                 }
 
@@ -167,13 +158,9 @@ impl Lexer {
                 // ====================================================
                 '-' => {
                     if self.match_char('=') {
-                        tokens.push(
-                            self.make_token(TokenKind::MinusEqual, "-="),
-                        );
+                        tokens.push(self.make_token(TokenKind::MinusEqual, "-="));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Minus, "-"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Minus, "-"));
                     }
                 }
 
@@ -183,13 +170,9 @@ impl Lexer {
                 // ====================================================
                 '*' => {
                     if self.match_char('=') {
-                        tokens.push(
-                            self.make_token(TokenKind::StarEqual, "*="),
-                        );
+                        tokens.push(self.make_token(TokenKind::StarEqual, "*="));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Star, "*"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Star, "*"));
                     }
                 }
 
@@ -205,13 +188,9 @@ impl Lexer {
                     } else if self.match_char('*') {
                         self.skip_multiline_comment();
                     } else if self.match_char('=') {
-                        tokens.push(
-                            self.make_token(TokenKind::SlashEqual, "/="),
-                        );
+                        tokens.push(self.make_token(TokenKind::SlashEqual, "/="));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Slash, "/"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Slash, "/"));
                     }
                 }
 
@@ -221,16 +200,28 @@ impl Lexer {
                 // ====================================================
                 '%' => {
                     if self.match_char('=') {
-                        tokens.push(
-                            self.make_token(TokenKind::PercentEqual, "%="),
-                        );
+                        tokens.push(self.make_token(TokenKind::PercentEqual, "%="));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Percent, "%"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Percent, "%"));
                     }
                 }
-
+                #[allow(unreachable_patterns)]
+                // ====================================================
+                // =
+                // ==
+                // =>
+                // ====================================================
+                '.' => {
+                    if self.match_char('.') {
+                        if self.match_char('=') {
+                            tokens.push(self.make_token(TokenKind::RangeInclusive, "..="));
+                        } else {
+                            tokens.push(self.make_token(TokenKind::Range, ".."));
+                        }
+                    } else {
+                        tokens.push(self.make_token(TokenKind::Dot, "."));
+                    }
+                }
                 // ====================================================
                 // =
                 // ==
@@ -238,17 +229,11 @@ impl Lexer {
                 // ====================================================
                 '=' => {
                     if self.match_char('=') {
-                        tokens.push(
-                            self.make_token(TokenKind::EqualEqual, "=="),
-                        );
+                        tokens.push(self.make_token(TokenKind::EqualEqual, "=="));
                     } else if self.match_char('>') {
-                        tokens.push(
-                            self.make_token(TokenKind::FatArrow, "=>"),
-                        );
+                        tokens.push(self.make_token(TokenKind::FatArrow, "=>"));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Equal, "="),
-                        );
+                        tokens.push(self.make_token(TokenKind::Equal, "="));
                     }
                 }
 
@@ -258,13 +243,9 @@ impl Lexer {
                 // ====================================================
                 '!' => {
                     if self.match_char('=') {
-                        tokens.push(
-                            self.make_token(TokenKind::NotEqual, "!="),
-                        );
+                        tokens.push(self.make_token(TokenKind::NotEqual, "!="));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Not, "!"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Not, "!"));
                     }
                 }
 
@@ -275,17 +256,11 @@ impl Lexer {
                 // ====================================================
                 '<' => {
                     if self.match_char('=') {
-                        tokens.push(
-                            self.make_token(TokenKind::LessEqual, "<="),
-                        );
+                        tokens.push(self.make_token(TokenKind::LessEqual, "<="));
                     } else if self.match_char('<') {
-                        tokens.push(
-                            self.make_token(TokenKind::LeftShift, "<<"),
-                        );
+                        tokens.push(self.make_token(TokenKind::LeftShift, "<<"));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Less, "<"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Less, "<"));
                     }
                 }
 
@@ -296,17 +271,11 @@ impl Lexer {
                 // ====================================================
                 '>' => {
                     if self.match_char('=') {
-                        tokens.push(
-                            self.make_token(TokenKind::GreaterEqual, ">="),
-                        );
+                        tokens.push(self.make_token(TokenKind::GreaterEqual, ">="));
                     } else if self.match_char('>') {
-                        tokens.push(
-                            self.make_token(TokenKind::RightShift, ">>"),
-                        );
+                        tokens.push(self.make_token(TokenKind::RightShift, ">>"));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Greater, ">"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Greater, ">"));
                     }
                 }
 
@@ -316,13 +285,9 @@ impl Lexer {
                 // ====================================================
                 '&' => {
                     if self.match_char('&') {
-                        tokens.push(
-                            self.make_token(TokenKind::And, "&&"),
-                        );
+                        tokens.push(self.make_token(TokenKind::And, "&&"));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Ampersand, "&"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Ampersand, "&"));
                     }
                 }
 
@@ -332,13 +297,9 @@ impl Lexer {
                 // ====================================================
                 '|' => {
                     if self.match_char('|') {
-                        tokens.push(
-                            self.make_token(TokenKind::Or, "||"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Or, "||"));
                     } else {
-                        tokens.push(
-                            self.make_token(TokenKind::Pipe, "|"),
-                        );
+                        tokens.push(self.make_token(TokenKind::Pipe, "|"));
                     }
                 }
 
@@ -346,15 +307,11 @@ impl Lexer {
                 // BITWISE
                 // ====================================================
                 '^' => {
-                    tokens.push(
-                        self.make_token(TokenKind::Caret, "^"),
-                    );
+                    tokens.push(self.make_token(TokenKind::Caret, "^"));
                 }
 
                 '~' => {
-                    tokens.push(
-                        self.make_token(TokenKind::Tilde, "~"),
-                    );
+                    tokens.push(self.make_token(TokenKind::Tilde, "~"));
                 }
 
                 // ====================================================
@@ -425,16 +382,12 @@ impl Lexer {
         // ========================================================
         // HEXADÉCIMAL
         // ========================================================
-        if first == '0'
-            && (self.peek() == 'x' || self.peek() == 'X')
-        {
+        if first == '0' && (self.peek() == 'x' || self.peek() == 'X') {
             self.advance();
 
             let mut digits = String::new();
 
-            while self.peek().is_ascii_hexdigit()
-                || self.peek() == '_'
-            {
+            while self.peek().is_ascii_hexdigit() || self.peek() == '_' {
                 let c = self.advance();
 
                 if c != '_' {
@@ -442,8 +395,7 @@ impl Lexer {
                 }
             }
 
-            let value =
-                u64::from_str_radix(&digits, 16).unwrap_or(0);
+            let value = u64::from_str_radix(&digits, 16).unwrap_or(0);
 
             return Token::new(
                 TokenKind::Number,
@@ -456,17 +408,12 @@ impl Lexer {
         // ========================================================
         // BINAIRE
         // ========================================================
-        if first == '0'
-            && (self.peek() == 'b' || self.peek() == 'B')
-        {
+        if first == '0' && (self.peek() == 'b' || self.peek() == 'B') {
             self.advance();
 
             let mut digits = String::new();
 
-            while self.peek() == '0'
-                || self.peek() == '1'
-                || self.peek() == '_'
-            {
+            while self.peek() == '0' || self.peek() == '1' || self.peek() == '_' {
                 let c = self.advance();
 
                 if c != '_' {
@@ -474,8 +421,7 @@ impl Lexer {
                 }
             }
 
-            let value =
-                u64::from_str_radix(&digits, 2).unwrap_or(0);
+            let value = u64::from_str_radix(&digits, 2).unwrap_or(0);
 
             return Token::new(
                 TokenKind::Number,
@@ -492,9 +438,7 @@ impl Lexer {
 
         text.push(first);
 
-        while self.peek().is_ascii_digit()
-            || self.peek() == '_'
-        {
+        while self.peek().is_ascii_digit() || self.peek() == '_' {
             let c = self.advance();
 
             if c != '_' {
@@ -505,14 +449,10 @@ impl Lexer {
         // ========================================================
         // FLOTTANT
         // ========================================================
-        if self.peek() == '.'
-            && self.peek_next().is_ascii_digit()
-        {
+        if self.peek() == '.' && self.peek_next().is_ascii_digit() {
             text.push(self.advance());
 
-            while self.peek().is_ascii_digit()
-                || self.peek() == '_'
-            {
+            while self.peek().is_ascii_digit() || self.peek() == '_' {
                 let c = self.advance();
 
                 if c != '_' {
@@ -525,10 +465,9 @@ impl Lexer {
         // EXPOSANT
         // ========================================================
         if self.peek() == 'e' || self.peek() == 'E' {
-            let exponent_starts_number =
-                self.peek_next().is_ascii_digit()
-                    || self.peek_next() == '+'
-                    || self.peek_next() == '-';
+            let exponent_starts_number = self.peek_next().is_ascii_digit()
+                || self.peek_next() == '+'
+                || self.peek_next() == '-';
 
             if exponent_starts_number {
                 text.push(self.advance());
@@ -543,12 +482,7 @@ impl Lexer {
             }
         }
 
-        Token::new(
-            TokenKind::Number,
-            text,
-            self.line,
-            start_column,
-        )
+        Token::new(TokenKind::Number, text, self.line, start_column)
     }
 
     fn string(&mut self) -> Token {
@@ -585,12 +519,7 @@ impl Lexer {
             });
         }
 
-        Token::new(
-            TokenKind::String,
-            value,
-            self.line,
-            start_column,
-        )
+        Token::new(TokenKind::String, value, self.line, start_column)
     }
 
     fn skip_comment(&mut self) {

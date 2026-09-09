@@ -1,4 +1,3 @@
-// use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -21,6 +20,7 @@ pub enum TokenKind {
     While,
     For,
     In,
+    Match,
     True,
     False,
     Nil,
@@ -68,6 +68,12 @@ pub enum TokenKind {
     Not,
 
     // ============================================================
+    // PATTERN MATCHING
+    // ============================================================
+    Range,
+    RangeInclusive,
+
+    // ============================================================
     // BITWISE
     // ============================================================
     Ampersand,
@@ -88,7 +94,6 @@ pub enum TokenKind {
 
     LeftBracket,
     RightBracket,
-
     Dot,
     Comma,
     Colon,
@@ -131,6 +136,7 @@ impl Token {
             "while" => Some(TokenKind::While),
             "for" => Some(TokenKind::For),
             "in" => Some(TokenKind::In),
+            "match" => Some(TokenKind::Match),
             "true" => Some(TokenKind::True),
             "false" => Some(TokenKind::False),
             "null" => Some(TokenKind::Nil),
@@ -144,3 +150,4 @@ impl Token {
         }
     }
 }
+
