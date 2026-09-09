@@ -124,10 +124,7 @@ impl Lexer {
                     tokens.push(self.make_token(TokenKind::Comma, ","));
                 }
 
-                '.' => {
-                    tokens.push(self.make_token(TokenKind::Dot, "."));
-                }
-
+           
                 ':' => {
                     tokens.push(self.make_token(TokenKind::Colon, ":"));
                 }
@@ -205,11 +202,11 @@ impl Lexer {
                         tokens.push(self.make_token(TokenKind::Percent, "%"));
                     }
                 }
-                #[allow(unreachable_patterns)]
+                
                 // ====================================================
-                // =
-                // ==
-                // =>
+                // .
+                // ..
+                // ..=
                 // ====================================================
                 '.' => {
                     if self.match_char('.') {

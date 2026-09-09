@@ -1,7 +1,6 @@
-let value = 2;
+let value = 5;
 
 match value {
-    0 => println("zero"),
-    x if x == 1 => println("one"),
-    x => println(x),
+    1..5 => println("between"),
+    _ => println("other"),
 }
