@@ -7,14 +7,9 @@ use super::compiler::Compiler;
 use super::variables::Global;
 
 impl Compiler {
-    pub(crate) fn register_export(
-        &mut self,
-        name: &str,
-    ) -> Result<(), CompileError> {
+    pub(crate) fn register_export(&mut self, name: &str) -> Result<(), CompileError> {
         if self.exports.iter().any(|export| export == name) {
-            return Err(CompileError::DuplicateExport(
-                name.to_string(),
-            ));
+            return Err(CompileError::DuplicateExport(name.to_string()));
         }
 
         self.exports.push(name.to_string());
@@ -26,10 +21,7 @@ impl Compiler {
     // STATEMENTS
     // ============================================================
 
-    pub fn compile_statement(
-        &mut self,
-        stmt: &Statement,
-    ) -> Result<(), CompileError> {
+    pub fn compile_statement(&mut self, stmt: &Statement) -> Result<(), CompileError> {
         match stmt {
             Statement::Positioned {
                 line,
@@ -52,11 +44,7 @@ impl Compiler {
                 value,
                 mutable,
             } => {
-                self.compile_var(
-                    name,
-                    Some(value),
-                    *mutable,
-                )?;
+                self.compile_var(name, Some(value), *mutable)?;
             }
 
             Statement::Block(statements) => {
@@ -69,60 +57,41 @@ impl Compiler {
                 self.end_scope();
             }
 
-            Statement::Assignment { target, value } => {
-                match target {
-                    AssignmentTarget::Variable(name) => {
-                        self.compile_expression(value)?;
-                        self.compile_variable_set(name)?;
-                        self.emit_opcode(OpCode::Pop);
-                    }
-
-                    AssignmentTarget::Index {
-                        object,
-                        index,
-                    } => {
-                        self.compile_expression(object)?;
-                        self.compile_expression(index)?;
-                        self.compile_expression(value)?;
-
-                        self.emit_opcode(OpCode::SetIndex);
-                    }
-
-                    AssignmentTarget::Member {
-                        object,
-                        name,
-                    } => {
-                        self.compile_expression(object)?;
-                        self.compile_expression(value)?;
-
-                        let name_constant =
-                            self.identifier_constant(name)?;
-
-                        self.emit_bytes(
-                            OpCode::SetProperty,
-                            name_constant,
-                        );
-                    }
+            Statement::Assignment { target, value } => match target {
+                AssignmentTarget::Variable(name) => {
+                    self.compile_expression(value)?;
+                    self.compile_variable_set(name)?;
+                    self.emit_opcode(OpCode::Pop);
                 }
-            }
+
+                AssignmentTarget::Index { object, index } => {
+                    self.compile_expression(object)?;
+                    self.compile_expression(index)?;
+                    self.compile_expression(value)?;
+
+                    self.emit_opcode(OpCode::SetIndex);
+                }
+
+                AssignmentTarget::Member { object, name } => {
+                    self.compile_expression(object)?;
+                    self.compile_expression(value)?;
+
+                    let name_constant = self.identifier_constant(name)?;
+
+                    self.emit_bytes(OpCode::SetProperty, name_constant);
+                }
+            },
 
             Statement::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                self.compile_if(
-                    condition,
-                    then_branch,
-                    else_branch.as_ref(),
-                )?;
+                self.compile_if(condition, then_branch, else_branch.as_ref())?;
             }
 
             Statement::While { condition, body } => {
-                self.compile_while(
-                    condition,
-                    body,
-                )?;
+                self.compile_while(condition, body)?;
             }
 
             Statement::ForIn {
@@ -130,11 +99,7 @@ impl Compiler {
                 iterable,
                 body,
             } => {
-                self.compile_for_in(
-                    variable,
-                    iterable,
-                    body,
-                )?;
+                self.compile_for_in(variable, iterable, body)?;
             }
 
             Statement::Match { value, arms } => {
@@ -144,7 +109,6 @@ impl Compiler {
             // ========================================================
             // EXCEPTIONS
             // ========================================================
-
             Statement::Throw { value } => {
                 self.compile_expression(value)?;
                 self.emit_opcode(OpCode::Throw);
@@ -164,16 +128,8 @@ impl Compiler {
                 )?;
             }
 
-            Statement::Function {
-                name,
-                params,
-                body,
-            } => {
-                self.compile_function_statement(
-                    name,
-                    params,
-                    body,
-                )?;
+            Statement::Function { name, params, body } => {
+                self.compile_function_statement(name, params, body)?;
             }
 
             Statement::Break => {
@@ -192,14 +148,8 @@ impl Compiler {
                 self.compile_import(path)?;
             }
 
-            Statement::FromImport {
-                module,
-                items,
-            } => {
-                self.compile_from_import(
-                    module,
-                    items,
-                )?;
+            Statement::FromImport { module, items } => {
+                self.compile_from_import(module, items)?;
             }
 
             Statement::Export { statement } => {
@@ -214,238 +164,161 @@ impl Compiler {
     // TRY / CATCH / FINALLY
     // ============================================================
 
-    fn compile_try(
-        &mut self,
-        try_body: &[Statement],
-        catch_name: Option<&str>,
-        catch_body: Option<&[Statement]>,
-        finally_body: Option<&[Statement]>,
-    ) -> Result<(), CompileError> {
-        if catch_body.is_none()
-            && finally_body.is_none()
-        {
-            return Err(
-                CompileError::InternalCompilerError(
-                    "try doit avoir catch ou finally"
-                        .to_string(),
-                ),
-            );
-        }
+fn compile_try(
+    &mut self,
+    try_body: &[Statement],
+    catch_name: Option<&str>,
+    catch_body: Option<&[Statement]>,
+    finally_body: Option<&[Statement]>,
+) -> Result<(), CompileError> {
+    if catch_body.is_none() && finally_body.is_none() {
+        return Err(CompileError::InternalCompilerError(
+            "try doit avoir catch ou finally".to_string(),
+        ));
+    }
 
-        if catch_name.is_some()
-            && catch_body.is_none()
-        {
-            return Err(
-                CompileError::InternalCompilerError(
-                    "catch_name present sans catch_body"
-                        .to_string(),
-                ),
-            );
-        }
+    if catch_name.is_some() && catch_body.is_none() {
+        return Err(CompileError::InternalCompilerError(
+            "catch_name present sans catch_body".to_string(),
+        ));
+    }
 
-        /*
-         * ========================================================
-         * HANDLER
-         * ========================================================
-         *
-         * Layout :
-         *
-         *     PushExceptionHandler
-         *     <catch_ip:u16>
-         *     <finally_ip:u16>
-         *
-         * 0xFFFF = aucun bloc.
-         */
-        self.emit_opcode(
-            OpCode::PushExceptionHandler,
-        );
+    // ========================================================
+    // HANDLER
+    // ========================================================
 
-        let catch_operand =
-            self.chunk.code.len();
+    self.emit_opcode(OpCode::PushExceptionHandler);
 
-        self.emit_u16(u16::MAX);
+    let catch_operand = self.chunk.code.len();
+    self.emit_u16(u16::MAX);
 
-        let finally_operand =
-            self.chunk.code.len();
+    let finally_operand = self.chunk.code.len();
+    self.emit_u16(u16::MAX);
 
-        self.emit_u16(u16::MAX);
+    // ========================================================
+    // TRY
+    // ========================================================
 
-        // ========================================================
-        // TRY
-        // ========================================================
+    if let Some(body) = finally_body {
+        self.push_finally_block(body);
+    }
+
+    self.begin_scope();
+
+    for statement in try_body {
+        self.compile_statement(statement)?;
+    }
+
+    self.emit_opcode(OpCode::PopExceptionHandler);
+
+    self.end_scope();
+
+    let normal_end_jump = self.emit_jump(OpCode::Jump);
+
+    // ========================================================
+    // CATCH
+    // ========================================================
+
+    let mut catch_end_jump = None;
+
+    let catch_ip;
+
+    if let Some(body) = catch_body {
+        catch_ip = self.chunk.code.len();
 
         self.begin_scope();
 
-        for statement in try_body {
+        if let Some(name) = catch_name {
+            self.declare_existing_local(name, true)?;
+        }
+
+        for statement in body {
             self.compile_statement(statement)?;
         }
 
-        /*
-         * Sortie normale du try :
-         *
-         * Le handler n'est plus nécessaire.
-         */
-        self.emit_opcode(
-            OpCode::PopExceptionHandler,
-        );
+        self.end_scope();
+
+        let jump = self.emit_jump(OpCode::Jump);
+        catch_end_jump = Some(jump);
+    } else {
+        catch_ip = self.chunk.code.len();
+    }
+
+    // ========================================================
+    // FINALLY
+    // ========================================================
+
+    if finally_body.is_some() {
+        self.pop_finally_block();
+    }
+
+    let finally_ip = if let Some(body) = finally_body {
+        let ip = self.chunk.code.len();
+
+        self.begin_scope();
+
+        for statement in body {
+            self.compile_statement(statement)?;
+        }
 
         self.end_scope();
 
-        /*
-         * Le chemin normal passe par finally si présent.
-         */
-        let normal_end_jump =
-            self.emit_jump(OpCode::Jump);
+        self.emit_opcode(OpCode::FinallyEnd);
 
-        // ========================================================
-        // CATCH
-        // ========================================================
+        Some(ip)
+    } else {
+        None
+    };
 
-        let mut catch_end_jump = None;
-        let catch_ip;
+    // ========================================================
+    // PATCH CATCH
+    // ========================================================
 
-        if let Some(body) = catch_body {
-            catch_ip = self.chunk.code.len();
-
-            /*
-             * L'exception est déjà sur la stack.
-             */
-            self.begin_scope();
-
-            if let Some(name) = catch_name {
-                /*
-                 * IMPORTANT :
-                 *
-                 * La Value existe déjà sur la stack.
-                 *
-                 * On crée seulement son Local dans la table
-                 * du compilateur.
-                 */
-                self.declare_existing_local(
-                    name,
-                    true,
-                )?;
-            }
-
-            for statement in body {
-                self.compile_statement(statement)?;
-            }
-
-            self.end_scope();
-
-            let jump =
-                self.emit_jump(OpCode::Jump);
-
-            catch_end_jump = Some(jump);
-        } else {
-            catch_ip = self.chunk.code.len();
-        }
-
-        // ========================================================
-        // FINALLY
-        // ========================================================
-
-        let finally_ip = if let Some(body) = finally_body {
-            let ip = self.chunk.code.len();
-
-            self.begin_scope();
-
-            for statement in body {
-                self.compile_statement(statement)?;
-            }
-
-            self.end_scope();
-
-            /*
-             * Si une exception est en attente, FinallyEnd la
-             * relancera.
-             *
-             * Sinon, il ne fait rien.
-             */
-            self.emit_opcode(OpCode::FinallyEnd);
-
-            Some(ip)
-        } else {
-            None
-        };
-
-        // ========================================================
-        // PATCH CATCH
-        // ========================================================
-
-        if catch_body.is_some() {
-            self.patch_u16(
-                catch_operand,
-                catch_ip,
-            )?;
-        } else {
-            self.patch_u16(
-                catch_operand,
-                u16::MAX as usize,
-            )?;
-        }
-
-        // ========================================================
-        // PATCH FINALLY
-        // ========================================================
-
-        if let Some(ip) = finally_ip {
-            self.patch_u16(
-                finally_operand,
-                ip,
-            )?;
-        } else {
-            self.patch_u16(
-                finally_operand,
-                u16::MAX as usize,
-            )?;
-        }
-
-        // ========================================================
-        // PATCH CATCH -> FINALLY / END
-        // ========================================================
-
-        if let Some(jump) = catch_end_jump {
-            let target = finally_ip
-                .unwrap_or(self.chunk.code.len());
-
-            self.patch_jump_to(
-                jump,
-                target,
-            )?;
-        }
-
-        // ========================================================
-        // PATCH TRY -> FINALLY / END
-        // ========================================================
-
-        let normal_target = finally_ip
-            .unwrap_or(self.chunk.code.len());
-
-        self.patch_jump_to(
-            normal_end_jump,
-            normal_target,
-        )?;
-
-        Ok(())
+    if catch_body.is_some() {
+        self.patch_u16(catch_operand, catch_ip)?;
+    } else {
+        self.patch_u16(catch_operand, u16::MAX as usize)?;
     }
+
+    // ========================================================
+    // PATCH FINALLY
+    // ========================================================
+
+    if let Some(ip) = finally_ip {
+        self.patch_u16(finally_operand, ip)?;
+    } else {
+        self.patch_u16(finally_operand, u16::MAX as usize)?;
+    }
+
+    // ========================================================
+    // CATCH -> FINALLY / END
+    // ========================================================
+
+    if let Some(jump) = catch_end_jump {
+        let target = finally_ip.unwrap_or(self.chunk.code.len());
+        self.patch_jump_to(jump, target)?;
+    }
+
+    // ========================================================
+    // TRY -> FINALLY / END
+    // ========================================================
+
+    let normal_target = finally_ip.unwrap_or(self.chunk.code.len());
+    self.patch_jump_to(normal_end_jump, normal_target)?;
+
+    Ok(())
+}
 
     // ============================================================
     // PATCH ABSOLUTE JUMP
     // ============================================================
 
-    fn patch_jump_to(
-        &mut self,
-        offset: usize,
-        target: usize,
-    ) -> Result<(), CompileError> {
+    fn patch_jump_to(&mut self, offset: usize, target: usize) -> Result<(), CompileError> {
         if offset + 1 >= self.chunk.code.len() {
             return Err(CompileError::InvalidJump);
         }
 
-        let instruction_end = offset
-            .checked_add(2)
-            .ok_or(CompileError::InvalidJump)?;
+        let instruction_end = offset.checked_add(2).ok_or(CompileError::InvalidJump)?;
 
         if target < instruction_end {
             return Err(CompileError::InvalidJump);
@@ -456,18 +329,14 @@ impl Compiler {
             .ok_or(CompileError::InvalidJump)?;
 
         if distance > u16::MAX as usize {
-            return Err(
-                CompileError::JumpTooLarge
-            );
+            return Err(CompileError::JumpTooLarge);
         }
 
         let distance = distance as u16;
 
-        self.chunk.code[offset] =
-            (distance >> 8) as u8;
+        self.chunk.code[offset] = (distance >> 8) as u8;
 
-        self.chunk.code[offset + 1] =
-            (distance & 0xff) as u8;
+        self.chunk.code[offset + 1] = (distance & 0xff) as u8;
 
         Ok(())
     }
@@ -482,53 +351,32 @@ impl Compiler {
         arms: &[MatchArm],
     ) -> Result<(), CompileError> {
         if arms.is_empty() {
-            return Err(
-                CompileError::InternalCompilerError(
-                    "match sans arm".to_string(),
-                ),
-            );
+            return Err(CompileError::InternalCompilerError(
+                "match sans arm".to_string(),
+            ));
         }
 
         self.begin_scope();
 
-        let subject_name = format!(
-            "__match_subject_{}",
-            self.context
-                .borrow()
-                .locals
-                .len()
-        );
+        let subject_name = format!("__match_subject_{}", self.context.borrow().locals.len());
 
-        self.compile_local_var(
-            &subject_name,
-            Some(value),
-            false,
-        )?;
+        self.compile_local_var(&subject_name, Some(value), false)?;
 
-        let subject_depth =
-            self.scope_depth;
+        let subject_depth = self.scope_depth;
 
-        let mut end_jumps =
-            Vec::with_capacity(arms.len());
+        let mut end_jumps = Vec::with_capacity(arms.len());
 
         for arm in arms {
             self.begin_scope();
 
-            let pattern_false_jump =
-                self.compile_match_pattern(
-                    &subject_name,
-                    &arm.pattern,
-                )?;
+            let pattern_false_jump = self.compile_match_pattern(&subject_name, &arm.pattern)?;
 
             self.emit_opcode(OpCode::Pop);
 
             if let Some(guard) = &arm.guard {
                 self.compile_expression(guard)?;
 
-                let guard_false_jump =
-                    self.emit_jump(
-                        OpCode::JumpIfFalse,
-                    );
+                let guard_false_jump = self.emit_jump(OpCode::JumpIfFalse);
 
                 self.emit_opcode(OpCode::Pop);
 
@@ -536,54 +384,37 @@ impl Compiler {
                     self.compile_statement(statement)?;
                 }
 
-                self.emit_scope_cleanup(
-                    subject_depth,
-                );
+                self.emit_scope_cleanup(subject_depth);
 
-                let end_jump =
-                    self.emit_jump(OpCode::Jump);
+                let end_jump = self.emit_jump(OpCode::Jump);
 
                 end_jumps.push(end_jump);
 
-                self.patch_jump(
-                    guard_false_jump,
-                )?;
+                self.patch_jump(guard_false_jump)?;
 
                 self.emit_opcode(OpCode::Pop);
 
-                self.emit_scope_cleanup(
-                    subject_depth,
-                );
+                self.emit_scope_cleanup(subject_depth);
 
-                let next_arm_jump =
-                    self.emit_jump(OpCode::Jump);
+                let next_arm_jump = self.emit_jump(OpCode::Jump);
 
-                self.patch_jump(
-                    pattern_false_jump,
-                )?;
+                self.patch_jump(pattern_false_jump)?;
 
                 self.emit_opcode(OpCode::Pop);
 
-                self.patch_jump(
-                    next_arm_jump,
-                )?;
+                self.patch_jump(next_arm_jump)?;
             } else {
                 for statement in &arm.body {
                     self.compile_statement(statement)?;
                 }
 
-                self.emit_scope_cleanup(
-                    subject_depth,
-                );
+                self.emit_scope_cleanup(subject_depth);
 
-                let end_jump =
-                    self.emit_jump(OpCode::Jump);
+                let end_jump = self.emit_jump(OpCode::Jump);
 
                 end_jumps.push(end_jump);
 
-                self.patch_jump(
-                    pattern_false_jump,
-                )?;
+                self.patch_jump(pattern_false_jump)?;
 
                 self.emit_opcode(OpCode::Pop);
             }
@@ -609,34 +440,19 @@ impl Compiler {
         subject_name: &str,
         pattern: &Pattern,
     ) -> Result<usize, CompileError> {
-        let subject =
-            Expression::Variable(
-                subject_name.to_string(),
-            );
+        let subject = Expression::Variable(subject_name.to_string());
 
-        let test_false_jump =
-            self.compile_pattern_test_expression(
-                &subject,
-                pattern,
-            )?;
+        let test_false_jump = self.compile_pattern_test_expression(&subject, pattern)?;
 
         self.emit_opcode(OpCode::Pop);
 
-        self.compile_pattern_bindings(
-            &subject,
-            pattern,
-        )?;
+        self.compile_pattern_bindings(&subject, pattern)?;
 
         self.emit_opcode(OpCode::True);
 
-        let final_false_jump =
-            self.emit_jump(
-                OpCode::JumpIfFalse,
-            );
+        let final_false_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-        self.patch_jump(
-            test_false_jump,
-        )?;
+        self.patch_jump(test_false_jump)?;
 
         Ok(final_false_jump)
     }
@@ -654,59 +470,34 @@ impl Compiler {
             Pattern::Wildcard => {
                 self.emit_opcode(OpCode::True);
 
-                Ok(self.emit_jump(
-                    OpCode::JumpIfFalse,
-                ))
+                Ok(self.emit_jump(OpCode::JumpIfFalse))
             }
 
             Pattern::Binding(_) => {
                 self.emit_opcode(OpCode::True);
 
-                Ok(self.emit_jump(
-                    OpCode::JumpIfFalse,
-                ))
+                Ok(self.emit_jump(OpCode::JumpIfFalse))
             }
 
             Pattern::Literal(literal) => {
                 self.compile_expression(expression)?;
 
-                self.compile_literal_pattern(
-                    literal,
-                )?;
+                self.compile_literal_pattern(literal)?;
 
                 self.emit_opcode(OpCode::Equal);
 
-                Ok(self.emit_jump(
-                    OpCode::JumpIfFalse,
-                ))
+                Ok(self.emit_jump(OpCode::JumpIfFalse))
             }
 
-            Pattern::Or(patterns) => {
-                self.compile_or_pattern_expression(
-                    expression,
-                    patterns,
-                )
-            }
+            Pattern::Or(patterns) => self.compile_or_pattern_expression(expression, patterns),
 
             Pattern::Range {
                 start,
                 end,
                 inclusive,
-            } => {
-                self.compile_range_pattern_expression(
-                    expression,
-                    start,
-                    end,
-                    *inclusive,
-                )
-            }
+            } => self.compile_range_pattern_expression(expression, start, end, *inclusive),
 
-            Pattern::Array(patterns) => {
-                self.compile_array_pattern_expression(
-                    expression,
-                    patterns,
-                )
-            }
+            Pattern::Array(patterns) => self.compile_array_pattern_expression(expression, patterns),
         }
     }
 
@@ -714,47 +505,24 @@ impl Compiler {
     // LITERAL
     // ============================================================
 
-    fn compile_literal_pattern(
-        &mut self,
-        literal: &Literal,
-    ) -> Result<(), CompileError> {
+    fn compile_literal_pattern(&mut self, literal: &Literal) -> Result<(), CompileError> {
         match literal {
             Literal::Integer(value) => {
-                let constant =
-                    self.make_constant(
-                        Value::Integer(*value),
-                    )?;
+                let constant = self.make_constant(Value::Integer(*value))?;
 
-                self.emit_bytes(
-                    OpCode::Constant,
-                    constant,
-                );
+                self.emit_bytes(OpCode::Constant, constant);
             }
 
             Literal::Float(value) => {
-                let constant =
-                    self.make_constant(
-                        Value::Float(*value),
-                    )?;
+                let constant = self.make_constant(Value::Float(*value))?;
 
-                self.emit_bytes(
-                    OpCode::Constant,
-                    constant,
-                );
+                self.emit_bytes(OpCode::Constant, constant);
             }
 
             Literal::String(value) => {
-                let constant =
-                    self.make_constant(
-                        Value::new_string(
-                            value.clone(),
-                        ),
-                    )?;
+                let constant = self.make_constant(Value::new_string(value.clone()))?;
 
-                self.emit_bytes(
-                    OpCode::Constant,
-                    constant,
-                );
+                self.emit_bytes(OpCode::Constant, constant);
             }
 
             Literal::Bool(true) => {
@@ -783,45 +551,27 @@ impl Compiler {
         patterns: &[Pattern],
     ) -> Result<usize, CompileError> {
         if patterns.is_empty() {
-            return Err(
-                CompileError::InternalCompilerError(
-                    "Pattern OR vide".to_string(),
-                ),
-            );
+            return Err(CompileError::InternalCompilerError(
+                "Pattern OR vide".to_string(),
+            ));
         }
 
-        if patterns
-            .iter()
-            .any(Self::pattern_contains_binding)
-        {
-            return Err(
-                CompileError::InternalCompilerError(
-                    "Binding directement dans un pattern OR non supporte"
-                        .to_string(),
-                ),
-            );
+        if patterns.iter().any(Self::pattern_contains_binding) {
+            return Err(CompileError::InternalCompilerError(
+                "Binding directement dans un pattern OR non supporte".to_string(),
+            ));
         }
 
-        let mut success_jumps =
-            Vec::new();
+        let mut success_jumps = Vec::new();
 
-        for pattern in
-            patterns.iter().take(
-                patterns.len() - 1
-            )
-        {
-            let false_jump =
-                self.compile_pattern_test_expression(
-                    expression,
-                    pattern,
-                )?;
+        for pattern in patterns.iter().take(patterns.len() - 1) {
+            let false_jump = self.compile_pattern_test_expression(expression, pattern)?;
 
             self.emit_opcode(OpCode::Pop);
 
             self.emit_opcode(OpCode::True);
 
-            let success_jump =
-                self.emit_jump(OpCode::Jump);
+            let success_jump = self.emit_jump(OpCode::Jump);
 
             success_jumps.push(success_jump);
 
@@ -830,14 +580,9 @@ impl Compiler {
             self.emit_opcode(OpCode::Pop);
         }
 
-        let last_pattern =
-            &patterns[patterns.len() - 1];
+        let last_pattern = &patterns[patterns.len() - 1];
 
-        let last_false_jump =
-            self.compile_pattern_test_expression(
-                expression,
-                last_pattern,
-            )?;
+        let last_false_jump = self.compile_pattern_test_expression(expression, last_pattern)?;
 
         for success_jump in success_jumps {
             self.patch_jump(success_jump)?;
@@ -861,12 +606,9 @@ impl Compiler {
             Pattern::Literal(literal) => literal,
 
             _ => {
-                return Err(
-                    CompileError::InternalCompilerError(
-                        "Le debut du range doit etre un litteral"
-                            .to_string(),
-                    ),
-                );
+                return Err(CompileError::InternalCompilerError(
+                    "Le debut du range doit etre un litteral".to_string(),
+                ));
             }
         };
 
@@ -874,36 +616,26 @@ impl Compiler {
             Pattern::Literal(literal) => literal,
 
             _ => {
-                return Err(
-                    CompileError::InternalCompilerError(
-                        "La fin du range doit etre un litteral"
-                            .to_string(),
-                    ),
-                );
+                return Err(CompileError::InternalCompilerError(
+                    "La fin du range doit etre un litteral".to_string(),
+                ));
             }
         };
 
         self.compile_expression(expression)?;
 
-        self.compile_literal_pattern(
-            start_literal,
-        )?;
+        self.compile_literal_pattern(start_literal)?;
 
         self.emit_opcode(OpCode::Less);
         self.emit_opcode(OpCode::Not);
 
-        let lower_false_jump =
-            self.emit_jump(
-                OpCode::JumpIfFalse,
-            );
+        let lower_false_jump = self.emit_jump(OpCode::JumpIfFalse);
 
         self.emit_opcode(OpCode::Pop);
 
         self.compile_expression(expression)?;
 
-        self.compile_literal_pattern(
-            end_literal,
-        )?;
+        self.compile_literal_pattern(end_literal)?;
 
         if inclusive {
             self.emit_opcode(OpCode::Greater);
@@ -912,41 +644,25 @@ impl Compiler {
             self.emit_opcode(OpCode::Less);
         }
 
-        let upper_false_jump =
-            self.emit_jump(
-                OpCode::JumpIfFalse,
-            );
+        let upper_false_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-        let result_jump =
-            self.emit_jump(OpCode::Jump);
+        let result_jump = self.emit_jump(OpCode::Jump);
 
-        self.patch_jump(
-            lower_false_jump,
-        )?;
+        self.patch_jump(lower_false_jump)?;
 
-        let lower_result_jump =
-            self.emit_jump(OpCode::Jump);
+        let lower_result_jump = self.emit_jump(OpCode::Jump);
 
-        self.patch_jump(
-            upper_false_jump,
-        )?;
+        self.patch_jump(upper_false_jump)?;
 
-        let upper_result_jump =
-            self.emit_jump(OpCode::Jump);
+        let upper_result_jump = self.emit_jump(OpCode::Jump);
 
         self.patch_jump(result_jump)?;
 
-        self.patch_jump(
-            lower_result_jump,
-        )?;
+        self.patch_jump(lower_result_jump)?;
 
-        self.patch_jump(
-            upper_result_jump,
-        )?;
+        self.patch_jump(upper_result_jump)?;
 
-        Ok(self.emit_jump(
-            OpCode::JumpIfFalse,
-        ))
+        Ok(self.emit_jump(OpCode::JumpIfFalse))
     }
 
     // ============================================================
@@ -960,115 +676,68 @@ impl Compiler {
     ) -> Result<usize, CompileError> {
         self.compile_expression(expression)?;
 
-        self.emit_opcode(
-            OpCode::ArrayLength,
-        );
+        self.emit_opcode(OpCode::ArrayLength);
 
-        let length_constant =
-            self.make_constant(
-                Value::Integer(
-                    patterns.len() as i64,
-                ),
-            )?;
+        let length_constant = self.make_constant(Value::Integer(patterns.len() as i64))?;
 
-        self.emit_bytes(
-            OpCode::Constant,
-            length_constant,
-        );
+        self.emit_bytes(OpCode::Constant, length_constant);
 
         self.emit_opcode(OpCode::Equal);
 
-        let length_false_jump =
-            self.emit_jump(
-                OpCode::JumpIfFalse,
-            );
+        let length_false_jump = self.emit_jump(OpCode::JumpIfFalse);
 
         self.emit_opcode(OpCode::Pop);
 
-        let mut element_false_jumps =
-            Vec::new();
+        let mut element_false_jumps = Vec::new();
 
-        for (index, pattern) in
-            patterns.iter().enumerate()
-        {
-            let element_expression =
-                Expression::Index {
-                    object: Box::new(
-                        expression.clone(),
-                    ),
-                    index: Box::new(
-                        Expression::Literal(
-                            Literal::Integer(
-                                index as i64,
-                            ),
-                        ),
-                    ),
-                };
+        for (index, pattern) in patterns.iter().enumerate() {
+            let element_expression = Expression::Index {
+                object: Box::new(expression.clone()),
+                index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
+            };
 
-            let false_jump =
-                self.compile_pattern_test_expression(
-                    &element_expression,
-                    pattern,
-                )?;
+            let false_jump = self.compile_pattern_test_expression(&element_expression, pattern)?;
 
             self.emit_opcode(OpCode::Pop);
 
-            element_false_jumps.push(
-                false_jump,
-            );
+            element_false_jumps.push(false_jump);
         }
 
         self.emit_opcode(OpCode::True);
 
-        let success_jump =
-            self.emit_jump(OpCode::Jump);
+        let success_jump = self.emit_jump(OpCode::Jump);
 
-        self.patch_jump(
-            length_false_jump,
-        )?;
+        self.patch_jump(length_false_jump)?;
 
         self.emit_opcode(OpCode::Pop);
 
         self.emit_opcode(OpCode::False);
 
-        let length_result_jump =
-            self.emit_jump(OpCode::Jump);
+        let length_result_jump = self.emit_jump(OpCode::Jump);
 
-        let mut element_result_jumps =
-            Vec::new();
+        let mut element_result_jumps = Vec::new();
 
-        for false_jump in
-            element_false_jumps
-        {
+        for false_jump in element_false_jumps {
             self.patch_jump(false_jump)?;
 
             self.emit_opcode(OpCode::Pop);
 
             self.emit_opcode(OpCode::False);
 
-            let result_jump =
-                self.emit_jump(OpCode::Jump);
+            let result_jump = self.emit_jump(OpCode::Jump);
 
-            element_result_jumps.push(
-                result_jump,
-            );
+            element_result_jumps.push(result_jump);
         }
 
         self.patch_jump(success_jump)?;
 
-        self.patch_jump(
-            length_result_jump,
-        )?;
+        self.patch_jump(length_result_jump)?;
 
-        for jump in
-            element_result_jumps
-        {
+        for jump in element_result_jumps {
             self.patch_jump(jump)?;
         }
 
-        Ok(self.emit_jump(
-            OpCode::JumpIfFalse,
-        ))
+        Ok(self.emit_jump(OpCode::JumpIfFalse))
     }
 
     // ============================================================
@@ -1081,58 +750,32 @@ impl Compiler {
         pattern: &Pattern,
     ) -> Result<(), CompileError> {
         match pattern {
-            Pattern::Wildcard
-            | Pattern::Literal(_)
-            | Pattern::Range { .. } => Ok(()),
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => Ok(()),
 
             Pattern::Binding(name) => {
-                self.compile_local_var(
-                    name,
-                    Some(expression),
-                    true,
-                )?;
+                self.compile_local_var(name, Some(expression), true)?;
 
                 Ok(())
             }
 
             Pattern::Or(patterns) => {
-                if patterns
-                    .iter()
-                    .any(Self::pattern_contains_binding)
-                {
-                    return Err(
-                        CompileError::InternalCompilerError(
-                            "Binding directement dans un pattern OR non supporte"
-                                .to_string(),
-                        ),
-                    );
+                if patterns.iter().any(Self::pattern_contains_binding) {
+                    return Err(CompileError::InternalCompilerError(
+                        "Binding directement dans un pattern OR non supporte".to_string(),
+                    ));
                 }
 
                 Ok(())
             }
 
             Pattern::Array(patterns) => {
-                for (index, child) in
-                    patterns.iter().enumerate()
-                {
-                    let element_expression =
-                        Expression::Index {
-                            object: Box::new(
-                                expression.clone(),
-                            ),
-                            index: Box::new(
-                                Expression::Literal(
-                                    Literal::Integer(
-                                        index as i64,
-                                    ),
-                                ),
-                            ),
-                        };
+                for (index, child) in patterns.iter().enumerate() {
+                    let element_expression = Expression::Index {
+                        object: Box::new(expression.clone()),
+                        index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
+                    };
 
-                    self.compile_pattern_bindings(
-                        &element_expression,
-                        child,
-                    )?;
+                    self.compile_pattern_bindings(&element_expression, child)?;
                 }
 
                 Ok(())
@@ -1144,33 +787,19 @@ impl Compiler {
     // HELPERS
     // ============================================================
 
-    fn pattern_contains_binding(
-        pattern: &Pattern,
-    ) -> bool {
+    fn pattern_contains_binding(pattern: &Pattern) -> bool {
         match pattern {
             Pattern::Binding(_) => true,
 
-            Pattern::Wildcard
-            | Pattern::Literal(_) => false,
+            Pattern::Wildcard | Pattern::Literal(_) => false,
 
-            Pattern::Or(patterns) => patterns
-                .iter()
-                .any(Self::pattern_contains_binding),
+            Pattern::Or(patterns) => patterns.iter().any(Self::pattern_contains_binding),
 
-            Pattern::Range {
-                start,
-                end,
-                ..
-            } => {
-                Self::pattern_contains_binding(start)
-                    || Self::pattern_contains_binding(
-                        end,
-                    )
+            Pattern::Range { start, end, .. } => {
+                Self::pattern_contains_binding(start) || Self::pattern_contains_binding(end)
             }
 
-            Pattern::Array(patterns) => patterns
-                .iter()
-                .any(Self::pattern_contains_binding),
+            Pattern::Array(patterns) => patterns.iter().any(Self::pattern_contains_binding),
         }
     }
 
@@ -1183,66 +812,32 @@ impl Compiler {
         module: &ModulePath,
         items: &[ImportItem],
     ) -> Result<(), CompileError> {
-        if module.parts.is_empty()
-            || items.is_empty()
-        {
-            return Err(
-                CompileError::InvalidImport
-            );
+        if module.parts.is_empty() || items.is_empty() {
+            return Err(CompileError::InvalidImport);
         }
 
-        let module_name =
-            module.parts.join(".");
+        let module_name = module.parts.join(".");
 
         for item in items {
-            let binding_name =
-                item.alias
-                    .as_deref()
-                    .unwrap_or(&item.name);
+            let binding_name = item.alias.as_deref().unwrap_or(&item.name);
 
-            if self
-                .globals
-                .borrow()
-                .contains_key(binding_name)
-            {
-                return Err(
-                    CompileError::VariableAlreadyDeclared(
-                        binding_name.to_string(),
-                    ),
-                );
+            if self.globals.borrow().contains_key(binding_name) {
+                return Err(CompileError::VariableAlreadyDeclared(
+                    binding_name.to_string(),
+                ));
             }
 
-            let module_constant =
-                self.make_constant(
-                    Value::new_string(
-                        module_name.clone(),
-                    ),
-                )?;
+            let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
 
-            self.emit_bytes(
-                OpCode::Import,
-                module_constant,
-            );
+            self.emit_bytes(OpCode::Import, module_constant);
 
-            let property_constant =
-                self.identifier_constant(
-                    &item.name,
-                )?;
+            let property_constant = self.identifier_constant(&item.name)?;
 
-            self.emit_bytes(
-                OpCode::GetProperty,
-                property_constant,
-            );
+            self.emit_bytes(OpCode::GetProperty, property_constant);
 
-            let binding_constant =
-                self.identifier_constant(
-                    binding_name,
-                )?;
+            let binding_constant = self.identifier_constant(binding_name)?;
 
-            self.emit_bytes(
-                OpCode::DefineGlobal,
-                binding_constant,
-            );
+            self.emit_bytes(OpCode::DefineGlobal, binding_constant);
 
             self.globals.borrow_mut().insert(
                 binding_name.to_string(),
@@ -1256,65 +851,30 @@ impl Compiler {
         Ok(())
     }
 
-    pub(crate) fn compile_import(
-        &mut self,
-        path: &[String],
-    ) -> Result<(), CompileError> {
+    pub(crate) fn compile_import(&mut self, path: &[String]) -> Result<(), CompileError> {
         if path.is_empty() {
-            return Err(
-                CompileError::InvalidImport
-            );
+            return Err(CompileError::InvalidImport);
         }
 
-        let module_name =
-            path.join(".");
+        let module_name = path.join(".");
 
-        let binding_name =
-            path.first()
-                .ok_or(
-                    CompileError::InvalidImport
-                )?;
+        let binding_name = path.first().ok_or(CompileError::InvalidImport)?;
 
-        if self
-            .imported_modules
-            .contains(binding_name)
-        {
+        if self.imported_modules.contains(binding_name) {
             return Ok(());
         }
 
-        if self
-            .globals
-            .borrow()
-            .contains_key(binding_name)
-        {
-            return Err(
-                CompileError::VariableAlreadyDeclared(
-                    binding_name.clone(),
-                ),
-            );
+        if self.globals.borrow().contains_key(binding_name) {
+            return Err(CompileError::VariableAlreadyDeclared(binding_name.clone()));
         }
 
-        let module_constant =
-            self.make_constant(
-                Value::new_string(
-                    module_name,
-                ),
-            )?;
+        let module_constant = self.make_constant(Value::new_string(module_name))?;
 
-        self.emit_bytes(
-            OpCode::Import,
-            module_constant,
-        );
+        self.emit_bytes(OpCode::Import, module_constant);
 
-        let name_constant =
-            self.identifier_constant(
-                binding_name,
-            )?;
+        let name_constant = self.identifier_constant(binding_name)?;
 
-        self.emit_bytes(
-            OpCode::DefineGlobal,
-            name_constant,
-        );
+        self.emit_bytes(OpCode::DefineGlobal, name_constant);
 
         self.globals.borrow_mut().insert(
             binding_name.clone(),
@@ -1324,8 +884,7 @@ impl Compiler {
             },
         );
 
-        self.imported_modules
-            .insert(binding_name.clone());
+        self.imported_modules.insert(binding_name.clone());
 
         Ok(())
     }
@@ -1334,42 +893,26 @@ impl Compiler {
     // EXPORT
     // ============================================================
 
-    pub(crate) fn compile_export(
-        &mut self,
-        statement: &Statement,
-    ) -> Result<(), CompileError> {
-        if self.in_function
-            || self.scope_depth != 0
-        {
-            return Err(
-                CompileError::InvalidExport
-            );
+    pub(crate) fn compile_export(&mut self, statement: &Statement) -> Result<(), CompileError> {
+        if self.in_function || self.scope_depth != 0 {
+            return Err(CompileError::InvalidExport);
         }
 
         match statement {
             Statement::Let { name, .. } => {
                 self.register_export(name)?;
 
-                self.compile_statement(
-                    statement,
-                )?;
+                self.compile_statement(statement)?;
             }
 
-            Statement::Function {
-                name,
-                ..
-            } => {
+            Statement::Function { name, .. } => {
                 self.register_export(name)?;
 
-                self.compile_statement(
-                    statement,
-                )?;
+                self.compile_statement(statement)?;
             }
 
             _ => {
-                return Err(
-                    CompileError::InvalidExport
-                );
+                return Err(CompileError::InvalidExport);
             }
         }
 

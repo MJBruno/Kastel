@@ -151,17 +151,13 @@ impl Compiler {
         }
 
         match value {
-            Some(expression) => {
-                self.compile_expression(expression)?;
-            }
-
-            None => {
-                self.emit_opcode(OpCode::Nil);
-            }
+            Some(expression) => self.compile_expression(expression)?,
+            None => self.emit_opcode(OpCode::Nil),
         }
 
-        self.emit_opcode(OpCode::Return);
+        self.compile_active_finally()?;
 
+        self.emit_opcode(OpCode::Return);
         Ok(())
     }
 }

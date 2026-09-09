@@ -14,55 +14,41 @@ use super::loops::LoopContext;
 use super::variables::Global;
 
 #[allow(dead_code)]
-/// Compile l'AST du langage en bytecode exécutable par la machine virtuelle.
-/// Le compilateur gère notamment les variables, les fonctions, les closures,
-/// les portées lexicales, les conditions, les boucles et les expressions.
-///
-/// L'implémentation est répartie sur plusieurs fichiers (voir `compile/mod.rs`) :
-/// chacun ajoute un bloc `impl Compiler` dédié à une responsabilité précise
-/// (variables, upvalues, scopes, émission de bytecode, déclarations, fonctions,
-/// expressions, contrôle de flux, boucles, statements). Ce fichier ne contient
-/// que la définition de la struct et son API d'entrée/sortie.
 pub struct Compiler {
-    /// Table partagée des variables globales et de leurs constantes de nom.
     pub(crate) globals: Rc<RefCell<HashMap<String, Global>>>,
-    /// Chunk contenant le bytecode et les constantes produits par ce compilateur.
     pub(crate) chunk: Chunk,
-    /// Contexte lexical courant utilisé pour résoudre les variables et captures.
     pub(crate) context: CompilerContextRef,
-    /// Profondeur de portée lexicale actuellement compilée.
     pub(crate) scope_depth: usize,
-    /// Pile des boucles imbriquées actuellement en cours de compilation.
     pub(crate) loops: Vec<LoopContext>,
-    /// Nom de la fonction actuellement compilée, lorsqu'il y en a une.
     pub(crate) function_name: Option<String>,
-    /// Nombre de paramètres de la fonction courante.
     pub(crate) function_arity: u8,
-    /// Indique si le compilateur se trouve à l'intérieur d'une fonction.
     pub(crate) in_function: bool,
 
     pub(crate) exports: Vec<String>,
     pub(crate) imported_modules: HashSet<String>,
 
-    /// Position source (ligne, colonne) du statement en cours de
-    /// compilation. Mise à jour uniquement au passage d'un
-    /// `Statement::Positioned` (voir statements.rs) — c'est ce que lit
-    /// `emit_byte` pour alimenter `chunk.lines`/`chunk.columns`, et ce que
-    /// `compile()`/`compile_module()`/`compile_function()` utilisent pour
-    /// enrichir un `CompileError` avec sa position au moment où il
-    /// s'échappe vers l'appelant.
+    /*
+     * Finally actifs dans le contexte lexical courant.
+     *
+     * Le dernier élément correspond au finally le plus interne.
+     *
+     * Ils sont utilisés lorsqu'un return traverse un try.
+     */
+    pub(crate) finally_blocks: Vec<Vec<Statement>>,
+
     pub(crate) current_line: usize,
     pub(crate) current_column: usize,
 }
 
 #[allow(dead_code)]
 impl Compiler {
-    /// Crée un compilateur racine prêt à compiler un script.
     pub fn new() -> Self {
         Self {
             globals: Rc::new(RefCell::new(HashMap::new())),
             chunk: Chunk::new(),
-            context: Rc::new(RefCell::new(CompilerContext::new())),
+            context: Rc::new(RefCell::new(
+                CompilerContext::new(),
+            )),
 
             scope_depth: 0,
             loops: Vec::new(),
@@ -70,17 +56,17 @@ impl Compiler {
             function_name: None,
             function_arity: 0,
             in_function: false,
+
             exports: Vec::new(),
             imported_modules: HashSet::new(),
+
+            finally_blocks: Vec::new(),
 
             current_line: 0,
             current_column: 0,
         }
     }
 
-    /// Crée un compilateur indépendant pour une nouvelle fonction.
-    /// Le nouveau compilateur partage les globales avec son parent et conserve
-    /// une référence vers le contexte englobant afin de résoudre les captures.
     pub(crate) fn new_function(
         name: String,
         globals: Rc<RefCell<HashMap<String, Global>>>,
@@ -89,7 +75,9 @@ impl Compiler {
         Self {
             globals,
             chunk: Chunk::new(),
-            context: Rc::new(RefCell::new(CompilerContext::new_child(enclosing))),
+            context: Rc::new(RefCell::new(
+                CompilerContext::new_child(enclosing),
+            )),
 
             scope_depth: 0,
             loops: Vec::new(),
@@ -97,26 +85,43 @@ impl Compiler {
             function_name: Some(name),
             function_arity: 0,
             in_function: true,
+
             exports: Vec::new(),
-imported_modules: HashSet::new(),
+            imported_modules: HashSet::new(),
+
+            /*
+             * Une fonction possède sa propre pile de finally.
+             *
+             * Elle ne doit pas hériter directement des finally
+             * du compilateur parent.
+             */
+            finally_blocks: Vec::new(),
+
             current_line: 0,
             current_column: 0,
         }
     }
 
     // ============================================================
-    //                      MAIN_COMPILER
+    // MAIN COMPILER
     // ============================================================
 
-    pub fn compile(self, statements: &[Statement]) -> Result<Function, CompileError> {
-        let (function, _) = self.compile_module(statements)?;
+    pub fn compile(
+        self,
+        statements: &[Statement],
+    ) -> Result<Function, CompileError> {
+        let (function, _) =
+            self.compile_module(statements)?;
 
         Ok(function)
     }
 
-    /// Enregistre une fonction native dans la table des symboles globaux.
-    pub fn define_native(&mut self, name: &str) -> Result<(), CompileError> {
-        let constant = self.identifier_constant(name)?;
+    pub fn define_native(
+        &mut self,
+        name: &str,
+    ) -> Result<(), CompileError> {
+        let constant =
+            self.identifier_constant(name)?;
 
         self.globals.borrow_mut().insert(
             name.to_string(),
@@ -130,24 +135,21 @@ imported_modules: HashSet::new(),
     }
 
     // ============================================================
-    //                      CONTEXTE
+    // CONTEXTE
     // ============================================================
 
-    /// Retourne une copie de la table des variables locales courantes.
     pub(crate) fn locals(&self) -> LocalTable {
         self.context.borrow().locals.clone()
     }
 
-    /// Retourne une copie des upvalues du contexte courant.
     pub(crate) fn upvalues(&self) -> Vec<Upvalue> {
         self.context.borrow().upvalues.clone()
     }
 
-    /// Enveloppe une erreur avec la position source courante — sauf si
-    /// elle est déjà enveloppée (une erreur remontant d'une fonction
-    /// imbriquée compilée séparément, voir functions.rs::compile_function,
-    /// porte déjà sa position, plus précise que celle de l'appelant).
-    pub(crate) fn attach_location(&self, error: CompileError) -> CompileError {
+    pub(crate) fn attach_location(
+        &self,
+        error: CompileError,
+    ) -> CompileError {
         match error {
             CompileError::WithLocation { .. } => error,
 
@@ -159,20 +161,100 @@ imported_modules: HashSet::new(),
         }
     }
 
+    // ============================================================
+    // FINALLY
+    // ============================================================
+
+    pub(crate) fn push_finally_block(
+        &mut self,
+        body: &[Statement],
+    ) {
+        self.finally_blocks.push(
+            body.to_vec(),
+        );
+    }
+
+    pub(crate) fn pop_finally_block(
+        &mut self,
+    ) {
+        self.finally_blocks.pop();
+    }
+
+    /*
+     * Compile tous les finally actuellement actifs.
+     *
+     * Ordre :
+     *
+     *     finally intérieur
+     *     finally extérieur
+     *
+     * Exemple :
+     *
+     *     try {
+     *         try {
+     *             return 10;
+     *         } finally {
+     *             println("inner");
+     *         }
+     *     } finally {
+     *         println("outer");
+     *     }
+     *
+     * produit :
+     *
+     *     inner
+     *     outer
+     *     Return
+     */
+    pub(crate) fn compile_active_finally(
+        &mut self,
+    ) -> Result<(), CompileError> {
+        let finally_blocks =
+            self.finally_blocks.clone();
+
+        for body in finally_blocks.iter().rev() {
+            self.begin_scope();
+
+            for statement in body {
+                self.compile_statement(statement)?;
+            }
+
+            self.end_scope();
+        }
+
+        Ok(())
+    }
+
+    // ============================================================
+    // MODULE
+    // ============================================================
+
     pub fn compile_module(
         mut self,
         statements: &[Statement],
     ) -> Result<(Function, Vec<String>), CompileError> {
         for statement in statements {
-            if let Err(error) = self.compile_statement(statement) {
-                return Err(self.attach_location(error));
+            if let Err(error) =
+                self.compile_statement(statement)
+            {
+                return Err(
+                    self.attach_location(error)
+                );
             }
         }
 
         self.emit_opcode(OpCode::Halt);
 
-        let local_count = u8::try_from(self.context.borrow().locals.max_slots())
-            .map_err(|_| CompileError::TooManyLocals)?;
+        let local_count =
+            u8::try_from(
+                self.context
+                    .borrow()
+                    .locals
+                    .max_slots(),
+            )
+            .map_err(
+                |_| CompileError::TooManyLocals
+            )?;
 
         let function = Function {
             name: "<script>".to_string(),
