@@ -1,52 +1,18 @@
-let text = "Kastel";
+let empty_list = [].to_iterator();
 
-println(text.length());
-println(text.upper());
-println(text.lower());
-
-let numbers = [1, 2, 3, 4, 5];
-
-let iterator = numbers.to_iterator();
-
-println(iterator.next());
-println(iterator.peek());
-println(iterator.next());
-
-let rest = iterator.collect();
-
-println(rest);
+println(empty_list.has_next());
 
 
-let filtered = range(10)
-    .filter(x => x % 2 == 0)
-    .map(x => x * 10)
-    .take(3)
-    .collect();
+let empty_range = range(0);
 
-println(filtered);
+println(empty_range.has_next());
 
 
-let data = {
-    name: "Bruno",
-    language: "Rust",
-    project: "Kastel"
-};
+let empty_string = "".to_iterator();
 
-println(data.length());
-println(data.get("name"));
-println(data.has("language"));
-println(data.keys());
-println(data.values());
-println(data.items());
+println(empty_string.has_next());
 
 
-data.set("version", 1);
+let empty_dict = {}.to_iterator();
 
-println(data.get_or("missing", "default"));
-
-let copy = data.copy();
-
-copy.set("name", "Kastel");
-
-println(data.get("name"));
-println(copy.get("name"));
+println(empty_dict.has_next());

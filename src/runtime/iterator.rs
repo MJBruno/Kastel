@@ -212,32 +212,28 @@ impl Value {
             }
 
             // ========================================================
-            // OBJECTS
+            // OBJECT
             // ========================================================
             Value::Object(handle) => {
                 match &*handle.borrow() {
-                    // ------------------------------------------------
+                    // -----------------------------------------------
                     // ITERATOR
-                    // ------------------------------------------------
+                    // -----------------------------------------------
                     Object::Iterator(_) => Ok(self.clone()),
 
-                    // ------------------------------------------------
+                    // -----------------------------------------------
                     // ARRAY
-                    // ------------------------------------------------
+                    // -----------------------------------------------
                     Object::Array(_) => Ok(Value::new_array_iterator(handle.clone())),
 
-                    // ------------------------------------------------
+                    // -----------------------------------------------
                     // DICT
-                    //
-                    // dict -> iterator des clés
-                    // ------------------------------------------------
+                    // -----------------------------------------------
                     Object::Dict(_) => Ok(Value::new_dict_iterator(handle.clone())),
 
-                    // ------------------------------------------------
+                    // -----------------------------------------------
                     // STRING
-                    //
-                    // string -> iterator des caractères
-                    // ------------------------------------------------
+                    // -----------------------------------------------
                     Object::String(_) => Ok(Value::new_string_iterator(handle.clone())),
 
                     _ => Err(RuntimeError::NotIterable),
@@ -247,7 +243,6 @@ impl Value {
             _ => Err(RuntimeError::NotIterable),
         }
     }
-
     fn new_dict_iterator(dict: Gc<Object>) -> Value {
         Self::new_iterator(IteratorState::new(IteratorKind::Dict { dict, index: 0 }))
     }
@@ -331,7 +326,20 @@ impl Value {
             | IteratorKind::Skip { .. } => Err(RuntimeError::TypeError),
         }
     }
+    // pub fn is_iterable(value: &Value) -> bool {
+    //     match value {
+    //         Value::Range { .. } => true,
 
+    //         Value::Object(handle) => {
+    //             matches!(
+    //                 &*handle.borrow(),
+    //                 Object::Array(_) | Object::Dict(_) | Object::String(_) | Object::Iterator(_)
+    //             )
+    //         }
+
+    //         _ => false,
+    //     }
+    // }
     pub fn iterator_next(&self) -> Result<Value, RuntimeError> {
         let Value::Object(handle) = self else {
             return Err(RuntimeError::TypeError);

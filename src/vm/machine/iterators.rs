@@ -583,6 +583,14 @@ impl VirtualMachine {
 
                 Ok(receiver.to_iterator()?)
             }
+         // ============================================================
+            //                         to_list()
+            // ============================================================
+            "to_list" => {
+                Self::expect_method_args(args, 1)?;
+
+                self.iterator_collect(&receiver)
+            }
             _ => Err(RuntimeError::ObjectFieldNotFound {
                 name: method.to_string(),
                 suggestion: None,

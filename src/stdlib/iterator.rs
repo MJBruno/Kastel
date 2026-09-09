@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::{object::Object, value::Value},
+    compiler::compiler::Compiler,
+    error::runtime_error::RuntimeError,
+    runtime::value::Value,
 };
 
 /// Convertit une valeur Kastel en entier i64.
@@ -34,35 +36,7 @@ pub fn native_list(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    let value = &args[0];
-
-    match value {
-        Value::Object(handle) => {
-            let object = handle.borrow();
-
-            match &*object {
-                Object::Array(_) => Ok(value.clone()),
-
-                Object::Iterator(_) => {
-                    drop(object);
-
-                    crate::runtime::iterator::drain_to_array(value)
-                }
-
-                Object::Dict(_) | Object::String(_) => {
-                    drop(object);
-
-                    crate::runtime::iterator::drain_to_array(value)
-                }
-
-                _ => Err(RuntimeError::NotIterable),
-            }
-        }
-
-        Value::Range { .. } => crate::runtime::iterator::drain_to_array(value),
-
-        _ => Err(RuntimeError::NotIterable),
-    }
+    crate::runtime::iterator::drain_to_array(&args[0])
 }
 /// Crée un range paresseux.
 ///
@@ -103,18 +77,6 @@ pub fn native_range(args: &[Value]) -> Result<Value, RuntimeError> {
 
     Ok(Value::new_range(start as f64, stop as f64, step as f64))
 }
-
-// Convertit un objet itérable en tableau.
-// pub fn native_list(args: &[Value]) -> Result<Value, RuntimeError> {
-//     if args.len() != 1 {
-//         return Err(RuntimeError::WrongArgumentCount {
-//             expected: 1,
-//             found: args.len(),
-//         });
-//     }
-
-//     crate::runtime::iterator::drain_to_array(&args[0])
-// }
 
 pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("range".to_string(), Value::NativeFunction(native_range));
