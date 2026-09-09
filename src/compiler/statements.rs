@@ -490,90 +490,158 @@ impl Compiler {
     // OR
     // ============================================================
 
-    fn compile_or_pattern(
-        &mut self,
-        subject_name: &str,
-        patterns: &[Pattern],
-    ) -> Result<usize, CompileError> {
-        if patterns.is_empty() {
-            return Err(CompileError::InternalCompilerError(
+
+fn compile_or_pattern(
+    &mut self,
+    subject_name: &str,
+    patterns: &[Pattern],
+) -> Result<usize, CompileError> {
+    if patterns.is_empty() {
+        return Err(
+            CompileError::InternalCompilerError(
                 "Pattern OR vide".to_string(),
-            ));
+            ),
+        );
+    }
+
+    /*
+     * Pour l'instant :
+     *
+     *     1 | 7 | 10
+     *
+     * est supporté.
+     *
+     * Les bindings dans un OR seront ajoutés ensuite.
+     */
+    for pattern in patterns {
+        if Self::pattern_contains_binding(pattern) {
+            return Err(
+                CompileError::InternalCompilerError(
+                    "Binding dans un pattern OR non encore supporté"
+                        .to_string(),
+                ),
+            );
         }
 
-        /*
-         * Tant que les bindings des OR ne sont pas implémentés,
-         * on les refuse explicitement.
-         */
-        for pattern in patterns {
-            if Self::pattern_contains_binding(pattern) {
-                return Err(CompileError::InternalCompilerError(
-                    "Binding dans un pattern OR non encore supporté".to_string(),
-                ));
+        match pattern {
+            Pattern::Literal(_) | Pattern::Wildcard => {}
+
+            _ => {
+                return Err(
+                    CompileError::InternalCompilerError(
+                        "Ce type de pattern n'est pas encore supporté dans OR"
+                            .to_string(),
+                    ),
+                );
             }
         }
+    }
+
+    /*
+     * Les Jump qui correspondent à un succès des alternatives
+     * précédentes seront tous redirigés vers le même point final.
+     */
+    let mut success_jumps = Vec::new();
+
+    /*
+     * Tous les patterns sauf le dernier.
+     *
+     * Exemple :
+     *
+     *     1 | 7 | 10
+     *
+     * produit :
+     *
+     *     test 1
+     *     false -> test 7
+     *     true  -> success
+     *
+     *     test 7
+     *     false -> test 10
+     *     true  -> success
+     */
+    for pattern in patterns.iter().take(patterns.len() - 1) {
+        let false_jump =
+            self.compile_match_pattern(
+                subject_name,
+                pattern,
+            )?;
 
         /*
-         * Cas simple :
+         * Pattern réussi :
          *
-         * 1 | 2 | 3
+         * JumpIfFalse a laissé true.
          */
-        let mut success_jumps = Vec::new();
-
-        for pattern in patterns.iter().take(patterns.len() - 1) {
-            let false_jump = self.compile_match_pattern(subject_name, pattern)?;
-
-            /*
-             * Cette alternative a réussi.
-             */
-            self.emit_opcode(OpCode::Pop);
-
-            let success_jump = self.emit_jump(OpCode::Jump);
-
-            success_jumps.push(success_jump);
-
-            /*
-             * Alternative échouée.
-             */
-            self.patch_jump(false_jump)?;
-
-            self.emit_opcode(OpCode::Pop);
-        }
+        self.emit_opcode(OpCode::Pop);
 
         /*
-         * Dernière alternative.
+         * Produire le résultat true du OR.
          *
-         * Son résultat est directement celui du OR.
-         */
-        let last_jump = self.compile_match_pattern(subject_name, patterns.last().unwrap())?;
-
-        /*
-         * Les alternatives précédentes convergent vers true.
-         */
-        for jump in success_jumps {
-            self.patch_jump(jump)?;
-        }
-
-        /*
-         * true pour les alternatives précédentes.
+         * Ce true sera utilisé par compile_match().
          */
         self.emit_opcode(OpCode::True);
 
         /*
-         * Ce JumpIfFalse est uniquement utilisé comme point
-         * de branchement commun.
+         * Aller au résultat commun.
          */
-        let result_jump = self.emit_jump(OpCode::JumpIfFalse);
+        let success_jump =
+            self.emit_jump(OpCode::Jump);
+
+        success_jumps.push(success_jump);
 
         /*
-         * Le dernier pattern possède son propre false jump.
+         * Pattern échoué :
          *
-         * Il faut le conserver comme chemin d'échec.
+         * JumpIfFalse a laissé false.
          */
-        let _ = last_jump;
+        self.patch_jump(false_jump)?;
 
-        Ok(result_jump)
+        /*
+         * Supprimer false avant de tester l'alternative suivante.
+         */
+        self.emit_opcode(OpCode::Pop);
     }
+
+    /*
+     * Dernier pattern.
+     *
+     * Son résultat devient directement le résultat du OR :
+     *
+     *     true  -> match arm
+     *     false -> prochain arm
+     */
+    let last_false_jump =
+        self.compile_match_pattern(
+            subject_name,
+            patterns
+                .last()
+                .expect("patterns non vide"),
+        )?;
+
+    /*
+     * Les succès des alternatives précédentes arrivent ici.
+     *
+     * Ils ont déjà placé true sur la pile.
+     *
+     * Le dernier pattern arrive lui aussi ici avec true sur la pile
+     * lorsqu'il réussit.
+     */
+    for success_jump in success_jumps {
+        self.patch_jump(success_jump)?;
+    }
+
+    /*
+     * IMPORTANT :
+     *
+     * Le dernier pattern possède déjà son JumpIfFalse.
+     *
+     * C'est exactement le jump que compile_match() doit utiliser
+     * pour passer à l'arm suivant.
+     */
+    Ok(last_false_jump)
+}
+
+
 
     // ============================================================
     // RANGE

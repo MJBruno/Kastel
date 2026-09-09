@@ -1,6 +1,6 @@
-let value = 5;
+let value = 10;
 
 match value {
-    1..5 => println("between"),
+    1|7|10 => println("between"),
     _ => println("other"),
 }
