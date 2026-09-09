@@ -1,12 +1,20 @@
-let values = {};
+let d = dict();
 
-values["name"] = "Kastel";
-values["version"] = 1;
-values["dynamic"] = true;
+d.set(1, "one");
+d.set("name", "Bruno");
 
-println(values["name"]);
-println(values["version"]);
-println(values["dynamic"]);
-println(values);
+println(d.get(1));
+println(d.get("name"));
 
- 
+println(d.has(1));
+
+println(d.keys());
+println(d.values());
+println(d.items());
+
+println(d[1]);
+
+d[2] = "two";
+
+d.remove(1);
+d.clear();

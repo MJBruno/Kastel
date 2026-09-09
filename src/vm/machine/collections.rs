@@ -32,21 +32,12 @@ impl VirtualMachine {
 
         let start = self.stack.len() - total;
 
-        for index in (start..self.stack.len()).step_by(2) {
-            if !self.stack[index].is_string() {
-                return Err(RuntimeError::TypeError);
-            }
-        }
-
         let mut fields = Vec::with_capacity(pair_count);
 
         for index in 0..pair_count {
             let base = start + index * 2;
 
-            let key = self.stack[base]
-                .as_string_value()
-                .ok_or(RuntimeError::TypeError)?;
-
+            let key = self.stack[base].clone();
             let value = self.stack[base + 1].clone();
 
             fields.push((key, value));
@@ -74,24 +65,22 @@ impl VirtualMachine {
         let index = self.stack[len - 1].clone();
 
         let value = match &collection {
-            // Array[index]
             Value::Object(handle) => {
                 let object = handle.borrow();
 
                 match &*object {
                     Object::Array(_) => {
                         let index = Self::array_index(index)?;
+
                         drop(object);
 
                         collection.array_get(index)?
                     }
 
-                    // Dict["key"]
                     Object::Dict(_) => {
-                        let key = Self::dict_key(index)?;
                         drop(object);
 
-                        collection.dict_get(&key)?
+                        collection.dict_get(&index)?
                     }
 
                     _ => {
@@ -123,24 +112,22 @@ impl VirtualMachine {
         let value = self.stack[len - 1].clone();
 
         match &collection {
-            // Array[index] = value
             Value::Object(handle) => {
                 let object = handle.borrow();
 
                 match &*object {
                     Object::Array(_) => {
                         let index = Self::array_index(index)?;
+
                         drop(object);
 
                         collection.array_set(index, value)?;
                     }
 
-                    // Dict["key"] = value
                     Object::Dict(_) => {
-                        let key = Self::dict_key(index)?;
                         drop(object);
 
-                        collection.dict_set(&key, value)?;
+                        collection.dict_set(&index, value)?;
                     }
 
                     _ => {
@@ -285,9 +272,7 @@ impl VirtualMachine {
 
         let property = self.read_constant(constant)?;
 
-        let name = property
-            .as_string_value()
-            .ok_or(RuntimeError::TypeError)?;
+        let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
 
         let object = self.peek()?.clone();
 
@@ -304,9 +289,7 @@ impl VirtualMachine {
 
         let property = self.read_constant(constant)?;
 
-        let name = property
-            .as_string_value()
-            .ok_or(RuntimeError::TypeError)?;
+        let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
 
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
@@ -345,19 +328,19 @@ impl VirtualMachine {
         }
     }
 
-    fn dict_key(value: Value) -> Result<String, RuntimeError> {
-        match value {
-            Value::Object(handle) => {
-                let object = handle.borrow();
+    // fn dict_key(value: Value) -> Result<String, RuntimeError> {
+    //     match value {
+    //         Value::Object(handle) => {
+    //             let object = handle.borrow();
 
-                match &*object {
-                    Object::String(value) => Ok(value.clone()),
+    //             match &*object {
+    //                 Object::String(value) => Ok(value.clone()),
 
-                    _ => Err(RuntimeError::TypeError),
-                }
-            }
+    //                 _ => Err(RuntimeError::TypeError),
+    //             }
+    //         }
 
-            _ => Err(RuntimeError::TypeError),
-        }
-    }
+    //         _ => Err(RuntimeError::TypeError),
+    //     }
+    // }
 }

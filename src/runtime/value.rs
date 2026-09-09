@@ -2,10 +2,10 @@ use std::rc::Rc;
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleInstance;
-use crate::stdlib::NativeFn;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
+use crate::stdlib::NativeFn;
 
 pub enum NumericOp {
     Add,
@@ -257,210 +257,191 @@ impl Value {
         }
     }
 
-   // ============================================================
-//                         DICT
-// ============================================================
-//
-// Dict = dictionnaire Kastel.
-//
-// Représentation interne :
-//     Object::Dict(Vec<(String, Value)>)
-//
-// Les clés sont actuellement des chaînes. L'ordre d'insertion
-// est conservé.
-//
-// Cette couche constitue l'API unique utilisée par la VM et la
-// stdlib pour manipuler les dictionnaires.
-//
+    // ============================================================
+    //                         DICT
+    // ============================================================
+    //
+    // Dict = dictionnaire Kastel.
+    //
+    // Représentation :
+    //     Object::Dict(Vec<(Value, Value)>)
+    //
+    // Les clés sont des Value.
+    // L'ordre d'insertion est conservé.
+    // ============================================================
 
-pub fn new_dict(entries: Vec<(String, Value)>) -> Self {
-    Self::new_heap_object(Object::Dict(entries))
-}
-
-pub fn dict_get(&self, key: &str) -> Result<Value, RuntimeError> {
-    match self {
-        Value::Object(handle) => match &*handle.borrow() {
-            Object::Dict(entries) => entries
-                .iter()
-                .find(|(entry_key, _)| entry_key == key)
-                .map(|(_, value)| value.clone())
-                .ok_or_else(|| {
-                    let suggestion = crate::error::suggest::closest_match(
-                        key,
-                        entries.iter().map(|(entry_key, _)| entry_key.as_str()),
-                    );
-
-                    RuntimeError::ObjectFieldNotFound {
-                        name: key.to_string(),
-                        suggestion,
-                    }
-                }),
-
-            _ => Err(RuntimeError::TypeError),
-        },
-
-        _ => Err(RuntimeError::TypeError),
+    pub fn new_dict(entries: Vec<(Value, Value)>) -> Self {
+        Self::new_heap_object(Object::Dict(entries))
     }
-}
 
-pub fn dict_set(
-    &self,
-    key: &str,
-    value: Value,
-) -> Result<(), RuntimeError> {
-    match self {
-        Value::Object(handle) => {
-            let mut object = handle.borrow_mut();
-
-            match &mut *object {
-                Object::Dict(entries) => {
-                    if let Some((_, existing)) =
-                        entries.iter_mut().find(|(entry_key, _)| entry_key == key)
-                    {
-                        *existing = value;
-                    } else {
-                        entries.push((key.to_string(), value));
-                    }
-
-                    Ok(())
-                }
-
-                _ => Err(RuntimeError::TypeError),
-            }
-        }
-
-        _ => Err(RuntimeError::TypeError),
-    }
-}
-
-pub fn dict_contains(
-    &self,
-    key: &str,
-) -> Result<bool, RuntimeError> {
-    match self {
-        Value::Object(handle) => match &*handle.borrow() {
-            Object::Dict(entries) => {
-                Ok(entries.iter().any(|(entry_key, _)| entry_key == key))
-            }
-
-            _ => Err(RuntimeError::TypeError),
-        },
-
-        _ => Err(RuntimeError::TypeError),
-    }
-}
-
-pub fn dict_remove(
-    &self,
-    key: &str,
-) -> Result<Value, RuntimeError> {
-    match self {
-        Value::Object(handle) => {
-            let mut object = handle.borrow_mut();
-
-            match &mut *object {
-                Object::Dict(entries) => {
-                    let index = entries
-                        .iter()
-                        .position(|(entry_key, _)| entry_key == key)
-                        .ok_or_else(|| {
-                            let suggestion =
-                                crate::error::suggest::closest_match(
-                                    key,
-                                    entries
-                                        .iter()
-                                        .map(|(entry_key, _)| entry_key.as_str()),
-                                );
-
-                            RuntimeError::ObjectFieldNotFound {
-                                name: key.to_string(),
-                                suggestion,
-                            }
-                        })?;
-
-                    Ok(entries.remove(index).1)
-                }
-
-                _ => Err(RuntimeError::TypeError),
-            }
-        }
-
-        _ => Err(RuntimeError::TypeError),
-    }
-}
-
-pub fn dict_len(&self) -> Result<usize, RuntimeError> {
-    match self {
-        Value::Object(handle) => match &*handle.borrow() {
-            Object::Dict(entries) => Ok(entries.len()),
-            _ => Err(RuntimeError::TypeError),
-        },
-
-        _ => Err(RuntimeError::TypeError),
-    }
-}
-
-pub fn dict_keys(&self) -> Result<Value, RuntimeError> {
-    match self {
-        Value::Object(handle) => match &*handle.borrow() {
-            Object::Dict(entries) => {
-                let keys = entries
+    pub fn dict_get(&self, key: &Value) -> Result<Value, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Dict(entries) => entries
                     .iter()
-                    .map(|(key, _)| Value::new_string(key.clone()))
-                    .collect();
-
-                Ok(Value::new_array(keys))
-            }
-
-            _ => Err(RuntimeError::TypeError),
-        },
-
-        _ => Err(RuntimeError::TypeError),
-    }
-}
-
-pub fn dict_values(&self) -> Result<Value, RuntimeError> {
-    match self {
-        Value::Object(handle) => match &*handle.borrow() {
-            Object::Dict(entries) => {
-                let values = entries
-                    .iter()
+                    .find(|(entry_key, _)| Value::equals(entry_key.clone(), key.clone()))
                     .map(|(_, value)| value.clone())
-                    .collect();
+                    .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
+                        name: key.to_string(),
+                        suggestion: None,
+                    }),
 
-                Ok(Value::new_array(values))
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn dict_set(&self, key: &Value, value: Value) -> Result<(), RuntimeError> {
+        match self {
+            Value::Object(handle) => {
+                let mut object = handle.borrow_mut();
+
+                match &mut *object {
+                    Object::Dict(entries) => {
+                        if let Some((_, existing)) = entries
+                            .iter_mut()
+                            .find(|(entry_key, _)| Value::equals(entry_key.clone(), key.clone()))
+                        {
+                            *existing = value;
+                        } else {
+                            entries.push((key.clone(), value));
+                        }
+
+                        Ok(())
+                    }
+
+                    _ => Err(RuntimeError::TypeError),
+                }
             }
 
             _ => Err(RuntimeError::TypeError),
-        },
-
-        _ => Err(RuntimeError::TypeError),
+        }
     }
-}
 
-pub fn dict_items(&self) -> Result<Value, RuntimeError> {
-    match self {
-        Value::Object(handle) => match &*handle.borrow() {
-            Object::Dict(entries) => {
-                let items = entries
+    pub fn dict_contains(&self, key: &Value) -> Result<bool, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Dict(entries) => Ok(entries
                     .iter()
-                    .map(|(key, value)| {
-                        Value::new_array(vec![
-                            Value::new_string(key.clone()),
-                            value.clone(),
-                        ])
-                    })
-                    .collect();
+                    .any(|(entry_key, _)| Value::equals(entry_key.clone(), key.clone()))),
 
-                Ok(Value::new_array(items))
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn dict_remove(&self, key: &Value) -> Result<Value, RuntimeError> {
+        match self {
+            Value::Object(handle) => {
+                let mut object = handle.borrow_mut();
+
+                match &mut *object {
+                    Object::Dict(entries) => {
+                        let index = entries
+                            .iter()
+                            .position(|(entry_key, _)| {
+                                Value::equals(entry_key.clone(), key.clone())
+                            })
+                            .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
+                                name: key.to_string(),
+                                suggestion: None,
+                            })?;
+
+                        Ok(entries.remove(index).1)
+                    }
+
+                    _ => Err(RuntimeError::TypeError),
+                }
             }
 
             _ => Err(RuntimeError::TypeError),
-        },
-
-        _ => Err(RuntimeError::TypeError),
+        }
     }
-}
+
+    pub fn dict_len(&self) -> Result<usize, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Dict(entries) => Ok(entries.len()),
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn dict_keys(&self) -> Result<Value, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Dict(entries) => {
+                    let keys = entries.iter().map(|(key, _)| key.clone()).collect();
+
+                    Ok(Value::new_array(keys))
+                }
+
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn dict_values(&self) -> Result<Value, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Dict(entries) => {
+                    let values = entries.iter().map(|(_, value)| value.clone()).collect();
+
+                    Ok(Value::new_array(values))
+                }
+
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn dict_items(&self) -> Result<Value, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Dict(entries) => {
+                    let items = entries
+                        .iter()
+                        .map(|(key, value)| Value::new_array(vec![key.clone(), value.clone()]))
+                        .collect();
+
+                    Ok(Value::new_array(items))
+                }
+
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn dict_clear(&self) -> Result<(), RuntimeError> {
+        match self {
+            Value::Object(handle) => {
+                let mut object = handle.borrow_mut();
+
+                match &mut *object {
+                    Object::Dict(entries) => {
+                        entries.clear();
+                        Ok(())
+                    }
+
+                    _ => Err(RuntimeError::TypeError),
+                }
+            }
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
     // ============================================================
     //                      ACCÈS UNIFIÉ AUX PROPRIÉTÉS
     // ============================================================
@@ -475,7 +456,23 @@ pub fn dict_items(&self) -> Result<Value, RuntimeError> {
         match self {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::Module(_) => self.module_get(name),
-                Object::Dict(_) => self.dict_get(name),
+
+                Object::Dict(entries) => entries
+                    .iter()
+                    .find(|(key, _)| match key {
+                        Value::Object(key_handle) => match &*key_handle.borrow() {
+                            Object::String(value) => value == name,
+                            _ => false,
+                        },
+
+                        _ => false,
+                    })
+                    .map(|(_, value)| value.clone())
+                    .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
+                        name: name.to_string(),
+                        suggestion: None,
+                    }),
+
                 _ => Err(RuntimeError::NotObject),
             },
 
@@ -485,19 +482,28 @@ pub fn dict_items(&self) -> Result<Value, RuntimeError> {
 
     pub fn set_property(&self, name: &str, value: Value) -> Result<(), RuntimeError> {
         match self {
-            // Les modules restent en lecture seule : leurs exports sont
-            // figés à la compilation du module importé.
             Value::Object(handle) => {
-                // ⚠️ L'emprunt de `matches!` doit être entièrement terminé
-                // AVANT d'appeler `dict_set` (qui fait son propre
-                // `borrow_mut()`) : le tenir plus longtemps ferait
-                // paniquer avec "already borrowed" à chaque affectation.
-                let is_dict = matches!(&*handle.borrow(), Object::Dict(_));
+                let mut object = handle.borrow_mut();
 
-                if is_dict {
-                   self.dict_set(name, value)
-                } else {
-                    Err(RuntimeError::NotObject)
+                match &mut *object {
+                    Object::Dict(entries) => {
+                        if let Some((_, existing)) = entries.iter_mut().find(|(key, _)| match key {
+                            Value::Object(key_handle) => match &*key_handle.borrow() {
+                                Object::String(key) => key == name,
+                                _ => false,
+                            },
+
+                            _ => false,
+                        }) {
+                            *existing = value;
+                        } else {
+                            entries.push((Value::new_string(name.to_string()), value));
+                        }
+
+                        Ok(())
+                    }
+
+                    _ => Err(RuntimeError::NotObject),
                 }
             }
 
