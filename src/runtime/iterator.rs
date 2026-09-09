@@ -2,20 +2,24 @@
 // ITERATOR
 // ================================================================
 //
-// Deux concepts bien distincts, comme en Python :
+// Un Iterator Kastel est toujours un Object::Iterator.
 //
-// - `Value::Range { start, stop, step }` : léger (3 f64, aucune allocation
-//   sur le tas), immuable, RÉUTILISABLE — reste hors du système Object/Gc
-//   (voir value.rs et object.rs pour la justification).
+// Sources natives :
+//   - Range
+//   - Array
 //
-// - `Object::Iterator(IteratorState)`, enveloppé dans un `Value::Object` :
-//   le curseur À ÉTAT, à usage unique, qui avance à chaque appel. Créé
-//   fraîchement à chaque fois qu'on demande "donne-moi un itérateur" via
-//   `to_iterator()`.
+// Adaptateurs paresseux :
+//   - Map
+//   - Filter
+//   - Take
+//   - Skip
 //
-// Le compilateur ne connaît jamais le type concret de l'itérable : il émet
-// toujours la même séquence GetIterator (une fois) / IteratorNext (à
-// chaque tour), quelle que soit la nature réelle de la valeur itérée.
+// `cached` est utilisé par has_next()/peek() pour regarder l'élément
+// suivant sans le perdre.
+//
+// Les callbacks sont exécutés par la VM, car eux seuls ont accès à
+// invoke_sync().
+// ================================================================
 
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::gc_handle::Gc;
@@ -23,26 +27,95 @@ use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum IteratorState {
-    Range { current: f64, stop: f64, step: f64 },
-    /// `Gc<Object>` pointe vers un `Object::Array` — même poignée que
-    /// celle référencée par la `Value::Object` d'origine, donc les
-    /// mutations du tableau pendant le parcours restent visibles.
-    Array { array: Gc<Object>, index: usize },
+pub enum IteratorKind {
+    Range {
+        current: f64,
+        stop: f64,
+        step: f64,
+    },
+
+    Array {
+        array: Gc<Object>,
+        index: usize,
+    },
+
+    Map {
+        source: Box<Value>,
+        callback: Value,
+    },
+
+    Filter {
+        source: Box<Value>,
+        callback: Value,
+    },
+
+    Take {
+        source: Box<Value>,
+        remaining: usize,
+    },
+
+    Skip {
+        source: Box<Value>,
+        remaining: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IteratorState {
+    pub(crate) kind: IteratorKind,
+
+    // Élément récupéré par peek()/has_next(), mais pas encore consommé.
+    pub(crate) cached: Option<Value>,
 }
 
 impl IteratorState {
-    /// Réinitialise l'état à une valeur neutre, sans référence externe.
-    /// Utilisé par le GC pour casser un cycle : un itérateur sur un
-    /// tableau retient une référence vers ce tableau, ce qui peut
-    /// participer à un cycle si l'itérateur est lui-même stocké quelque
-    /// part de durable (ex. poussé dans le tableau qu'il parcourt).
+    pub(crate) fn new(kind: IteratorKind) -> Self {
+        Self { kind, cached: None }
+    }
+
+    /// Réinitialisation utilisée par le GC pour casser les cycles.
     pub(crate) fn reset_for_gc(&mut self) {
-        *self = IteratorState::Range {
+        self.kind = IteratorKind::Range {
             current: 0.0,
             stop: 0.0,
             step: 1.0,
         };
+
+        self.cached = None;
+    }
+
+    /// Donne toutes les Value retenues par l'itérateur au GC.
+    pub(crate) fn visit_values<F>(&self, mut visit: F)
+    where
+        F: FnMut(&Value),
+    {
+        if let Some(cached) = &self.cached {
+            visit(cached);
+        }
+
+        match &self.kind {
+            IteratorKind::Range { .. } => {}
+
+            IteratorKind::Array { .. } => {}
+
+            IteratorKind::Map { source, callback } => {
+                visit(source);
+                visit(callback);
+            }
+
+            IteratorKind::Filter { source, callback } => {
+                visit(source);
+                visit(callback);
+            }
+
+            IteratorKind::Take { source, .. } => {
+                visit(source);
+            }
+
+            IteratorKind::Skip { source, .. } => {
+                visit(source);
+            }
+        }
     }
 }
 
@@ -51,48 +124,72 @@ impl Value {
     //                      CONSTRUCTION
     // ============================================================
 
-    /// Range léger et réutilisable — utilisé par native_range(). Aucune
-    /// allocation sur le tas, quelle que soit l'amplitude de l'intervalle.
+    /// Range léger et réutilisable.
     pub fn new_range(start: f64, stop: f64, step: f64) -> Self {
-        Value::Range { start, stop, step }
+        Self::new_range_iterator(start, stop, step)
+    }
+
+    fn new_iterator(state: IteratorState) -> Value {
+        let handle = Gc::new(Object::Iterator(state));
+
+        crate::runtime::gc::register_object(&handle);
+
+        Value::Object(handle)
     }
 
     fn new_range_iterator(start: f64, stop: f64, step: f64) -> Value {
-        let handle = Gc::new(Object::Iterator(IteratorState::Range {
+        Self::new_iterator(IteratorState::new(IteratorKind::Range {
             current: start,
             stop,
             step,
-        }));
-
-        crate::runtime::gc::register_object(&handle);
-
-        Value::Object(handle)
+        }))
     }
 
     fn new_array_iterator(array: Gc<Object>) -> Value {
-        let handle = Gc::new(Object::Iterator(IteratorState::Array { array, index: 0 }));
-
-        crate::runtime::gc::register_object(&handle);
-
-        Value::Object(handle)
+        Self::new_iterator(IteratorState::new(IteratorKind::Array { array, index: 0 }))
     }
 
     // ============================================================
-    //                      PROTOCOLE D'ITÉRATION
+    //                 LAZY ITERATOR CONSTRUCTORS
     // ============================================================
-    //
-    // Deux méthodes séparées (plutôt qu'une seule combinée) pour matcher
-    // les 3 opcodes de la VM : GetIterator (une fois, avant la boucle),
-    // puis IteratorHasNext / IteratorNext (à chaque tour). has_next ne
-    // modifie jamais l'état — seul next avance le curseur.
 
-    /// Convertit une valeur en itérateur À ÉTAT, fraîchement créé.
+    pub(crate) fn new_map_iterator(source: Value, callback: Value) -> Value {
+        Self::new_iterator(IteratorState::new(IteratorKind::Map {
+            source: Box::new(source),
+            callback,
+        }))
+    }
+
+    pub(crate) fn new_filter_iterator(source: Value, callback: Value) -> Value {
+        Self::new_iterator(IteratorState::new(IteratorKind::Filter {
+            source: Box::new(source),
+            callback,
+        }))
+    }
+
+    pub(crate) fn new_take_iterator(source: Value, remaining: usize) -> Value {
+        Self::new_iterator(IteratorState::new(IteratorKind::Take {
+            source: Box::new(source),
+            remaining,
+        }))
+    }
+
+    pub(crate) fn new_skip_iterator(source: Value, remaining: usize) -> Value {
+        Self::new_iterator(IteratorState::new(IteratorKind::Skip {
+            source: Box::new(source),
+            remaining,
+        }))
+    }
+
+    // ============================================================
+    //                      TO ITERATOR
+    // ============================================================
+
+    /// Convertit une valeur en itérateur à état.
     ///
-    /// - Un `Range` produit un nouveau curseur à chaque appel : parcourir
-    ///   le même `range(5)` deux fois donne deux fois la séquence complète.
-    /// - Un `Array` produit un curseur qui garde la MÊME poignée `Gc` :
-    ///   les mutations du tableau pendant le parcours restent visibles.
-    /// - Un `Iterator` déjà existant est retourné tel quel (passthrough).
+    /// Range  -> nouvel itérateur
+    /// Array  -> nouvel itérateur
+    /// Iterator -> lui-même
     pub fn to_iterator(&self) -> Result<Value, RuntimeError> {
         match self {
             Value::Range { start, stop, step } => {
@@ -101,7 +198,9 @@ impl Value {
 
             Value::Object(handle) => match &*handle.borrow() {
                 Object::Array(_) => Ok(Value::new_array_iterator(handle.clone())),
+
                 Object::Iterator(_) => Ok(self.clone()),
+
                 _ => Err(RuntimeError::NotIterable),
             },
 
@@ -109,57 +208,82 @@ impl Value {
         }
     }
 
-    /// Vérifie s'il reste un élément, SANS avancer le curseur.
+    // ============================================================
+    //             LEGACY LOW-LEVEL ITERATOR API
+    // ============================================================
+    //
+    // Ces deux méthodes restent pour les utilisateurs internes
+    // existants. Les iterators fonctionnels sont exécutés par la VM.
+    //
+    // ============================================================
+
     pub fn iterator_has_next(&self) -> Result<bool, RuntimeError> {
         let Value::Object(handle) = self else {
             return Err(RuntimeError::TypeError);
         };
 
-        let Object::Iterator(state) = &*handle.borrow() else {
+        let object = handle.borrow();
+
+        let Object::Iterator(state) = &*object else {
             return Err(RuntimeError::TypeError);
         };
 
-        let has_next = match state {
-            IteratorState::Range { current, stop, step } => {
+        if state.cached.is_some() {
+            return Ok(true);
+        }
+
+        match &state.kind {
+            IteratorKind::Range {
+                current,
+                stop,
+                step,
+            } => {
                 if *step >= 0.0 {
-                    current < stop
+                    Ok(current < stop)
                 } else {
-                    current > stop
+                    Ok(current > stop)
                 }
             }
 
-            IteratorState::Array { array, index } => {
-                let Object::Array(elements) = &*array.borrow() else {
-                    // Ne peut normalement pas arriver : un IteratorState::Array
-                    // pointe toujours vers un Object::Array par construction.
+            IteratorKind::Array { array, index } => {
+                let array = array.borrow();
+
+                let Object::Array(elements) = &*array else {
                     return Err(RuntimeError::TypeError);
                 };
 
-                *index < elements.len()
+                Ok(*index < elements.len())
             }
-        };
 
-        Ok(has_next)
+            // Les adaptateurs avec callback doivent passer par la VM.
+            IteratorKind::Map { .. }
+            | IteratorKind::Filter { .. }
+            | IteratorKind::Take { .. }
+            | IteratorKind::Skip { .. } => Err(RuntimeError::TypeError),
+        }
     }
 
-    /// Avance le curseur d'un cran et retourne l'élément. À n'appeler que
-    /// si `iterator_has_next` a préalablement renvoyé `true` — garanti par
-    /// le bytecode généré par `compile_for_in`, jamais par du code
-    /// utilisateur directement. `IteratorExhausted` est un filet de
-    /// sécurité, pas un cas normal.
     pub fn iterator_next(&self) -> Result<Value, RuntimeError> {
         let Value::Object(handle) = self else {
             return Err(RuntimeError::TypeError);
         };
 
-        let mut borrowed = handle.borrow_mut();
+        let mut object = handle.borrow_mut();
 
-        let Object::Iterator(state) = &mut *borrowed else {
+        let Object::Iterator(state) = &mut *object else {
             return Err(RuntimeError::TypeError);
         };
 
-        match state {
-            IteratorState::Range { current, stop, step } => {
+        if let Some(value) = state.cached.take() {
+            return Ok(value);
+        }
+
+        match &mut state.kind {
+            IteratorKind::Range {
+                current,
+                stop,
+                step,
+            } => {
                 let has_next = if *step >= 0.0 {
                     *current < *stop
                 } else {
@@ -177,8 +301,10 @@ impl Value {
                 Ok(Value::Integer(value as i64))
             }
 
-            IteratorState::Array { array, index } => {
-                let Object::Array(elements) = &*array.borrow() else {
+            IteratorKind::Array { array, index } => {
+                let array = array.borrow();
+
+                let Object::Array(elements) = &*array else {
                     return Err(RuntimeError::TypeError);
                 };
 
@@ -192,14 +318,23 @@ impl Value {
 
                 Ok(value)
             }
+
+            IteratorKind::Map { .. }
+            | IteratorKind::Filter { .. }
+            | IteratorKind::Take { .. }
+            | IteratorKind::Skip { .. } => Err(RuntimeError::TypeError),
         }
     }
 }
 
-/// Matérialise n'importe quel itérable en un tableau concret — équivalent
-/// de `list(x)` en Python. Utile maintenant que range() ne construit plus
-/// de tableau par défaut : `list(range(10))` force la matérialisation
-/// quand on a réellement besoin d'un tableau indexable/mutable.
+// ================================================================
+//                     MATERIALISATION
+// ================================================================
+
+/// Matérialise un itérable simple en tableau.
+///
+/// Les itérateurs fonctionnels sont exécutés par `iterator.collect()`
+/// au niveau VM.
 pub fn drain_to_array(value: &Value) -> Result<Value, RuntimeError> {
     let iterator = value.to_iterator()?;
 

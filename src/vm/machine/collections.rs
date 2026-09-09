@@ -313,10 +313,41 @@ impl VirtualMachine {
         self.stack.truncate(receiver_index);
 
         let result = match &receiver {
+            // ============================================================
+            // RANGE
+            // ============================================================
+            //
+            // range(5) produit initialement Value::Range.
+            //
+            // Pour les méthodes iterator(), on le convertit une seule fois
+            // en Object::Iterator.
+            //
+            Value::Range { .. } => {
+                let iterator = receiver.to_iterator()?;
+
+                self.invoke_iterator_method(&method_name, &{
+                    let mut iterator_args = args.clone();
+                    iterator_args[0] = iterator;
+                    iterator_args
+                })?
+            }
+
+            // ============================================================
+            // OBJECT
+            // ============================================================
             Value::Object(handle) => {
                 let object = handle.borrow();
 
                 match &*object {
+                    // ====================================================
+                    // ITERATOR
+                    // ====================================================
+                    Object::Iterator(_) => {
+                        drop(object);
+
+                        self.invoke_iterator_method(&method_name, &args)?
+                    }
+
                     // ====================================================
                     // STRING
                     // ====================================================

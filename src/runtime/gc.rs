@@ -5,7 +5,6 @@ use std::time::Instant;
 
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
-use crate::runtime::iterator::IteratorState;
 use crate::runtime::object::Object;
 use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
@@ -298,10 +297,10 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
             }
         }
 
-        Object::Iterator(IteratorState::Range { .. }) => {}
-
-        Object::Iterator(IteratorState::Array { array, .. }) => {
-            mark_object(array, state);
+        Object::Iterator(iterator) => {
+            iterator.visit_values(|value| {
+                mark_value(value, state);
+            });
         }
 
         Object::Module(module) => {
