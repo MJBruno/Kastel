@@ -19,7 +19,7 @@ fn main() -> std::process::ExitCode {
     let elapsed = start.elapsed();
 
     eprintln!(
-        "\n\x1b[32mProcess finished... \x1b[0m {} \x1b[32mms\x1b[0m",
+        "\x1b[32mProcess finished... \x1b[0m {} \x1b[32mms\x1b[0m",
         elapsed.as_secs_f64() * 1000.0
     );
 

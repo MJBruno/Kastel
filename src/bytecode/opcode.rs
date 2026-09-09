@@ -67,6 +67,15 @@ pub enum OpCode {
 
     GetProperty,
     SetProperty,
+
+    // Appel dynamique d'une méthode :
+    //
+    //   receiver.method(arg1, arg2)
+    //
+    // encodé comme :
+    //
+    //   InvokeMethod <method_constant> <arg_count>
+    InvokeMethod,
 }
 
 impl From<OpCode> for u8 {
@@ -144,6 +153,8 @@ impl TryFrom<u8> for OpCode {
 
             x if x == OpCode::GetProperty.into() => Ok(OpCode::GetProperty),
             x if x == OpCode::SetProperty.into() => Ok(OpCode::SetProperty),
+
+            x if x == OpCode::InvokeMethod.into() => Ok(OpCode::InvokeMethod),
 
             _ => Err(()),
         }

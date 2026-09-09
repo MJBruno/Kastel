@@ -1,8 +1,21 @@
-let d = list([]);
+let a = [1, 2, 3, 4];
 
-d.push(56);
-d.push(33);
-d.push(71);
+let doubled = a.map(fn(x) {
+    return x * 2;
+});
 
-println(d);
-println(d[2]);
+let even = a.filter(fn(x) {
+    return x % 2 == 0;
+});
+
+let sum = a.reduce(fn(acc, x) {
+    return acc + x;
+}, 0);
+
+let has_even = a.any(fn(x) {
+    return x % 2 == 0;
+});
+
+let all_positive = a.all(fn(x) {
+    return x > 0;
+});

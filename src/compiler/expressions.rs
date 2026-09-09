@@ -2,9 +2,6 @@ use crate::bytecode::chunk::OpCode;
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
 use crate::runtime::value::Value;
-use crate::stdlib::dict::{
-    native_dict_clear, native_dict_get, native_dict_has, native_dict_items, native_dict_keys, native_dict_remove, native_dict_set, native_dict_values,
-};
 
 use super::compiler::Compiler;
 
@@ -25,6 +22,7 @@ impl Compiler {
                 };
 
                 let constant = self.make_constant(value)?;
+
                 self.emit_bytes(OpCode::Constant, constant);
             }
 
@@ -64,19 +62,7 @@ impl Compiler {
 
             Expression::Call { callee, arguments } => {
                 if let Expression::Member { object, name } = callee.as_ref() {
-                    match name.as_str() {
-                        // Array
-                        "push" | "pop" | "insert" | "contains" => {
-                            return self.compile_array_method_call(object, name, arguments);
-                        }
-
-                        "get" | "set" | "has" | "keys" | "values" | "items" | "remove"
-                        | "clear" => {
-                            return self.compile_dict_method_call(object, name, arguments);
-                        }
-
-                        _ => {}
-                    }
+                    return self.compile_method_call(object, name, arguments);
                 }
 
                 self.compile_call(callee, arguments)?;
@@ -103,6 +89,7 @@ impl Compiler {
                     let key_constant = self.make_constant(Value::new_string(key.clone()))?;
 
                     self.emit_bytes(OpCode::Constant, key_constant);
+
                     self.compile_expression(value)?;
                 }
 
@@ -137,15 +124,16 @@ impl Compiler {
 
                 let else_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-                // Chemin vrai.
                 self.emit_opcode(OpCode::Pop);
+
                 self.compile_expression(then_expr)?;
 
                 let end_jump = self.emit_jump(OpCode::Jump);
 
-                // Chemin faux.
                 self.patch_jump(else_jump)?;
+
                 self.emit_opcode(OpCode::Pop);
+
                 self.compile_expression(else_expr)?;
 
                 self.patch_jump(end_jump)?;
@@ -156,178 +144,36 @@ impl Compiler {
     }
 
     // ============================================================
-    //                         DICT
+    //                       METHOD CALL
     // ============================================================
 
-    pub(crate) fn compile_dict_method_call(
+    pub(crate) fn compile_method_call(
         &mut self,
         object: &Expression,
         name: &str,
         arguments: &[Expression],
     ) -> Result<(), CompileError> {
-        let expected = match name {
-            "get" => 1,
-            "set" => 2,
-            "has" => 1,
-            "keys" => 0,
-            "values" => 0,
-            "items" => 0,
-            "remove" => 1,
-            "clear" => 0,
-
-            _ => {
-                return Err(CompileError::InvalidMemberAccess {
-                    name: name.to_string(),
-                });
-            }
-        };
-
-        if arguments.len() != expected {
-            return Err(CompileError::WrongArgumentCount {
-                expected: expected as i32,
-                found: arguments.len(),
-            });
+        if arguments.len() > u8::MAX as usize {
+            return Err(CompileError::TooManyArguments);
         }
 
-        let native = match name {
-            "get" => native_dict_get,
-            "set" => native_dict_set,
-            "has" => native_dict_has,
-            "keys" => native_dict_keys,
-            "values" => native_dict_values,
-            "items" => native_dict_items,
-            "remove" => native_dict_remove,
-            "clear" => native_dict_clear,
+        let method_constant = self.identifier_constant(name)?;
 
-            _ => unreachable!(),
-        };
-
-        let constant = self.make_constant(Value::NativeFunction(native))?;
-
-        self.emit_bytes(OpCode::Constant, constant);
-
-        // receiver
         self.compile_expression(object)?;
 
-        // arguments
         for argument in arguments {
             self.compile_expression(argument)?;
         }
 
-        self.emit_bytes(OpCode::Call, (arguments.len() + 1) as u8);
+        self.emit_byte(OpCode::InvokeMethod.into());
+        self.emit_byte(method_constant);
+        self.emit_byte(arguments.len() as u8);
 
         Ok(())
     }
-
     // ============================================================
     //                         ARRAY
     // ============================================================
-
-    pub(crate) fn compile_array_method_call(
-        &mut self,
-        object: &Expression,
-        name: &str,
-        arguments: &[Expression],
-    ) -> Result<(), CompileError> {
-        match name {
-            "push" => {
-                if arguments.len() != 1 {
-                    return Err(CompileError::WrongArgumentCount {
-                        expected: 1,
-                        found: arguments.len(),
-                    });
-                }
-
-                self.compile_expression(object)?;
-                self.compile_expression(&arguments[0])?;
-
-                self.emit_opcode(OpCode::ArrayPush);
-
-                Ok(())
-            }
-
-            "pop" => {
-                if !arguments.is_empty() {
-                    return Err(CompileError::WrongArgumentCount {
-                        expected: 0,
-                        found: arguments.len(),
-                    });
-                }
-
-                self.compile_expression(object)?;
-                self.emit_opcode(OpCode::ArrayPop);
-
-                Ok(())
-            }
-
-            "insert" => {
-                if arguments.len() != 2 {
-                    return Err(CompileError::WrongArgumentCount {
-                        expected: 2,
-                        found: arguments.len(),
-                    });
-                }
-
-                self.compile_expression(object)?;
-                self.compile_expression(&arguments[0])?;
-                self.compile_expression(&arguments[1])?;
-
-                self.emit_opcode(OpCode::ArrayInsert);
-
-                Ok(())
-            }
-
-            "remove" => {
-                if arguments.len() != 1 {
-                    return Err(CompileError::WrongArgumentCount {
-                        expected: 1,
-                        found: arguments.len(),
-                    });
-                }
-
-                self.compile_expression(object)?;
-                self.compile_expression(&arguments[0])?;
-
-                self.emit_opcode(OpCode::ArrayRemove);
-
-                Ok(())
-            }
-
-            "clear" => {
-                if !arguments.is_empty() {
-                    return Err(CompileError::WrongArgumentCount {
-                        expected: 0,
-                        found: arguments.len(),
-                    });
-                }
-
-                self.compile_expression(object)?;
-                self.emit_opcode(OpCode::ArrayClear);
-
-                Ok(())
-            }
-
-            "contains" => {
-                if arguments.len() != 1 {
-                    return Err(CompileError::WrongArgumentCount {
-                        expected: 1,
-                        found: arguments.len(),
-                    });
-                }
-
-                self.compile_expression(object)?;
-                self.compile_expression(&arguments[0])?;
-
-                self.emit_opcode(OpCode::ArrayContains);
-
-                Ok(())
-            }
-
-            _ => Err(CompileError::InvalidMemberAccess {
-                name: name.to_string(),
-            }),
-        }
-    }
 
     pub(crate) fn compile_array_member(
         &mut self,
@@ -341,10 +187,6 @@ impl Compiler {
 
                 Ok(())
             }
-
-            "push" | "pop" => Err(CompileError::InvalidMemberAccess {
-                name: name.to_string(),
-            }),
 
             _ => Err(CompileError::InvalidMemberAccess {
                 name: name.to_string(),
@@ -410,6 +252,7 @@ impl Compiler {
         let right_jump = self.emit_jump(OpCode::Jump);
 
         self.patch_jump(end_jump)?;
+
         self.emit_opcode(OpCode::Pop);
 
         self.compile_expression(right)?;
