@@ -1,4 +1,3 @@
-
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
     Variable(String),
@@ -120,6 +119,32 @@ pub enum Statement {
         arms: Vec<MatchArm>,
     },
 
+    // ========================================================
+    // EXCEPTIONS
+    // ========================================================
+
+    /// `throw expression;`
+    Throw {
+        value: Expression,
+    },
+
+    /// 
+    /// try {
+    ///     ...
+    /// } catch (error) {
+    ///     ...
+    /// } finally {
+    ///     ...
+    /// }
+    ///
+    /// `catch` est optionnel si `finally` est présent.
+    Try {
+        try_body: Vec<Statement>,
+        catch_name: Option<String>,
+        catch_body: Option<Vec<Statement>>,
+        finally_body: Option<Vec<Statement>>,
+    },
+
     Function {
         name: String,
         params: Vec<String>,
@@ -237,4 +262,3 @@ pub enum BinaryOp {
     ShiftLeft,
     ShiftRight,
 }
-

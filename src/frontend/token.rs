@@ -1,4 +1,3 @@
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // ============================================================
@@ -30,6 +29,14 @@ pub enum TokenKind {
     From,
     As,
     Export,
+
+    // ============================================================
+    // EXCEPTIONS
+    // ============================================================
+    Try,
+    Catch,
+    Throw,
+    Finally,
 
     // ============================================================
     // OPÉRATEURS
@@ -146,8 +153,16 @@ impl Token {
             "from" => Some(TokenKind::From),
             "as" => Some(TokenKind::As),
             "export" => Some(TokenKind::Export),
+
+            // ========================================================
+            // EXCEPTIONS
+            // ========================================================
+            "try" => Some(TokenKind::Try),
+            "catch" => Some(TokenKind::Catch),
+            "throw" => Some(TokenKind::Throw),
+            "finally" => Some(TokenKind::Finally),
+
             _ => None,
         }
     }
 }
-

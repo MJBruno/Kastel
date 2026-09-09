@@ -1,9 +1,10 @@
+use crate::runtime::value::Value;
+
 // ================================================================
 // RUNTIME_ERROR
 // ================================================================
 
- 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum RuntimeError {
     TypeError,
     DivisionByZero,
@@ -18,7 +19,9 @@ pub enum RuntimeError {
     NativeError,
 
     IndexOutOfBounds,
+
     ArrayIndexNotInteger,
+
     ArrayIndexOutOfBounds {
         index: usize,
         length: usize,
@@ -46,6 +49,24 @@ pub enum RuntimeError {
 
     StackUnderflow,
     InvalidOpcode(u8),
+
+    // ============================================================
+    // EXCEPTION KASTEL
+    // ============================================================
+
+    /*
+     * Exception explicitement lancée par :
+     *
+     *     throw value;
+     *
+     * La valeur peut être n'importe quelle Value Kastel :
+     *
+     *     throw "boom";
+     *     throw 42;
+     *     throw [1, 2, 3];
+     *     throw { message: "boom" };
+     */
+    Thrown(Value),
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -60,7 +81,10 @@ impl std::fmt::Display for RuntimeError {
             }
 
             RuntimeError::WrongArgumentCount { expected, found } => {
-                write!(f, "Expected {expected} arguments but found {found}.")
+                write!(
+                    f,
+                    "Expected {expected} arguments but found {found}."
+                )
             }
 
             RuntimeError::NotCallable => {
@@ -94,7 +118,10 @@ impl std::fmt::Display for RuntimeError {
                 write!(f, "Module error: {message}")
             }
 
-            RuntimeError::ObjectFieldNotFound { name, suggestion } => {
+            RuntimeError::ObjectFieldNotFound {
+                name,
+                suggestion,
+            } => {
                 match suggestion {
                     Some(suggestion) => write!(
                         f,
@@ -131,7 +158,10 @@ impl std::fmt::Display for RuntimeError {
                 column,
                 source,
             } => {
-                write!(f, "ligne {line}, colonne {column} : {source}")
+                write!(
+                    f,
+                    "ligne {line}, colonne {column} : {source}"
+                )
             }
 
             RuntimeError::NotIndexable => {
@@ -147,7 +177,14 @@ impl std::fmt::Display for RuntimeError {
             }
 
             RuntimeError::InvalidOpcode(opcode) => {
-                write!(f, "Invalid bytecode opcode: {opcode}.")
+                write!(
+                    f,
+                    "Invalid bytecode opcode: {opcode}."
+                )
+            }
+
+            RuntimeError::Thrown(value) => {
+                write!(f, "Uncaught exception: {value:?}")
             }
         }
     }

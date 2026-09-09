@@ -76,6 +76,47 @@ pub enum OpCode {
     //
     //   InvokeMethod <method_constant> <arg_count>
     InvokeMethod,
+
+    // ============================================================
+    // EXCEPTIONS
+    // ============================================================
+
+    /*
+     * Installe un handler d'exception.
+     *
+     * Layout bytecode :
+     *
+     *     PushExceptionHandler <handler_ip>
+     *
+     * Le VM enregistre le handler courant avant d'exécuter
+     * le corps du try.
+     */
+    PushExceptionHandler,
+
+    /*
+     * Retire le handler courant.
+     *
+     * Utilisé lorsque le try se termine normalement.
+     */
+    PopExceptionHandler,
+
+    /*
+     * Déclenche une exception Kastel.
+     *
+     * La valeur de l'exception est prise sur la stack.
+     */
+    Throw,
+
+    /*
+     * Signale que l'exécution du bloc finally est terminée.
+     *
+     * Le VM pourra alors :
+     *
+     * - reprendre l'exécution normale ;
+     * - reprendre une exception en attente ;
+     * - continuer la propagation de l'exception.
+     */
+    FinallyEnd,
 }
 
 impl From<OpCode> for u8 {
@@ -156,6 +197,17 @@ impl TryFrom<u8> for OpCode {
 
             x if x == OpCode::InvokeMethod.into() => Ok(OpCode::InvokeMethod),
 
+            // ========================================================
+            // EXCEPTIONS
+            // ========================================================
+            x if x == OpCode::PushExceptionHandler.into() => Ok(OpCode::PushExceptionHandler),
+
+            x if x == OpCode::PopExceptionHandler.into() => Ok(OpCode::PopExceptionHandler),
+
+            x if x == OpCode::Throw.into() => Ok(OpCode::Throw),
+
+            x if x == OpCode::FinallyEnd.into() => Ok(OpCode::FinallyEnd),
+
             _ => Err(()),
         }
     }
@@ -177,12 +229,21 @@ mod tests {
 
     #[test]
     fn invalid_opcode_is_rejected() {
-        let max = OpCode::SetProperty as u8;
+        let max = OpCode::FinallyEnd as u8;
 
         for value in 0u8..=u8::MAX {
             if value > max {
                 assert!(OpCode::try_from(value).is_err());
             }
         }
+    }
+
+    #[test]
+    fn exception_opcodes_are_distinct() {
+        assert_ne!(OpCode::PushExceptionHandler, OpCode::PopExceptionHandler);
+
+        assert_ne!(OpCode::Throw, OpCode::FinallyEnd);
+
+        assert_ne!(OpCode::PushExceptionHandler, OpCode::Throw);
     }
 }

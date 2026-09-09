@@ -116,4 +116,23 @@ impl Compiler {
 
         Ok(())
     }
+
+    pub(crate) fn declare_existing_local(
+        &mut self,
+        name: &str,
+        mutable: bool,
+    ) -> Result<u8, CompileError> {
+        let slot =
+            self.context
+                .borrow_mut()
+                .locals
+                .declare_local(name, self.scope_depth, mutable)?;
+
+        self.context
+            .borrow_mut()
+            .locals
+            .mark_initialized(self.scope_depth);
+
+        Ok(slot)
+    }
 }

@@ -7,22 +7,16 @@ use crate::{
 };
 
 impl VirtualMachine {
-    pub(crate) fn dispatch(
-        &mut self,
-        instruction: u8,
-    ) -> Result<bool, RuntimeError> {
+    pub(crate) fn dispatch(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
         let opcode =
-            OpCode::try_from(instruction)
-                .map_err(|_| {
-                    RuntimeError::InvalidOpcode(
-                        instruction
-                    )
-                })?;
+            OpCode::try_from(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
 
         match opcode {
+            // ========================================================
+            // CONSTANTS / GLOBALS
+            // ========================================================
             OpCode::Constant => {
-                let constant =
-                    self.read_constant_byte()?;
+                let constant = self.read_constant_byte()?;
 
                 self.push(constant);
             }
@@ -48,19 +42,20 @@ impl VirtualMachine {
             }
 
             OpCode::GetUpvalue => {
-                let index =
-                    self.read_byte()? as usize;
+                let index = self.read_byte()? as usize;
 
                 self.get_upvalue(index)?;
             }
 
             OpCode::SetUpvalue => {
-                let index =
-                    self.read_byte()? as usize;
+                let index = self.read_byte()? as usize;
 
                 self.set_upvalue(index)?;
             }
 
+            // ========================================================
+            // LITERALS
+            // ========================================================
             OpCode::True => {
                 self.push(Value::Boolean(true));
             }
@@ -73,38 +68,36 @@ impl VirtualMachine {
                 self.push(Value::Nil);
             }
 
+            // ========================================================
+            // ARITHMETIC
+            // ========================================================
             OpCode::Add => {
                 self.add()?;
             }
 
             OpCode::Subtract => {
-                self.numeric_binary(
-                    NumericOp::Subtract
-                )?;
+                self.numeric_binary(NumericOp::Subtract)?;
             }
 
             OpCode::Multiply => {
-                self.numeric_binary(
-                    NumericOp::Multiply
-                )?;
+                self.numeric_binary(NumericOp::Multiply)?;
             }
 
             OpCode::Divide => {
-                self.numeric_binary(
-                    NumericOp::Divide
-                )?;
+                self.numeric_binary(NumericOp::Divide)?;
             }
 
             OpCode::Modulo => {
-                self.numeric_binary(
-                    NumericOp::Modulo
-                )?;
+                self.numeric_binary(NumericOp::Modulo)?;
             }
 
             OpCode::Negate => {
                 self.negate()?;
             }
 
+            // ========================================================
+            // BITWISE
+            // ========================================================
             OpCode::BitAnd => {
                 self.bitwise_binary(0)?;
             }
@@ -129,33 +122,31 @@ impl VirtualMachine {
                 self.shift(false)?;
             }
 
+            // ========================================================
+            // COMPARISON
+            // ========================================================
             OpCode::Equal => {
                 let b = self.pop()?;
                 let a = self.pop()?;
 
-                self.push(
-                    Value::Boolean(
-                        Value::equals(a, b)
-                    )
-                );
+                self.push(Value::Boolean(Value::equals(a, b)));
             }
 
             OpCode::Greater => {
-                self.compare(
-                    ComparisonOp::Greater
-                )?;
+                self.compare(ComparisonOp::Greater)?;
             }
 
             OpCode::Less => {
-                self.compare(
-                    ComparisonOp::Less
-                )?;
+                self.compare(ComparisonOp::Less)?;
             }
 
             OpCode::Not => {
                 self.not()?;
             }
 
+            // ========================================================
+            // OBJECT / PROPERTY
+            // ========================================================
             OpCode::GetProperty => {
                 self.get_property()?;
             }
@@ -164,16 +155,17 @@ impl VirtualMachine {
                 self.set_property()?;
             }
 
+            // ========================================================
+            // ARRAY
+            // ========================================================
             OpCode::Array => {
-                let count =
-                    self.read_byte()? as usize;
+                let count = self.read_byte()? as usize;
 
                 self.op_array(count)?;
             }
 
             OpCode::Object => {
-                let pair_count =
-                    self.read_byte()? as usize;
+                let pair_count = self.read_byte()? as usize;
 
                 self.op_object(pair_count)?;
             }
@@ -214,6 +206,9 @@ impl VirtualMachine {
                 self.op_array_contains()?;
             }
 
+            // ========================================================
+            // ITERATORS
+            // ========================================================
             OpCode::GetIterator => {
                 self.op_get_iterator()?;
             }
@@ -226,34 +221,36 @@ impl VirtualMachine {
                 self.op_iterator_next()?;
             }
 
+            // ========================================================
+            // FUNCTIONS / CLOSURES
+            // ========================================================
             OpCode::Closure => {
                 self.op_closure()?;
             }
 
             OpCode::Call => {
-                let arg_count =
-                    self.read_byte()? as usize;
+                let arg_count = self.read_byte()? as usize;
 
                 self.execute_call(arg_count)?;
             }
 
             OpCode::InvokeMethod => {
-                let method_constant =
-                    self.read_byte()? as usize;
+                let method_constant = self.read_byte()? as usize;
+                let arg_count = self.read_byte()? as usize;
 
-                let arg_count =
-                    self.read_byte()? as usize;
-
-                self.op_invoke_method(
-                    method_constant,
-                    arg_count,
-                )?;
+                self.op_invoke_method(method_constant, arg_count)?;
             }
 
+            // ========================================================
+            // MODULES
+            // ========================================================
             OpCode::Import => {
                 self.import_module()?;
             }
 
+            // ========================================================
+            // CONTROL FLOW
+            // ========================================================
             OpCode::Jump => {
                 self.jump()?;
             }
@@ -270,6 +267,9 @@ impl VirtualMachine {
                 self.pop()?;
             }
 
+            // ========================================================
+            // RETURN / HALT
+            // ========================================================
             OpCode::Return => {
                 self.execute_return()?;
 
@@ -279,6 +279,48 @@ impl VirtualMachine {
             OpCode::Halt => {
                 return Ok(true);
             }
+
+            // ========================================================
+            // EXCEPTIONS
+            // ========================================================
+            OpCode::PushExceptionHandler => {
+                let catch_raw = self.read_short()?;
+                let finally_raw = self.read_short()?;
+
+                let catch_ip = if catch_raw == u16::MAX {
+                    None
+                } else {
+                    Some(catch_raw as usize)
+                };
+
+                let finally_ip = if finally_raw == u16::MAX {
+                    None
+                } else {
+                    Some(finally_raw as usize)
+                };
+
+                self.register_exception_handler(catch_ip, finally_ip)?;
+            }
+
+            OpCode::PopExceptionHandler => {
+                self.unregister_exception_handler()?;
+            }
+
+            OpCode::Throw => {
+                let value = self.pop()?;
+
+                return Err(RuntimeError::Thrown(value));
+            }
+            #[allow(clippy::single_match)]
+            OpCode::FinallyEnd => match self.pending_exception.take() {
+                Some(pending) => {
+                    match pending.rethrow {
+                        true => return Err(RuntimeError::Thrown(pending.value)),
+                        false => (),
+                    }
+                }
+                _ => (),
+            },
         }
 
         Ok(false)
