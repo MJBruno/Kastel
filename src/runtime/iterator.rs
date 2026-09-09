@@ -39,6 +39,16 @@ pub enum IteratorKind {
         index: usize,
     },
 
+    Dict {
+        dict: Gc<Object>,
+        index: usize,
+    },
+
+    String {
+        string: Gc<Object>,
+        index: usize,
+    },
+
     Map {
         source: Box<Value>,
         callback: Value,
@@ -59,7 +69,6 @@ pub enum IteratorKind {
         remaining: usize,
     },
 }
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct IteratorState {
     pub(crate) kind: IteratorKind,
@@ -98,6 +107,9 @@ impl IteratorState {
 
             IteratorKind::Array { .. } => {}
 
+            IteratorKind::Dict { .. } => {}
+
+            IteratorKind::String { .. } => {}
             IteratorKind::Map { source, callback } => {
                 visit(source);
                 visit(callback);
@@ -192,20 +204,59 @@ impl Value {
     /// Iterator -> lui-même
     pub fn to_iterator(&self) -> Result<Value, RuntimeError> {
         match self {
+            // ========================================================
+            // RANGE
+            // ========================================================
             Value::Range { start, stop, step } => {
                 Ok(Value::new_range_iterator(*start, *stop, *step))
             }
 
-            Value::Object(handle) => match &*handle.borrow() {
-                Object::Array(_) => Ok(Value::new_array_iterator(handle.clone())),
+            // ========================================================
+            // OBJECTS
+            // ========================================================
+            Value::Object(handle) => {
+                match &*handle.borrow() {
+                    // ------------------------------------------------
+                    // ITERATOR
+                    // ------------------------------------------------
+                    Object::Iterator(_) => Ok(self.clone()),
 
-                Object::Iterator(_) => Ok(self.clone()),
+                    // ------------------------------------------------
+                    // ARRAY
+                    // ------------------------------------------------
+                    Object::Array(_) => Ok(Value::new_array_iterator(handle.clone())),
 
-                _ => Err(RuntimeError::NotIterable),
-            },
+                    // ------------------------------------------------
+                    // DICT
+                    //
+                    // dict -> iterator des clés
+                    // ------------------------------------------------
+                    Object::Dict(_) => Ok(Value::new_dict_iterator(handle.clone())),
+
+                    // ------------------------------------------------
+                    // STRING
+                    //
+                    // string -> iterator des caractères
+                    // ------------------------------------------------
+                    Object::String(_) => Ok(Value::new_string_iterator(handle.clone())),
+
+                    _ => Err(RuntimeError::NotIterable),
+                }
+            }
 
             _ => Err(RuntimeError::NotIterable),
         }
+    }
+
+    fn new_dict_iterator(dict: Gc<Object>) -> Value {
+        Self::new_iterator(IteratorState::new(IteratorKind::Dict { dict, index: 0 }))
+    }
+
+    fn new_string_iterator(string: Gc<Object>) -> Value {
+        Self::new_iterator(IteratorState::new(IteratorKind::String {
+            string,
+            index: 0,
+        }))
     }
 
     // ============================================================
@@ -244,7 +295,25 @@ impl Value {
                     Ok(current > stop)
                 }
             }
+            IteratorKind::Dict { dict, index } => {
+                let dict = dict.borrow();
 
+                let Object::Dict(entries) = &*dict else {
+                    return Err(RuntimeError::TypeError);
+                };
+
+                Ok(*index < entries.len())
+            }
+
+            IteratorKind::String { string, index } => {
+                let string = string.borrow();
+
+                let Object::String(value) = &*string else {
+                    return Err(RuntimeError::TypeError);
+                };
+
+                Ok(*index < value.chars().count())
+            }
             IteratorKind::Array { array, index } => {
                 let array = array.borrow();
 
@@ -279,6 +348,9 @@ impl Value {
         }
 
         match &mut state.kind {
+            // ============================================================
+            // RANGE
+            // ============================================================
             IteratorKind::Range {
                 current,
                 stop,
@@ -301,6 +373,9 @@ impl Value {
                 Ok(Value::Integer(value as i64))
             }
 
+            // ============================================================
+            // ARRAY
+            // ============================================================
             IteratorKind::Array { array, index } => {
                 let array = array.borrow();
 
@@ -319,6 +394,56 @@ impl Value {
                 Ok(value)
             }
 
+            // ============================================================
+            // DICT
+            //
+            // dict -> iterator des clés
+            // ============================================================
+            IteratorKind::Dict { dict, index } => {
+                let dict = dict.borrow();
+
+                let Object::Dict(entries) = &*dict else {
+                    return Err(RuntimeError::TypeError);
+                };
+
+                if *index >= entries.len() {
+                    return Err(RuntimeError::IteratorExhausted);
+                }
+
+                let value = entries[*index].0.clone();
+
+                *index += 1;
+
+                Ok(value)
+            }
+
+            // ============================================================
+            // STRING
+            //
+            // string -> iterator des caractères
+            // ============================================================
+            IteratorKind::String { string, index } => {
+                let string = string.borrow();
+
+                let Object::String(value) = &*string else {
+                    return Err(RuntimeError::TypeError);
+                };
+
+                let character = value
+                    .chars()
+                    .nth(*index)
+                    .ok_or(RuntimeError::IteratorExhausted)?;
+
+                *index += 1;
+
+                Ok(Value::new_string(character.to_string()))
+            }
+
+            // ============================================================
+            // LAZY ADAPTERS
+            //
+            // Ces itérateurs nécessitent la VM pour exécuter les callbacks.
+            // ============================================================
             IteratorKind::Map { .. }
             | IteratorKind::Filter { .. }
             | IteratorKind::Take { .. }
@@ -327,6 +452,30 @@ impl Value {
     }
 }
 
+// pub fn iterator_to_array(
+//     value: &Value,
+//     vm: &mut crate::vm::machine::VirtualMachine,
+// ) -> Result<Value, RuntimeError> {
+//     let iterator = value.to_iterator()?;
+
+//     let mut values = Vec::new();
+
+//     loop {
+//         match vm.iterator_next_value(&iterator) {
+//             Ok(value) => values.push(value),
+
+//             Err(RuntimeError::IteratorExhausted) => {
+//                 break;
+//             }
+
+//             Err(error) => {
+//                 return Err(error);
+//             }
+//         }
+//     }
+
+//     Ok(Value::new_array(values))
+// }
 // ================================================================
 //                     MATERIALISATION
 // ================================================================

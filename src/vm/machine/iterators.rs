@@ -64,7 +64,7 @@ impl VirtualMachine {
     //                       ITERATOR NEXT
     // ============================================================
 
-    fn iterator_next_value(&mut self, iterator: &Value) -> Result<Value, RuntimeError> {
+    pub fn iterator_next_value(&mut self, iterator: &Value) -> Result<Value, RuntimeError> {
         // --------------------------------------------------------
         // Un cached value.
         // --------------------------------------------------------
@@ -133,7 +133,27 @@ impl VirtualMachine {
 
                 Ok(Value::Integer(current as i64))
             }
+            // ====================================================
+            // DICT
+            // ====================================================
+            IteratorKind::Dict { dict, index } => {
+                let value = {
+                    let object = dict.borrow();
 
+                    let Object::Dict(entries) = &*object else {
+                        return Err(RuntimeError::TypeError);
+                    };
+
+                    entries
+                        .get(index)
+                        .map(|(key, _)| key.clone())
+                        .ok_or(RuntimeError::IteratorExhausted)?
+                };
+
+                self.set_dict_index(iterator, index + 1)?;
+
+                Ok(value)
+            }
             // ====================================================
             // ARRAY
             // ====================================================
@@ -217,9 +237,75 @@ impl VirtualMachine {
 
                 self.iterator_next_value(&source)
             }
+            // ====================================================
+            // STRING
+            // ====================================================
+            IteratorKind::String { string, index } => {
+                let value = {
+                    let object = string.borrow();
+
+                    let Object::String(value) = &*object else {
+                        return Err(RuntimeError::TypeError);
+                    };
+
+                    value
+                        .chars()
+                        .nth(index)
+                        .map(|character| Value::new_string(character.to_string()))
+                        .ok_or(RuntimeError::IteratorExhausted)?
+                };
+
+                self.set_string_index(iterator, index + 1)?;
+
+                Ok(value)
+            }
         }
     }
 
+    fn set_string_index(&mut self, iterator: &Value, index: usize) -> Result<(), RuntimeError> {
+        let Value::Object(handle) = iterator else {
+            return Err(RuntimeError::TypeError);
+        };
+
+        let mut object = handle.borrow_mut();
+
+        let Object::Iterator(state) = &mut *object else {
+            return Err(RuntimeError::TypeError);
+        };
+
+        if let IteratorKind::String {
+            index: state_index, ..
+        } = &mut state.kind
+        {
+            *state_index = index;
+
+            Ok(())
+        } else {
+            Err(RuntimeError::TypeError)
+        }
+    }
+    fn set_dict_index(&mut self, iterator: &Value, index: usize) -> Result<(), RuntimeError> {
+        let Value::Object(handle) = iterator else {
+            return Err(RuntimeError::TypeError);
+        };
+
+        let mut object = handle.borrow_mut();
+
+        let Object::Iterator(state) = &mut *object else {
+            return Err(RuntimeError::TypeError);
+        };
+
+        if let IteratorKind::Dict {
+            index: state_index, ..
+        } = &mut state.kind
+        {
+            *state_index = index;
+
+            Ok(())
+        } else {
+            Err(RuntimeError::TypeError)
+        }
+    }
     // ============================================================
     //                         CACHE
     // ============================================================
@@ -489,7 +575,14 @@ impl VirtualMachine {
 
                 self.iterator_all(&receiver, args[1].clone())
             }
+            // ============================================================
+            //                         to_iterator()
+            // ============================================================
+            "to_iterator" => {
+                Self::expect_method_args(args, 1)?;
 
+                Ok(receiver.to_iterator()?)
+            }
             _ => Err(RuntimeError::ObjectFieldNotFound {
                 name: method.to_string(),
                 suggestion: None,

@@ -311,7 +311,34 @@ impl VirtualMachine {
         let args = self.stack[receiver_index..].to_vec();
 
         self.stack.truncate(receiver_index);
+        // ============================================================
+        //                     to_iterator()
+        // ============================================================
+        //
+        // Conversion générique :
+        //
+        // Array    -> Iterator
+        // Dict     -> Iterator
+        // String   -> Iterator
+        // Range    -> Iterator
+        // Iterator -> lui-même
+        //
+        // ============================================================
 
+        if method_name == "to_iterator" {
+            if arg_count != 0 {
+                return Err(RuntimeError::WrongArgumentCount {
+                    expected: 0,
+                    found: arg_count,
+                });
+            }
+
+            let iterator = receiver.to_iterator()?;
+
+            self.push(iterator);
+
+            return Ok(());
+        }
         let result = match &receiver {
             // ============================================================
             // RANGE
