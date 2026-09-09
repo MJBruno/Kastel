@@ -490,158 +490,137 @@ impl Compiler {
     // OR
     // ============================================================
 
-
-fn compile_or_pattern(
-    &mut self,
-    subject_name: &str,
-    patterns: &[Pattern],
-) -> Result<usize, CompileError> {
-    if patterns.is_empty() {
-        return Err(
-            CompileError::InternalCompilerError(
+    fn compile_or_pattern(
+        &mut self,
+        subject_name: &str,
+        patterns: &[Pattern],
+    ) -> Result<usize, CompileError> {
+        if patterns.is_empty() {
+            return Err(CompileError::InternalCompilerError(
                 "Pattern OR vide".to_string(),
-            ),
-        );
-    }
-
-    /*
-     * Pour l'instant :
-     *
-     *     1 | 7 | 10
-     *
-     * est supporté.
-     *
-     * Les bindings dans un OR seront ajoutés ensuite.
-     */
-    for pattern in patterns {
-        if Self::pattern_contains_binding(pattern) {
-            return Err(
-                CompileError::InternalCompilerError(
-                    "Binding dans un pattern OR non encore supporté"
-                        .to_string(),
-                ),
-            );
+            ));
         }
 
-        match pattern {
-            Pattern::Literal(_) | Pattern::Wildcard => {}
+        /*
+         * Pour l'instant :
+         *
+         *     1 | 7 | 10
+         *
+         * est supporté.
+         *
+         * Les bindings dans un OR seront ajoutés ensuite.
+         */
+        for pattern in patterns {
+            if Self::pattern_contains_binding(pattern) {
+                return Err(CompileError::InternalCompilerError(
+                    "Binding dans un pattern OR non encore supporté".to_string(),
+                ));
+            }
 
-            _ => {
-                return Err(
-                    CompileError::InternalCompilerError(
-                        "Ce type de pattern n'est pas encore supporté dans OR"
-                            .to_string(),
-                    ),
-                );
+            match pattern {
+                Pattern::Literal(_) | Pattern::Wildcard => {}
+
+                _ => {
+                    return Err(CompileError::InternalCompilerError(
+                        "Ce type de pattern n'est pas encore supporté dans OR".to_string(),
+                    ));
+                }
             }
         }
-    }
-
-    /*
-     * Les Jump qui correspondent à un succès des alternatives
-     * précédentes seront tous redirigés vers le même point final.
-     */
-    let mut success_jumps = Vec::new();
-
-    /*
-     * Tous les patterns sauf le dernier.
-     *
-     * Exemple :
-     *
-     *     1 | 7 | 10
-     *
-     * produit :
-     *
-     *     test 1
-     *     false -> test 7
-     *     true  -> success
-     *
-     *     test 7
-     *     false -> test 10
-     *     true  -> success
-     */
-    for pattern in patterns.iter().take(patterns.len() - 1) {
-        let false_jump =
-            self.compile_match_pattern(
-                subject_name,
-                pattern,
-            )?;
 
         /*
-         * Pattern réussi :
+         * Les Jump qui correspondent à un succès des alternatives
+         * précédentes seront tous redirigés vers le même point final.
+         */
+        let mut success_jumps = Vec::new();
+
+        /*
+         * Tous les patterns sauf le dernier.
          *
-         * JumpIfFalse a laissé true.
-         */
-        self.emit_opcode(OpCode::Pop);
-
-        /*
-         * Produire le résultat true du OR.
+         * Exemple :
          *
-         * Ce true sera utilisé par compile_match().
-         */
-        self.emit_opcode(OpCode::True);
-
-        /*
-         * Aller au résultat commun.
-         */
-        let success_jump =
-            self.emit_jump(OpCode::Jump);
-
-        success_jumps.push(success_jump);
-
-        /*
-         * Pattern échoué :
+         *     1 | 7 | 10
          *
-         * JumpIfFalse a laissé false.
+         * produit :
+         *
+         *     test 1
+         *     false -> test 7
+         *     true  -> success
+         *
+         *     test 7
+         *     false -> test 10
+         *     true  -> success
          */
-        self.patch_jump(false_jump)?;
+        for pattern in patterns.iter().take(patterns.len() - 1) {
+            let false_jump = self.compile_match_pattern(subject_name, pattern)?;
+
+            /*
+             * Pattern réussi :
+             *
+             * JumpIfFalse a laissé true.
+             */
+            self.emit_opcode(OpCode::Pop);
+
+            /*
+             * Produire le résultat true du OR.
+             *
+             * Ce true sera utilisé par compile_match().
+             */
+            self.emit_opcode(OpCode::True);
+
+            /*
+             * Aller au résultat commun.
+             */
+            let success_jump = self.emit_jump(OpCode::Jump);
+
+            success_jumps.push(success_jump);
+
+            /*
+             * Pattern échoué :
+             *
+             * JumpIfFalse a laissé false.
+             */
+            self.patch_jump(false_jump)?;
+
+            /*
+             * Supprimer false avant de tester l'alternative suivante.
+             */
+            self.emit_opcode(OpCode::Pop);
+        }
 
         /*
-         * Supprimer false avant de tester l'alternative suivante.
+         * Dernier pattern.
+         *
+         * Son résultat devient directement le résultat du OR :
+         *
+         *     true  -> match arm
+         *     false -> prochain arm
          */
-        self.emit_opcode(OpCode::Pop);
+        let last_false_jump =
+            self.compile_match_pattern(subject_name, patterns.last().expect("patterns non vide"))?;
+
+        /*
+         * Les succès des alternatives précédentes arrivent ici.
+         *
+         * Ils ont déjà placé true sur la pile.
+         *
+         * Le dernier pattern arrive lui aussi ici avec true sur la pile
+         * lorsqu'il réussit.
+         */
+        for success_jump in success_jumps {
+            self.patch_jump(success_jump)?;
+        }
+
+        /*
+         * IMPORTANT :
+         *
+         * Le dernier pattern possède déjà son JumpIfFalse.
+         *
+         * C'est exactement le jump que compile_match() doit utiliser
+         * pour passer à l'arm suivant.
+         */
+        Ok(last_false_jump)
     }
-
-    /*
-     * Dernier pattern.
-     *
-     * Son résultat devient directement le résultat du OR :
-     *
-     *     true  -> match arm
-     *     false -> prochain arm
-     */
-    let last_false_jump =
-        self.compile_match_pattern(
-            subject_name,
-            patterns
-                .last()
-                .expect("patterns non vide"),
-        )?;
-
-    /*
-     * Les succès des alternatives précédentes arrivent ici.
-     *
-     * Ils ont déjà placé true sur la pile.
-     *
-     * Le dernier pattern arrive lui aussi ici avec true sur la pile
-     * lorsqu'il réussit.
-     */
-    for success_jump in success_jumps {
-        self.patch_jump(success_jump)?;
-    }
-
-    /*
-     * IMPORTANT :
-     *
-     * Le dernier pattern possède déjà son JumpIfFalse.
-     *
-     * C'est exactement le jump que compile_match() doit utiliser
-     * pour passer à l'arm suivant.
-     */
-    Ok(last_false_jump)
-}
-
-
 
     // ============================================================
     // RANGE
@@ -779,12 +758,257 @@ fn compile_or_pattern(
 
     fn compile_array_pattern(
         &mut self,
-        _subject_name: &str,
-        _patterns: &[Pattern],
+        subject_name: &str,
+        patterns: &[Pattern],
     ) -> Result<usize, CompileError> {
-        Err(CompileError::InternalCompilerError(
-            "Pattern tableau non encore activé".to_string(),
-        ))
+        /*
+         * Exemple :
+         *
+         *     [10, 20]
+         *
+         * ou :
+         *
+         *     [x, y]
+         *
+         * La longueur doit correspondre exactement.
+         */
+
+        let target_depth = self.scope_depth.checked_sub(1).ok_or_else(|| {
+            CompileError::InternalCompilerError(
+                "Scope invalide pour un pattern tableau".to_string(),
+            )
+        })?;
+
+        // ============================================================
+        // LONGUEUR
+        // ============================================================
+
+        /*
+         * subject.length
+         */
+        self.compile_variable_get(subject_name)?;
+
+        self.emit_opcode(OpCode::ArrayLength);
+
+        /*
+         * longueur attendue
+         */
+        let length_constant = self.make_constant(Value::Integer(patterns.len() as i64))?;
+
+        self.emit_bytes(OpCode::Constant, length_constant);
+
+        /*
+         * subject.length == patterns.len()
+         */
+        self.emit_opcode(OpCode::Equal);
+
+        /*
+         * Si false :
+         *
+         *     passer directement à l'arm suivant.
+         *
+         * Aucun binding n'a encore été créé.
+         */
+        let length_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+
+        /*
+         * La longueur est correcte.
+         */
+        self.emit_opcode(OpCode::Pop);
+
+        // ============================================================
+        // ÉLÉMENTS
+        // ============================================================
+
+        let mut element_false_jumps = Vec::new();
+
+        for (index, pattern) in patterns.iter().enumerate() {
+            /*
+             * --------------------------------------------------------
+             * WILDCARD
+             * --------------------------------------------------------
+             */
+
+            if matches!(pattern, Pattern::Wildcard) {
+                continue;
+            }
+
+            /*
+             * Expression :
+             *
+             *     subject[index]
+             */
+            let element_expression = Expression::Index {
+                object: Box::new(Expression::Variable(subject_name.to_string())),
+                index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
+            };
+
+            match pattern {
+                // ----------------------------------------------------
+                // LITERAL
+                // ----------------------------------------------------
+                Pattern::Literal(literal) => {
+                    self.compile_expression(&element_expression)?;
+
+                    self.compile_literal_pattern(literal)?;
+
+                    self.emit_opcode(OpCode::Equal);
+
+                    /*
+                     * Échec de cet élément.
+                     */
+                    let false_jump = self.emit_jump(OpCode::JumpIfFalse);
+
+                    /*
+                     * Succès de cet élément.
+                     */
+                    self.emit_opcode(OpCode::Pop);
+
+                    element_false_jumps.push(false_jump);
+                }
+
+                // ----------------------------------------------------
+                // BINDING
+                // ----------------------------------------------------
+                Pattern::Binding(name) => {
+                    /*
+                     * [x, y]
+                     *
+                     * devient conceptuellement :
+                     *
+                     * let x = subject[0];
+                     * let y = subject[1];
+                     */
+                    self.compile_local_var(name, Some(&element_expression), true)?;
+                }
+
+                // ----------------------------------------------------
+                // OR
+                // ----------------------------------------------------
+                Pattern::Or(_) => {
+                    return Err(CompileError::InternalCompilerError(
+                        "Pattern OR imbriqué dans un tableau non encore supporté".to_string(),
+                    ));
+                }
+
+                // ----------------------------------------------------
+                // RANGE
+                // ----------------------------------------------------
+                Pattern::Range { .. } => {
+                    return Err(CompileError::InternalCompilerError(
+                        "Pattern range imbriqué dans un tableau non encore supporté".to_string(),
+                    ));
+                }
+
+                // ----------------------------------------------------
+                // ARRAY
+                // ----------------------------------------------------
+                Pattern::Array(_) => {
+                    return Err(CompileError::InternalCompilerError(
+                        "Pattern tableau imbriqué non encore supporté".to_string(),
+                    ));
+                }
+
+                Pattern::Wildcard => unreachable!(),
+            }
+        }
+
+        // ============================================================
+        // SUCCÈS
+        // ============================================================
+
+        /*
+         * Tous les éléments correspondent.
+         */
+        self.emit_opcode(OpCode::True);
+
+        /*
+         * Aller au point de résultat commun.
+         */
+        let success_jump = self.emit_jump(OpCode::Jump);
+
+        // ============================================================
+        // ÉCHEC DE LONGUEUR
+        // ============================================================
+
+        self.patch_jump(length_false_jump)?;
+
+        /*
+         * JumpIfFalse laisse false sur la pile.
+         */
+        self.emit_opcode(OpCode::Pop);
+
+        /*
+         * Aucun binding n'existe encore dans ce chemin.
+         */
+        self.emit_opcode(OpCode::False);
+
+        let length_result_jump = self.emit_jump(OpCode::Jump);
+
+        // ============================================================
+        // ÉCHECS D'ÉLÉMENTS
+        // ============================================================
+
+        let mut element_result_jumps = Vec::new();
+
+        for false_jump in element_false_jumps {
+            self.patch_jump(false_jump)?;
+
+            /*
+             * Le résultat du test est false.
+             */
+            self.emit_opcode(OpCode::Pop);
+
+            /*
+             * Les bindings déjà créés dans cet arm doivent être
+             * supprimés avant de continuer.
+             *
+             * IMPORTANT :
+             * cleanup_count() compte les locals, mais ne modifie
+             * pas la LocalTable.
+             */
+            self.emit_scope_cleanup(target_depth);
+
+            /*
+             * Remettre explicitement false comme résultat du pattern.
+             */
+            self.emit_opcode(OpCode::False);
+
+            let jump = self.emit_jump(OpCode::Jump);
+
+            element_result_jumps.push(jump);
+        }
+
+        // ============================================================
+        // RÉSULTAT COMMUN
+        // ============================================================
+
+        /*
+         * Tous les chemins arrivent ici :
+         *
+         *     success -> true
+         *     length  -> false
+         *     element -> false
+         */
+
+        self.patch_jump(success_jump)?;
+
+        self.patch_jump(length_result_jump)?;
+
+        for jump in element_result_jumps {
+            self.patch_jump(jump)?;
+        }
+
+        /*
+         * Convention standard des patterns :
+         *
+         *     [bool]
+         *
+         * compile_match() utilisera ensuite JumpIfFalse.
+         */
+        let result_jump = self.emit_jump(OpCode::JumpIfFalse);
+
+        Ok(result_jump)
     }
 
     // ============================================================
