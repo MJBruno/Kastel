@@ -103,18 +103,18 @@ pub fn native_format(args: &[Value]) -> Result<Value, RuntimeError> {
     ))
 }
 
-pub fn native_strlen(args: &[Value]) -> Result<Value, RuntimeError> {
-    if args.len() != 1 {
-        return Err(RuntimeError::WrongArgumentCount {
-            expected: 1,
-            found: args.len(),
-        });
-    }
+// pub fn native_strlen(args: &[Value]) -> Result<Value, RuntimeError> {
+//     if args.len() != 1 {
+//         return Err(RuntimeError::WrongArgumentCount {
+//             expected: 1,
+//             found: args.len(),
+//         });
+//     }
 
-    let value = expect_string(&args[0])?;
+//     let value = expect_string(&args[0])?;
 
-    Ok(Value::Integer(value.chars().count() as i64))
-}
+//     Ok(Value::Integer(value.chars().count() as i64))
+// }
 
 pub fn native_lower(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
@@ -667,68 +667,8 @@ pub fn register(globals: &mut HashMap<String, Value>) {
         "format".to_string(),
         Value::NativeFunction(native_format),
     );
-
-    globals.insert(
-        "strlen".to_string(),
-        Value::NativeFunction(native_strlen),
-    );
-
-    globals.insert(
-        "lower".to_string(),
-        Value::NativeFunction(native_lower),
-    );
-
-    globals.insert(
-        "upper".to_string(),
-        Value::NativeFunction(native_upper),
-    );
-
-    globals.insert(
-        "trim".to_string(),
-        Value::NativeFunction(native_trim),
-    );
-
-    globals.insert(
-        "starts_with".to_string(),
-        Value::NativeFunction(native_starts_with),
-    );
-
-    globals.insert(
-        "ends_with".to_string(),
-        Value::NativeFunction(native_ends_with),
-    );
-
-    globals.insert(
-        "includes".to_string(),
-        Value::NativeFunction(native_contains),
-    );
-
-    globals.insert(
-        "replace".to_string(),
-        Value::NativeFunction(native_replace),
-    );
-
-    globals.insert(
-        "split".to_string(),
-        Value::NativeFunction(native_split),
-    );
 }
 
 pub fn register_compiler(compiler: &mut Compiler) {
-    let names = [
-        "format",
-        "strlen",
-        "lower",
-        "upper",
-        "trim",
-        "starts_with",
-        "ends_with",
-        "includes",
-        "replace",
-        "split",
-    ];
-
-    for name in names {
-        let _ = compiler.define_native(name);
-    }
+    let _ = compiler.define_native("format");
 }
