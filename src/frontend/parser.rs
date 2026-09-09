@@ -482,7 +482,6 @@ impl Parser {
     // ============================================================
     // PRIMARY
     // ============================================================
-
     fn primary(&mut self) -> Result<Expression, ParserError> {
         let token = self.advance().clone();
 
@@ -498,6 +497,15 @@ impl Parser {
             TokenKind::False => Ok(Expression::Literal(Literal::Bool(false))),
 
             TokenKind::Nil => Ok(Expression::Literal(Literal::Nil)),
+
+            // ----------------------------------------------------
+            // Fonction anonyme / callback
+            //
+            // function(x) {
+            //     return x * 2;
+            // }
+            // ----------------------------------------------------
+            TokenKind::Function => self.parse_function_expression(),
 
             // ----------------------------------------------------
             // Parenthèses
@@ -524,9 +532,6 @@ impl Parser {
                             break;
                         }
 
-                        // Autorise :
-                        //
-                        // [1, 2, 3,]
                         if self.check(TokenKind::RightBracket) {
                             break;
                         }
@@ -539,22 +544,13 @@ impl Parser {
             }
 
             // ----------------------------------------------------
-            // Objet : { clé: expression, clé2: expression2, ... }
-            //
-            // Aucune ambiguïté avec les blocs de statements : ceux-ci ne
-            // sont reconnus qu'au niveau statement() (en tout début de
-            // statement), jamais ici dans primary(), qui n'est atteint
-            // qu'en position d'expression (après '=', comme argument,
-            // comme élément de tableau, etc.).
+            // Objet
             // ----------------------------------------------------
             TokenKind::LeftBrace => {
                 let mut fields: Vec<(String, Expression)> = Vec::new();
 
                 if !self.check(TokenKind::RightBrace) {
                     loop {
-                        // La clé peut être un identifiant ({ name: ... })
-                        // ou une chaîne ({ "name": ... }), pratique pour
-                        // les clés qui ne sont pas des identifiants valides.
                         let key = if self.check(TokenKind::String) {
                             self.advance().lexeme.clone()
                         } else {
@@ -572,7 +568,6 @@ impl Parser {
                             break;
                         }
 
-                        // Autorise la virgule finale : { a: 1, b: 2, }
                         if self.check(TokenKind::RightBrace) {
                             break;
                         }
@@ -590,6 +585,38 @@ impl Parser {
                 column: token.column,
             }),
         }
+    }
+
+    fn parse_function_expression(&mut self) -> Result<Expression, ParserError> {
+        self.consume(
+            TokenKind::LeftParen,
+            "'(' attendu après 'function' dans une fonction anonyme",
+        )?;
+
+        let mut params = Vec::new();
+
+        if !self.check(TokenKind::RightParen) {
+            loop {
+                let param = self.consume(TokenKind::Identifier, "Nom de paramètre attendu")?;
+
+                params.push(param.lexeme);
+
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(TokenKind::RightParen, "')' attendu après les paramètres")?;
+
+        self.consume(
+            TokenKind::LeftBrace,
+            "'{' attendu avant le corps de la fonction anonyme",
+        )?;
+
+        let body = self.parse_block_statement()?;
+
+        Ok(Expression::Function { params, body })
     }
 
     // ============================================================
@@ -1008,7 +1035,8 @@ impl Parser {
     // for, à la façon de Python.
 
     fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
-        let variable = self.consume(TokenKind::Identifier, "Nom de variable attendu après 'for'")?;
+        let variable =
+            self.consume(TokenKind::Identifier, "Nom de variable attendu après 'for'")?;
 
         self.consume(TokenKind::In, "'in' attendu après le nom de variable")?;
 
@@ -1024,5 +1052,4 @@ impl Parser {
             body,
         })
     }
-
 }

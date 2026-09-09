@@ -10,7 +10,10 @@ impl Compiler {
     //                      EXPRESSION
     // ============================================================
 
-    pub(crate) fn compile_expression(&mut self, expr: &Expression) -> Result<(), CompileError> {
+    pub(crate) fn compile_expression(
+        &mut self,
+        expr: &Expression,
+    ) -> Result<(), CompileError> {
         match expr {
             Expression::Literal(value) => {
                 let value = match value {
@@ -22,12 +25,32 @@ impl Compiler {
                 };
 
                 let constant = self.make_constant(value)?;
-
                 self.emit_bytes(OpCode::Constant, constant);
             }
 
             Expression::Variable(name) => {
                 self.compile_variable_get(name)?;
+            }
+
+            // ====================================================
+            // FONCTION ANONYME / CALLBACK
+            //
+            // function(x) {
+            //     return x * 2;
+            // }
+            //
+            // Produit une Closure exactement comme une fonction
+            // nommée, mais sans déclaration dans la table des globals
+            // ou des locals.
+            // ====================================================
+            Expression::Function { params, body } => {
+                let function = self.compile_function("", params, body)?;
+
+                let function_constant = self.make_constant(
+                    Value::new_function(std::rc::Rc::new(function.clone())),
+                )?;
+
+                self.emit_closure(function_constant, &function.upvalues);
             }
 
             Expression::Binary {
@@ -86,7 +109,8 @@ impl Compiler {
                 }
 
                 for (key, value) in fields {
-                    let key_constant = self.make_constant(Value::new_string(key.clone()))?;
+                    let key_constant =
+                        self.make_constant(Value::new_string(key.clone()))?;
 
                     self.emit_bytes(OpCode::Constant, key_constant);
 
@@ -171,6 +195,7 @@ impl Compiler {
 
         Ok(())
     }
+
     // ============================================================
     //                         ARRAY
     // ============================================================

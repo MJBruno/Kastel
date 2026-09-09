@@ -138,6 +138,11 @@ pub enum Expression {
         right: Box<Expression>,
     },
 
+    Function {
+        params: Vec<String>,
+        body: Vec<Statement>,
+    },
+
     Call {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
