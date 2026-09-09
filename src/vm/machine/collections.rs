@@ -12,18 +12,14 @@ impl VirtualMachine {
     //                      ARRAY CREATION
     // ============================================================
 
-    pub(crate) fn op_array(
-        &mut self,
-        count: usize,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array(&mut self, count: usize) -> Result<(), RuntimeError> {
         if self.stack.len() < count {
             return Err(RuntimeError::StackUnderflow);
         }
 
         let start = self.stack.len() - count;
 
-        let values =
-            self.stack[start..].to_vec();
+        let values = self.stack[start..].to_vec();
 
         self.stack.truncate(start);
 
@@ -32,10 +28,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_object(
-        &mut self,
-        pair_count: usize,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_object(&mut self, pair_count: usize) -> Result<(), RuntimeError> {
         let total = pair_count
             .checked_mul(2)
             .ok_or(RuntimeError::InvalidFunction)?;
@@ -46,17 +39,14 @@ impl VirtualMachine {
 
         let start = self.stack.len() - total;
 
-        let mut fields =
-            Vec::with_capacity(pair_count);
+        let mut fields = Vec::with_capacity(pair_count);
 
         for index in 0..pair_count {
             let base = start + index * 2;
 
-            let key =
-                self.stack[base].clone();
+            let key = self.stack[base].clone();
 
-            let value =
-                self.stack[base + 1].clone();
+            let value = self.stack[base + 1].clone();
 
             fields.push((key, value));
         }
@@ -72,20 +62,16 @@ impl VirtualMachine {
     //                         INDEX
     // ============================================================
 
-    pub(crate) fn op_get_index(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_get_index(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
         }
 
         let len = self.stack.len();
 
-        let collection =
-            self.stack[len - 2].clone();
+        let collection = self.stack[len - 2].clone();
 
-        let index =
-            self.stack[len - 1].clone();
+        let index = self.stack[len - 1].clone();
 
         let value = match &collection {
             Value::Object(handle) => {
@@ -93,8 +79,7 @@ impl VirtualMachine {
 
                 match &*object {
                     Object::Array(_) => {
-                        let index =
-                            Self::array_index(index)?;
+                        let index = Self::array_index(index)?;
 
                         drop(object);
 
@@ -108,17 +93,13 @@ impl VirtualMachine {
                     }
 
                     _ => {
-                        return Err(
-                            RuntimeError::NotIndexable
-                        );
+                        return Err(RuntimeError::NotIndexable);
                     }
                 }
             }
 
             _ => {
-                return Err(
-                    RuntimeError::NotIndexable
-                );
+                return Err(RuntimeError::NotIndexable);
             }
         };
 
@@ -128,23 +109,18 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_set_index(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_set_index(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 3 {
             return Err(RuntimeError::StackUnderflow);
         }
 
         let len = self.stack.len();
 
-        let collection =
-            self.stack[len - 3].clone();
+        let collection = self.stack[len - 3].clone();
 
-        let index =
-            self.stack[len - 2].clone();
+        let index = self.stack[len - 2].clone();
 
-        let value =
-            self.stack[len - 1].clone();
+        let value = self.stack[len - 1].clone();
 
         match &collection {
             Value::Object(handle) => {
@@ -152,38 +128,27 @@ impl VirtualMachine {
 
                 match &*object {
                     Object::Array(_) => {
-                        let index =
-                            Self::array_index(index)?;
+                        let index = Self::array_index(index)?;
 
                         drop(object);
 
-                        collection.array_set(
-                            index,
-                            value,
-                        )?;
+                        collection.array_set(index, value)?;
                     }
 
                     Object::Dict(_) => {
                         drop(object);
 
-                        collection.dict_set(
-                            &index,
-                            value,
-                        )?;
+                        collection.dict_set(&index, value)?;
                     }
 
                     _ => {
-                        return Err(
-                            RuntimeError::NotIndexable
-                        );
+                        return Err(RuntimeError::NotIndexable);
                     }
                 }
             }
 
             _ => {
-                return Err(
-                    RuntimeError::NotIndexable
-                );
+                return Err(RuntimeError::NotIndexable);
             }
         }
 
@@ -196,14 +161,10 @@ impl VirtualMachine {
     //                    ARRAY PRIMITIVES
     // ============================================================
 
-    pub(crate) fn op_array_length(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
-        let array =
-            self.peek()?.clone();
+    pub(crate) fn op_array_length(&mut self) -> Result<(), RuntimeError> {
+        let array = self.peek()?.clone();
 
-        let length =
-            array.array_len()? as i64;
+        let length = array.array_len()? as i64;
 
         self.pop()?;
 
@@ -212,41 +173,30 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_push(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_push(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
         }
 
         let len = self.stack.len();
 
-        let array =
-            self.stack[len - 2].clone();
+        let array = self.stack[len - 2].clone();
 
-        let value =
-            self.stack[len - 1].clone();
+        let value = self.stack[len - 1].clone();
 
-        let length =
-            array.array_push(value)?;
+        let length = array.array_push(value)?;
 
         self.stack.truncate(len - 2);
 
-        self.push(Value::Integer(
-            length as i64
-        ));
+        self.push(Value::Integer(length as i64));
 
         Ok(())
     }
 
-    pub(crate) fn op_array_pop(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
-        let array =
-            self.peek()?.clone();
+    pub(crate) fn op_array_pop(&mut self) -> Result<(), RuntimeError> {
+        let array = self.peek()?.clone();
 
-        let value =
-            array.array_pop()?;
+        let value = array.array_pop()?;
 
         self.pop()?;
 
@@ -255,62 +205,44 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_insert(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_insert(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 3 {
             return Err(RuntimeError::StackUnderflow);
         }
 
         let len = self.stack.len();
 
-        let array =
-            self.stack[len - 3].clone();
+        let array = self.stack[len - 3].clone();
 
-        let index_value =
-            self.stack[len - 2].clone();
+        let index_value = self.stack[len - 2].clone();
 
-        let value =
-            self.stack[len - 1].clone();
+        let value = self.stack[len - 1].clone();
 
-        let index =
-            Self::array_index(index_value)?;
+        let index = Self::array_index(index_value)?;
 
-        let new_length =
-            array.array_insert(
-                index,
-                value,
-            )?;
+        let new_length = array.array_insert(index, value)?;
 
         self.stack.truncate(len - 3);
 
-        self.push(Value::Integer(
-            new_length as i64
-        ));
+        self.push(Value::Integer(new_length as i64));
 
         Ok(())
     }
 
-    pub(crate) fn op_array_remove(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_remove(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
         }
 
         let len = self.stack.len();
 
-        let array =
-            self.stack[len - 2].clone();
+        let array = self.stack[len - 2].clone();
 
-        let index_value =
-            self.stack[len - 1].clone();
+        let index_value = self.stack[len - 1].clone();
 
-        let index =
-            Self::array_index(index_value)?;
+        let index = Self::array_index(index_value)?;
 
-        let value =
-            array.array_remove(index)?;
+        let value = array.array_remove(index)?;
 
         self.stack.truncate(len - 2);
 
@@ -319,11 +251,8 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_clear(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
-        let array =
-            self.peek()?.clone();
+    pub(crate) fn op_array_clear(&mut self) -> Result<(), RuntimeError> {
+        let array = self.peek()?.clone();
 
         array.array_clear()?;
 
@@ -332,29 +261,22 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_contains(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_contains(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
         }
 
         let len = self.stack.len();
 
-        let array =
-            self.stack[len - 2].clone();
+        let array = self.stack[len - 2].clone();
 
-        let value =
-            self.stack[len - 1].clone();
+        let value = self.stack[len - 1].clone();
 
-        let contains =
-            array.array_contains(&value)?;
+        let contains = array.array_contains(&value)?;
 
         self.stack.truncate(len - 2);
 
-        self.push(Value::Boolean(
-            contains
-        ));
+        self.push(Value::Boolean(contains));
 
         Ok(())
     }
@@ -368,13 +290,11 @@ impl VirtualMachine {
         method_constant: usize,
         arg_count: usize,
     ) -> Result<(), RuntimeError> {
-        let method_value =
-            self.read_constant(method_constant.try_into().unwrap())?;
+        let method_value = self.read_constant(method_constant.try_into().unwrap())?;
 
-        let method_name =
-            method_value
-                .as_string_value()
-                .ok_or(RuntimeError::TypeError)?;
+        let method_name = method_value
+            .as_string_value()
+            .ok_or(RuntimeError::TypeError)?;
 
         let required = arg_count
             .checked_add(1)
@@ -384,14 +304,11 @@ impl VirtualMachine {
             return Err(RuntimeError::StackUnderflow);
         }
 
-        let receiver_index =
-            self.stack.len() - required;
+        let receiver_index = self.stack.len() - required;
 
-        let receiver =
-            self.stack[receiver_index].clone();
+        let receiver = self.stack[receiver_index].clone();
 
-        let args =
-            self.stack[receiver_index..].to_vec();
+        let args = self.stack[receiver_index..].to_vec();
 
         self.stack.truncate(receiver_index);
 
@@ -400,59 +317,66 @@ impl VirtualMachine {
                 let object = handle.borrow();
 
                 match &*object {
-                    Object::Array(_) => {
+                    // ====================================================
+                    // STRING
+                    // ====================================================
+                    Object::String(_) => {
                         drop(object);
 
-                        if let Some(result) =
-                            array::dispatch_method(
-                                &method_name,
-                                &args,
-                            )?
-                        {
-                            result
-                        } else {
-                            self.invoke_array_functional(
-                                &method_name,
-                                &args,
-                            )?
-                        }
-                    }
-
-                    Object::Dict(_) => {
-                        drop(object);
-
-                        match dict::dispatch_method(
-                            &method_name,
-                            &args,
-                        )? {
+                        match crate::stdlib::string::dispatch_method(&method_name, &args)? {
                             Some(result) => result,
 
                             None => {
-                                return Err(
-                                    RuntimeError::ObjectFieldNotFound {
-                                        name: method_name,
-                                        suggestion: None,
-                                    }
-                                );
+                                return Err(RuntimeError::ObjectFieldNotFound {
+                                    name: method_name,
+                                    suggestion: None,
+                                });
+                            }
+                        }
+                    }
+
+                    // ====================================================
+                    // ARRAY
+                    // ====================================================
+                    Object::Array(_) => {
+                        drop(object);
+
+                        if let Some(result) = array::dispatch_method(&method_name, &args)? {
+                            result
+                        } else {
+                            self.invoke_array_functional(&method_name, &args)?
+                        }
+                    }
+
+                    // ====================================================
+                    // DICT
+                    // ====================================================
+                    Object::Dict(_) => {
+                        drop(object);
+
+                        match dict::dispatch_method(&method_name, &args)? {
+                            Some(result) => result,
+
+                            None => {
+                                return Err(RuntimeError::ObjectFieldNotFound {
+                                    name: method_name,
+                                    suggestion: None,
+                                });
                             }
                         }
                     }
 
                     _ => {
-                        return Err(
-                            RuntimeError::ObjectFieldNotFound {
-                                name: method_name,
-                                suggestion: None,
-                            }
-                        );
+                        return Err(RuntimeError::ObjectFieldNotFound {
+                            name: method_name,
+                            suggestion: None,
+                        });
                     }
                 }
             }
 
             _ => {
-                return Err(
-                    RuntimeError::NotObject
-                );
+                return Err(RuntimeError::NotObject);
             }
         };
 
@@ -473,30 +397,20 @@ impl VirtualMachine {
         match method {
             "map" => {
                 if args.len() != 2 {
-                    return Err(
-                        RuntimeError::WrongArgumentCount {
-                            expected: 2,
-                            found: args.len(),
-                        }
-                    );
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 2,
+                        found: args.len(),
+                    });
                 }
 
-                let elements =
-                    Self::array_snapshot(&args[0])?;
+                let elements = Self::array_snapshot(&args[0])?;
 
-                let callback =
-                    args[1].clone();
+                let callback = args[1].clone();
 
-                let mut result =
-                    Vec::with_capacity(elements.len());
+                let mut result = Vec::with_capacity(elements.len());
 
                 for element in elements {
-                    result.push(
-                        self.invoke_sync(
-                            callback.clone(),
-                            &[element],
-                        )?
-                    );
+                    result.push(self.invoke_sync(callback.clone(), &[element])?);
                 }
 
                 Ok(Value::new_array(result))
@@ -504,29 +418,21 @@ impl VirtualMachine {
 
             "filter" => {
                 if args.len() != 2 {
-                    return Err(
-                        RuntimeError::WrongArgumentCount {
-                            expected: 2,
-                            found: args.len(),
-                        }
-                    );
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 2,
+                        found: args.len(),
+                    });
                 }
 
-                let elements =
-                    Self::array_snapshot(&args[0])?;
+                let elements = Self::array_snapshot(&args[0])?;
 
-                let callback =
-                    args[1].clone();
+                let callback = args[1].clone();
 
-                let mut result =
-                    Vec::new();
+                let mut result = Vec::new();
 
                 for element in elements {
                     let keep =
-                        self.invoke_sync(
-                            callback.clone(),
-                            std::slice::from_ref(&element),
-                        )?;
+                        self.invoke_sync(callback.clone(), std::slice::from_ref(&element))?;
 
                     if keep.is_truthy() {
                         result.push(element);
@@ -538,32 +444,20 @@ impl VirtualMachine {
 
             "reduce" => {
                 if args.len() != 3 {
-                    return Err(
-                        RuntimeError::WrongArgumentCount {
-                            expected: 3,
-                            found: args.len(),
-                        }
-                    );
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 3,
+                        found: args.len(),
+                    });
                 }
 
-                let elements =
-                    Self::array_snapshot(&args[0])?;
+                let elements = Self::array_snapshot(&args[0])?;
 
-                let callback =
-                    args[1].clone();
+                let callback = args[1].clone();
 
-                let mut accumulator =
-                    args[2].clone();
+                let mut accumulator = args[2].clone();
 
                 for element in elements {
-                    accumulator =
-                        self.invoke_sync(
-                            callback.clone(),
-                            &[
-                                accumulator,
-                                element,
-                            ],
-                        )?;
+                    accumulator = self.invoke_sync(callback.clone(), &[accumulator, element])?;
                 }
 
                 Ok(accumulator)
@@ -571,31 +465,21 @@ impl VirtualMachine {
 
             "any" => {
                 if args.len() != 2 {
-                    return Err(
-                        RuntimeError::WrongArgumentCount {
-                            expected: 2,
-                            found: args.len(),
-                        }
-                    );
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 2,
+                        found: args.len(),
+                    });
                 }
 
-                let elements =
-                    Self::array_snapshot(&args[0])?;
+                let elements = Self::array_snapshot(&args[0])?;
 
-                let callback =
-                    args[1].clone();
+                let callback = args[1].clone();
 
                 for element in elements {
-                    let value =
-                        self.invoke_sync(
-                            callback.clone(),
-                            &[element],
-                        )?;
+                    let value = self.invoke_sync(callback.clone(), &[element])?;
 
                     if value.is_truthy() {
-                        return Ok(
-                            Value::Boolean(true)
-                        );
+                        return Ok(Value::Boolean(true));
                     }
                 }
 
@@ -604,58 +488,41 @@ impl VirtualMachine {
 
             "all" => {
                 if args.len() != 2 {
-                    return Err(
-                        RuntimeError::WrongArgumentCount {
-                            expected: 2,
-                            found: args.len(),
-                        }
-                    );
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 2,
+                        found: args.len(),
+                    });
                 }
 
-                let elements =
-                    Self::array_snapshot(&args[0])?;
+                let elements = Self::array_snapshot(&args[0])?;
 
-                let callback =
-                    args[1].clone();
+                let callback = args[1].clone();
 
                 for element in elements {
-                    let value =
-                        self.invoke_sync(
-                            callback.clone(),
-                            &[element],
-                        )?;
+                    let value = self.invoke_sync(callback.clone(), &[element])?;
 
                     if !value.is_truthy() {
-                        return Ok(
-                            Value::Boolean(false)
-                        );
+                        return Ok(Value::Boolean(false));
                     }
                 }
 
                 Ok(Value::Boolean(true))
             }
 
-            _ => Err(
-                RuntimeError::ObjectFieldNotFound {
-                    name: method.to_string(),
-                    suggestion: None,
-                }
-            ),
+            _ => Err(RuntimeError::ObjectFieldNotFound {
+                name: method.to_string(),
+                suggestion: None,
+            }),
         }
     }
 
-    fn array_snapshot(
-        value: &Value,
-    ) -> Result<Vec<Value>, RuntimeError> {
+    fn array_snapshot(value: &Value) -> Result<Vec<Value>, RuntimeError> {
         match value {
             Value::Object(handle) => {
-                let object =
-                    handle.borrow();
+                let object = handle.borrow();
 
                 match &*object {
-                    Object::Array(array) => {
-                        Ok(array.clone())
-                    }
+                    Object::Array(array) => Ok(array.clone()),
 
                     _ => Err(RuntimeError::TypeError),
                 }
@@ -669,25 +536,16 @@ impl VirtualMachine {
     //                         PROPERTY
     // ============================================================
 
-    pub(crate) fn get_property(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
-        let constant =
-            self.read_byte()?;
+    pub(crate) fn get_property(&mut self) -> Result<(), RuntimeError> {
+        let constant = self.read_byte()?;
 
-        let property =
-            self.read_constant(constant)?;
+        let property = self.read_constant(constant)?;
 
-        let name =
-            property
-                .as_string_value()
-                .ok_or(RuntimeError::TypeError)?;
+        let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
 
-        let object =
-            self.peek()?.clone();
+        let object = self.peek()?.clone();
 
-        let value =
-            object.get_property(&name)?;
+        let value = object.get_property(&name)?;
 
         self.pop()?;
 
@@ -696,19 +554,12 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn set_property(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
-        let constant =
-            self.read_byte()?;
+    pub(crate) fn set_property(&mut self) -> Result<(), RuntimeError> {
+        let constant = self.read_byte()?;
 
-        let property =
-            self.read_constant(constant)?;
+        let property = self.read_constant(constant)?;
 
-        let name =
-            property
-                .as_string_value()
-                .ok_or(RuntimeError::TypeError)?;
+        let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
 
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
@@ -716,16 +567,11 @@ impl VirtualMachine {
 
         let len = self.stack.len();
 
-        let object =
-            self.stack[len - 2].clone();
+        let object = self.stack[len - 2].clone();
 
-        let value =
-            self.stack[len - 1].clone();
+        let value = self.stack[len - 1].clone();
 
-        object.set_property(
-            &name,
-            value,
-        )?;
+        object.set_property(&name, value)?;
 
         self.stack.truncate(len - 2);
 
@@ -736,15 +582,10 @@ impl VirtualMachine {
     //                         HELPERS
     // ============================================================
 
-    fn array_index(
-        value: Value,
-    ) -> Result<usize, RuntimeError> {
+    fn array_index(value: Value) -> Result<usize, RuntimeError> {
         match value {
-            Value::Integer(index)
-                if index >= 0 =>
-            {
-                usize::try_from(index)
-                    .map_err(|_| RuntimeError::TypeError)
+            Value::Integer(index) if index >= 0 => {
+                usize::try_from(index).map_err(|_| RuntimeError::TypeError)
             }
 
             Value::Float(index)
@@ -756,9 +597,7 @@ impl VirtualMachine {
                 Ok(index as usize)
             }
 
-            _ => Err(
-                RuntimeError::ArrayIndexNotInteger
-            ),
+            _ => Err(RuntimeError::ArrayIndexNotInteger),
         }
     }
 }
