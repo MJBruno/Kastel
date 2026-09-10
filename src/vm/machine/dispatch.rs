@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-
 use super::VirtualMachine;
+use std::collections::HashMap;
 
 use crate::{
     bytecode::chunk::OpCode,
     error::runtime_error::RuntimeError,
     runtime::{
+        gc_handle::Gc,
         object::Object,
         value::{ComparisonOp, NumericOp, Value},
     },
@@ -245,6 +245,12 @@ impl VirtualMachine {
 
                 self.op_invoke_method(method_constant, arg_count)?;
             }
+            OpCode::InvokeBaseMethod => {
+                let method_constant = self.read_byte()? as usize;
+                let arg_count = self.read_byte()? as usize;
+
+                self.op_invoke_base_method(method_constant, arg_count)?;
+            }
             OpCode::Class => {
                 let method_count = self.read_byte()? as usize;
 
@@ -415,11 +421,139 @@ impl VirtualMachine {
 
         self.stack.truncate(start);
 
-        self.push(Value::new_class(class_name, superclass, methods));
+        let class_value = Value::new_class(class_name, superclass, methods);
+
+        let class_handle = match &class_value {
+            Value::Object(handle) => handle.clone(),
+
+            _ => {
+                return Err(RuntimeError::InvalidFunction);
+            }
+        };
+
+        {
+            let mut class_object = class_handle.borrow_mut();
+
+            let Object::Class { methods, .. } = &mut *class_object else {
+                return Err(RuntimeError::InvalidFunction);
+            };
+
+            for method in methods.values() {
+                if let Value::Object(handle) = method {
+                    let mut object = handle.borrow_mut();
+
+                    if let Object::Closure(closure) = &mut *object {
+                        closure.owner_class = Some(class_handle.clone());
+                    }
+                }
+            }
+        }
+
+        self.push(class_value);
 
         Ok(())
     }
 
+    fn find_base_method(class: Gc<Object>, name: &str) -> Option<Value> {
+        let parent = {
+            let object = class.borrow();
+
+            match &*object {
+                Object::Class { superclass, .. } => superclass.clone(),
+
+                _ => None,
+            }
+        };
+
+        let mut current = parent;
+
+        while let Some(handle) = current {
+            let object = handle.borrow();
+
+            match &*object {
+                Object::Class {
+                    superclass,
+                    methods,
+                    ..
+                } => {
+                    if let Some(method) = methods.get(name) {
+                        return Some(method.clone());
+                    }
+
+                    current = superclass.clone();
+                }
+
+                _ => return None,
+            }
+        }
+
+        None
+    }
+    pub(crate) fn op_invoke_base_method(
+        &mut self,
+        method_constant: usize,
+        arg_count: usize,
+    ) -> Result<(), RuntimeError> {
+        let method_value = self.read_constant(method_constant.try_into().unwrap())?;
+
+        let method_name = method_value
+            .as_string_value()
+            .ok_or(RuntimeError::TypeError)?;
+
+        let frame = self
+            .frames
+            .last()
+            .ok_or(RuntimeError::InvalidFunction)?
+            .clone();
+
+        let this_index = frame
+            .slot_start
+            .checked_add(1)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if this_index >= self.stack.len() {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let this_value = self.stack[this_index].clone();
+
+        // Les derniers éléments sont les arguments de base.speak(...).
+        if self.stack.len() < arg_count {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let args_start = self.stack.len() - arg_count;
+
+        let args = self.stack[args_start..].to_vec();
+
+        self.stack.truncate(args_start);
+
+        let owner_class = {
+            let closure = super::bytecode::frame_closure(&frame.closure);
+            closure.owner_class.clone().ok_or(RuntimeError::TypeError)?
+        };
+
+        let method = Self::find_base_method(owner_class, &method_name).ok_or_else(|| {
+            RuntimeError::ObjectFieldNotFound {
+                name: method_name,
+                suggestion: None,
+            }
+        })?;
+
+        // Nouvel appel :
+        //
+        // [method, this, arg1, arg2, ...]
+        self.push(method);
+        self.push(this_value);
+
+        for argument in args {
+            self.push(argument);
+        }
+
+        self.execute_call(arg_count + 1)?;
+
+        Ok(())
+    }
     pub(crate) fn op_new_instance(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
         let required = arg_count
             .checked_add(1)

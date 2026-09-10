@@ -7,16 +7,9 @@ class Animal {
 class Dog : Animal {
     function speak() {
         println("dog");
-        base.speak();
     }
 }
 
-class Puppy : Dog {
-    function speak() {
-        println("puppy");
-        base.speak();
-    }
-}
+let d = new Dog();
 
-let p = new Puppy();
-p.speak();
+d.speak();

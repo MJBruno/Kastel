@@ -43,7 +43,11 @@ impl Object {
         function: Rc<Function>,
         upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
     ) -> Gc<Object> {
-        let handle = Gc::new(Object::Closure(Closure { function, upvalues }));
+        let handle = Gc::new(Object::Closure(Closure {
+            function,
+            upvalues,
+            owner_class: None,
+        }));
         crate::runtime::gc::register_object(&handle);
 
         handle
@@ -65,6 +69,7 @@ impl Object {
 
             Object::Closure(closure) => {
                 closure.upvalues.clear();
+                closure.owner_class = None;
             }
 
             Object::Iterator(state) => {

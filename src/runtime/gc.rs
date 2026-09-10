@@ -295,6 +295,10 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
             for upvalue in &closure.upvalues {
                 mark_upvalue(upvalue, state);
             }
+
+            if let Some(owner_class) = &closure.owner_class {
+                mark_object(owner_class, state);
+            }
         }
 
         Object::Iterator(iterator) => {

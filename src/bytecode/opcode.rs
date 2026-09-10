@@ -76,6 +76,7 @@ pub enum OpCode {
     //
     //   InvokeMethod <method_constant> <arg_count>
     InvokeMethod,
+    InvokeBaseMethod,
     Class,
     NewInstance,
     // ============================================================
@@ -197,17 +198,15 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::SetProperty.into() => Ok(OpCode::SetProperty),
 
             x if x == OpCode::InvokeMethod.into() => Ok(OpCode::InvokeMethod),
+            x if x == OpCode::InvokeBaseMethod.into() => Ok(OpCode::InvokeBaseMethod),
             x if x == OpCode::Class.into() => Ok(OpCode::Class),
             x if x == OpCode::NewInstance.into() => Ok(OpCode::NewInstance),
             // ========================================================
             // EXCEPTIONS
             // ========================================================
             x if x == OpCode::PushExceptionHandler.into() => Ok(OpCode::PushExceptionHandler),
-
             x if x == OpCode::PopExceptionHandler.into() => Ok(OpCode::PopExceptionHandler),
-
             x if x == OpCode::Throw.into() => Ok(OpCode::Throw),
-
             x if x == OpCode::FinallyEnd.into() => Ok(OpCode::FinallyEnd),
 
             _ => Err(()),

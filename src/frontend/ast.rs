@@ -230,6 +230,7 @@ pub enum Expression {
     },
 
     This,
+    Base,
     Array(Vec<Expression>),
 
     Object(Vec<(String, Expression)>),

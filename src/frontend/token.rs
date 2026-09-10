@@ -35,6 +35,7 @@ pub enum TokenKind {
     Class,
     New,
     This,
+    Base,
     // ============================================================
     // EXCEPTIONS
     // ============================================================
@@ -159,6 +160,7 @@ impl Token {
             "class" => Some(TokenKind::Class),
             "new" => Some(TokenKind::New),
             "this" => Some(TokenKind::This),
+            "base" => Some(TokenKind::Base),
             // ========================================================
             // EXCEPTIONS
             // ========================================================

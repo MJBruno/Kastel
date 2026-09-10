@@ -591,6 +591,8 @@ impl Parser {
 
             TokenKind::New => self.parse_new_expression(),
 
+            TokenKind::Base => Ok(Expression::Base),
+
             TokenKind::Function => self.parse_function_expression(),
 
             TokenKind::LeftParen => {
