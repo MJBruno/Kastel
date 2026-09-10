@@ -1,6 +1,5 @@
 use super::bytecode::frame_closure;
 use super::{CallFrame, VirtualMachine};
-
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
@@ -13,8 +12,8 @@ impl VirtualMachine {
         arg_count: usize,
     ) -> Result<(), RuntimeError> {
         let arity = {
-            let frame_closure = frame_closure(&closure);
-            frame_closure.function.arity
+            let closure = frame_closure(&closure);
+            closure.function.arity
         };
 
         if arg_count != arity {
@@ -34,6 +33,12 @@ impl VirtualMachine {
 
         let callee_index = self.stack.len() - required;
 
+        let current_frame = self.current_frame()?;
+
+        if callee_index < current_frame.slot_start {
+            return Err(RuntimeError::InvalidFunction);
+        }
+
         self.frames.push(CallFrame {
             closure,
             ip: 0,
@@ -43,7 +48,10 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn execute_call(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
+    pub(crate) fn execute_call(
+        &mut self,
+        arg_count: usize,
+    ) -> Result<(), RuntimeError> {
         let required = arg_count
             .checked_add(1)
             .ok_or(RuntimeError::InvalidFunction)?;
@@ -54,7 +62,17 @@ impl VirtualMachine {
 
         let callee_index = self.stack.len() - required;
 
-        let callee = self.stack[callee_index].clone();
+        let current_frame = self.current_frame()?;
+
+        if callee_index < current_frame.slot_start {
+            return Err(RuntimeError::InvalidFunction);
+        }
+
+        let callee = self
+            .stack
+            .get(callee_index)
+            .cloned()
+            .ok_or(RuntimeError::StackUnderflow)?;
 
         match callee {
             Value::Object(handle) => {
@@ -62,9 +80,10 @@ impl VirtualMachine {
                     let object = handle.borrow();
 
                     match &*object {
-                        Object::BoundMethod { method, receiver } => {
-                            Some((method.clone(), receiver.clone()))
-                        }
+                        Object::BoundMethod {
+                            method,
+                            receiver,
+                        } => Some((method.clone(), receiver.clone())),
 
                         Object::Closure(_) => None,
 
@@ -74,21 +93,18 @@ impl VirtualMachine {
 
                 if let Some((method, receiver)) = bound {
                     self.stack[callee_index] = Value::Object(method);
-
                     self.stack.insert(callee_index + 1, receiver);
 
-                    self.execute_call(arg_count + 1)?;
+                    self.execute_call(
+                        arg_count
+                            .checked_add(1)
+                            .ok_or(RuntimeError::InvalidFunction)?,
+                    )?;
 
                     return Ok(());
                 }
 
-                let is_closure = {
-                    let object = handle.borrow();
-
-                    matches!(&*object, Object::Closure(_))
-                };
-
-                if is_closure {
+                if matches!(&*handle.borrow(), Object::Closure(_)) {
                     self.call(handle, arg_count)?;
                     return Ok(());
                 }
@@ -97,9 +113,15 @@ impl VirtualMachine {
             }
 
             Value::NativeFunction(native) => {
-                let args_start = callee_index + 1;
+                let args_start = callee_index
+                    .checked_add(1)
+                    .ok_or(RuntimeError::InvalidFunction)?;
 
-                let args = self.stack[args_start..].to_vec();
+                let args = self
+                    .stack
+                    .get(args_start..)
+                    .ok_or(RuntimeError::StackUnderflow)?
+                    .to_vec();
 
                 let result = native(&args)?;
 
@@ -112,10 +134,6 @@ impl VirtualMachine {
             _ => Err(RuntimeError::NotCallable),
         }
     }
-
-    // ============================================================
-    //            APPEL SYNCHRONE D'UNE VALEUR CALLABLE
-    // ============================================================
 
     pub(crate) fn invoke_sync(
         &mut self,
@@ -155,23 +173,36 @@ impl VirtualMachine {
     }
 
     pub(crate) fn execute_return(&mut self) -> Result<(), RuntimeError> {
-        let slot_start = self
+        let frame = self
             .frames
             .last()
-            .ok_or(RuntimeError::InvalidFunction)?
-            .slot_start;
+            .cloned()
+            .ok_or(RuntimeError::InvalidFunction)?;
 
-        if slot_start > self.stack.len() {
+        let minimum_stack_len = frame
+            .slot_start
+            .checked_add(2)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if self.stack.len() < minimum_stack_len {
             return Err(RuntimeError::InvalidFunction);
         }
 
         let result = self.pop()?;
 
-        self.close_upvalues(slot_start)?;
+        self.close_upvalues(frame.slot_start)?;
+
+        self.remove_current_frame_handlers();
+
+        if frame.slot_start > self.stack.len() {
+            return Err(RuntimeError::InvalidFunction);
+        }
 
         self.frames.pop().ok_or(RuntimeError::InvalidFunction)?;
 
-        self.stack.truncate(slot_start);
+        self.stack.truncate(frame.slot_start);
+
+        self.prune_exception_handlers();
 
         if self.frames.is_empty() {
             return Ok(());

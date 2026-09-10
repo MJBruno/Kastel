@@ -24,9 +24,14 @@ impl VirtualMachine {
     }
 
     pub(crate) fn read_byte(&mut self) -> Result<u8, RuntimeError> {
-        let frame = self.frames.last_mut().ok_or(RuntimeError::StackUnderflow)?;
+        let frame = self
+            .frames
+            .last_mut()
+            .ok_or(RuntimeError::InvalidFunction)?;
+
         let byte = {
             let closure = frame_closure(&frame.closure);
+
             closure
                 .function
                 .chunk
@@ -35,13 +40,14 @@ impl VirtualMachine {
                 .copied()
                 .ok_or(RuntimeError::InvalidFunction)?
         };
+
         frame.ip = frame
             .ip
             .checked_add(1)
             .ok_or(RuntimeError::InvalidFunction)?;
+
         Ok(byte)
     }
-
     pub(crate) fn read_short(&mut self) -> Result<u16, RuntimeError> {
         let high = self.read_byte()? as u16;
         let low = self.read_byte()? as u16;

@@ -7,7 +7,6 @@ mod compiler;
 mod error;
 mod frontend;
 mod module;
-mod repl;
 mod runtime;
 mod stdlib;
 mod vm;

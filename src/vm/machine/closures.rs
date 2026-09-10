@@ -1,8 +1,7 @@
- 
 use std::rc::Rc;
 
-use super::VirtualMachine;
 use super::bytecode::frame_closure;
+use super::VirtualMachine;
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::object::Object;
 use crate::runtime::value::Value;
@@ -16,12 +15,10 @@ impl VirtualMachine {
             let closure = frame_closure(&frame.closure);
 
             match closure.function.chunk.constants.get(constant_index).cloned() {
-                Some(Value::Object(handle)) => {
-                    match &*handle.borrow() {
-                        Object::Function(function) => Rc::clone(function),
-                        _ => return Err(RuntimeError::InvalidFunction),
-                    }
-                }
+                Some(Value::Object(handle)) => match &*handle.borrow() {
+                    Object::Function(function) => Rc::clone(function),
+                    _ => return Err(RuntimeError::InvalidFunction),
+                },
                 _ => return Err(RuntimeError::InvalidFunction),
             }
         };
@@ -32,31 +29,31 @@ impl VirtualMachine {
             let is_local = self.read_byte()?;
             let index = self.read_byte()? as usize;
 
-            let upvalue = if is_local != 0 {
-                self.capture_upvalue(index)?
-            } else {
-                let frame = self.current_frame()?;
-                frame_closure(&frame.closure)
-                    .upvalues
-                    .get(index)
-                    .cloned()
-                    .ok_or(RuntimeError::InvalidFunction)?
+            let upvalue = match is_local {
+                0 => {
+                    let frame = self.current_frame()?;
+
+                    frame_closure(&frame.closure)
+                        .upvalues
+                        .get(index)
+                        .cloned()
+                        .ok_or(RuntimeError::InvalidFunction)?
+                }
+
+                1 => self.capture_upvalue(index)?,
+
+                _ => return Err(RuntimeError::InvalidFunction),
             };
 
             pending_upvalues.push(upvalue);
         }
 
-        let closure = Object::new_closure(
-            Rc::clone(&function),
-            pending_upvalues,
-        );
+        let closure = Object::new_closure(Rc::clone(&function), pending_upvalues);
 
         self.push(Value::Object(closure));
 
         Ok(())
     }
-
-   
 
     pub(crate) fn get_upvalue(
         &mut self,
@@ -118,15 +115,13 @@ impl VirtualMachine {
             upvalue_ref.slot
         };
 
-        if slot >= self.stack.len() {
-            return Err(RuntimeError::InvalidFunction);
-        }
+        let slot_ref = self
+            .stack
+            .get_mut(slot)
+            .ok_or(RuntimeError::InvalidFunction)?;
 
-        self.stack[slot] = value;
+        *slot_ref = value;
 
         Ok(())
     }
-
-   
 }
- 

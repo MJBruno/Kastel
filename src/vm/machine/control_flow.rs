@@ -13,14 +13,16 @@ impl VirtualMachine {
 
         self.set_ip(new_ip)
     }
+
     fn set_ip(&mut self, ip: usize) -> Result<(), RuntimeError> {
         let code_len = {
             let frame = self.current_frame()?;
             let closure = super::bytecode::frame_closure(&frame.closure);
+
             closure.function.chunk.code.len()
         };
 
-        if ip > code_len {
+        if ip >= code_len {
             return Err(RuntimeError::InvalidFunction);
         }
 
@@ -28,6 +30,7 @@ impl VirtualMachine {
 
         Ok(())
     }
+
     pub(crate) fn jump_if_false(&mut self) -> Result<(), RuntimeError> {
         let offset = self.read_short()? as usize;
 

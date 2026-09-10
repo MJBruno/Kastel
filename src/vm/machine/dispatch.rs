@@ -399,7 +399,11 @@ impl VirtualMachine {
         let mut interfaces = Vec::new();
 
         for index in 0..base_count {
-            let value = self.stack[start + index].clone();
+            let value = self
+                .stack
+                .get(start + index)
+                .cloned()
+                .ok_or(RuntimeError::StackUnderflow)?;
 
             let handle = match value {
                 Value::Object(handle) => handle,
@@ -432,8 +436,10 @@ impl VirtualMachine {
         // CLASS NAME
         // ========================================================
 
-        let class_name = self.stack[start + base_count]
-            .as_string_value()
+        let class_name = self
+            .stack
+            .get(start + base_count)
+            .and_then(Value::as_string_value)
             .ok_or(RuntimeError::TypeError)?;
 
         // ========================================================
@@ -447,11 +453,17 @@ impl VirtualMachine {
         for index in 0..method_count {
             let base = methods_start + index * 2;
 
-            let method_name = self.stack[base]
-                .as_string_value()
+            let method_name = self
+                .stack
+                .get(base)
+                .and_then(Value::as_string_value)
                 .ok_or(RuntimeError::TypeError)?;
 
-            let method = self.stack[base + 1].clone();
+            let method = self
+                .stack
+                .get(base + 1)
+                .cloned()
+                .ok_or(RuntimeError::StackUnderflow)?;
 
             if !matches!(
                 &method,
@@ -716,7 +728,11 @@ impl VirtualMachine {
         let mut bases = Vec::with_capacity(base_count);
 
         for index in 0..base_count {
-            let value = self.stack[start + index].clone();
+            let value = self
+                .stack
+                .get(start + index)
+                .cloned()
+                .ok_or(RuntimeError::StackUnderflow)?;
 
             let handle = match value {
                 Value::Object(handle) => handle,
@@ -739,8 +755,10 @@ impl VirtualMachine {
 
         let name_index = start + base_count;
 
-        let name = self.stack[name_index]
-            .as_string_value()
+        let name = self
+            .stack
+            .get(name_index)
+            .and_then(Value::as_string_value)
             .ok_or(RuntimeError::TypeError)?;
 
         // ========================================================
@@ -754,11 +772,18 @@ impl VirtualMachine {
         for index in 0..method_count {
             let base = methods_start + index * 2;
 
-            let method_name = self.stack[base]
-                .as_string_value()
+            let method_name = self
+                .stack
+                .get(base)
+                .and_then(Value::as_string_value)
                 .ok_or(RuntimeError::TypeError)?;
 
-            let arity = match &self.stack[base + 1] {
+            let arity_value = self
+                .stack
+                .get(base + 1)
+                .ok_or(RuntimeError::StackUnderflow)?;
+
+            let arity = match arity_value {
                 Value::Integer(value) if *value >= 0 => {
                     usize::try_from(*value).map_err(|_| RuntimeError::TypeError)?
                 }
@@ -789,7 +814,10 @@ impl VirtualMachine {
         method_constant: usize,
         arg_count: usize,
     ) -> Result<(), RuntimeError> {
-        let method_value = self.read_constant(method_constant.try_into().unwrap())?;
+        let method_constant =
+            u8::try_from(method_constant).map_err(|_| RuntimeError::InvalidFunction)?;
+
+        let method_value = self.read_constant(method_constant)?;
 
         let method_name = method_value
             .as_string_value()
@@ -810,7 +838,11 @@ impl VirtualMachine {
             return Err(RuntimeError::StackUnderflow);
         }
 
-        let this_value = self.stack[this_index].clone();
+        let this_value = self
+            .stack
+            .get(this_index)
+            .cloned()
+            .ok_or(RuntimeError::StackUnderflow)?;
 
         if self.stack.len() < arg_count {
             return Err(RuntimeError::StackUnderflow);
@@ -818,7 +850,11 @@ impl VirtualMachine {
 
         let args_start = self.stack.len() - arg_count;
 
-        let args = self.stack[args_start..].to_vec();
+        let args = self
+            .stack
+            .get(args_start..)
+            .ok_or(RuntimeError::StackUnderflow)?
+            .to_vec();
 
         self.stack.truncate(args_start);
 
@@ -863,7 +899,11 @@ impl VirtualMachine {
 
         let class_index = self.stack.len() - required;
 
-        let class_value = self.stack[class_index].clone();
+        let class_value = self
+            .stack
+            .get(class_index)
+            .cloned()
+            .ok_or(RuntimeError::StackUnderflow)?;
 
         let class_handle = match &class_value {
             Value::Object(handle) => match &*handle.borrow() {
@@ -881,7 +921,11 @@ impl VirtualMachine {
 
         let instance = Value::new_instance(class_handle.clone());
 
-        let args = self.stack[class_index + 1..].to_vec();
+        let args = self
+            .stack
+            .get(class_index + 1..)
+            .ok_or(RuntimeError::StackUnderflow)?
+            .to_vec();
 
         self.stack.truncate(class_index);
 
@@ -991,7 +1035,7 @@ impl VirtualMachine {
             // ====================================================
             1 => Self::class_implements_interface(value_class, target_handle.clone()),
 
-            _ => unreachable!(),
+            _ => Err(RuntimeError::TypeError),
         }
     }
 

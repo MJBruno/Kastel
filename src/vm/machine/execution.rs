@@ -42,6 +42,10 @@ impl VirtualMachine {
         }
     }
 
+    // ============================================================
+    // RUNTIME ERROR PROPAGATION
+    // ============================================================
+
     pub(crate) fn propagate_runtime_error(
         &mut self,
         error: RuntimeError,
@@ -49,63 +53,52 @@ impl VirtualMachine {
         match error {
             RuntimeError::Thrown(value) => self.propagate_thrown(value),
 
-            error => {
-                let value = Value::new_string(error.to_string());
-
-                self.propagate_thrown(value)
-            }
+            error => Err(error),
         }
     }
 
-   
     // ============================================================
     // THROW PROPAGATION
     // ============================================================
 
     pub(crate) fn propagate_thrown(&mut self, value: Value) -> Result<bool, RuntimeError> {
         loop {
-            /*
-             * Aucun frame :
-             *
-             * exception non capturée.
-             */
+            // ----------------------------------------------------
+            // Plus aucun frame
+            // ----------------------------------------------------
+
             if self.frames.is_empty() {
                 return Ok(false);
             }
 
             let current_frame_index = self.frames.len() - 1;
 
-            /*
-             * Chercher le handler le plus proche.
-             */
+            // ----------------------------------------------------
+            // Trouver le handler actif le plus proche
+            // ----------------------------------------------------
+
             let handler_index = self
                 .exception_handlers
                 .iter()
                 .rposition(|handler| handler.frame_index <= current_frame_index);
 
             let Some(handler_index) = handler_index else {
-                /*
-                 * Aucun handler dans les frames actuels.
-                 *
-                 * Remonter d'un frame.
-                 */
+                // Aucun handler dans cette frame :
+                // remonter vers l'appelant.
                 self.close_current_frame_for_exception()?;
-
                 continue;
             };
 
-            /*
-             * Retirer le handler.
-             *
-             * Il ne doit plus être actif pendant catch/finally.
-             */
+            // ----------------------------------------------------
+            // Consommer le handler
+            // ----------------------------------------------------
+
             let handler = self.exception_handlers.remove(handler_index);
 
-            /*
-             * --------------------------------------------------------
-             * REMONTÉE DES FRAMES
-             * --------------------------------------------------------
-             */
+            // ----------------------------------------------------
+            // Remonter les frames jusqu'à celle du handler
+            // ----------------------------------------------------
+
             while self.frames.len() - 1 > handler.frame_index {
                 self.close_current_frame_for_exception()?;
             }
@@ -114,23 +107,18 @@ impl VirtualMachine {
                 return Ok(false);
             }
 
-            /*
-             * --------------------------------------------------------
-             * RESTAURATION STACK
-             * --------------------------------------------------------
-             */
+            // ----------------------------------------------------
+            // Restaurer la stack au point d'entrée du try
+            // ----------------------------------------------------
+
             self.restore_exception_stack(handler.stack_height)?;
 
-            /*
-             * --------------------------------------------------------
-             * CATCH
-             * --------------------------------------------------------
-             */
+            // ----------------------------------------------------
+            // CATCH
+            // ----------------------------------------------------
+
             if let Some(catch_ip) = handler.catch_ip {
-                /*
-                 * La valeur de l'exception devient la
-                 * valeur disponible pour catch(e).
-                 */
+                // catch(e) récupérera cette valeur depuis la stack.
                 self.push(value);
 
                 self.current_frame_mut()?.ip = catch_ip;
@@ -138,11 +126,10 @@ impl VirtualMachine {
                 return Ok(true);
             }
 
-            /*
-             * --------------------------------------------------------
-             * FINALLY
-             * --------------------------------------------------------
-             */
+            // ----------------------------------------------------
+            // FINALLY
+            // ----------------------------------------------------
+
             if let Some(finally_ip) = handler.finally_ip {
                 self.pending_exception = Some(super::PendingException {
                     value,
@@ -154,10 +141,10 @@ impl VirtualMachine {
                 return Ok(true);
             }
 
-            /*
-             * Handler vide :
-             * continuer la propagation.
-             */
+            // ----------------------------------------------------
+            // Handler sans catch/finally
+            // Continuer la propagation.
+            // ----------------------------------------------------
         }
     }
 }
