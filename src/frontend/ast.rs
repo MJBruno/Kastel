@@ -73,6 +73,13 @@ pub struct FunctionMethod {
     pub params: Vec<String>,
     pub body: Vec<Statement>,
 }
+
+#[derive(Debug, Clone)]
+pub struct InterfaceMethod {
+    pub name: String,
+    pub arity: usize,
+}
+
 #[derive(Debug, Clone)]
 pub enum Statement {
     Positioned {
@@ -172,8 +179,12 @@ pub enum Statement {
     },
     Class {
         name: String,
-        superclass: Option<String>,
+        bases: Vec<String>,
         methods: Vec<FunctionMethod>,
+    },
+    Interface {
+        name: String,
+        methods: Vec<InterfaceMethod>,
     },
     Break,
     Continue,

@@ -79,6 +79,7 @@ pub enum OpCode {
     InvokeBaseMethod,
     Class,
     NewInstance,
+    Interface,
     // ============================================================
     // EXCEPTIONS
     // ============================================================
@@ -200,6 +201,7 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::InvokeMethod.into() => Ok(OpCode::InvokeMethod),
             x if x == OpCode::InvokeBaseMethod.into() => Ok(OpCode::InvokeBaseMethod),
             x if x == OpCode::Class.into() => Ok(OpCode::Class),
+            x if x == OpCode::Interface.into() => Ok(OpCode::Interface),
             x if x == OpCode::NewInstance.into() => Ok(OpCode::NewInstance),
             // ========================================================
             // EXCEPTIONS

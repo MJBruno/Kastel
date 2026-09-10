@@ -129,10 +129,14 @@ impl Compiler {
             }
             Statement::Class {
                 name,
-                superclass,
+                bases,
                 methods,
             } => {
-                self.compile_class(name, superclass.as_deref(), methods)?;
+                self.compile_class(name, bases, methods)?;
+            }
+
+            Statement::Interface { name, methods } => {
+                self.compile_interface(name, methods)?;
             }
             Statement::Function { name, params, body } => {
                 self.compile_function_statement(name, params, body)?;
@@ -172,29 +176,60 @@ impl Compiler {
     pub(crate) fn compile_class(
         &mut self,
         name: &str,
-        superclass: Option<&str>,
+        bases: &[String],
         methods: &[FunctionMethod],
     ) -> Result<(), CompileError> {
+        // ========================================================
+        // LIMITES BYTECODE
+        // ========================================================
+
+        if bases.len() > u8::MAX as usize {
+            return Err(CompileError::TooManyObjectFields);
+        }
+
         if methods.len() > u8::MAX as usize {
             return Err(CompileError::TooManyObjectFields);
         }
 
         // ========================================================
-        // SUPERCLASS
+        // VÉRIFICATION DU NOM
         // ========================================================
 
-        match superclass {
-            Some(parent) => {
-                self.compile_variable_get(parent)?;
-            }
-
-            None => {
-                self.emit_opcode(OpCode::Nil);
-            }
+        if !self.in_function && self.scope_depth == 0 && self.globals.borrow().contains_key(name) {
+            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
 
         // ========================================================
-        // CLASS NAME
+        // BASES
+        //
+        // Une classe peut avoir :
+        //
+        //     class Dog : Animal
+        //
+        // ou :
+        //
+        //     class User : Printable, Named
+        //
+        // ou :
+        //
+        //     class Admin : User, Printable, Serializable
+        //
+        // Le runtime déterminera quelles bases sont des classes
+        // et lesquelles sont des interfaces.
+        //
+        // Stack :
+        //
+        //     base1
+        //     base2
+        //     ...
+        // ========================================================
+
+        for base in bases {
+            self.compile_variable_get(base)?;
+        }
+
+        // ========================================================
+        // NOM DE LA CLASSE
         // ========================================================
 
         let class_name_constant = self.identifier_constant(name)?;
@@ -202,7 +237,19 @@ impl Compiler {
         self.emit_bytes(OpCode::Constant, class_name_constant);
 
         // ========================================================
-        // METHODS
+        // MÉTHODES
+        //
+        // Stack après cette étape :
+        //
+        //     base1
+        //     base2
+        //     ...
+        //     class_name
+        //     method_name
+        //     closure
+        //     method_name
+        //     closure
+        //     ...
         // ========================================================
 
         for method in methods {
@@ -219,14 +266,79 @@ impl Compiler {
         }
 
         // ========================================================
-        // CREATE CLASS
+        // CRÉATION DE LA CLASSE
+        //
+        // Operandes :
+        //
+        //     Class <base_count:u8> <method_count:u8>
+        //
         // ========================================================
 
-        self.emit_bytes(OpCode::Class, methods.len() as u8);
+        self.emit_byte(OpCode::Class.into());
+        self.emit_byte(bases.len() as u8);
+        self.emit_byte(methods.len() as u8);
 
         // ========================================================
-        // BIND CLASS
+        // BINDING DE LA CLASSE
         // ========================================================
+
+        if !self.in_function && self.scope_depth == 0 {
+            // Classe globale.
+            let name_constant = self.identifier_constant(name)?;
+
+            self.emit_bytes(OpCode::DefineGlobal, name_constant);
+
+            self.globals.borrow_mut().insert(
+                name.to_string(),
+                Global {
+                    constant: name_constant,
+                    mutable: true,
+                },
+            );
+        } else {
+            // Classe locale / nested.
+            let slot =
+                self.context
+                    .borrow_mut()
+                    .locals
+                    .declare_local(name, self.scope_depth, true)?;
+
+            self.context
+                .borrow_mut()
+                .locals
+                .mark_initialized(self.scope_depth);
+
+            debug_assert_eq!(self.context.borrow().locals.len() - 1, slot as usize);
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn compile_interface(
+        &mut self,
+        name: &str,
+        methods: &[InterfaceMethod],
+    ) -> Result<(), CompileError> {
+        if methods.len() > u8::MAX as usize {
+            return Err(CompileError::TooManyObjectFields);
+        }
+
+        let name_constant = self.identifier_constant(name)?;
+
+        self.emit_bytes(OpCode::Constant, name_constant);
+
+        for method in methods {
+            let method_constant = self.identifier_constant(&method.name)?;
+
+            self.emit_bytes(OpCode::Constant, method_constant);
+
+            let arity_constant = self.make_constant(Value::Integer(method.arity as i64))?;
+
+            self.emit_bytes(OpCode::Constant, arity_constant);
+        }
+
+        self.emit_byte(OpCode::Interface.into());
+        self.emit_byte(methods.len() as u8);
 
         if !self.in_function && self.scope_depth == 0 {
             if self.globals.borrow().contains_key(name) {

@@ -29,7 +29,13 @@ pub enum Object {
     Class {
         name: String,
         superclass: Option<Gc<Object>>,
+        interfaces: Vec<Gc<Object>>,
         methods: HashMap<String, Value>,
+    },
+
+    Interface {
+        name: String,
+        methods: HashMap<String, usize>,
     },
 
     Instance {
@@ -78,7 +84,16 @@ impl Object {
 
             Object::Module(_) => {}
 
-            Object::Class { methods, .. } => {
+            Object::Class {
+                interfaces,
+                methods,
+                ..
+            } => {
+                interfaces.clear();
+                methods.clear();
+            }
+
+            Object::Interface { methods, .. } => {
                 methods.clear();
             }
 

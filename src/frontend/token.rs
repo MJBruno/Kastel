@@ -36,6 +36,7 @@ pub enum TokenKind {
     New,
     This,
     Base,
+    Interface,
     // ============================================================
     // EXCEPTIONS
     // ============================================================
@@ -161,6 +162,7 @@ impl Token {
             "new" => Some(TokenKind::New),
             "this" => Some(TokenKind::This),
             "base" => Some(TokenKind::Base),
+            "interface" => Some(TokenKind::Interface),
             // ========================================================
             // EXCEPTIONS
             // ========================================================

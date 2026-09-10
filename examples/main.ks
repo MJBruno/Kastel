@@ -1,22 +1,12 @@
-class Animal {
-    function speak() {
-        println("animal");
+interface Printable {
+    function print();
+}
+
+class User : Printable {
+    function print() {
+        println("user");
     }
 }
 
-class Dog : Animal {
-    function speak() {
-        println("dog");
-        base.speak();
-    }
-}
-
-class Puppy : Dog {
-    function speak() {
-        println("puppy");
-        base.speak();
-    }
-}
-
-let p = new Puppy();
-p.speak();
+let u = new User();
+u.print();

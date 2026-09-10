@@ -747,6 +747,8 @@ impl Parser {
             vec![self.parse_function_statement()?]
         } else if self.match_token(TokenKind::Class) {
             vec![self.parse_class_statement()?]
+        } else if self.match_token(TokenKind::Interface) {
+            vec![self.parse_interface_statement()?]
         } else if self.match_token(TokenKind::Return) {
             vec![self.parse_return_statement()?]
         } else if self.match_token(TokenKind::Break) {
@@ -1119,17 +1121,22 @@ impl Parser {
 
     fn parse_class_statement(&mut self) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom de classe attendu après 'class'")?;
-        let superclass = if self.match_token(TokenKind::Colon) {
-            Some(
-                self.consume(
+        let mut bases = Vec::new();
+
+        if self.match_token(TokenKind::Colon) {
+            loop {
+                let base = self.consume(
                     TokenKind::Identifier,
-                    "Nom de classe parent attendu après ':'",
-                )?
-                .lexeme,
-            )
-        } else {
-            None
-        };
+                    "Nom de classe ou d'interface attendu après ':'",
+                )?;
+
+                bases.push(base.lexeme);
+
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
         self.consume(TokenKind::LeftBrace, "'{' attendu après le nom de classe")?;
 
         let mut methods = Vec::new();
@@ -1185,10 +1192,79 @@ impl Parser {
 
         Ok(Statement::Class {
             name: name.lexeme,
-            superclass,
+            bases,
             methods,
         })
     }
+
+    fn parse_interface_statement(&mut self) -> Result<Statement, ParserError> {
+        let name = self.consume(
+            TokenKind::Identifier,
+            "Nom d'interface attendu après 'interface'",
+        )?;
+
+        self.consume(
+            TokenKind::LeftBrace,
+            "'{' attendu après le nom de l'interface",
+        )?;
+
+        let mut methods = Vec::new();
+
+        while !self.check(TokenKind::RightBrace) && !self.is_at_end() {
+            self.consume(TokenKind::Function, "'function' attendu dans l'interface")?;
+
+            let method_name = self.consume(
+                TokenKind::Identifier,
+                "Nom de méthode attendu dans l'interface",
+            )?;
+
+            self.consume(TokenKind::LeftParen, "'(' attendu après le nom de méthode")?;
+
+            let mut arity = 0;
+
+            if !self.check(TokenKind::RightParen) {
+                loop {
+                    self.consume(
+                        TokenKind::Identifier,
+                        "Nom de paramètre attendu dans l'interface",
+                    )?;
+
+                    arity += 1;
+
+                    if !self.match_token(TokenKind::Comma) {
+                        break;
+                    }
+
+                    if self.check(TokenKind::RightParen) {
+                        break;
+                    }
+                }
+            }
+
+            self.consume(TokenKind::RightParen, "')' attendu après les paramètres")?;
+
+            self.consume(
+                TokenKind::Semicolon,
+                "';' attendu après la signature de méthode",
+            )?;
+
+            methods.push(InterfaceMethod {
+                name: method_name.lexeme,
+                arity,
+            });
+        }
+
+        self.consume(
+            TokenKind::RightBrace,
+            "'}' attendu après le corps de l'interface",
+        )?;
+
+        Ok(Statement::Interface {
+            name: name.lexeme,
+            methods,
+        })
+    }
+
     // ============================================================
     // FUNCTION
     // ============================================================

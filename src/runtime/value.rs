@@ -80,13 +80,19 @@ impl Value {
     pub fn new_class(
         name: String,
         superclass: Option<Gc<Object>>,
+        interfaces: Vec<Gc<Object>>,
         methods: HashMap<String, Value>,
     ) -> Self {
         Self::new_heap_object(Object::Class {
             name,
             superclass,
+            interfaces,
             methods,
         })
+    }
+
+    pub fn new_interface(name: String, methods: HashMap<String, usize>) -> Self {
+        Self::new_heap_object(Object::Interface { name, methods })
     }
 
     pub fn new_instance(class: Gc<Object>) -> Self {
@@ -667,6 +673,9 @@ impl std::fmt::Display for Value {
                             write!(f, "<instance>")
                         }
                     }
+                }
+                Object::Interface { name, .. } => {
+                    write!(f, "<interface '{}'>", name)
                 }
             },
         }

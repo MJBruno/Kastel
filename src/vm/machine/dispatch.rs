@@ -251,10 +251,17 @@ impl VirtualMachine {
 
                 self.op_invoke_base_method(method_constant, arg_count)?;
             }
-            OpCode::Class => {
+            OpCode::Interface => {
                 let method_count = self.read_byte()? as usize;
 
-                self.op_class(method_count)?;
+                self.op_interface(method_count)?;
+            }
+
+            OpCode::Class => {
+                let base_count = self.read_byte()? as usize;
+                let method_count = self.read_byte()? as usize;
+
+                self.op_class(base_count, method_count)?;
             }
 
             OpCode::NewInstance => {
@@ -345,13 +352,18 @@ impl VirtualMachine {
         Ok(false)
     }
 
-    pub(crate) fn op_class(&mut self, method_count: usize) -> Result<(), RuntimeError> {
+    pub(crate) fn op_class(
+        &mut self,
+        base_count: usize,
+        method_count: usize,
+    ) -> Result<(), RuntimeError> {
         let method_values = method_count
             .checked_mul(2)
             .ok_or(RuntimeError::InvalidFunction)?;
 
-        let total = method_values
-            .checked_add(2)
+        let total = base_count
+            .checked_add(1)
+            .and_then(|value| value.checked_add(method_values))
             .ok_or(RuntimeError::InvalidFunction)?;
 
         if self.stack.len() < total {
@@ -361,32 +373,48 @@ impl VirtualMachine {
         let start = self.stack.len() - total;
 
         // ========================================================
-        // SUPERCLASS
+        // BASES
         // ========================================================
 
-        let superclass_value = self.stack[start].clone();
+        let mut superclass = None;
+        let mut interfaces = Vec::new();
 
-        let superclass = match superclass_value {
-            Value::Nil => None,
+        for index in 0..base_count {
+            let value = self.stack[start + index].clone();
 
-            Value::Object(handle) => {
-                if !matches!(&*handle.borrow(), Object::Class { .. }) {
+            let handle = match value {
+                Value::Object(handle) => handle,
+
+                _ => {
                     return Err(RuntimeError::TypeError);
                 }
+            };
 
-                Some(handle)
-            }
+            match &*handle.clone().borrow() {
+                Object::Class { .. } => {
+                    // Une seule classe parente autorisée.
+                    if superclass.is_some() {
+                        return Err(RuntimeError::TypeError);
+                    }
 
-            _ => {
-                return Err(RuntimeError::TypeError);
+                    superclass = Some(handle);
+                }
+
+                Object::Interface { .. } => {
+                    interfaces.push(handle);
+                }
+
+                _ => {
+                    return Err(RuntimeError::TypeError);
+                }
             }
-        };
+        }
 
         // ========================================================
-        // NAME
+        // CLASS NAME
         // ========================================================
 
-        let class_name = self.stack[start + 1]
+        let class_name = self.stack[start + base_count]
             .as_string_value()
             .ok_or(RuntimeError::TypeError)?;
 
@@ -394,10 +422,12 @@ impl VirtualMachine {
         // METHODS
         // ========================================================
 
+        let methods_start = start + base_count + 1;
+
         let mut methods = HashMap::with_capacity(method_count);
 
         for index in 0..method_count {
-            let base = start + 2 + index * 2;
+            let base = methods_start + index * 2;
 
             let method_name = self.stack[base]
                 .as_string_value()
@@ -416,12 +446,18 @@ impl VirtualMachine {
                 return Err(RuntimeError::NotCallable);
             }
 
-            methods.insert(method_name, method);
+            if methods.insert(method_name, method).is_some() {
+                return Err(RuntimeError::TypeError);
+            }
         }
+
+        // ========================================================
+        // CREATE CLASS
+        // ========================================================
 
         self.stack.truncate(start);
 
-        let class_value = Value::new_class(class_name, superclass, methods);
+        let class_value = Value::new_class(class_name, superclass, interfaces, methods);
 
         let class_handle = match &class_value {
             Value::Object(handle) => handle.clone(),
@@ -430,6 +466,16 @@ impl VirtualMachine {
                 return Err(RuntimeError::InvalidFunction);
             }
         };
+
+        // ========================================================
+        // OWNER CLASS DES MÉTHODES
+        // ========================================================
+        //
+        // Nécessaire pour :
+        //
+        //     base.foo()
+        //
+        // Une méthode doit savoir quelle classe la possède.
 
         {
             let mut class_object = class_handle.borrow_mut();
@@ -449,7 +495,146 @@ impl VirtualMachine {
             }
         }
 
+        // ========================================================
+        // INTERFACE VALIDATION
+        // ========================================================
+
+        Self::validate_interfaces(&class_handle)?;
+
+        // ========================================================
+        // PUSH RESULT
+        // ========================================================
+
         self.push(class_value);
+
+        Ok(())
+    }
+
+    fn find_class_method_from(class: Gc<Object>, name: &str) -> Option<Value> {
+        let mut current = Some(class);
+
+        while let Some(handle) = current {
+            let object = handle.borrow();
+
+            match &*object {
+                Object::Class {
+                    superclass,
+                    methods,
+                    ..
+                } => {
+                    if let Some(method) = methods.get(name) {
+                        return Some(method.clone());
+                    }
+
+                    current = superclass.clone();
+                }
+
+                _ => return None,
+            }
+        }
+
+        None
+    }
+
+    fn validate_interfaces(class: &Gc<Object>) -> Result<(), RuntimeError> {
+        let interfaces = {
+            let object = class.borrow();
+
+            match &*object {
+                Object::Class { interfaces, .. } => interfaces.clone(),
+
+                _ => return Err(RuntimeError::TypeError),
+            }
+        };
+
+        for interface in interfaces {
+            let requirements = {
+                let object = interface.borrow();
+
+                match &*object {
+                    Object::Interface { methods, .. } => methods.clone(),
+
+                    _ => return Err(RuntimeError::TypeError),
+                }
+            };
+
+            for (name, required_arity) in requirements {
+                let method = Self::find_class_method_from(class.clone(), &name);
+
+                let Some(method) = method else {
+                    return Err(RuntimeError::TypeError);
+                };
+
+                let actual_arity = match method {
+                    Value::Object(handle) => {
+                        let object = handle.borrow();
+
+                        match &*object {
+                            Object::Closure(closure) => closure
+                                .function
+                                .arity
+                                .checked_sub(1)
+                                .ok_or(RuntimeError::TypeError)?,
+
+                            _ => return Err(RuntimeError::TypeError),
+                        }
+                    }
+
+                    _ => return Err(RuntimeError::TypeError),
+                };
+
+                if actual_arity != required_arity {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: required_arity,
+                        found: actual_arity,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+    pub(crate) fn op_interface(&mut self, method_count: usize) -> Result<(), RuntimeError> {
+        let total = method_count
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if self.stack.len() < total {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let start = self.stack.len() - total;
+
+        let name = self.stack[start]
+            .as_string_value()
+            .ok_or(RuntimeError::TypeError)?;
+
+        let mut methods = HashMap::with_capacity(method_count);
+
+        for index in 0..method_count {
+            let base = start + 1 + index * 2;
+
+            let method_name = self.stack[base]
+                .as_string_value()
+                .ok_or(RuntimeError::TypeError)?;
+
+            let arity = match &self.stack[base + 1] {
+                Value::Integer(value) if *value >= 0 => {
+                    usize::try_from(*value).map_err(|_| RuntimeError::TypeError)?
+                }
+
+                _ => return Err(RuntimeError::TypeError),
+            };
+
+            if methods.insert(method_name.clone(), arity).is_some() {
+                return Err(RuntimeError::TypeError);
+            }
+        }
+
+        self.stack.truncate(start);
+
+        self.push(Value::new_interface(name, methods));
 
         Ok(())
     }
@@ -533,12 +718,12 @@ impl VirtualMachine {
             closure.owner_class.clone().ok_or(RuntimeError::TypeError)?
         };
 
-        let method = Self::find_base_method(owner_class, &method_name).ok_or_else(|| {
+        let method = Self::find_base_method(owner_class, &method_name).ok_or(
             RuntimeError::ObjectFieldNotFound {
                 name: method_name,
                 suggestion: None,
-            }
-        })?;
+            },
+        )?;
 
         // Nouvel appel :
         //

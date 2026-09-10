@@ -315,6 +315,7 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
 
         Object::Class {
             superclass,
+            interfaces,
             methods,
             ..
         } => {
@@ -322,10 +323,16 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
                 mark_object(superclass, state);
             }
 
+            for interface in interfaces {
+                mark_object(interface, state);
+            }
+
             for value in methods.values() {
                 mark_value(value, state);
             }
         }
+
+        Object::Interface { .. } => {}
 
         Object::Instance { class, fields } => {
             mark_object(class, state);
