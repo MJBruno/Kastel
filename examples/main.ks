@@ -1,20 +1,15 @@
-class Counter {
-    function init(value) {
-        this.value = value;
-    }
-
-    function increment() {
-        this.value = this.value + 1;
-    }
-
-    function get() {
-        return this.value;
+class Animal {
+    function speak() {
+        println("animal");
     }
 }
 
-let c = new Counter(10);
+class Dog : Animal {
+    function speak() {
+        println("dog");
+    }
+}
 
-c.increment();
-c.increment();
+let d = new Dog();
 
-println(c.get());
+d.speak();

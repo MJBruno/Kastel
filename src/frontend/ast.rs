@@ -172,6 +172,7 @@ pub enum Statement {
     },
     Class {
         name: String,
+        superclass: Option<String>,
         methods: Vec<FunctionMethod>,
     },
     Break,

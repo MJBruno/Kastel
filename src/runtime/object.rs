@@ -28,6 +28,7 @@ pub enum Object {
 
     Class {
         name: String,
+        superclass: Option<Gc<Object>>,
         methods: HashMap<String, Value>,
     },
 

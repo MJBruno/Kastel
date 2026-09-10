@@ -127,8 +127,12 @@ impl Compiler {
                     finally_body.as_deref(),
                 )?;
             }
-            Statement::Class { name, methods } => {
-                self.compile_class(name, methods)?;
+            Statement::Class {
+                name,
+                superclass,
+                methods,
+            } => {
+                self.compile_class(name, superclass.as_deref(), methods)?;
             }
             Statement::Function { name, params, body } => {
                 self.compile_function_statement(name, params, body)?;
@@ -168,15 +172,38 @@ impl Compiler {
     pub(crate) fn compile_class(
         &mut self,
         name: &str,
+        superclass: Option<&str>,
         methods: &[FunctionMethod],
     ) -> Result<(), CompileError> {
         if methods.len() > u8::MAX as usize {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        // Le nom de classe reste temporairement sur la stack.
+        // ========================================================
+        // SUPERCLASS
+        // ========================================================
+
+        match superclass {
+            Some(parent) => {
+                self.compile_variable_get(parent)?;
+            }
+
+            None => {
+                self.emit_opcode(OpCode::Nil);
+            }
+        }
+
+        // ========================================================
+        // CLASS NAME
+        // ========================================================
+
         let class_name_constant = self.identifier_constant(name)?;
+
         self.emit_bytes(OpCode::Constant, class_name_constant);
+
+        // ========================================================
+        // METHODS
+        // ========================================================
 
         for method in methods {
             let method_name_constant = self.identifier_constant(&method.name)?;
@@ -191,7 +218,15 @@ impl Compiler {
             self.emit_closure(function_constant, &function.upvalues);
         }
 
+        // ========================================================
+        // CREATE CLASS
+        // ========================================================
+
         self.emit_bytes(OpCode::Class, methods.len() as u8);
+
+        // ========================================================
+        // BIND CLASS
+        // ========================================================
 
         if !self.in_function && self.scope_depth == 0 {
             if self.globals.borrow().contains_key(name) {

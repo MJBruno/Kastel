@@ -3,7 +3,12 @@ use std::collections::HashMap;
 use super::VirtualMachine;
 
 use crate::{
-    bytecode::chunk::OpCode, error::runtime_error::RuntimeError, runtime::{object::Object, value::{ComparisonOp, NumericOp, Value}},
+    bytecode::chunk::OpCode,
+    error::runtime_error::RuntimeError,
+    runtime::{
+        object::Object,
+        value::{ComparisonOp, NumericOp, Value},
+    },
 };
 
 impl VirtualMachine {
@@ -335,9 +340,12 @@ impl VirtualMachine {
     }
 
     pub(crate) fn op_class(&mut self, method_count: usize) -> Result<(), RuntimeError> {
-        let total = method_count
+        let method_values = method_count
             .checked_mul(2)
-            .and_then(|value| value.checked_add(1))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let total = method_values
+            .checked_add(2)
             .ok_or(RuntimeError::InvalidFunction)?;
 
         if self.stack.len() < total {
@@ -346,14 +354,44 @@ impl VirtualMachine {
 
         let start = self.stack.len() - total;
 
-        let class_name = self.stack[start]
+        // ========================================================
+        // SUPERCLASS
+        // ========================================================
+
+        let superclass_value = self.stack[start].clone();
+
+        let superclass = match superclass_value {
+            Value::Nil => None,
+
+            Value::Object(handle) => {
+                if !matches!(&*handle.borrow(), Object::Class { .. }) {
+                    return Err(RuntimeError::TypeError);
+                }
+
+                Some(handle)
+            }
+
+            _ => {
+                return Err(RuntimeError::TypeError);
+            }
+        };
+
+        // ========================================================
+        // NAME
+        // ========================================================
+
+        let class_name = self.stack[start + 1]
             .as_string_value()
             .ok_or(RuntimeError::TypeError)?;
+
+        // ========================================================
+        // METHODS
+        // ========================================================
 
         let mut methods = HashMap::with_capacity(method_count);
 
         for index in 0..method_count {
-            let base = start + 1 + index * 2;
+            let base = start + 2 + index * 2;
 
             let method_name = self.stack[base]
                 .as_string_value()
@@ -361,20 +399,23 @@ impl VirtualMachine {
 
             let method = self.stack[base + 1].clone();
 
-            match &method {
-                Value::Object(handle) if matches!(&*handle.borrow(), Object::Closure(_)) => {
-                    methods.insert(method_name, method);
-                }
-
-                _ => {
-                    return Err(RuntimeError::NotCallable);
-                }
+            if !matches!(
+                &method,
+                Value::Object(handle)
+                    if matches!(
+                        &*handle.borrow(),
+                        Object::Closure(_)
+                    )
+            ) {
+                return Err(RuntimeError::NotCallable);
             }
+
+            methods.insert(method_name, method);
         }
 
         self.stack.truncate(start);
 
-        self.push(Value::new_class(class_name, methods));
+        self.push(Value::new_class(class_name, superclass, methods));
 
         Ok(())
     }

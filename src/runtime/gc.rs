@@ -309,7 +309,15 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
             }
         }
 
-        Object::Class { methods, .. } => {
+        Object::Class {
+            superclass,
+            methods,
+            ..
+        } => {
+            if let Some(superclass) = superclass {
+                mark_object(superclass, state);
+            }
+
             for value in methods.values() {
                 mark_value(value, state);
             }

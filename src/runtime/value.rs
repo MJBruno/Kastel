@@ -77,8 +77,16 @@ impl Value {
     pub fn new_array(elements: Vec<Value>) -> Self {
         Self::new_heap_object(Object::Array(elements))
     }
-    pub fn new_class(name: String, methods: HashMap<String, Value>) -> Self {
-        Self::new_heap_object(Object::Class { name, methods })
+    pub fn new_class(
+        name: String,
+        superclass: Option<Gc<Object>>,
+        methods: HashMap<String, Value>,
+    ) -> Self {
+        Self::new_heap_object(Object::Class {
+            name,
+            superclass,
+            methods,
+        })
     }
 
     pub fn new_instance(class: Gc<Object>) -> Self {

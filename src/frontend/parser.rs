@@ -1117,7 +1117,17 @@ impl Parser {
 
     fn parse_class_statement(&mut self) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom de classe attendu après 'class'")?;
-
+        let superclass = if self.match_token(TokenKind::Colon) {
+            Some(
+                self.consume(
+                    TokenKind::Identifier,
+                    "Nom de classe parent attendu après ':'",
+                )?
+                .lexeme,
+            )
+        } else {
+            None
+        };
         self.consume(TokenKind::LeftBrace, "'{' attendu après le nom de classe")?;
 
         let mut methods = Vec::new();
@@ -1173,6 +1183,7 @@ impl Parser {
 
         Ok(Statement::Class {
             name: name.lexeme,
+            superclass,
             methods,
         })
     }

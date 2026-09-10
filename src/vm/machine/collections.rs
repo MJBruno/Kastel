@@ -2,8 +2,7 @@ use super::VirtualMachine;
 
 use crate::{
     error::runtime_error::RuntimeError,
-    runtime::object::Object,
-    runtime::value::Value,
+    runtime::{gc_handle::Gc, object::Object, value::Value},
     stdlib::{array, dict},
 };
 
@@ -280,7 +279,31 @@ impl VirtualMachine {
 
         Ok(())
     }
+    fn find_class_method(class: Gc<Object>, name: &str) -> Option<Value> {
+        let mut current = Some(class);
 
+        while let Some(handle) = current {
+            let object = handle.borrow();
+
+            match &*object {
+                Object::Class {
+                    superclass,
+                    methods,
+                    ..
+                } => {
+                    if let Some(method) = methods.get(name) {
+                        return Some(method.clone());
+                    }
+
+                    current = superclass.clone();
+                }
+
+                _ => return None,
+            }
+        }
+
+        None
+    }
     // ============================================================
     //                     INVOKE METHOD
     // ============================================================
@@ -367,15 +390,7 @@ impl VirtualMachine {
 
                 match &*object {
                     Object::Instance { class, .. } => {
-                        let method = {
-                            let class = class.borrow();
-
-                            match &*class {
-                                Object::Class { methods, .. } => methods.get(&method_name).cloned(),
-
-                                _ => None,
-                            }
-                        };
+                        let method = Self::find_class_method(class.clone(), &method_name);
 
                         let Some(method) = method else {
                             return Err(RuntimeError::ObjectFieldNotFound {
