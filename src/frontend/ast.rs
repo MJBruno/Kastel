@@ -184,6 +184,7 @@ pub enum Statement {
     },
     Interface {
         name: String,
+        bases: Vec<String>,
         methods: Vec<InterfaceMethod>,
     },
     Break,

@@ -332,7 +332,15 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
             }
         }
 
-        Object::Interface { .. } => {}
+        Object::Interface { bases, methods, .. } => {
+            for base in bases {
+                mark_object(base, state);
+            }
+
+            // Les méthodes restent des signatures ici,
+            // donc aucun Value à marquer.
+            let _ = methods;
+        }
 
         Object::Instance { class, fields } => {
             mark_object(class, state);

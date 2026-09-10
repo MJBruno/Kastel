@@ -2,11 +2,12 @@ interface Printable {
     function print();
 }
 
-class User : Printable {
-    function print() {
-        println("user");
-    }
+interface Document : Printable {
+    function save();
 }
 
-let u = new User();
-u.print();
+class File : Document {
+    function save() {
+        println("save");
+    }
+}

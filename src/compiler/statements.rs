@@ -135,8 +135,12 @@ impl Compiler {
                 self.compile_class(name, bases, methods)?;
             }
 
-            Statement::Interface { name, methods } => {
-                self.compile_interface(name, methods)?;
+            Statement::Interface {
+                name,
+                bases,
+                methods,
+            } => {
+                self.compile_interface(name, bases, methods)?;
             }
             Statement::Function { name, params, body } => {
                 self.compile_function_statement(name, params, body)?;
@@ -317,15 +321,40 @@ impl Compiler {
     pub(crate) fn compile_interface(
         &mut self,
         name: &str,
+        bases: &[String],
         methods: &[InterfaceMethod],
     ) -> Result<(), CompileError> {
+        if bases.len() > u8::MAX as usize {
+            return Err(CompileError::TooManyObjectFields);
+        }
+
         if methods.len() > u8::MAX as usize {
             return Err(CompileError::TooManyObjectFields);
         }
 
+        if !self.in_function && self.scope_depth == 0 && self.globals.borrow().contains_key(name) {
+            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+        }
+
+        // ========================================================
+        // INTERFACES PARENTES
+        // ========================================================
+
+        for base in bases {
+            self.compile_variable_get(base)?;
+        }
+
+        // ========================================================
+        // NOM
+        // ========================================================
+
         let name_constant = self.identifier_constant(name)?;
 
         self.emit_bytes(OpCode::Constant, name_constant);
+
+        // ========================================================
+        // MÉTHODES
+        // ========================================================
 
         for method in methods {
             let method_constant = self.identifier_constant(&method.name)?;
@@ -337,14 +366,19 @@ impl Compiler {
             self.emit_bytes(OpCode::Constant, arity_constant);
         }
 
+        // ========================================================
+        // CREATE INTERFACE
+        // ========================================================
+
         self.emit_byte(OpCode::Interface.into());
+        self.emit_byte(bases.len() as u8);
         self.emit_byte(methods.len() as u8);
 
-        if !self.in_function && self.scope_depth == 0 {
-            if self.globals.borrow().contains_key(name) {
-                return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
-            }
+        // ========================================================
+        // BIND
+        // ========================================================
 
+        if !self.in_function && self.scope_depth == 0 {
             let name_constant = self.identifier_constant(name)?;
 
             self.emit_bytes(OpCode::DefineGlobal, name_constant);

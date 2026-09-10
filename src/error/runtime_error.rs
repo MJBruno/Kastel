@@ -67,6 +67,18 @@ pub enum RuntimeError {
      *     throw { message: "boom" };
      */
     Thrown(Value),
+
+    InterfaceMethodMissing {
+        interface: String,
+        method: String,
+    },
+
+    InterfaceMethodArityMismatch {
+        interface: String,
+        method: String,
+        expected: usize,
+        found: usize,
+    },
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -81,10 +93,7 @@ impl std::fmt::Display for RuntimeError {
             }
 
             RuntimeError::WrongArgumentCount { expected, found } => {
-                write!(
-                    f,
-                    "Expected {expected} arguments but found {found}."
-                )
+                write!(f, "Expected {expected} arguments but found {found}.")
             }
 
             RuntimeError::NotCallable => {
@@ -104,10 +113,7 @@ impl std::fmt::Display for RuntimeError {
             }
 
             RuntimeError::ArrayIndexOutOfBounds { index, length } => {
-                write!(
-                    f,
-                    "Array index {index} out of bounds for length {length}."
-                )
+                write!(f, "Array index {index} out of bounds for length {length}.")
             }
 
             RuntimeError::IndexOutOfBounds => {
@@ -118,22 +124,14 @@ impl std::fmt::Display for RuntimeError {
                 write!(f, "Module error: {message}")
             }
 
-            RuntimeError::ObjectFieldNotFound {
-                name,
-                suggestion,
-            } => {
-                match suggestion {
-                    Some(suggestion) => write!(
-                        f,
-                        "Champ '{name}' introuvable sur l'objet. Vouliez-vous dire '{suggestion}' ?"
-                    ),
+            RuntimeError::ObjectFieldNotFound { name, suggestion } => match suggestion {
+                Some(suggestion) => write!(
+                    f,
+                    "Champ '{name}' introuvable sur l'objet. Vouliez-vous dire '{suggestion}' ?"
+                ),
 
-                    None => write!(
-                        f,
-                        "Champ '{name}' introuvable sur l'objet."
-                    ),
-                }
-            }
+                None => write!(f, "Champ '{name}' introuvable sur l'objet."),
+            },
 
             RuntimeError::NotIterable => {
                 write!(
@@ -147,10 +145,7 @@ impl std::fmt::Display for RuntimeError {
             }
 
             RuntimeError::InvalidShiftAmount => {
-                write!(
-                    f,
-                    "Décalage invalide : doit être compris entre 0 et 63."
-                )
+                write!(f, "Décalage invalide : doit être compris entre 0 et 63.")
             }
 
             RuntimeError::WithLocation {
@@ -158,10 +153,7 @@ impl std::fmt::Display for RuntimeError {
                 column,
                 source,
             } => {
-                write!(
-                    f,
-                    "ligne {line}, colonne {column} : {source}"
-                )
+                write!(f, "ligne {line}, colonne {column} : {source}")
             }
 
             RuntimeError::NotIndexable => {
@@ -177,14 +169,28 @@ impl std::fmt::Display for RuntimeError {
             }
 
             RuntimeError::InvalidOpcode(opcode) => {
-                write!(
-                    f,
-                    "Invalid bytecode opcode: {opcode}."
-                )
+                write!(f, "Invalid bytecode opcode: {opcode}.")
             }
 
             RuntimeError::Thrown(value) => {
                 write!(f, "Uncaught exception: {value:?}")
+            }
+
+            RuntimeError::InterfaceMethodMissing { interface, method } => {
+                write!(f, "Interface '{}' requires method '{}'.", interface, method)
+            }
+
+            RuntimeError::InterfaceMethodArityMismatch {
+                interface,
+                method,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "Method '{}' from interface '{}' expects {} arguments but found {}.",
+                    method, interface, expected, found
+                )
             }
         }
     }

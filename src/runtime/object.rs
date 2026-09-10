@@ -35,6 +35,7 @@ pub enum Object {
 
     Interface {
         name: String,
+        bases: Vec<Gc<Object>>,
         methods: HashMap<String, usize>,
     },
 
@@ -93,7 +94,8 @@ impl Object {
                 methods.clear();
             }
 
-            Object::Interface { methods, .. } => {
+            Object::Interface { bases, methods, .. } => {
+                bases.clear();
                 methods.clear();
             }
 

@@ -252,9 +252,10 @@ impl VirtualMachine {
                 self.op_invoke_base_method(method_constant, arg_count)?;
             }
             OpCode::Interface => {
+                let base_count = self.read_byte()? as usize;
                 let method_count = self.read_byte()? as usize;
 
-                self.op_interface(method_count)?;
+                self.op_interface(base_count, method_count)?;
             }
 
             OpCode::Class => {
@@ -536,6 +537,41 @@ impl VirtualMachine {
         None
     }
 
+    fn collect_interface_methods(
+        interface: Gc<Object>,
+        methods: &mut HashMap<String, usize>,
+    ) -> Result<(), RuntimeError> {
+        let (bases, own_methods) = {
+            let object = interface.borrow();
+
+            match &*object {
+                Object::Interface { bases, methods, .. } => (bases.clone(), methods.clone()),
+
+                _ => {
+                    return Err(RuntimeError::TypeError);
+                }
+            }
+        };
+
+        // Interfaces parentes d'abord.
+        for base in bases {
+            Self::collect_interface_methods(base, methods)?;
+        }
+
+        // Puis les méthodes propres.
+        for (name, arity) in own_methods {
+            if let Some(existing) = methods.get(&name)
+                && *existing != arity
+            {
+                return Err(RuntimeError::TypeError);
+            }
+
+            methods.insert(name, arity);
+        }
+
+        Ok(())
+    }
+
     fn validate_interfaces(class: &Gc<Object>) -> Result<(), RuntimeError> {
         let interfaces = {
             let object = class.borrow();
@@ -543,26 +579,40 @@ impl VirtualMachine {
             match &*object {
                 Object::Class { interfaces, .. } => interfaces.clone(),
 
-                _ => return Err(RuntimeError::TypeError),
+                _ => {
+                    return Err(RuntimeError::TypeError);
+                }
             }
         };
 
         for interface in interfaces {
-            let requirements = {
+            let (interface_name, _) = {
                 let object = interface.borrow();
 
                 match &*object {
-                    Object::Interface { methods, .. } => methods.clone(),
+                    Object::Interface { name, .. } => (name.clone(), ()),
 
-                    _ => return Err(RuntimeError::TypeError),
+                    _ => {
+                        return Err(RuntimeError::TypeError);
+                    }
                 }
             };
 
+            // Récupère les méthodes de l'interface ET
+            // de toutes ses interfaces parentes.
+            let mut requirements = HashMap::<String, usize>::new();
+
+            Self::collect_interface_methods(interface.clone(), &mut requirements)?;
+
+            // Vérifie chaque méthode du contrat complet.
             for (name, required_arity) in requirements {
                 let method = Self::find_class_method_from(class.clone(), &name);
 
                 let Some(method) = method else {
-                    return Err(RuntimeError::TypeError);
+                    return Err(RuntimeError::InterfaceMethodMissing {
+                        interface: interface_name.clone(),
+                        method: name.clone(),
+                    });
                 };
 
                 let actual_arity = match method {
@@ -576,15 +626,21 @@ impl VirtualMachine {
                                 .checked_sub(1)
                                 .ok_or(RuntimeError::TypeError)?,
 
-                            _ => return Err(RuntimeError::TypeError),
+                            _ => {
+                                return Err(RuntimeError::TypeError);
+                            }
                         }
                     }
 
-                    _ => return Err(RuntimeError::TypeError),
+                    _ => {
+                        return Err(RuntimeError::TypeError);
+                    }
                 };
 
                 if actual_arity != required_arity {
-                    return Err(RuntimeError::WrongArgumentCount {
+                    return Err(RuntimeError::InterfaceMethodArityMismatch {
+                        interface: interface_name.clone(),
+                        method: name.clone(),
                         expected: required_arity,
                         found: actual_arity,
                     });
@@ -594,10 +650,18 @@ impl VirtualMachine {
 
         Ok(())
     }
-    pub(crate) fn op_interface(&mut self, method_count: usize) -> Result<(), RuntimeError> {
-        let total = method_count
+    pub(crate) fn op_interface(
+        &mut self,
+        base_count: usize,
+        method_count: usize,
+    ) -> Result<(), RuntimeError> {
+        let method_values = method_count
             .checked_mul(2)
-            .and_then(|value| value.checked_add(1))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let total = base_count
+            .checked_add(1)
+            .and_then(|value| value.checked_add(method_values))
             .ok_or(RuntimeError::InvalidFunction)?;
 
         if self.stack.len() < total {
@@ -606,14 +670,50 @@ impl VirtualMachine {
 
         let start = self.stack.len() - total;
 
-        let name = self.stack[start]
+        // ========================================================
+        // BASES
+        // ========================================================
+
+        let mut bases = Vec::with_capacity(base_count);
+
+        for index in 0..base_count {
+            let value = self.stack[start + index].clone();
+
+            let handle = match value {
+                Value::Object(handle) => handle,
+
+                _ => {
+                    return Err(RuntimeError::TypeError);
+                }
+            };
+
+            if !matches!(&*handle.borrow(), Object::Interface { .. }) {
+                return Err(RuntimeError::TypeError);
+            }
+
+            bases.push(handle);
+        }
+
+        // ========================================================
+        // NOM
+        // ========================================================
+
+        let name_index = start + base_count;
+
+        let name = self.stack[name_index]
             .as_string_value()
             .ok_or(RuntimeError::TypeError)?;
+
+        // ========================================================
+        // MÉTHODES
+        // ========================================================
+
+        let methods_start = name_index + 1;
 
         let mut methods = HashMap::with_capacity(method_count);
 
         for index in 0..method_count {
-            let base = start + 1 + index * 2;
+            let base = methods_start + index * 2;
 
             let method_name = self.stack[base]
                 .as_string_value()
@@ -624,17 +724,19 @@ impl VirtualMachine {
                     usize::try_from(*value).map_err(|_| RuntimeError::TypeError)?
                 }
 
-                _ => return Err(RuntimeError::TypeError),
+                _ => {
+                    return Err(RuntimeError::TypeError);
+                }
             };
 
-            if methods.insert(method_name.clone(), arity).is_some() {
+            if methods.insert(method_name, arity).is_some() {
                 return Err(RuntimeError::TypeError);
             }
         }
 
         self.stack.truncate(start);
 
-        self.push(Value::new_interface(name, methods));
+        self.push(Value::new_interface(name, bases, methods));
 
         Ok(())
     }

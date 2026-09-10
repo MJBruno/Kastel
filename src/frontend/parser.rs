@@ -1203,6 +1203,31 @@ impl Parser {
             "Nom d'interface attendu après 'interface'",
         )?;
 
+        // ============================================================
+        // INTERFACES PARENTES
+        // ============================================================
+
+        let mut bases = Vec::new();
+
+        if self.match_token(TokenKind::Colon) {
+            loop {
+                let base = self.consume(
+                    TokenKind::Identifier,
+                    "Nom d'interface parent attendu après ':'",
+                )?;
+
+                bases.push(base.lexeme);
+
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+
+        // ============================================================
+        // CORPS
+        // ============================================================
+
         self.consume(
             TokenKind::LeftBrace,
             "'{' attendu après le nom de l'interface",
@@ -1261,6 +1286,7 @@ impl Parser {
 
         Ok(Statement::Interface {
             name: name.lexeme,
+            bases,
             methods,
         })
     }

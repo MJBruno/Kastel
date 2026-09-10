@@ -90,11 +90,17 @@ impl Value {
             methods,
         })
     }
-
-    pub fn new_interface(name: String, methods: HashMap<String, usize>) -> Self {
-        Self::new_heap_object(Object::Interface { name, methods })
+    pub fn new_interface(
+        name: String,
+        bases: Vec<Gc<Object>>,
+        methods: HashMap<String, usize>,
+    ) -> Self {
+        Self::new_heap_object(Object::Interface {
+            name,
+            bases,
+            methods,
+        })
     }
-
     pub fn new_instance(class: Gc<Object>) -> Self {
         Self::new_heap_object(Object::Instance {
             class,
