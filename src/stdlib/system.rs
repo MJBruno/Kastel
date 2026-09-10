@@ -113,6 +113,8 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
             Object::Iterator(_) => "iterator".to_string(),
             Object::Module(_) => "module".to_string(),
 
+            Object::BoundMethod { .. } => "function".to_string(),
+
             Object::Class { .. } => "class".to_string(),
 
             Object::Interface { .. } => "interface".to_string(),

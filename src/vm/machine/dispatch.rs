@@ -883,29 +883,26 @@ impl VirtualMachine {
 
         self.stack.truncate(class_index);
 
-        // L'instance reste une racine GC pendant l'appel
+        // L'instance reste sur la stack pendant l'appel
         // du constructeur.
         self.push(instance.clone());
 
-        let init = {
-            let class = class_handle.borrow();
-
-            match &*class {
-                Object::Class { methods, .. } => methods.get("init").cloned(),
-
-                _ => None,
-            }
-        };
+        // Recherche de init dans toute la hiérarchie.
+        let init = Self::find_class_method_from(class_handle, "init");
 
         match init {
             Some(init) => {
                 let mut init_args = Vec::with_capacity(arg_count + 1);
 
+                // slot 0 = this
                 init_args.push(instance.clone());
+
                 init_args.extend(args);
 
                 self.invoke_sync(init, &init_args)?;
 
+                // invoke_sync() laisse le résultat du
+                // constructeur sur la stack.
                 self.pop()?;
             }
 
@@ -1030,36 +1027,31 @@ impl VirtualMachine {
         Ok(false)
     }
     fn interface_extends_or_is(
-    interface: Gc<Object>,
-    target: &Gc<Object>,
-) -> Result<bool, RuntimeError> {
-    if Gc::ptr_eq(&interface, target) {
-        return Ok(true);
-    }
-
-    let bases = {
-        let object = interface.borrow();
-
-        match &*object {
-            Object::Interface { bases, .. } => {
-                bases.clone()
-            }
-
-            _ => {
-                return Ok(false);
-            }
-        }
-    };
-
-    for base in bases {
-        if Self::interface_extends_or_is(
-            base,
-            target,
-        )? {
+        interface: Gc<Object>,
+        target: &Gc<Object>,
+    ) -> Result<bool, RuntimeError> {
+        if Gc::ptr_eq(&interface, target) {
             return Ok(true);
         }
-    }
 
-    Ok(false)
-}
+        let bases = {
+            let object = interface.borrow();
+
+            match &*object {
+                Object::Interface { bases, .. } => bases.clone(),
+
+                _ => {
+                    return Ok(false);
+                }
+            }
+        };
+
+        for base in bases {
+            if Self::interface_extends_or_is(base, target)? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
 }

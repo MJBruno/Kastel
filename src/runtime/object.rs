@@ -21,7 +21,10 @@ pub enum Object {
     Function(Rc<Function>),
 
     Closure(Closure),
-
+    BoundMethod {
+        method: Gc<Object>,
+        receiver: Value,
+    },
     Iterator(IteratorState),
 
     Module(Rc<ModuleInstance>),
@@ -78,7 +81,7 @@ impl Object {
                 closure.upvalues.clear();
                 closure.owner_class = None;
             }
-
+            Object::BoundMethod { .. } => {}
             Object::Iterator(state) => {
                 state.reset_for_gc();
             }

@@ -300,7 +300,10 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
                 mark_object(owner_class, state);
             }
         }
-
+        Object::BoundMethod { method, receiver } => {
+            mark_object(method, state);
+            mark_value(receiver, state);
+        }
         Object::Iterator(iterator) => {
             iterator.visit_values(|value| {
                 mark_value(value, state);

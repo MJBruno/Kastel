@@ -77,6 +77,9 @@ impl Value {
     pub fn new_array(elements: Vec<Value>) -> Self {
         Self::new_heap_object(Object::Array(elements))
     }
+    pub fn new_bound_method(method: Gc<Object>, receiver: Value) -> Self {
+        Self::new_heap_object(Object::BoundMethod { method, receiver })
+    }
     pub fn new_class(
         name: String,
         superclass: Option<Gc<Object>>,
@@ -491,20 +494,45 @@ impl Value {
                         return Ok(value.clone());
                     }
 
-                    let class = class.borrow();
+                    let mut current = Some(class.clone());
 
-                    match &*class {
-                        Object::Class { methods, .. } => {
-                            methods.get(name).cloned().ok_or_else(|| {
-                                RuntimeError::ObjectFieldNotFound {
-                                    name: name.to_string(),
-                                    suggestion: None,
+                    while let Some(class_handle) = current {
+                        let object = class_handle.borrow();
+
+                        match &*object {
+                            Object::Class {
+                                methods,
+                                superclass,
+                                ..
+                            } => {
+                                if let Some(method) = methods.get(name) {
+                                    let method_handle = match method {
+                                        Value::Object(handle) => handle.clone(),
+
+                                        _ => {
+                                            return Err(RuntimeError::TypeError);
+                                        }
+                                    };
+
+                                    return Ok(Value::new_bound_method(
+                                        method_handle,
+                                        self.clone(),
+                                    ));
                                 }
-                            })
-                        }
 
-                        _ => Err(RuntimeError::TypeError),
+                                current = superclass.clone();
+                            }
+
+                            _ => {
+                                return Err(RuntimeError::TypeError);
+                            }
+                        }
                     }
+
+                    Err(RuntimeError::ObjectFieldNotFound {
+                        name: name.to_string(),
+                        suggestion: None,
+                    })
                 }
                 Object::Dict(entries) => entries
                     .iter()
@@ -682,6 +710,9 @@ impl std::fmt::Display for Value {
                 }
                 Object::Interface { name, .. } => {
                     write!(f, "<interface '{}'>", name)
+                }
+                Object::BoundMethod { .. } => {
+                    write!(f, "<bound method>")
                 }
             },
         }

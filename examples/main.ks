@@ -1,10 +1,17 @@
-class Animal {
+class Counter {
+    function init(value) {
+        this.value = value;
+    }
+
+    function show() {
+        println(this.value);
+    }
 }
 
-class Dog : Animal {
-}
+let CounterType = Counter;
 
-let d = new Dog();
+let a = new CounterType(10);
+let b = new CounterType(20);
 
-println(d is Dog);
-println(d is Animal);
+a.show();
+b.show();

@@ -279,6 +279,7 @@ impl VirtualMachine {
 
         Ok(())
     }
+    #[allow(dead_code)]
     fn find_class_method(class: Gc<Object>, name: &str) -> Option<Value> {
         let mut current = Some(class);
 
@@ -334,18 +335,9 @@ impl VirtualMachine {
         let args = self.stack[receiver_index..].to_vec();
 
         self.stack.truncate(receiver_index);
+
         // ============================================================
         //                     to_iterator()
-        // ============================================================
-        //
-        // Conversion générique :
-        //
-        // Array    -> Iterator
-        // Dict     -> Iterator
-        // String   -> Iterator
-        // Range    -> Iterator
-        // Iterator -> lui-même
-        //
         // ============================================================
 
         if method_name == "to_iterator" {
@@ -362,98 +354,104 @@ impl VirtualMachine {
 
             return Ok(());
         }
+
         let result = match &receiver {
             // ============================================================
             // RANGE
             // ============================================================
-            //
-            // range(5) produit initialement Value::Range.
-            //
-            // Pour les méthodes iterator(), on le convertit une seule fois
-            // en Object::Iterator.
-            //
             Value::Range { .. } => {
                 let iterator = receiver.to_iterator()?;
 
-                self.invoke_iterator_method(&method_name, &{
-                    let mut iterator_args = args.clone();
-                    iterator_args[0] = iterator;
-                    iterator_args
-                })?
+                let mut iterator_args = args.clone();
+
+                iterator_args[0] = iterator;
+
+                self.invoke_iterator_method(&method_name, &iterator_args)?
             }
 
             // ============================================================
             // OBJECT
             // ============================================================
             Value::Object(handle) => {
-                let object = handle.borrow();
+                let object_kind = {
+                    let object = handle.borrow();
 
-                match &*object {
-                    Object::Instance { class, .. } => {
-                        let method = Self::find_class_method(class.clone(), &method_name);
+                    match &*object {
+                        Object::Instance { .. } => 0,
+                        Object::Iterator(_) => 1,
+                        Object::String(_) => 2,
+                        Object::Array(_) => 3,
+                        Object::Dict(_) => 4,
+                        _ => 5,
+                    }
+                };
 
-                        let Some(method) = method else {
-                            return Err(RuntimeError::ObjectFieldNotFound {
-                                name: method_name,
-                                suggestion: None,
-                            });
-                        };
+                match object_kind {
+                    // ====================================================
+                    // INSTANCE
+                    // ====================================================
+                    0 => {
+                        // IMPORTANT :
+                        //
+                        // On passe d'abord par get_property().
+                        //
+                        // Cela garantit :
+                        //
+                        //     instance field > class method
+                        //
+                        // Si le champ existe :
+                        //
+                        //     t.callback()
+                        //
+                        // appelle directement la Value stockée dans le champ.
+                        //
+                        // Si le champ n'existe pas :
+                        //
+                        //     get_property()
+                        //
+                        // remonte la hiérarchie des classes et retourne
+                        // un BoundMethod.
+                        let callable = receiver.get_property(&method_name)?;
 
-                        if !matches!(
-                            &method,
-                            Value::Object(handle)
-                                if matches!(
-                                    &*handle.borrow(),
-                                    Object::Closure(_)
-                                )
-                        ) {
-                            return Err(RuntimeError::NotCallable);
-                        }
+                        self.push(callable);
 
-                        self.push(method);
-                        self.push(receiver.clone());
-
+                        // Le receiver est déjà encapsulé dans un BoundMethod
+                        // si l'appel cible une méthode de classe.
+                        //
+                        // Pour un champ contenant une fonction normale,
+                        // on ne transmet PAS automatiquement `this`.
                         for argument in args.iter().skip(1) {
                             self.push(argument.clone());
                         }
 
-                        self.execute_call(arg_count + 1)?;
+                        self.execute_call(arg_count)?;
 
                         return Ok(());
                     }
+
                     // ====================================================
                     // ITERATOR
                     // ====================================================
-                    Object::Iterator(_) => {
-                        drop(object);
-
-                        self.invoke_iterator_method(&method_name, &args)?
-                    }
+                    1 => self.invoke_iterator_method(&method_name, &args)?,
 
                     // ====================================================
                     // STRING
                     // ====================================================
-                    Object::String(_) => {
-                        drop(object);
+                    2 => match crate::stdlib::string::dispatch_method(&method_name, &args)? {
+                        Some(result) => result,
 
-                        match crate::stdlib::string::dispatch_method(&method_name, &args)? {
-                            Some(result) => result,
-
-                            None => {
-                                return Err(RuntimeError::ObjectFieldNotFound {
-                                    name: method_name,
-                                    suggestion: None,
-                                });
-                            }
+                        None => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
                         }
-                    }
+                    },
 
                     // ====================================================
                     // ARRAY
                     // ====================================================
-                    Object::Array(_) => {
-                        drop(object);
-
+                    3 => {
                         if let Some(result) = array::dispatch_method(&method_name, &args)? {
                             result
                         } else {
@@ -464,21 +462,20 @@ impl VirtualMachine {
                     // ====================================================
                     // DICT
                     // ====================================================
-                    Object::Dict(_) => {
-                        drop(object);
+                    4 => match dict::dispatch_method(&method_name, &args)? {
+                        Some(result) => result,
 
-                        match dict::dispatch_method(&method_name, &args)? {
-                            Some(result) => result,
-
-                            None => {
-                                return Err(RuntimeError::ObjectFieldNotFound {
-                                    name: method_name,
-                                    suggestion: None,
-                                });
-                            }
+                        None => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
                         }
-                    }
+                    },
 
+                    // ====================================================
+                    // UNSUPPORTED OBJECT
+                    // ====================================================
                     _ => {
                         return Err(RuntimeError::ObjectFieldNotFound {
                             name: method_name,
@@ -497,7 +494,6 @@ impl VirtualMachine {
 
         Ok(())
     }
-
     // ============================================================
     //                  ARRAY FUNCTIONAL METHODS
     // ============================================================
