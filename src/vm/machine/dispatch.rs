@@ -12,6 +12,10 @@ use crate::{
 };
 
 impl VirtualMachine {
+    // ========================================================
+    // DISPATCH
+    // ========================================================
+
     pub(crate) fn dispatch(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
         let opcode =
             OpCode::try_from(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
@@ -22,7 +26,6 @@ impl VirtualMachine {
             // ========================================================
             OpCode::Constant => {
                 let constant = self.read_constant_byte()?;
-
                 self.push(constant);
             }
 
@@ -48,13 +51,11 @@ impl VirtualMachine {
 
             OpCode::GetUpvalue => {
                 let index = self.read_byte()? as usize;
-
                 self.get_upvalue(index)?;
             }
 
             OpCode::SetUpvalue => {
                 let index = self.read_byte()? as usize;
-
                 self.set_upvalue(index)?;
             }
 
@@ -170,17 +171,15 @@ impl VirtualMachine {
             }
 
             // ========================================================
-            // ARRAY
+            // ARRAY / OBJECT
             // ========================================================
             OpCode::Array => {
                 let count = self.read_byte()? as usize;
-
                 self.op_array(count)?;
             }
 
             OpCode::Object => {
                 let pair_count = self.read_byte()? as usize;
-
                 self.op_object(pair_count)?;
             }
 
@@ -244,7 +243,6 @@ impl VirtualMachine {
 
             OpCode::Call => {
                 let arg_count = self.read_byte()? as usize;
-
                 self.execute_call(arg_count)?;
             }
 
@@ -254,12 +252,17 @@ impl VirtualMachine {
 
                 self.op_invoke_method(method_constant, arg_count)?;
             }
+
             OpCode::InvokeBaseMethod => {
                 let method_constant = self.read_byte()? as usize;
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_invoke_base_method(method_constant, arg_count)?;
             }
+
+            // ========================================================
+            // INTERFACE / CLASS
+            // ========================================================
             OpCode::Interface => {
                 let base_count = self.read_byte()? as usize;
                 let method_count = self.read_byte()? as usize;
@@ -279,6 +282,7 @@ impl VirtualMachine {
 
                 self.op_new_instance(arg_count)?;
             }
+
             // ========================================================
             // MODULES
             // ========================================================
@@ -349,6 +353,7 @@ impl VirtualMachine {
 
                 return Err(RuntimeError::Thrown(value));
             }
+
             #[allow(clippy::single_match)]
             OpCode::FinallyEnd => match self.pending_exception.take() {
                 Some(pending) => match pending.rethrow {
@@ -361,6 +366,10 @@ impl VirtualMachine {
 
         Ok(false)
     }
+
+    // ========================================================
+    // CLASS
+    // ========================================================
 
     pub(crate) fn op_class(
         &mut self,
@@ -402,7 +411,6 @@ impl VirtualMachine {
 
             match &*handle.clone().borrow() {
                 Object::Class { .. } => {
-                    // Une seule classe parente autorisée.
                     if superclass.is_some() {
                         return Err(RuntimeError::TypeError);
                     }
@@ -478,14 +486,8 @@ impl VirtualMachine {
         };
 
         // ========================================================
-        // OWNER CLASS DES MÉTHODES
+        // OWNER CLASS
         // ========================================================
-        //
-        // Nécessaire pour :
-        //
-        //     base.foo()
-        //
-        // Une méthode doit savoir quelle classe la possède.
 
         {
             let mut class_object = class_handle.borrow_mut();
@@ -512,7 +514,7 @@ impl VirtualMachine {
         Self::validate_interfaces(&class_handle)?;
 
         // ========================================================
-        // PUSH RESULT
+        // RESULT
         // ========================================================
 
         self.push(class_value);
@@ -520,16 +522,36 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn find_class_method_from(class: Gc<Object>, name: &str) -> Option<Value> {
-        let mut current = Some(class);
+    // ========================================================
+    // METHOD RESOLUTION
+    // ========================================================
 
+    fn find_class_method_from(class: Gc<Object>, name: &str) -> Option<Value> {
+        Self::find_method_in_hierarchy(Some(class), name)
+    }
+
+    fn find_base_method(class: Gc<Object>, name: &str) -> Option<Value> {
+        let parent = {
+            let object = class.borrow();
+
+            match &*object {
+                Object::Class { superclass, .. } => superclass.clone(),
+
+                _ => None,
+            }
+        };
+
+        Self::find_method_in_hierarchy(parent, name)
+    }
+
+    fn find_method_in_hierarchy(mut current: Option<Gc<Object>>, name: &str) -> Option<Value> {
         while let Some(handle) = current {
             let object = handle.borrow();
 
             match &*object {
                 Object::Class {
-                    superclass,
                     methods,
+                    superclass,
                     ..
                 } => {
                     if let Some(method) = methods.get(name) {
@@ -539,12 +561,18 @@ impl VirtualMachine {
                     current = superclass.clone();
                 }
 
-                _ => return None,
+                _ => {
+                    return None;
+                }
             }
         }
 
         None
     }
+
+    // ========================================================
+    // INTERFACE HELPERS
+    // ========================================================
 
     fn collect_interface_methods(
         interface: Gc<Object>,
@@ -595,11 +623,11 @@ impl VirtualMachine {
         };
 
         for interface in interfaces {
-            let (interface_name, _) = {
+            let interface_name = {
                 let object = interface.borrow();
 
                 match &*object {
-                    Object::Interface { name, .. } => (name.clone(), ()),
+                    Object::Interface { name, .. } => name.clone(),
 
                     _ => {
                         return Err(RuntimeError::TypeError);
@@ -607,13 +635,10 @@ impl VirtualMachine {
                 }
             };
 
-            // Récupère les méthodes de l'interface ET
-            // de toutes ses interfaces parentes.
             let mut requirements = HashMap::<String, usize>::new();
 
             Self::collect_interface_methods(interface.clone(), &mut requirements)?;
 
-            // Vérifie chaque méthode du contrat complet.
             for (name, required_arity) in requirements {
                 let method = Self::find_class_method_from(class.clone(), &name);
 
@@ -659,6 +684,11 @@ impl VirtualMachine {
 
         Ok(())
     }
+
+    // ========================================================
+    // INTERFACE
+    // ========================================================
+
     pub(crate) fn op_interface(
         &mut self,
         base_count: usize,
@@ -704,7 +734,7 @@ impl VirtualMachine {
         }
 
         // ========================================================
-        // NOM
+        // NAME
         // ========================================================
 
         let name_index = start + base_count;
@@ -714,7 +744,7 @@ impl VirtualMachine {
             .ok_or(RuntimeError::TypeError)?;
 
         // ========================================================
-        // MÉTHODES
+        // METHODS
         // ========================================================
 
         let methods_start = name_index + 1;
@@ -750,41 +780,10 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn find_base_method(class: Gc<Object>, name: &str) -> Option<Value> {
-        let parent = {
-            let object = class.borrow();
+    // ========================================================
+    // BASE METHOD
+    // ========================================================
 
-            match &*object {
-                Object::Class { superclass, .. } => superclass.clone(),
-
-                _ => None,
-            }
-        };
-
-        let mut current = parent;
-
-        while let Some(handle) = current {
-            let object = handle.borrow();
-
-            match &*object {
-                Object::Class {
-                    superclass,
-                    methods,
-                    ..
-                } => {
-                    if let Some(method) = methods.get(name) {
-                        return Some(method.clone());
-                    }
-
-                    current = superclass.clone();
-                }
-
-                _ => return None,
-            }
-        }
-
-        None
-    }
     pub(crate) fn op_invoke_base_method(
         &mut self,
         method_constant: usize,
@@ -813,7 +812,6 @@ impl VirtualMachine {
 
         let this_value = self.stack[this_index].clone();
 
-        // Les derniers éléments sont les arguments de base.speak(...).
         if self.stack.len() < arg_count {
             return Err(RuntimeError::StackUnderflow);
         }
@@ -826,6 +824,7 @@ impl VirtualMachine {
 
         let owner_class = {
             let closure = super::bytecode::frame_closure(&frame.closure);
+
             closure.owner_class.clone().ok_or(RuntimeError::TypeError)?
         };
 
@@ -836,8 +835,6 @@ impl VirtualMachine {
             },
         )?;
 
-        // Nouvel appel :
-        //
         // [method, this, arg1, arg2, ...]
         self.push(method);
         self.push(this_value);
@@ -850,6 +847,11 @@ impl VirtualMachine {
 
         Ok(())
     }
+
+    // ========================================================
+    // NEW INSTANCE
+    // ========================================================
+
     pub(crate) fn op_new_instance(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
         let required = arg_count
             .checked_add(1)
@@ -883,8 +885,8 @@ impl VirtualMachine {
 
         self.stack.truncate(class_index);
 
-        // L'instance reste sur la stack pendant l'appel
-        // du constructeur.
+        // L'instance reste sur la stack pendant l'appel du
+        // constructeur.
         self.push(instance.clone());
 
         // Recherche de init dans toute la hiérarchie.
@@ -894,15 +896,12 @@ impl VirtualMachine {
             Some(init) => {
                 let mut init_args = Vec::with_capacity(arg_count + 1);
 
-                // slot 0 = this
                 init_args.push(instance.clone());
-
                 init_args.extend(args);
 
                 self.invoke_sync(init, &init_args)?;
 
-                // invoke_sync() laisse le résultat du
-                // constructeur sur la stack.
+                // Le résultat du constructeur est ignoré.
                 self.pop()?;
             }
 
@@ -922,6 +921,10 @@ impl VirtualMachine {
 
         Ok(())
     }
+
+    // ========================================================
+    // INSTANCE OF
+    // ========================================================
 
     fn is_value_instance_of(value: &Value, target: &Value) -> Result<bool, RuntimeError> {
         let Value::Object(value_handle) = value else {
@@ -956,9 +959,9 @@ impl VirtualMachine {
         };
 
         match target_kind {
-            // ========================================================
+            // ====================================================
             // INSTANCE IS CLASS
-            // ========================================================
+            // ====================================================
             0 => {
                 let mut current = Some(value_class);
 
@@ -983,9 +986,9 @@ impl VirtualMachine {
                 Ok(false)
             }
 
-            // ========================================================
+            // ====================================================
             // INSTANCE IS INTERFACE
-            // ========================================================
+            // ====================================================
             1 => Self::class_implements_interface(value_class, target_handle.clone()),
 
             _ => unreachable!(),
@@ -1026,6 +1029,7 @@ impl VirtualMachine {
 
         Ok(false)
     }
+
     fn interface_extends_or_is(
         interface: Gc<Object>,
         target: &Gc<Object>,

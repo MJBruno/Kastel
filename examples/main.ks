@@ -1,17 +1,27 @@
-class Counter {
-    function init(value) {
-        this.value = value;
-    }
+function first() {
+    println("first");
+}
 
-    function show() {
-        println(this.value);
+function second() {
+    println("second");
+}
+
+class Test {
+    function callback() {
+        println("method");
     }
 }
 
-let CounterType = Counter;
+let test = new Test();
 
-let a = new CounterType(10);
-let b = new CounterType(20);
+let original = test.callback;
 
-a.show();
-b.show();
+test.callback = first;
+
+original();
+test.callback();
+
+test.callback = second;
+
+original();
+test.callback();

@@ -2,7 +2,7 @@ use super::VirtualMachine;
 
 use crate::{
     error::runtime_error::RuntimeError,
-    runtime::{gc_handle::Gc, object::Object, value::Value},
+    runtime::{object::Object, value::Value},
     stdlib::{array, dict},
 };
 
@@ -279,32 +279,7 @@ impl VirtualMachine {
 
         Ok(())
     }
-    #[allow(dead_code)]
-    fn find_class_method(class: Gc<Object>, name: &str) -> Option<Value> {
-        let mut current = Some(class);
-
-        while let Some(handle) = current {
-            let object = handle.borrow();
-
-            match &*object {
-                Object::Class {
-                    superclass,
-                    methods,
-                    ..
-                } => {
-                    if let Some(method) = methods.get(name) {
-                        return Some(method.clone());
-                    }
-
-                    current = superclass.clone();
-                }
-
-                _ => return None,
-            }
-        }
-
-        None
-    }
+   
     // ============================================================
     //                     INVOKE METHOD
     // ============================================================
