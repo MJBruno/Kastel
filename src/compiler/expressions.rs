@@ -369,7 +369,7 @@ impl Compiler {
                 self.emit_opcode(OpCode::Not);
                 return;
             }
-
+            BinaryOp::Is => OpCode::Is,
             BinaryOp::BitAnd => OpCode::BitAnd,
             BinaryOp::BitOr => OpCode::BitOr,
             BinaryOp::BitXor => OpCode::BitXor,

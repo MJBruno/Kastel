@@ -1,13 +1,10 @@
-interface Printable {
-    function print();
+class Animal {
 }
 
-interface Document : Printable {
-    function save();
+class Dog : Animal {
 }
 
-class File : Document {
-    function save() {
-        println("save");
-    }
-}
+let d = new Dog();
+
+println(d is Dog);
+println(d is Animal);

@@ -80,7 +80,7 @@ pub enum TokenKind {
     And,
     Or,
     Not,
-
+    Is,
     // ============================================================
     // PATTERN MATCHING
     // ============================================================
@@ -170,6 +170,8 @@ impl Token {
             "catch" => Some(TokenKind::Catch),
             "throw" => Some(TokenKind::Throw),
             "finally" => Some(TokenKind::Finally),
+
+            "is" => Some(TokenKind::Is),
 
             _ => None,
         }

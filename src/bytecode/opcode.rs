@@ -12,6 +12,7 @@ pub enum OpCode {
     Greater,
     Less,
     Not,
+    Is,
 
     Add,
     Subtract,
@@ -142,6 +143,7 @@ impl TryFrom<u8> for OpCode {
             x if x == OpCode::Greater.into() => Ok(OpCode::Greater),
             x if x == OpCode::Less.into() => Ok(OpCode::Less),
             x if x == OpCode::Not.into() => Ok(OpCode::Not),
+            x if x == OpCode::Is.into() => Ok(OpCode::Is),
 
             x if x == OpCode::Add.into() => Ok(OpCode::Add),
             x if x == OpCode::Subtract.into() => Ok(OpCode::Subtract),

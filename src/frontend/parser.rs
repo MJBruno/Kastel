@@ -377,6 +377,7 @@ impl Parser {
             TokenKind::LessEqual,
             TokenKind::Greater,
             TokenKind::GreaterEqual,
+            TokenKind::Is,
         ]) {
             let operator = match self.previous().kind {
                 TokenKind::EqualEqual => BinaryOp::Equal,
@@ -385,6 +386,7 @@ impl Parser {
                 TokenKind::LessEqual => BinaryOp::LessEqual,
                 TokenKind::Greater => BinaryOp::Greater,
                 TokenKind::GreaterEqual => BinaryOp::GreaterEqual,
+                TokenKind::Is => BinaryOp::Is,
 
                 _ => unreachable!(),
             };

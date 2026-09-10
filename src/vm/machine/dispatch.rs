@@ -149,6 +149,15 @@ impl VirtualMachine {
                 self.not()?;
             }
 
+            OpCode::Is => {
+                let right = self.pop()?;
+                let left = self.pop()?;
+
+                let result = Self::is_value_instance_of(&left, &right)?;
+
+                self.push(Value::Boolean(result));
+            }
+
             // ========================================================
             // OBJECT / PROPERTY
             // ========================================================
@@ -916,4 +925,141 @@ impl VirtualMachine {
 
         Ok(())
     }
+
+    fn is_value_instance_of(value: &Value, target: &Value) -> Result<bool, RuntimeError> {
+        let Value::Object(value_handle) = value else {
+            return Ok(false);
+        };
+
+        let Value::Object(target_handle) = target else {
+            return Err(RuntimeError::TypeError);
+        };
+
+        let value_class = {
+            let object = value_handle.borrow();
+
+            match &*object {
+                Object::Instance { class, .. } => class.clone(),
+
+                _ => return Ok(false),
+            }
+        };
+
+        let target_kind = {
+            let object = target_handle.borrow();
+
+            match &*object {
+                Object::Class { .. } => 0,
+                Object::Interface { .. } => 1,
+
+                _ => {
+                    return Err(RuntimeError::TypeError);
+                }
+            }
+        };
+
+        match target_kind {
+            // ========================================================
+            // INSTANCE IS CLASS
+            // ========================================================
+            0 => {
+                let mut current = Some(value_class);
+
+                while let Some(class) = current {
+                    if Gc::ptr_eq(&class, target_handle) {
+                        return Ok(true);
+                    }
+
+                    let superclass = {
+                        let object = class.borrow();
+
+                        match &*object {
+                            Object::Class { superclass, .. } => superclass.clone(),
+
+                            _ => None,
+                        }
+                    };
+
+                    current = superclass;
+                }
+
+                Ok(false)
+            }
+
+            // ========================================================
+            // INSTANCE IS INTERFACE
+            // ========================================================
+            1 => Self::class_implements_interface(value_class, target_handle.clone()),
+
+            _ => unreachable!(),
+        }
+    }
+
+    fn class_implements_interface(
+        class: Gc<Object>,
+        target: Gc<Object>,
+    ) -> Result<bool, RuntimeError> {
+        let mut current_class = Some(class);
+
+        while let Some(class_handle) = current_class {
+            let (interfaces, superclass) = {
+                let object = class_handle.borrow();
+
+                match &*object {
+                    Object::Class {
+                        interfaces,
+                        superclass,
+                        ..
+                    } => (interfaces.clone(), superclass.clone()),
+
+                    _ => {
+                        return Ok(false);
+                    }
+                }
+            };
+
+            for interface in interfaces {
+                if Self::interface_extends_or_is(interface, &target)? {
+                    return Ok(true);
+                }
+            }
+
+            current_class = superclass;
+        }
+
+        Ok(false)
+    }
+    fn interface_extends_or_is(
+    interface: Gc<Object>,
+    target: &Gc<Object>,
+) -> Result<bool, RuntimeError> {
+    if Gc::ptr_eq(&interface, target) {
+        return Ok(true);
+    }
+
+    let bases = {
+        let object = interface.borrow();
+
+        match &*object {
+            Object::Interface { bases, .. } => {
+                bases.clone()
+            }
+
+            _ => {
+                return Ok(false);
+            }
+        }
+    };
+
+    for base in bases {
+        if Self::interface_extends_or_is(
+            base,
+            target,
+        )? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
 }

@@ -280,6 +280,7 @@ pub enum BinaryOp {
 
     And,
     Or,
+    Is,
 
     BitAnd,
     BitOr,
