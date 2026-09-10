@@ -5,10 +5,6 @@ use crate::runtime::gc;
 use crate::runtime::value::Value;
 
 impl VirtualMachine {
-    // ============================================================
-    // RUN
-    // ============================================================
-
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
             if cfg!(feature = "debug_trace") {
@@ -20,16 +16,13 @@ impl VirtualMachine {
             }
 
             let (line, column) = self.current_position()?;
-
             self.current_line = line;
             self.current_column = column;
 
             let instruction = self.read_byte()?;
 
             match self.dispatch(instruction) {
-                Ok(true) => {
-                    return Ok(());
-                }
+                Ok(true) => return Ok(()),
 
                 Ok(false) => {}
 
@@ -42,95 +35,127 @@ impl VirtualMachine {
         }
     }
 
-    // ============================================================
-    // RUNTIME ERROR PROPAGATION
-    // ============================================================
-
     pub(crate) fn propagate_runtime_error(
         &mut self,
         error: RuntimeError,
     ) -> Result<bool, RuntimeError> {
-        match error {
-            RuntimeError::Thrown(value) => self.propagate_thrown(value),
+        self.propagate_runtime_error_until(error, 0)
+    }
 
-            error => Err(error),
+    pub(crate) fn propagate_runtime_error_until(
+        &mut self,
+        error: RuntimeError,
+        min_frame_len: usize,
+    ) -> Result<bool, RuntimeError> {
+        match error {
+            RuntimeError::Thrown(value) => {
+                self.propagate_thrown(value, min_frame_len)
+            }
+
+            error => {
+                let value = self.runtime_error_value(&error)?;
+
+                if self.propagate_thrown(value, min_frame_len)? {
+                    Ok(true)
+                } else {
+                    Err(error)
+                }
+            }
         }
     }
 
-    // ============================================================
-    // THROW PROPAGATION
-    // ============================================================
+    fn runtime_error_value(
+        &self,
+        error: &RuntimeError,
+    ) -> Result<Value, RuntimeError> {
+        match error {
+            RuntimeError::TypeError
+            | RuntimeError::DivisionByZero
+            | RuntimeError::WrongArgumentCount { .. }
+            | RuntimeError::NotCallable
+            | RuntimeError::NativeError
+            | RuntimeError::IndexOutOfBounds
+            | RuntimeError::InterfaceMethodMissing { .. }
+            | RuntimeError::InterfaceMethodArityMismatch { .. }
+            | RuntimeError::ArrayIndexNotInteger
+            | RuntimeError::ArrayIndexOutOfBounds { .. }
+            | RuntimeError::NotIndexable
+            | RuntimeError::NotObject
+            | RuntimeError::ModuleError(_)
+            | RuntimeError::ObjectFieldNotFound { .. }
+            | RuntimeError::NotIterable
+            | RuntimeError::IteratorExhausted
+            | RuntimeError::InvalidShiftAmount => {
+                Ok(Value::new_string(error.to_string()))
+            }
 
-    pub(crate) fn propagate_thrown(&mut self, value: Value) -> Result<bool, RuntimeError> {
+            RuntimeError::Thrown(value) => Ok(value.clone()),
+
+            RuntimeError::WithLocation { source, .. } => {
+                self.runtime_error_value(source)
+            }
+
+            RuntimeError::StackUnderflow
+            | RuntimeError::InvalidOpcode(_)
+            | RuntimeError::InvalidFunction => Err(error.clone()),
+        }
+    }
+
+    pub(crate) fn propagate_thrown(
+        &mut self,
+        value: Value,
+        min_frame_len: usize,
+    ) -> Result<bool, RuntimeError> {
         loop {
-            // ----------------------------------------------------
-            // Plus aucun frame
-            // ----------------------------------------------------
-
-            if self.frames.is_empty() {
+            if self.frames.len() <= min_frame_len {
                 return Ok(false);
             }
 
             let current_frame_index = self.frames.len() - 1;
 
-            // ----------------------------------------------------
-            // Trouver le handler actif le plus proche
-            // ----------------------------------------------------
-
-            let handler_index = self
+            let Some(handler_index) = self
                 .exception_handlers
                 .iter()
-                .rposition(|handler| handler.frame_index <= current_frame_index);
-
-            let Some(handler_index) = handler_index else {
-                // Aucun handler dans cette frame :
-                // remonter vers l'appelant.
+                .rposition(|handler| {
+                    handler.frame_index >= min_frame_len
+                        && handler.frame_index <= current_frame_index
+                })
+            else {
                 self.close_current_frame_for_exception()?;
                 continue;
             };
 
-            // ----------------------------------------------------
-            // Consommer le handler
-            // ----------------------------------------------------
+            let handler_frame =
+                self.exception_handlers[handler_index].frame_index;
 
-            let handler = self.exception_handlers.remove(handler_index);
-
-            // ----------------------------------------------------
-            // Remonter les frames jusqu'à celle du handler
-            // ----------------------------------------------------
-
-            while self.frames.len() - 1 > handler.frame_index {
+            while self.frames.len() > handler_frame + 1 {
                 self.close_current_frame_for_exception()?;
             }
 
-            if self.frames.is_empty() {
+            if self.frames.len() <= min_frame_len {
                 return Ok(false);
             }
 
-            // ----------------------------------------------------
-            // Restaurer la stack au point d'entrée du try
-            // ----------------------------------------------------
+            let catch_ip = self.exception_handlers[handler_index].catch_ip;
+            let finally_ip =
+                self.exception_handlers[handler_index].finally_ip;
+            let stack_height =
+                self.exception_handlers[handler_index].stack_height;
 
-            self.restore_exception_stack(handler.stack_height)?;
+            self.restore_exception_stack(stack_height)?;
 
-            // ----------------------------------------------------
-            // CATCH
-            // ----------------------------------------------------
+            if let Some(catch_ip) = catch_ip {
+                self.exception_handlers[handler_index].catch_ip = None;
 
-            if let Some(catch_ip) = handler.catch_ip {
-                // catch(e) récupérera cette valeur depuis la stack.
                 self.push(value);
-
                 self.current_frame_mut()?.ip = catch_ip;
 
                 return Ok(true);
             }
 
-            // ----------------------------------------------------
-            // FINALLY
-            // ----------------------------------------------------
+            self.exception_handlers.remove(handler_index);
 
-            if let Some(finally_ip) = handler.finally_ip {
+            if let Some(finally_ip) = finally_ip {
                 self.pending_exception = Some(super::PendingException {
                     value,
                     rethrow: true,
@@ -141,10 +166,7 @@ impl VirtualMachine {
                 return Ok(true);
             }
 
-            // ----------------------------------------------------
-            // Handler sans catch/finally
-            // Continuer la propagation.
-            // ----------------------------------------------------
+            self.close_current_frame_for_exception()?;
         }
     }
 }

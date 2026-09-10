@@ -1,27 +1,7 @@
-function first() {
-    println("first");
-}
+let values = [1, 2, 3];
 
-function second() {
-    println("second");
-}
-
-class Test {
-    function callback() {
-        println("method");
-    }
-}
-
-let test = new Test();
-
-let original = test.callback;
-
-test.callback = first;
-
-original();
-test.callback();
-
-test.callback = second;
-
-original();
-test.callback();
+println(values.map(function(x) {
+    return [x, x + 1].map(function(y) {
+        return y * 10;
+    });
+}));

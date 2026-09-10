@@ -27,13 +27,8 @@ pub struct Compiler {
     pub(crate) exports: Vec<String>,
     pub(crate) imported_modules: HashSet<String>,
 
-    /*
-     * Finally actifs dans le contexte lexical courant.
-     *
-     * Le dernier élément correspond au finally le plus interne.
-     *
-     * Ils sont utilisés lorsqu'un return traverse un try.
-     */
+    pub(crate) predeclared_functions: HashSet<String>,
+
     pub(crate) finally_blocks: Vec<Vec<Statement>>,
 
     pub(crate) current_line: usize,
@@ -47,43 +42,40 @@ impl Compiler {
             globals: Rc::new(RefCell::new(HashMap::new())),
             chunk: Chunk::new(),
             context: Rc::new(RefCell::new(CompilerContext::new())),
-
             scope_depth: 0,
             loops: Vec::new(),
-
             function_name: None,
             function_arity: 0,
             in_function: false,
-
             exports: Vec::new(),
             imported_modules: HashSet::new(),
-
+            predeclared_functions: HashSet::new(),
             finally_blocks: Vec::new(),
-
             current_line: 0,
             current_column: 0,
         }
     }
 
-   pub(crate) fn new_with_globals(
-    globals: Rc<RefCell<HashMap<String, Global>>>,
-) -> Self {
-    Self {
-        globals,
-        chunk: Chunk::new(),
-        context: Rc::new(RefCell::new(CompilerContext::new())),
-        scope_depth: 0,
-        loops: Vec::new(),
-        function_name: None,
-        function_arity: 0,
-        in_function: false,
-        exports: Vec::new(),
-        imported_modules: HashSet::new(),
-        finally_blocks: Vec::new(),
-        current_line: 0,
-        current_column: 0,
+    pub(crate) fn new_with_globals(
+        globals: Rc<RefCell<HashMap<String, Global>>>,
+    ) -> Self {
+        Self {
+            globals,
+            chunk: Chunk::new(),
+            context: Rc::new(RefCell::new(CompilerContext::new())),
+            scope_depth: 0,
+            loops: Vec::new(),
+            function_name: None,
+            function_arity: 0,
+            in_function: false,
+            exports: Vec::new(),
+            imported_modules: HashSet::new(),
+            predeclared_functions: HashSet::new(),
+            finally_blocks: Vec::new(),
+            current_line: 0,
+            current_column: 0,
+        }
     }
-}
 
     pub(crate) fn new_function(
         name: String,
@@ -94,25 +86,15 @@ impl Compiler {
             globals,
             chunk: Chunk::new(),
             context: Rc::new(RefCell::new(CompilerContext::new_child(enclosing))),
-
             scope_depth: 0,
             loops: Vec::new(),
-
             function_name: Some(name),
             function_arity: 0,
             in_function: true,
-
             exports: Vec::new(),
             imported_modules: HashSet::new(),
-
-            /*
-             * Une fonction possède sa propre pile de finally.
-             *
-             * Elle ne doit pas hériter directement des finally
-             * du compilateur parent.
-             */
+            predeclared_functions: HashSet::new(),
             finally_blocks: Vec::new(),
-
             current_line: 0,
             current_column: 0,
         }
@@ -122,13 +104,18 @@ impl Compiler {
     // MAIN COMPILER
     // ============================================================
 
-    pub fn compile(self, statements: &[Statement]) -> Result<Function, CompileError> {
+    pub fn compile(
+        self,
+        statements: &[Statement],
+    ) -> Result<Function, CompileError> {
         let (function, _) = self.compile_module(statements)?;
-
         Ok(function)
     }
 
-    pub fn define_native(&mut self, name: &str) -> Result<(), CompileError> {
+    pub fn define_native(
+        &mut self,
+        name: &str,
+    ) -> Result<(), CompileError> {
         let constant = self.identifier_constant(name)?;
 
         self.globals.borrow_mut().insert(
@@ -143,6 +130,62 @@ impl Compiler {
     }
 
     // ============================================================
+    // GLOBAL FUNCTION PREDECLARATION
+    // ============================================================
+
+    fn predeclare_global_functions(
+        &mut self,
+        statements: &[Statement],
+    ) -> Result<(), CompileError> {
+        for statement in statements {
+            self.predeclare_global_function(statement)?;
+        }
+
+        Ok(())
+    }
+
+    fn predeclare_global_function(
+        &mut self,
+        statement: &Statement,
+    ) -> Result<(), CompileError> {
+        match statement {
+            Statement::Positioned { statement, .. } => {
+                self.predeclare_global_function(statement)
+            }
+
+            Statement::Export { statement } => {
+                self.predeclare_global_function(statement)
+            }
+
+            Statement::Function { name, .. } => {
+                if self.globals.borrow().contains_key(name) {
+                    return Err(
+                        CompileError::VariableAlreadyDeclared(
+                            name.clone(),
+                        ),
+                    );
+                }
+
+                let constant = self.identifier_constant(name)?;
+
+                self.globals.borrow_mut().insert(
+                    name.clone(),
+                    Global {
+                        constant,
+                        mutable: true,
+                    },
+                );
+
+                self.predeclared_functions.insert(name.clone());
+
+                Ok(())
+            }
+
+            _ => Ok(()),
+        }
+    }
+
+    // ============================================================
     // CONTEXTE
     // ============================================================
 
@@ -154,7 +197,10 @@ impl Compiler {
         self.context.borrow().upvalues.clone()
     }
 
-    pub(crate) fn attach_location(&self, error: CompileError) -> CompileError {
+    pub(crate) fn attach_location(
+        &self,
+        error: CompileError,
+    ) -> CompileError {
         match error {
             CompileError::WithLocation { .. } => error,
 
@@ -170,7 +216,10 @@ impl Compiler {
     // FINALLY
     // ============================================================
 
-    pub(crate) fn push_finally_block(&mut self, body: &[Statement]) {
+    pub(crate) fn push_finally_block(
+        &mut self,
+        body: &[Statement],
+    ) {
         self.finally_blocks.push(body.to_vec());
     }
 
@@ -178,33 +227,9 @@ impl Compiler {
         self.finally_blocks.pop();
     }
 
-    /*
-     * Compile tous les finally actuellement actifs.
-     *
-     * Ordre :
-     *
-     *     finally intérieur
-     *     finally extérieur
-     *
-     * Exemple :
-     *
-     *     try {
-     *         try {
-     *             return 10;
-     *         } finally {
-     *             println("inner");
-     *         }
-     *     } finally {
-     *         println("outer");
-     *     }
-     *
-     * produit :
-     *
-     *     inner
-     *     outer
-     *     Return
-     */
-    pub(crate) fn compile_active_finally(&mut self) -> Result<(), CompileError> {
+    pub(crate) fn compile_active_finally(
+        &mut self,
+    ) -> Result<(), CompileError> {
         let finally_blocks = self.finally_blocks.clone();
 
         for body in finally_blocks.iter().rev() {
@@ -228,6 +253,8 @@ impl Compiler {
         mut self,
         statements: &[Statement],
     ) -> Result<(Function, Vec<String>), CompileError> {
+        self.predeclare_global_functions(statements)?;
+
         for statement in statements {
             if let Err(error) = self.compile_statement(statement) {
                 return Err(self.attach_location(error));
@@ -236,8 +263,10 @@ impl Compiler {
 
         self.emit_opcode(OpCode::Halt);
 
-        let local_count = u8::try_from(self.context.borrow().locals.max_slots())
-            .map_err(|_| CompileError::TooManyLocals)?;
+        let local_count = u8::try_from(
+            self.context.borrow().locals.max_slots(),
+        )
+        .map_err(|_| CompileError::TooManyLocals)?;
 
         let function = Function {
             name: "<script>".to_string(),

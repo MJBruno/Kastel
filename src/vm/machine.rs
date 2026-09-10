@@ -13,17 +13,22 @@ use crate::runtime::value::Value;
 use crate::stdlib::register_natives;
 
 pub mod arithmetic;
+pub mod arrays;
 pub mod bytecode;
 pub mod calls;
+pub mod classes;
 pub mod closures;
-pub mod collections;
 pub mod control_flow;
 pub mod debug;
 pub mod dispatch;
+pub mod exceptions;
 pub mod execution;
 pub mod gc;
 pub mod iterators;
+pub mod methods;
 pub mod modules;
+pub mod objects;
+pub mod properties;
 pub mod stack;
 pub mod variables;
 
@@ -160,8 +165,6 @@ impl VirtualMachine {
 
         vm
     }
-
-   
 
     pub fn execute_repl(&mut self, function: Rc<Function>) -> Result<Option<Value>, RuntimeError> {
         let closure = Object::new_closure(function, Vec::new());

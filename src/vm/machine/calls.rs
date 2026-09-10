@@ -1,5 +1,6 @@
 use super::bytecode::frame_closure;
 use super::{CallFrame, VirtualMachine};
+
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
@@ -32,7 +33,6 @@ impl VirtualMachine {
         }
 
         let callee_index = self.stack.len() - required;
-
         let current_frame = self.current_frame()?;
 
         if callee_index < current_frame.slot_start {
@@ -48,10 +48,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn execute_call(
-        &mut self,
-        arg_count: usize,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn execute_call(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
         let required = arg_count
             .checked_add(1)
             .ok_or(RuntimeError::InvalidFunction)?;
@@ -61,7 +58,6 @@ impl VirtualMachine {
         }
 
         let callee_index = self.stack.len() - required;
-
         let current_frame = self.current_frame()?;
 
         if callee_index < current_frame.slot_start {
@@ -80,10 +76,9 @@ impl VirtualMachine {
                     let object = handle.borrow();
 
                     match &*object {
-                        Object::BoundMethod {
-                            method,
-                            receiver,
-                        } => Some((method.clone(), receiver.clone())),
+                        Object::BoundMethod { method, receiver } => {
+                            Some((method.clone(), receiver.clone()))
+                        }
 
                         Object::Closure(_) => None,
 
@@ -95,12 +90,11 @@ impl VirtualMachine {
                     self.stack[callee_index] = Value::Object(method);
                     self.stack.insert(callee_index + 1, receiver);
 
-                    self.execute_call(
-                        arg_count
-                            .checked_add(1)
-                            .ok_or(RuntimeError::InvalidFunction)?,
-                    )?;
+                    let bound_arg_count = arg_count
+                        .checked_add(1)
+                        .ok_or(RuntimeError::InvalidFunction)?;
 
+                    self.execute_call(bound_arg_count)?;
                     return Ok(());
                 }
 
@@ -154,20 +148,40 @@ impl VirtualMachine {
         while self.frames.len() > base_frame_len {
             let instruction = self.read_byte()?;
 
-            if self.dispatch(instruction)? {
-                return Err(RuntimeError::InvalidFunction);
+            match self.dispatch(instruction) {
+                Ok(true) => {
+                    self.stack.truncate(base_stack_len);
+                    return Err(RuntimeError::InvalidFunction);
+                }
+
+                Ok(false) => {}
+
+                Err(error) => {
+                    match self.propagate_runtime_error_until(error.clone(), base_frame_len) {
+                        Ok(true) => {}
+
+                        Ok(false) => {
+                            self.stack.truncate(base_stack_len);
+                            return Err(error);
+                        }
+
+                        Err(propagation_error) => {
+                            self.stack.truncate(base_stack_len);
+                            return Err(propagation_error);
+                        }
+                    }
+                }
             }
         }
 
         if self.stack.len() <= base_stack_len {
+            self.stack.truncate(base_stack_len);
             return Err(RuntimeError::InvalidFunction);
         }
 
         let result = self.pop()?;
 
-        if self.stack.len() != base_stack_len {
-            self.stack.truncate(base_stack_len);
-        }
+        self.stack.truncate(base_stack_len);
 
         Ok(result)
     }
@@ -191,24 +205,16 @@ impl VirtualMachine {
         let result = self.pop()?;
 
         self.close_upvalues(frame.slot_start)?;
-
         self.remove_current_frame_handlers();
-
-        if frame.slot_start > self.stack.len() {
-            return Err(RuntimeError::InvalidFunction);
-        }
 
         self.frames.pop().ok_or(RuntimeError::InvalidFunction)?;
 
         self.stack.truncate(frame.slot_start);
-
         self.prune_exception_handlers();
 
-        if self.frames.is_empty() {
-            return Ok(());
+        if !self.frames.is_empty() {
+            self.push(result);
         }
-
-        self.push(result);
 
         Ok(())
     }
