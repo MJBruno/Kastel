@@ -12,4 +12,4 @@ mod loops;
 mod scope;
 mod statements;
 mod upvalue;
-mod variables;
+pub(crate) mod variables;

@@ -46,9 +46,7 @@ impl Compiler {
         Self {
             globals: Rc::new(RefCell::new(HashMap::new())),
             chunk: Chunk::new(),
-            context: Rc::new(RefCell::new(
-                CompilerContext::new(),
-            )),
+            context: Rc::new(RefCell::new(CompilerContext::new())),
 
             scope_depth: 0,
             loops: Vec::new(),
@@ -67,6 +65,26 @@ impl Compiler {
         }
     }
 
+   pub(crate) fn new_with_globals(
+    globals: Rc<RefCell<HashMap<String, Global>>>,
+) -> Self {
+    Self {
+        globals,
+        chunk: Chunk::new(),
+        context: Rc::new(RefCell::new(CompilerContext::new())),
+        scope_depth: 0,
+        loops: Vec::new(),
+        function_name: None,
+        function_arity: 0,
+        in_function: false,
+        exports: Vec::new(),
+        imported_modules: HashSet::new(),
+        finally_blocks: Vec::new(),
+        current_line: 0,
+        current_column: 0,
+    }
+}
+
     pub(crate) fn new_function(
         name: String,
         globals: Rc<RefCell<HashMap<String, Global>>>,
@@ -75,9 +93,7 @@ impl Compiler {
         Self {
             globals,
             chunk: Chunk::new(),
-            context: Rc::new(RefCell::new(
-                CompilerContext::new_child(enclosing),
-            )),
+            context: Rc::new(RefCell::new(CompilerContext::new_child(enclosing))),
 
             scope_depth: 0,
             loops: Vec::new(),
@@ -106,22 +122,14 @@ impl Compiler {
     // MAIN COMPILER
     // ============================================================
 
-    pub fn compile(
-        self,
-        statements: &[Statement],
-    ) -> Result<Function, CompileError> {
-        let (function, _) =
-            self.compile_module(statements)?;
+    pub fn compile(self, statements: &[Statement]) -> Result<Function, CompileError> {
+        let (function, _) = self.compile_module(statements)?;
 
         Ok(function)
     }
 
-    pub fn define_native(
-        &mut self,
-        name: &str,
-    ) -> Result<(), CompileError> {
-        let constant =
-            self.identifier_constant(name)?;
+    pub fn define_native(&mut self, name: &str) -> Result<(), CompileError> {
+        let constant = self.identifier_constant(name)?;
 
         self.globals.borrow_mut().insert(
             name.to_string(),
@@ -146,10 +154,7 @@ impl Compiler {
         self.context.borrow().upvalues.clone()
     }
 
-    pub(crate) fn attach_location(
-        &self,
-        error: CompileError,
-    ) -> CompileError {
+    pub(crate) fn attach_location(&self, error: CompileError) -> CompileError {
         match error {
             CompileError::WithLocation { .. } => error,
 
@@ -165,18 +170,11 @@ impl Compiler {
     // FINALLY
     // ============================================================
 
-    pub(crate) fn push_finally_block(
-        &mut self,
-        body: &[Statement],
-    ) {
-        self.finally_blocks.push(
-            body.to_vec(),
-        );
+    pub(crate) fn push_finally_block(&mut self, body: &[Statement]) {
+        self.finally_blocks.push(body.to_vec());
     }
 
-    pub(crate) fn pop_finally_block(
-        &mut self,
-    ) {
+    pub(crate) fn pop_finally_block(&mut self) {
         self.finally_blocks.pop();
     }
 
@@ -206,11 +204,8 @@ impl Compiler {
      *     outer
      *     Return
      */
-    pub(crate) fn compile_active_finally(
-        &mut self,
-    ) -> Result<(), CompileError> {
-        let finally_blocks =
-            self.finally_blocks.clone();
+    pub(crate) fn compile_active_finally(&mut self) -> Result<(), CompileError> {
+        let finally_blocks = self.finally_blocks.clone();
 
         for body in finally_blocks.iter().rev() {
             self.begin_scope();
@@ -234,27 +229,15 @@ impl Compiler {
         statements: &[Statement],
     ) -> Result<(Function, Vec<String>), CompileError> {
         for statement in statements {
-            if let Err(error) =
-                self.compile_statement(statement)
-            {
-                return Err(
-                    self.attach_location(error)
-                );
+            if let Err(error) = self.compile_statement(statement) {
+                return Err(self.attach_location(error));
             }
         }
 
         self.emit_opcode(OpCode::Halt);
 
-        let local_count =
-            u8::try_from(
-                self.context
-                    .borrow()
-                    .locals
-                    .max_slots(),
-            )
-            .map_err(
-                |_| CompileError::TooManyLocals
-            )?;
+        let local_count = u8::try_from(self.context.borrow().locals.max_slots())
+            .map_err(|_| CompileError::TooManyLocals)?;
 
         let function = Function {
             name: "<script>".to_string(),

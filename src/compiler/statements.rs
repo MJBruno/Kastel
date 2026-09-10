@@ -1,6 +1,7 @@
 use crate::bytecode::chunk::OpCode;
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
+use crate::runtime::function::Function;
 use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
@@ -1164,5 +1165,54 @@ impl Compiler {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn compile_repl(
+        mut self,
+        statements: &[Statement],
+    ) -> Result<Function, CompileError> {
+        for (index, statement) in statements.iter().enumerate() {
+            let is_last = index + 1 == statements.len();
+
+            match (is_last, statement) {
+                (
+                    true,
+                    Statement::Positioned {
+                        line,
+                        column,
+                        statement,
+                    },
+                ) if matches!(statement.as_ref(), Statement::Expression { .. }) => {
+                    self.current_line = *line;
+                    self.current_column = *column;
+
+                    if let Statement::Expression { expression } = statement.as_ref() {
+                        self.compile_expression(expression)?;
+                    }
+                }
+
+                (true, Statement::Expression { expression }) => {
+                    self.compile_expression(expression)?;
+                }
+
+                _ => {
+                    self.compile_statement(statement)?;
+                }
+            }
+        }
+
+        self.emit_opcode(OpCode::Halt);
+
+        let local_count = u8::try_from(self.context.borrow().locals.max_slots())
+            .map_err(|_| CompileError::TooManyLocals)?;
+
+        Ok(Function {
+            name: "<repl>".to_string(),
+            arity: 0,
+            chunk: self.chunk,
+            local_count: local_count.into(),
+            upvalue_count: 0,
+            upvalues: Vec::new(),
+        })
     }
 }

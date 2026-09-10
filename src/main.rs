@@ -7,9 +7,10 @@ mod compiler;
 mod error;
 mod frontend;
 mod module;
+mod repl;
 mod runtime;
-mod vm;
 mod stdlib;
+mod vm;
 
 fn main() -> std::process::ExitCode {
     let start = Instant::now();

@@ -5,12 +5,12 @@ use std::rc::Rc;
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
-use crate::stdlib::register_natives;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
 use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
+use crate::stdlib::register_natives;
 
 pub mod arithmetic;
 pub mod bytecode;
@@ -118,15 +118,8 @@ pub struct VirtualMachine {
 }
 
 impl VirtualMachine {
-    pub fn new(
-        function: Rc<Function>,
-        module_path: Option<PathBuf>,
-    ) -> Self {
-        Self::new_with_loader(
-            function,
-            module_path,
-            ModuleLoader::new(),
-        )
+    pub fn new(function: Rc<Function>, module_path: Option<PathBuf>) -> Self {
+        Self::new_with_loader(function, module_path, ModuleLoader::new())
     }
 
     pub fn new_with_loader(
@@ -168,17 +161,44 @@ impl VirtualMachine {
         vm
     }
 
+   
+
+    pub fn execute_repl(&mut self, function: Rc<Function>) -> Result<Option<Value>, RuntimeError> {
+        let closure = Object::new_closure(function, Vec::new());
+
+        self.stack.clear();
+        self.stack.push(Value::Nil);
+
+        self.frames.clear();
+        self.frames.push(CallFrame {
+            closure,
+            ip: 0,
+            slot_start: 0,
+        });
+
+        self.exception_handlers.clear();
+        self.pending_exception = None;
+        self.open_upvalues.clear();
+
+        self.current_line = 0;
+        self.current_column = 0;
+
+        self.run()?;
+
+        if self.stack.len() > 1 {
+            Ok(self.stack.last().cloned())
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn execute_module(
         function: Rc<Function>,
         exports: &[String],
         module_path: PathBuf,
         module_loader: ModuleLoader,
     ) -> Result<HashMap<String, Value>, RuntimeError> {
-        let mut vm = Self::new_with_loader(
-            function,
-            Some(module_path),
-            module_loader,
-        );
+        let mut vm = Self::new_with_loader(function, Some(module_path), module_loader);
 
         if let Err(error) = vm.run() {
             return Err(RuntimeError::WithLocation {
@@ -188,20 +208,17 @@ impl VirtualMachine {
             });
         }
 
-        let mut values =
-            HashMap::with_capacity(exports.len());
+        let mut values = HashMap::with_capacity(exports.len());
 
         for name in exports {
             let value = vm
                 .globals
                 .get(name)
                 .cloned()
-                .ok_or(RuntimeError::ModuleError(
-                    format!(
-                        "Export '{}' was not initialized",
-                        name
-                    ),
-                ))?;
+                .ok_or(RuntimeError::ModuleError(format!(
+                    "Export '{}' was not initialized",
+                    name
+                )))?;
 
             values.insert(name.clone(), value);
         }
@@ -220,15 +237,9 @@ impl VirtualMachine {
         let (slot_start, local_count) = {
             let frame = self.current_frame()?;
 
-            let closure =
-                crate::vm::machine::bytecode::frame_closure(
-                    &frame.closure,
-                );
+            let closure = crate::vm::machine::bytecode::frame_closure(&frame.closure);
 
-            (
-                frame.slot_start,
-                closure.function.local_count as usize,
-            )
+            (frame.slot_start, closure.function.local_count as usize)
         };
 
         if slot >= local_count {
@@ -250,9 +261,7 @@ impl VirtualMachine {
             }
         }
 
-        let upvalue = Rc::new(RefCell::new(
-            ObjUpvalue::new(absolute_slot),
-        ));
+        let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(absolute_slot)));
 
         crate::runtime::gc::register_upvalue(&upvalue);
 
@@ -261,12 +270,8 @@ impl VirtualMachine {
         Ok(upvalue)
     }
 
-    pub(crate) fn close_upvalues(
-        &mut self,
-        last: usize,
-    ) -> Result<(), RuntimeError> {
-        let mut remaining =
-            Vec::with_capacity(self.open_upvalues.len());
+    pub(crate) fn close_upvalues(&mut self, last: usize) -> Result<(), RuntimeError> {
+        let mut remaining = Vec::with_capacity(self.open_upvalues.len());
 
         for upvalue in self.open_upvalues.drain(..) {
             let slot = upvalue.borrow().slot;
@@ -318,14 +323,12 @@ impl VirtualMachine {
             .checked_sub(1)
             .ok_or(RuntimeError::InvalidFunction)?;
 
-        self.exception_handlers.push(
-            ExceptionHandler {
-                frame_index,
-                catch_ip,
-                finally_ip,
-                stack_height: self.stack.len(),
-            },
-        );
+        self.exception_handlers.push(ExceptionHandler {
+            frame_index,
+            catch_ip,
+            finally_ip,
+            stack_height: self.stack.len(),
+        });
 
         Ok(())
     }
@@ -342,29 +345,22 @@ impl VirtualMachine {
         let index = self
             .exception_handlers
             .iter()
-            .rposition(|handler| {
-                handler.frame_index == frame_index
-            })
+            .rposition(|handler| handler.frame_index == frame_index)
             .ok_or(RuntimeError::InvalidFunction)?;
 
         Ok(self.exception_handlers.remove(index))
     }
 
-    pub(crate) fn remove_handlers_for_frame(
-        &mut self,
-        frame_index: usize,
-    ) {
-        self.exception_handlers.retain(|handler| {
-            handler.frame_index != frame_index
-        });
+    pub(crate) fn remove_handlers_for_frame(&mut self, frame_index: usize) {
+        self.exception_handlers
+            .retain(|handler| handler.frame_index != frame_index);
     }
 
     pub(crate) fn prune_exception_handlers(&mut self) {
         let frame_count = self.frames.len();
 
-        self.exception_handlers.retain(|handler| {
-            handler.frame_index < frame_count
-        });
+        self.exception_handlers
+            .retain(|handler| handler.frame_index < frame_count);
     }
 
     // pub(crate) fn nearest_exception_handler(
@@ -419,16 +415,12 @@ impl VirtualMachine {
     // ============================================================
 
     pub(crate) fn remove_current_frame_handlers(&mut self) {
-        if let Some(frame_index) =
-            self.frames.len().checked_sub(1)
-        {
+        if let Some(frame_index) = self.frames.len().checked_sub(1) {
             self.remove_handlers_for_frame(frame_index);
         }
     }
 
-    pub(crate) fn close_current_frame_for_exception(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn close_current_frame_for_exception(&mut self) -> Result<(), RuntimeError> {
         let frame = match self.frames.last() {
             Some(frame) => frame.clone(),
             None => return Ok(()),
