@@ -225,7 +225,7 @@ pub fn collect(roots: GcRoots) -> usize {
         let live_count = registry.objects.len() + registry.upvalues.len();
 
         registry.allocations_since_collect = 0;
-        registry.threshold = (live_count * 2).max(256);
+        registry.threshold = (live_count * 8).max(4096);
 
         if trace_enabled() {
             eprintln!(

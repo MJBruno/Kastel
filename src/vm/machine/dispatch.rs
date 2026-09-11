@@ -1,11 +1,18 @@
 use super::VirtualMachine;
 
 use crate::{
-    bytecode::chunk::OpCode, error::runtime_error::RuntimeError, runtime::{object::Object, value::{ComparisonOp, NumericOp, Value}},
+    bytecode::chunk::OpCode,
+    error::runtime_error::RuntimeError,
+    runtime::{
+        object::Object,
+        value::{ComparisonOp, NumericOp, Value},
+    },
 };
 
 impl VirtualMachine {
     pub(crate) fn dispatch(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
+        self.profile_instruction(instruction);
+
         let opcode =
             OpCode::try_from(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
 

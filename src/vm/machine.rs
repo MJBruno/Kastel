@@ -28,6 +28,7 @@ pub mod iterators;
 pub mod methods;
 pub mod modules;
 pub mod objects;
+pub mod profiling;
 pub mod properties;
 pub mod stack;
 pub mod variables;
@@ -120,6 +121,9 @@ pub struct VirtualMachine {
 
     pub current_line: usize,
     pub current_column: usize,
+
+    #[cfg(feature = "profile")]
+    pub(crate) profile_counts: [u64; 256],
 }
 
 impl VirtualMachine {
@@ -159,6 +163,9 @@ impl VirtualMachine {
 
             current_line: 0,
             current_column: 0,
+
+            #[cfg(feature = "profile")]
+            profile_counts: [0; 256],
         };
 
         register_natives(&mut vm.globals);

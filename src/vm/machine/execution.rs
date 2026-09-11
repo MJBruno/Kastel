@@ -22,19 +22,22 @@ impl VirtualMachine {
             let instruction = self.read_byte()?;
 
             match self.dispatch(instruction) {
-                Ok(true) => return Ok(()),
+                Ok(true) => {
+                    self.print_profile();
+                    return Ok(());
+                }
 
                 Ok(false) => {}
 
                 Err(error) => {
                     if !self.propagate_runtime_error(error.clone())? {
+                        self.print_profile();
                         return Err(error);
                     }
                 }
             }
         }
     }
-
     pub(crate) fn propagate_runtime_error(
         &mut self,
         error: RuntimeError,
@@ -48,9 +51,7 @@ impl VirtualMachine {
         min_frame_len: usize,
     ) -> Result<bool, RuntimeError> {
         match error {
-            RuntimeError::Thrown(value) => {
-                self.propagate_thrown(value, min_frame_len)
-            }
+            RuntimeError::Thrown(value) => self.propagate_thrown(value, min_frame_len),
 
             error => {
                 let value = self.runtime_error_value(&error)?;
@@ -64,10 +65,7 @@ impl VirtualMachine {
         }
     }
 
-    fn runtime_error_value(
-        &self,
-        error: &RuntimeError,
-    ) -> Result<Value, RuntimeError> {
+    fn runtime_error_value(&self, error: &RuntimeError) -> Result<Value, RuntimeError> {
         match error {
             RuntimeError::TypeError
             | RuntimeError::DivisionByZero
@@ -85,15 +83,11 @@ impl VirtualMachine {
             | RuntimeError::ObjectFieldNotFound { .. }
             | RuntimeError::NotIterable
             | RuntimeError::IteratorExhausted
-            | RuntimeError::InvalidShiftAmount => {
-                Ok(Value::new_string(error.to_string()))
-            }
+            | RuntimeError::InvalidShiftAmount => Ok(Value::new_string(error.to_string())),
 
             RuntimeError::Thrown(value) => Ok(value.clone()),
 
-            RuntimeError::WithLocation { source, .. } => {
-                self.runtime_error_value(source)
-            }
+            RuntimeError::WithLocation { source, .. } => self.runtime_error_value(source),
 
             RuntimeError::StackUnderflow
             | RuntimeError::InvalidOpcode(_)
@@ -113,20 +107,14 @@ impl VirtualMachine {
 
             let current_frame_index = self.frames.len() - 1;
 
-            let Some(handler_index) = self
-                .exception_handlers
-                .iter()
-                .rposition(|handler| {
-                    handler.frame_index >= min_frame_len
-                        && handler.frame_index <= current_frame_index
-                })
-            else {
+            let Some(handler_index) = self.exception_handlers.iter().rposition(|handler| {
+                handler.frame_index >= min_frame_len && handler.frame_index <= current_frame_index
+            }) else {
                 self.close_current_frame_for_exception()?;
                 continue;
             };
 
-            let handler_frame =
-                self.exception_handlers[handler_index].frame_index;
+            let handler_frame = self.exception_handlers[handler_index].frame_index;
 
             while self.frames.len() > handler_frame + 1 {
                 self.close_current_frame_for_exception()?;
@@ -137,10 +125,8 @@ impl VirtualMachine {
             }
 
             let catch_ip = self.exception_handlers[handler_index].catch_ip;
-            let finally_ip =
-                self.exception_handlers[handler_index].finally_ip;
-            let stack_height =
-                self.exception_handlers[handler_index].stack_height;
+            let finally_ip = self.exception_handlers[handler_index].finally_ip;
+            let stack_height = self.exception_handlers[handler_index].stack_height;
 
             self.restore_exception_stack(stack_height)?;
 

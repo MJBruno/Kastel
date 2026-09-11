@@ -1,7 +1,7 @@
-let values = [1, 2, 3];
+let i = 0;
 
-println(values.map(function(x) {
-    return [x, x + 1].map(function(y) {
-        return y * 10;
-    });
-}));
+while (i < 1000000) {
+    i = i + 1;
+}
+
+println(i);
