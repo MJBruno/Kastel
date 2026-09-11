@@ -18,6 +18,18 @@ impl VirtualMachine {
         Ok(())
     }
 
+    pub(crate) fn jump_if_false_pop(&mut self) -> Result<(), RuntimeError> {
+        let offset = self.read_short()? as usize;
+
+        let condition = self.pop()?;
+
+        if !condition.is_truthy() {
+            self.jump_forward(offset)?;
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn loop_back(&mut self) -> Result<(), RuntimeError> {
         let offset = self.read_short()? as usize;
 

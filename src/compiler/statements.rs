@@ -5,7 +5,7 @@ use crate::runtime::function::Function;
 use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
-use super::variables::Global;
+use super::variables::{Global, VariableLocation};
 
 impl Compiler {
     pub(crate) fn register_export(&mut self, name: &str) -> Result<(), CompileError> {
@@ -60,9 +60,114 @@ impl Compiler {
 
             Statement::Assignment { target, value } => match target {
                 AssignmentTarget::Variable(name) => {
-                    self.compile_expression(value)?;
-                    self.compile_variable_set(name)?;
-                    self.emit_opcode(OpCode::Pop);
+                    /*
+                     * Fast path :
+                     *
+                     *     i = i + 1
+                     *
+                     * devient :
+                     *
+                     *     AddLocalConst <slot> <constant>
+                     *
+                     * Cette optimisation est volontairement limitée à :
+                     *
+                     *     local = local + literal numérique
+                     *
+                     * Tout autre cas utilise le chemin normal.
+                     */
+                    let optimized = match value {
+                        Expression::Binary {
+                            left,
+                            operator: BinaryOp::Add,
+                            right,
+                        } => match left.as_ref() {
+                            Expression::Variable(left_name) if left_name == name => {
+                                let literal = match right.as_ref() {
+                                    Expression::Literal(Literal::Integer(value)) => {
+                                        Some(Value::Integer(*value))
+                                    }
+
+                                    Expression::Literal(Literal::Float(value)) => {
+                                        Some(Value::Float(*value))
+                                    }
+
+                                    _ => None,
+                                };
+
+                                match literal {
+                                    Some(constant_value) => match self.resolve_variable(name)? {
+                                        VariableLocation::Local(slot) => {
+                                            let constant = self.make_constant(constant_value)?;
+
+                                            self.emit_bytes(OpCode::AddLocalConst, slot as u8);
+
+                                            self.emit_byte(constant);
+
+                                            true
+                                        }
+
+                                        _ => false,
+                                    },
+
+                                    None => false,
+                                }
+                            }
+
+                            _ => false,
+                        },
+
+                        _ => false,
+                    };
+
+                    if !optimized {
+                        self.compile_expression(value)?;
+                        self.compile_variable_set(name)?;
+
+                        /*
+                         * Une affectation utilisée comme statement ne laisse
+                         * aucune valeur sur la pile.
+                         *
+                         * Pour un local, SetLocalPop fusionne :
+                         *
+                         *     SetLocal
+                         *     Pop
+                         *
+                         * en une seule instruction.
+                         *
+                         * Pour global/upvalue, le chemin existant est conservé.
+                         */
+                        let location = self.resolve_variable(name)?;
+
+                        match location {
+                            VariableLocation::Local(slot) => {
+                                /*
+                                 * compile_expression(value) a déjà placé
+                                 * la valeur sur la pile.
+                                 *
+                                 * On remplace directement le dernier opcode
+                                 * SetLocal émis par compile_variable_set().
+                                 */
+                                let opcode_offset =
+                                    self.chunk.code.len().checked_sub(2).ok_or_else(|| {
+                                        CompileError::InternalCompilerError(
+                                            "bytecode d'affectation locale invalide".to_string(),
+                                        )
+                                    })?;
+
+                                if self.chunk.code[opcode_offset] == OpCode::SetLocal.into()
+                                    && self.chunk.code[opcode_offset + 1] == slot as u8
+                                {
+                                    self.chunk.code[opcode_offset] = OpCode::SetLocalPop.into();
+                                } else {
+                                    self.emit_opcode(OpCode::Pop);
+                                }
+                            }
+
+                            VariableLocation::Global | VariableLocation::Upvalue(_) => {
+                                self.emit_opcode(OpCode::Pop);
+                            }
+                        }
+                    }
                 }
 
                 AssignmentTarget::Index { object, index } => {
@@ -128,6 +233,7 @@ impl Compiler {
                     finally_body.as_deref(),
                 )?;
             }
+
             Statement::Class {
                 name,
                 bases,
@@ -143,6 +249,7 @@ impl Compiler {
             } => {
                 self.compile_interface(name, bases, methods)?;
             }
+
             Statement::Function { name, params, body } => {
                 self.compile_function_statement(name, params, body)?;
             }
@@ -174,6 +281,7 @@ impl Compiler {
 
         Ok(())
     }
+
     // ============================================================
     // CLASS
     // ============================================================
@@ -276,7 +384,6 @@ impl Compiler {
         // Operandes :
         //
         //     Class <base_count:u8> <method_count:u8>
-        //
         // ========================================================
 
         self.emit_byte(OpCode::Class.into());
@@ -288,7 +395,6 @@ impl Compiler {
         // ========================================================
 
         if !self.in_function && self.scope_depth == 0 {
-            // Classe globale.
             let name_constant = self.identifier_constant(name)?;
 
             self.emit_bytes(OpCode::DefineGlobal, name_constant);
@@ -301,7 +407,6 @@ impl Compiler {
                 },
             );
         } else {
-            // Classe locale / nested.
             let slot =
                 self.context
                     .borrow_mut()
@@ -408,6 +513,7 @@ impl Compiler {
 
         Ok(())
     }
+
     // ============================================================
     // TRY / CATCH / FINALLY
     // ============================================================
@@ -583,7 +689,6 @@ impl Compiler {
         let distance = distance as u16;
 
         self.chunk.code[offset] = (distance >> 8) as u8;
-
         self.chunk.code[offset + 1] = (distance & 0xff) as u8;
 
         Ok(())
@@ -958,7 +1063,6 @@ impl Compiler {
         self.patch_jump(length_false_jump)?;
 
         self.emit_opcode(OpCode::Pop);
-
         self.emit_opcode(OpCode::False);
 
         let length_result_jump = self.emit_jump(OpCode::Jump);
@@ -969,7 +1073,6 @@ impl Compiler {
             self.patch_jump(false_jump)?;
 
             self.emit_opcode(OpCode::Pop);
-
             self.emit_opcode(OpCode::False);
 
             let result_jump = self.emit_jump(OpCode::Jump);
@@ -978,7 +1081,6 @@ impl Compiler {
         }
 
         self.patch_jump(success_jump)?;
-
         self.patch_jump(length_result_jump)?;
 
         for jump in element_result_jumps {
@@ -1149,13 +1251,11 @@ impl Compiler {
         match statement {
             Statement::Let { name, .. } => {
                 self.register_export(name)?;
-
                 self.compile_statement(statement)?;
             }
 
             Statement::Function { name, .. } => {
                 self.register_export(name)?;
-
                 self.compile_statement(statement)?;
             }
 

@@ -1,3 +1,6 @@
+#[allow(unused_imports)]
+use std::time::Instant;
+
 use super::VirtualMachine;
 
 use crate::{
@@ -12,7 +15,20 @@ use crate::{
 impl VirtualMachine {
     #[inline]
     pub(crate) fn dispatch(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
+        #[cfg(feature = "profile")]
         self.profile_instruction(instruction);
+
+        #[cfg(feature = "profile")]
+        let profile_sample = {
+            let count = self.profile_counts[instruction as usize];
+
+            if count & 4095 == 0 {
+                Some(Instant::now())
+            } else {
+                None
+            }
+        };
+
         let opcode =
             OpCode::try_from(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
 
@@ -43,6 +59,14 @@ impl VirtualMachine {
 
             OpCode::SetLocal => {
                 self.set_local()?;
+            }
+
+            OpCode::SetLocalPop => {
+                self.set_local_pop()?;
+            }
+
+            OpCode::AddLocalConst => {
+                self.add_local_const()?;
             }
 
             OpCode::GetUpvalue => {
@@ -142,6 +166,10 @@ impl VirtualMachine {
                 self.compare(ComparisonOp::Less)?;
             }
 
+            OpCode::LessLocalConst => {
+                self.less_local_const()?;
+            }
+
             OpCode::Not => {
                 self.not()?;
             }
@@ -196,7 +224,9 @@ impl VirtualMachine {
                             self.op_get_dict_index()?;
                         }
 
-                        _ => return Err(RuntimeError::NotIndexable),
+                        _ => {
+                            return Err(RuntimeError::NotIndexable);
+                        }
                     }
                 } else {
                     return Err(RuntimeError::NotIndexable);
@@ -220,7 +250,9 @@ impl VirtualMachine {
                             self.op_set_dict_index()?;
                         }
 
-                        _ => return Err(RuntimeError::NotIndexable),
+                        _ => {
+                            return Err(RuntimeError::NotIndexable);
+                        }
                     }
                 } else {
                     return Err(RuntimeError::NotIndexable);
@@ -279,11 +311,13 @@ impl VirtualMachine {
 
             OpCode::Call => {
                 let arg_count = self.read_byte()? as usize;
+
                 self.execute_call(arg_count)?;
             }
 
             OpCode::InvokeMethod => {
                 let method_constant = self.read_byte()? as usize;
+
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_invoke_method(method_constant, arg_count)?;
@@ -291,6 +325,7 @@ impl VirtualMachine {
 
             OpCode::InvokeBaseMethod => {
                 let method_constant = self.read_byte()? as usize;
+
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_invoke_base_method(method_constant, arg_count)?;
@@ -301,6 +336,7 @@ impl VirtualMachine {
             // ========================================================
             OpCode::Interface => {
                 let base_count = self.read_byte()? as usize;
+
                 let method_count = self.read_byte()? as usize;
 
                 self.op_interface(base_count, method_count)?;
@@ -308,6 +344,7 @@ impl VirtualMachine {
 
             OpCode::Class => {
                 let base_count = self.read_byte()? as usize;
+
                 let method_count = self.read_byte()? as usize;
 
                 self.op_class(base_count, method_count)?;
@@ -337,6 +374,10 @@ impl VirtualMachine {
                 self.jump_if_false()?;
             }
 
+            OpCode::JumpIfFalsePop => {
+                self.jump_if_false_pop()?;
+            }
+
             OpCode::Loop => {
                 self.loop_back()?;
             }
@@ -351,10 +392,20 @@ impl VirtualMachine {
             OpCode::Return => {
                 self.execute_return()?;
 
+                #[cfg(feature = "profile")]
+                if let Some(start) = profile_sample {
+                    self.profile_times[instruction as usize] += start.elapsed();
+                }
+
                 return Ok(self.frames.is_empty());
             }
 
             OpCode::Halt => {
+                #[cfg(feature = "profile")]
+                if let Some(start) = profile_sample {
+                    self.profile_times[instruction as usize] += start.elapsed();
+                }
+
                 return Ok(true);
             }
 
@@ -376,6 +427,11 @@ impl VirtualMachine {
             OpCode::FinallyEnd => {
                 self.op_finally_end()?;
             }
+        }
+
+        #[cfg(feature = "profile")]
+        if let Some(start) = profile_sample {
+            self.profile_times[instruction as usize] += start.elapsed();
         }
 
         Ok(false)

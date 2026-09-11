@@ -31,8 +31,8 @@ pub enum OpCode {
     DefineGlobal,
     SetGlobal,
     GetGlobal,
-    GetLocal,
     SetLocal,
+    GetLocal,
 
     Import,
 
@@ -41,7 +41,6 @@ pub enum OpCode {
     Pop,
     Loop,
     Call,
-
     Array,
     GetIndex,
     SetIndex,
@@ -79,6 +78,11 @@ pub enum OpCode {
     PopExceptionHandler,
     Throw,
     FinallyEnd,
+
+    SetLocalPop,
+    AddLocalConst,
+    LessLocalConst,
+    JumpIfFalsePop,
 }
 
 impl From<OpCode> for u8 {
@@ -122,8 +126,8 @@ impl TryFrom<u8> for OpCode {
             21 => Ok(Self::DefineGlobal),
             22 => Ok(Self::SetGlobal),
             23 => Ok(Self::GetGlobal),
-            24 => Ok(Self::GetLocal),
-            25 => Ok(Self::SetLocal),
+            24 => Ok(Self::SetLocal),
+            25 => Ok(Self::GetLocal),
 
             26 => Ok(Self::Import),
 
@@ -132,7 +136,6 @@ impl TryFrom<u8> for OpCode {
             29 => Ok(Self::Pop),
             30 => Ok(Self::Loop),
             31 => Ok(Self::Call),
-
             32 => Ok(Self::Array),
             33 => Ok(Self::GetIndex),
             34 => Ok(Self::SetIndex),
@@ -171,6 +174,11 @@ impl TryFrom<u8> for OpCode {
             60 => Ok(Self::Throw),
             61 => Ok(Self::FinallyEnd),
 
+            62 => Ok(Self::SetLocalPop),
+            63 => Ok(Self::AddLocalConst),
+            64 => Ok(Self::LessLocalConst),
+            65 => Ok(Self::JumpIfFalsePop),
+
             _ => Err(()),
         }
     }
@@ -192,7 +200,7 @@ mod tests {
 
     #[test]
     fn invalid_opcode_is_rejected() {
-        let max = OpCode::FinallyEnd as u8;
+        let max = OpCode::JumpIfFalsePop as u8;
 
         for value in 0u8..=u8::MAX {
             if value > max {
