@@ -228,60 +228,22 @@ impl VirtualMachine {
                 .ok_or(RuntimeError::InvalidFunction)?
         };
 
-        /*
-         * HOT CACHE
-         *
-         * Après le premier passage, les opérandes de cette
-         * super-instruction sont déjà résolus.
-         *
-         * Le chemin chaud n'effectue donc plus :
-         *
-         *     read_byte x3
-         *     constants.get x2
-         */
-        let cached = {
-            let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
+        // ============================================================
+        // CACHE
+        // ============================================================
 
-            match frame.hot_loop_cache.as_ref() {
-                Some(crate::vm::machine::HotLoopCache::Integer {
-                    instruction_start: cached_start,
-                    local_index,
-                    limit,
-                    increment,
-                }) if *cached_start == instruction_start => Some((
-                    *local_index,
-                    crate::vm::machine::HotLoopCache::Integer {
-                        instruction_start: *cached_start,
-                        local_index: *local_index,
-                        limit: *limit,
-                        increment: *increment,
-                    },
-                )),
-
-                Some(crate::vm::machine::HotLoopCache::Float {
-                    instruction_start: cached_start,
-                    local_index,
-                    limit,
-                    increment,
-                }) if *cached_start == instruction_start => Some((
-                    *local_index,
-                    crate::vm::machine::HotLoopCache::Float {
-                        instruction_start: *cached_start,
-                        local_index: *local_index,
-                        limit: *limit,
-                        increment: *increment,
-                    },
-                )),
-
-                _ => None,
-            }
-        };
-
-        if let Some((local_index, cache)) = cached {
+        if let Some(cache) = self
+            .frames
+            .last()
+            .and_then(|frame| frame.hot_loop_cache.clone())
+        {
             match cache {
                 crate::vm::machine::HotLoopCache::Integer {
-                    limit, increment, ..
-                } => {
+                    instruction_start: cached_start,
+                    local_index,
+                    limit,
+                    increment,
+                } if cached_start == instruction_start => {
                     let target = self
                         .stack
                         .get_mut(local_index)
@@ -291,26 +253,33 @@ impl VirtualMachine {
                         Value::Integer(local) => {
                             if *local < limit {
                                 *local = local.wrapping_add(increment);
-                            } else {
-                                let frame = self
-                                    .frames
-                                    .last_mut()
-                                    .ok_or(RuntimeError::InvalidFunction)?;
 
-                                frame.ip = instruction_start + 4;
+                                self.frames
+                                    .last_mut()
+                                    .ok_or(RuntimeError::InvalidFunction)?
+                                    .ip = instruction_start;
+
                                 return Ok(());
                             }
+
+                            self.frames
+                                .last_mut()
+                                .ok_or(RuntimeError::InvalidFunction)?
+                                .ip = instruction_start + 4;
+
+                            return Ok(());
                         }
 
-                        _ => {
-                            return Err(RuntimeError::InvalidFunction);
-                        }
+                        _ => return Err(RuntimeError::InvalidFunction),
                     }
                 }
 
                 crate::vm::machine::HotLoopCache::Float {
-                    limit, increment, ..
-                } => {
+                    instruction_start: cached_start,
+                    local_index,
+                    limit,
+                    increment,
+                } if cached_start == instruction_start => {
                     let target = self
                         .stack
                         .get_mut(local_index)
@@ -320,38 +289,35 @@ impl VirtualMachine {
                         Value::Float(local) => {
                             if *local < limit {
                                 *local += increment;
-                            } else {
-                                let frame = self
-                                    .frames
-                                    .last_mut()
-                                    .ok_or(RuntimeError::InvalidFunction)?;
 
-                                frame.ip = instruction_start + 4;
+                                self.frames
+                                    .last_mut()
+                                    .ok_or(RuntimeError::InvalidFunction)?
+                                    .ip = instruction_start;
+
                                 return Ok(());
                             }
+
+                            self.frames
+                                .last_mut()
+                                .ok_or(RuntimeError::InvalidFunction)?
+                                .ip = instruction_start + 4;
+
+                            return Ok(());
                         }
 
-                        _ => {
-                            return Err(RuntimeError::InvalidFunction);
-                        }
+                        _ => return Err(RuntimeError::InvalidFunction),
                     }
                 }
+
+                _ => {}
             }
-
-            self.frames
-                .last_mut()
-                .ok_or(RuntimeError::InvalidFunction)?
-                .ip = instruction_start;
-
-            return Ok(());
         }
 
-        /*
-         * CACHE MISS
-         *
-         * Premier passage seulement :
-         * on décode et résout les opérandes.
-         */
+        // ============================================================
+        // PREMIER PASSAGE : DECODE
+        // ============================================================
+
         let slot = self.read_byte()? as usize;
         let limit_index = self.read_byte()? as usize;
         let increment_index = self.read_byte()? as usize;
@@ -367,15 +333,17 @@ impl VirtualMachine {
                 .chunk
                 .constants
                 .get(limit_index)
+                .cloned()
                 .ok_or(RuntimeError::InvalidFunction)?;
 
             let increment = frame
                 .chunk
                 .constants
                 .get(increment_index)
+                .cloned()
                 .ok_or(RuntimeError::InvalidFunction)?;
 
-            (frame.slot_start, limit.clone(), increment.clone())
+            (frame.slot_start, limit, increment)
         };
 
         let local_index = slot_start
@@ -383,38 +351,52 @@ impl VirtualMachine {
             .and_then(|index| index.checked_add(slot))
             .ok_or(RuntimeError::InvalidFunction)?;
 
-        /*
-         * Si les constantes sont homogènes et primitives,
-         * on les met en cache.
-         */
-        match (&limit, &increment) {
-            (Value::Integer(limit), Value::Integer(increment)) => {
+        // ============================================================
+        // INTEGER LOOP ELIMINATION
+        //
+        // while i < limit {
+        //     i += increment
+        // }
+        //
+        // devient directement :
+        //
+        // i = i + ceil((limit - i) / increment)
+        //
+        // uniquement quand increment > 0 et que le résultat tient
+        // dans i64.
+        // ============================================================
+
+        if let (Value::Integer(limit), Value::Integer(increment)) = (&limit, &increment) {
+            let target = self
+                .stack
+                .get_mut(local_index)
+                .ok_or(RuntimeError::StackUnderflow)?;
+
+            let local = match target {
+                Value::Integer(value) => *value,
+                _ => return Err(RuntimeError::InvalidFunction),
+            };
+
+            if local >= *limit {
                 self.frames
                     .last_mut()
                     .ok_or(RuntimeError::InvalidFunction)?
-                    .hot_loop_cache = Some(crate::vm::machine::HotLoopCache::Integer {
-                    instruction_start,
-                    local_index,
-                    limit: *limit,
-                    increment: *increment,
-                });
+                    .ip = instruction_start + 4;
 
-                let target = self
-                    .stack
-                    .get_mut(local_index)
-                    .ok_or(RuntimeError::StackUnderflow)?;
+                return Ok(());
+            }
 
-                if let Value::Integer(local) = target {
-                    if *local < *limit {
-                        *local = local.wrapping_add(*increment);
+            if *increment > 0 {
+                let local128 = local as i128;
+                let limit128 = *limit as i128;
+                let increment128 = *increment as i128;
 
-                        self.frames
-                            .last_mut()
-                            .ok_or(RuntimeError::InvalidFunction)?
-                            .ip = instruction_start;
+                let distance = limit128 - local128;
+                let steps = (distance + increment128 - 1) / increment128;
+                let final_value = local128 + steps * increment128;
 
-                        return Ok(());
-                    }
+                if let Ok(final_value) = i64::try_from(final_value) {
+                    *target = Value::Integer(final_value);
 
                     self.frames
                         .last_mut()
@@ -423,27 +405,52 @@ impl VirtualMachine {
 
                     return Ok(());
                 }
-
-                return Err(RuntimeError::InvalidFunction);
             }
 
-            (Value::Float(limit), Value::Float(increment)) => {
-                self.frames
-                    .last_mut()
-                    .ok_or(RuntimeError::InvalidFunction)?
-                    .hot_loop_cache = Some(crate::vm::machine::HotLoopCache::Float {
-                    instruction_start,
-                    local_index,
-                    limit: *limit,
-                    increment: *increment,
-                });
+            // Cas overflow / increment non positif :
+            // retour au comportement itératif normal.
+            self.frames
+                .last_mut()
+                .ok_or(RuntimeError::InvalidFunction)?
+                .hot_loop_cache = Some(crate::vm::machine::HotLoopCache::Integer {
+                instruction_start,
+                local_index,
+                limit: *limit,
+                increment: *increment,
+            });
 
-                let target = self
-                    .stack
-                    .get_mut(local_index)
-                    .ok_or(RuntimeError::StackUnderflow)?;
+            *target = Value::Integer(local.wrapping_add(*increment));
 
-                if let Value::Float(local) = target {
+            self.frames
+                .last_mut()
+                .ok_or(RuntimeError::InvalidFunction)?
+                .ip = instruction_start;
+
+            return Ok(());
+        }
+
+        // ============================================================
+        // FLOAT
+        // ============================================================
+
+        if let (Value::Float(limit), Value::Float(increment)) = (&limit, &increment) {
+            self.frames
+                .last_mut()
+                .ok_or(RuntimeError::InvalidFunction)?
+                .hot_loop_cache = Some(crate::vm::machine::HotLoopCache::Float {
+                instruction_start,
+                local_index,
+                limit: *limit,
+                increment: *increment,
+            });
+
+            let target = self
+                .stack
+                .get_mut(local_index)
+                .ok_or(RuntimeError::StackUnderflow)?;
+
+            match target {
+                Value::Float(local) => {
                     if *local < *limit {
                         *local += *increment;
 
@@ -451,27 +458,24 @@ impl VirtualMachine {
                             .last_mut()
                             .ok_or(RuntimeError::InvalidFunction)?
                             .ip = instruction_start;
-
-                        return Ok(());
+                    } else {
+                        self.frames
+                            .last_mut()
+                            .ok_or(RuntimeError::InvalidFunction)?
+                            .ip = instruction_start + 4;
                     }
-
-                    self.frames
-                        .last_mut()
-                        .ok_or(RuntimeError::InvalidFunction)?
-                        .ip = instruction_start + 4;
 
                     return Ok(());
                 }
 
-                return Err(RuntimeError::InvalidFunction);
+                _ => return Err(RuntimeError::InvalidFunction),
             }
-
-            _ => {}
         }
 
-        /*
-         * Fallback générique.
-         */
+        // ============================================================
+        // FALLBACK GENERIC
+        // ============================================================
+
         let target = self
             .stack
             .get_mut(local_index)
@@ -481,10 +485,7 @@ impl VirtualMachine {
 
         let is_less = match condition {
             Value::Boolean(value) => value,
-
-            _ => {
-                return Err(RuntimeError::InvalidFunction);
-            }
+            _ => return Err(RuntimeError::InvalidFunction),
         };
 
         if !is_less {

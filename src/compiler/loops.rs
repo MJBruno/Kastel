@@ -59,7 +59,12 @@ impl Compiler {
         // --------------------------------------------------------
 
         let fused_loop = if body.len() == 1 {
-            match &body[0] {
+            let statement = match &body[0] {
+                Statement::Positioned { statement, .. } => statement.as_ref(),
+                statement => statement,
+            };
+
+            match statement {
                 Statement::Assignment { target, value } => {
                     let variable_name = match target {
                         AssignmentTarget::Variable(name) => Some(name.as_str()),
@@ -104,7 +109,6 @@ impl Compiler {
                             } => {
                                 let condition_name = match condition_left.as_ref() {
                                     Expression::Variable(name) => Some(name.as_str()),
-
                                     _ => None,
                                 };
 
@@ -156,7 +160,6 @@ impl Compiler {
         } else {
             false
         };
-
         if fused_loop {
             return Ok(());
         }
