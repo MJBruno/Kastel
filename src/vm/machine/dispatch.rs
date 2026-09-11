@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use std::time::Instant;
-
 use super::VirtualMachine;
 
 use crate::{
@@ -13,24 +10,13 @@ use crate::{
 };
 
 impl VirtualMachine {
-    #[inline]
+    #[inline(always)]
     pub(crate) fn dispatch(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
         #[cfg(feature = "profile")]
         self.profile_instruction(instruction);
 
-        #[cfg(feature = "profile")]
-        let profile_sample = {
-            let count = self.profile_counts[instruction as usize];
-
-            if count & 4095 == 0 {
-                Some(Instant::now())
-            } else {
-                None
-            }
-        };
-
         let opcode =
-            OpCode::try_from(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
+            OpCode::from_byte(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
 
         match opcode {
             // ========================================================
@@ -392,20 +378,10 @@ impl VirtualMachine {
             OpCode::Return => {
                 self.execute_return()?;
 
-                #[cfg(feature = "profile")]
-                if let Some(start) = profile_sample {
-                    self.profile_times[instruction as usize] += start.elapsed();
-                }
-
                 return Ok(self.frames.is_empty());
             }
 
             OpCode::Halt => {
-                #[cfg(feature = "profile")]
-                if let Some(start) = profile_sample {
-                    self.profile_times[instruction as usize] += start.elapsed();
-                }
-
                 return Ok(true);
             }
 
@@ -427,11 +403,6 @@ impl VirtualMachine {
             OpCode::FinallyEnd => {
                 self.op_finally_end()?;
             }
-        }
-
-        #[cfg(feature = "profile")]
-        if let Some(start) = profile_sample {
-            self.profile_times[instruction as usize] += start.elapsed();
         }
 
         Ok(false)

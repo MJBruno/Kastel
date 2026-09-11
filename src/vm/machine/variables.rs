@@ -142,22 +142,21 @@ impl VirtualMachine {
         let slot = self.read_byte()? as usize;
         let constant_index = self.read_byte()? as usize;
 
-        let (slot_start, local_count, constant) = {
+        let (slot_start, constant) = {
             let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
+
+            if slot >= frame.local_count {
+                return Err(RuntimeError::InvalidFunction);
+            }
 
             let constant = frame
                 .chunk
                 .constants
                 .get(constant_index)
-                .cloned()
                 .ok_or(RuntimeError::InvalidFunction)?;
 
-            (frame.slot_start, frame.local_count, constant)
+            (frame.slot_start, constant)
         };
-
-        if slot >= local_count {
-            return Err(RuntimeError::InvalidFunction);
-        }
 
         let local_index = slot_start
             .checked_add(1)
@@ -167,19 +166,13 @@ impl VirtualMachine {
         /*
          * Hot path :
          *
-         * Integer + Integer
+         *     Integer + Integer
          *
-         * On évite complètement :
-         *
-         * Value::binary_numeric_op()
-         * match externe
-         * reconstruction inutile de plusieurs variantes
-         *
-         * La sémantique est exactement celle de binary_numeric_op :
-         * l'addition entière utilise wrapping_add().
+         * Aucun clone de la valeur locale et aucun appel au helper
+         * générique.
          */
         if let (Some(Value::Integer(local)), Value::Integer(constant)) =
-            (self.stack.get(local_index), &constant)
+            (self.stack.get(local_index), constant)
         {
             let result = local.wrapping_add(*constant);
 
@@ -194,12 +187,7 @@ impl VirtualMachine {
         }
 
         /*
-         * Tous les autres cas utilisent le chemin numérique générique :
-         *
-         * Integer + Float
-         * Float + Integer
-         * Float + Float
-         * types invalides
+         * Fallback pour les autres combinaisons numériques.
          */
         let local = self
             .stack
@@ -207,7 +195,7 @@ impl VirtualMachine {
             .cloned()
             .ok_or(RuntimeError::StackUnderflow)?;
 
-        let result = Value::binary_numeric_op(local, constant, NumericOp::Add)?;
+        let result = Value::binary_numeric_op(local, constant.clone(), NumericOp::Add)?;
 
         let target = self
             .stack
