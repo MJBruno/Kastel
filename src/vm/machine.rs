@@ -34,12 +34,31 @@ pub mod stack;
 pub mod variables;
 
 #[derive(Clone)]
+#[allow(dead_code)]
+pub(crate) enum HotLoopCache {
+    Integer {
+        instruction_start: usize,
+        local_index: usize,
+        limit: i64,
+        increment: i64,
+    },
+    Float {
+        instruction_start: usize,
+        local_index: usize,
+        limit: f64,
+        increment: f64,
+    },
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
 pub struct CallFrame {
     pub(crate) closure: Gc<Object>,
     pub(crate) chunk: Rc<crate::bytecode::chunk::Chunk>,
     pub(crate) ip: usize,
     pub(crate) slot_start: usize,
     pub(crate) local_count: usize,
+    pub(crate) hot_loop_cache: Option<HotLoopCache>,
 }
 
 // ============================================================
@@ -159,6 +178,7 @@ impl VirtualMachine {
                 ip: 0,
                 slot_start: 0,
                 local_count,
+                hot_loop_cache: None,
             }],
 
             exception_handlers: Vec::new(),
@@ -202,6 +222,7 @@ impl VirtualMachine {
             ip: 0,
             slot_start: 0,
             local_count,
+            hot_loop_cache: None,
         });
 
         self.exception_handlers.clear();

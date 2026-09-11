@@ -57,8 +57,8 @@ impl VirtualMachine {
             ip: 0,
             slot_start: callee_index,
             local_count,
+            hot_loop_cache: None,
         });
-
         Ok(())
     }
 
