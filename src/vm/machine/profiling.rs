@@ -1,3 +1,4 @@
+#[cfg(feature = "profile")]
 use crate::bytecode::chunk::OpCode;
 
 use super::VirtualMachine;
@@ -6,6 +7,10 @@ use super::VirtualMachine;
 impl VirtualMachine {
     pub(crate) fn profile_instruction(&mut self, instruction: u8) {
         self.profile_counts[instruction as usize] += 1;
+    }
+
+    pub(crate) fn profile_read_byte(&mut self) {
+        self.profile_read_bytes += 1;
     }
 
     pub(crate) fn print_profile(&self) {
@@ -28,12 +33,12 @@ impl VirtualMachine {
 
         entries.sort_unstable_by(|a, b| b.1.cmp(&a.1));
 
-        eprintln!();
-        eprintln!("========== KASTEL VM PROFILE ==========");
-
         let total: u64 = entries.iter().map(|(_, count)| *count).sum();
 
+        eprintln!();
+        eprintln!("========== KASTEL VM PROFILE ==========");
         eprintln!("instructions: {total}");
+        eprintln!("read_byte calls: {}", self.profile_read_bytes);
 
         for (name, count) in entries {
             eprintln!("{count:>12}  {name}");
@@ -46,6 +51,8 @@ impl VirtualMachine {
 #[cfg(not(feature = "profile"))]
 impl VirtualMachine {
     pub(crate) fn profile_instruction(&mut self, _instruction: u8) {}
+    #[allow(dead_code)]
+    pub(crate) fn profile_read_byte(&mut self) {}
 
     pub(crate) fn print_profile(&self) {}
 }

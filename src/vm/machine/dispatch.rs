@@ -10,9 +10,9 @@ use crate::{
 };
 
 impl VirtualMachine {
+    #[inline]
     pub(crate) fn dispatch(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
         self.profile_instruction(instruction);
-
         let opcode =
             OpCode::try_from(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
 

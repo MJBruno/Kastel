@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use super::bytecode::frame_closure;
 use super::{CallFrame, VirtualMachine};
 
@@ -17,9 +19,14 @@ impl VirtualMachine {
         closure: Gc<Object>,
         arg_count: usize,
     ) -> Result<(), RuntimeError> {
-        let arity = {
-            let closure = frame_closure(&closure);
-            closure.function.arity
+        let (arity, local_count, chunk) = {
+            let closure_ref = frame_closure(&closure);
+
+            (
+                closure_ref.function.arity,
+                closure_ref.function.local_count as usize,
+                Rc::new(closure_ref.function.chunk.clone()),
+            )
         };
 
         if arg_count != arity {
@@ -46,8 +53,10 @@ impl VirtualMachine {
 
         self.frames.push(CallFrame {
             closure,
+            chunk,
             ip: 0,
             slot_start: callee_index,
+            local_count,
         });
 
         Ok(())
@@ -57,10 +66,7 @@ impl VirtualMachine {
     // EXECUTE CALL
     // ============================================================
 
-    pub(crate) fn execute_call(
-        &mut self,
-        arg_count: usize,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn execute_call(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
         let required = arg_count
             .checked_add(1)
             .ok_or(RuntimeError::InvalidFunction)?;
@@ -185,10 +191,7 @@ impl VirtualMachine {
                 Ok(false) => {}
 
                 Err(error) => {
-                    match self.propagate_runtime_error_until(
-                        error.clone(),
-                        base_frame_len,
-                    ) {
+                    match self.propagate_runtime_error_until(error.clone(), base_frame_len) {
                         Ok(true) => {}
 
                         Ok(false) => {
@@ -242,9 +245,7 @@ impl VirtualMachine {
         self.close_upvalues(frame.slot_start)?;
         self.remove_current_frame_handlers();
 
-        self.frames
-            .pop()
-            .ok_or(RuntimeError::InvalidFunction)?;
+        self.frames.pop().ok_or(RuntimeError::InvalidFunction)?;
 
         self.stack.truncate(frame.slot_start);
         self.prune_exception_handlers();

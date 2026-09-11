@@ -69,61 +69,20 @@ pub enum OpCode {
     GetProperty,
     SetProperty,
 
-    // Appel dynamique d'une méthode :
-    //
-    //   receiver.method(arg1, arg2)
-    //
-    // encodé comme :
-    //
-    //   InvokeMethod <method_constant> <arg_count>
     InvokeMethod,
     InvokeBaseMethod,
     Class,
     NewInstance,
     Interface,
-    // ============================================================
-    // EXCEPTIONS
-    // ============================================================
 
-    /*
-     * Installe un handler d'exception.
-     *
-     * Layout bytecode :
-     *
-     *     PushExceptionHandler <handler_ip>
-     *
-     * Le VM enregistre le handler courant avant d'exécuter
-     * le corps du try.
-     */
     PushExceptionHandler,
-
-    /*
-     * Retire le handler courant.
-     *
-     * Utilisé lorsque le try se termine normalement.
-     */
     PopExceptionHandler,
-
-    /*
-     * Déclenche une exception Kastel.
-     *
-     * La valeur de l'exception est prise sur la stack.
-     */
     Throw,
-
-    /*
-     * Signale que l'exécution du bloc finally est terminée.
-     *
-     * Le VM pourra alors :
-     *
-     * - reprendre l'exécution normale ;
-     * - reprendre une exception en attente ;
-     * - continuer la propagation de l'exception.
-     */
     FinallyEnd,
 }
 
 impl From<OpCode> for u8 {
+    #[inline]
     fn from(op: OpCode) -> Self {
         op as u8
     }
@@ -132,86 +91,85 @@ impl From<OpCode> for u8 {
 impl TryFrom<u8> for OpCode {
     type Error = ();
 
+    #[inline]
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            x if x == OpCode::Constant.into() => Ok(OpCode::Constant),
-            x if x == OpCode::Nil.into() => Ok(OpCode::Nil),
-            x if x == OpCode::True.into() => Ok(OpCode::True),
-            x if x == OpCode::False.into() => Ok(OpCode::False),
+            0 => Ok(Self::Constant),
+            1 => Ok(Self::Nil),
+            2 => Ok(Self::True),
+            3 => Ok(Self::False),
 
-            x if x == OpCode::Equal.into() => Ok(OpCode::Equal),
-            x if x == OpCode::Greater.into() => Ok(OpCode::Greater),
-            x if x == OpCode::Less.into() => Ok(OpCode::Less),
-            x if x == OpCode::Not.into() => Ok(OpCode::Not),
-            x if x == OpCode::Is.into() => Ok(OpCode::Is),
+            4 => Ok(Self::Equal),
+            5 => Ok(Self::Greater),
+            6 => Ok(Self::Less),
+            7 => Ok(Self::Not),
+            8 => Ok(Self::Is),
 
-            x if x == OpCode::Add.into() => Ok(OpCode::Add),
-            x if x == OpCode::Subtract.into() => Ok(OpCode::Subtract),
-            x if x == OpCode::Multiply.into() => Ok(OpCode::Multiply),
-            x if x == OpCode::Divide.into() => Ok(OpCode::Divide),
-            x if x == OpCode::Modulo.into() => Ok(OpCode::Modulo),
-            x if x == OpCode::Negate.into() => Ok(OpCode::Negate),
+            9 => Ok(Self::Add),
+            10 => Ok(Self::Subtract),
+            11 => Ok(Self::Multiply),
+            12 => Ok(Self::Divide),
+            13 => Ok(Self::Modulo),
+            14 => Ok(Self::Negate),
 
-            x if x == OpCode::BitAnd.into() => Ok(OpCode::BitAnd),
-            x if x == OpCode::BitOr.into() => Ok(OpCode::BitOr),
-            x if x == OpCode::BitXor.into() => Ok(OpCode::BitXor),
-            x if x == OpCode::BitNot.into() => Ok(OpCode::BitNot),
-            x if x == OpCode::ShiftLeft.into() => Ok(OpCode::ShiftLeft),
-            x if x == OpCode::ShiftRight.into() => Ok(OpCode::ShiftRight),
+            15 => Ok(Self::BitAnd),
+            16 => Ok(Self::BitOr),
+            17 => Ok(Self::BitXor),
+            18 => Ok(Self::BitNot),
+            19 => Ok(Self::ShiftLeft),
+            20 => Ok(Self::ShiftRight),
 
-            x if x == OpCode::DefineGlobal.into() => Ok(OpCode::DefineGlobal),
-            x if x == OpCode::SetGlobal.into() => Ok(OpCode::SetGlobal),
-            x if x == OpCode::GetGlobal.into() => Ok(OpCode::GetGlobal),
-            x if x == OpCode::GetLocal.into() => Ok(OpCode::GetLocal),
-            x if x == OpCode::SetLocal.into() => Ok(OpCode::SetLocal),
+            21 => Ok(Self::DefineGlobal),
+            22 => Ok(Self::SetGlobal),
+            23 => Ok(Self::GetGlobal),
+            24 => Ok(Self::GetLocal),
+            25 => Ok(Self::SetLocal),
 
-            x if x == OpCode::Import.into() => Ok(OpCode::Import),
+            26 => Ok(Self::Import),
 
-            x if x == OpCode::JumpIfFalse.into() => Ok(OpCode::JumpIfFalse),
-            x if x == OpCode::Jump.into() => Ok(OpCode::Jump),
-            x if x == OpCode::Pop.into() => Ok(OpCode::Pop),
-            x if x == OpCode::Loop.into() => Ok(OpCode::Loop),
-            x if x == OpCode::Call.into() => Ok(OpCode::Call),
+            27 => Ok(Self::JumpIfFalse),
+            28 => Ok(Self::Jump),
+            29 => Ok(Self::Pop),
+            30 => Ok(Self::Loop),
+            31 => Ok(Self::Call),
 
-            x if x == OpCode::Array.into() => Ok(OpCode::Array),
-            x if x == OpCode::GetIndex.into() => Ok(OpCode::GetIndex),
-            x if x == OpCode::SetIndex.into() => Ok(OpCode::SetIndex),
-            x if x == OpCode::ArrayLength.into() => Ok(OpCode::ArrayLength),
-            x if x == OpCode::ArrayPush.into() => Ok(OpCode::ArrayPush),
-            x if x == OpCode::ArrayPop.into() => Ok(OpCode::ArrayPop),
-            x if x == OpCode::ArrayInsert.into() => Ok(OpCode::ArrayInsert),
-            x if x == OpCode::ArrayRemove.into() => Ok(OpCode::ArrayRemove),
-            x if x == OpCode::ArrayClear.into() => Ok(OpCode::ArrayClear),
-            x if x == OpCode::ArrayContains.into() => Ok(OpCode::ArrayContains),
+            32 => Ok(Self::Array),
+            33 => Ok(Self::GetIndex),
+            34 => Ok(Self::SetIndex),
+            35 => Ok(Self::ArrayLength),
+            36 => Ok(Self::ArrayPush),
+            37 => Ok(Self::ArrayPop),
+            38 => Ok(Self::ArrayInsert),
+            39 => Ok(Self::ArrayRemove),
+            40 => Ok(Self::ArrayClear),
+            41 => Ok(Self::ArrayContains),
 
-            x if x == OpCode::Object.into() => Ok(OpCode::Object),
+            42 => Ok(Self::Object),
 
-            x if x == OpCode::GetIterator.into() => Ok(OpCode::GetIterator),
-            x if x == OpCode::IteratorHasNext.into() => Ok(OpCode::IteratorHasNext),
-            x if x == OpCode::IteratorNext.into() => Ok(OpCode::IteratorNext),
+            43 => Ok(Self::GetIterator),
+            44 => Ok(Self::IteratorHasNext),
+            45 => Ok(Self::IteratorNext),
 
-            x if x == OpCode::Closure.into() => Ok(OpCode::Closure),
-            x if x == OpCode::GetUpvalue.into() => Ok(OpCode::GetUpvalue),
-            x if x == OpCode::SetUpvalue.into() => Ok(OpCode::SetUpvalue),
+            46 => Ok(Self::Closure),
+            47 => Ok(Self::GetUpvalue),
+            48 => Ok(Self::SetUpvalue),
 
-            x if x == OpCode::Return.into() => Ok(OpCode::Return),
-            x if x == OpCode::Halt.into() => Ok(OpCode::Halt),
+            49 => Ok(Self::Return),
+            50 => Ok(Self::Halt),
 
-            x if x == OpCode::GetProperty.into() => Ok(OpCode::GetProperty),
-            x if x == OpCode::SetProperty.into() => Ok(OpCode::SetProperty),
+            51 => Ok(Self::GetProperty),
+            52 => Ok(Self::SetProperty),
 
-            x if x == OpCode::InvokeMethod.into() => Ok(OpCode::InvokeMethod),
-            x if x == OpCode::InvokeBaseMethod.into() => Ok(OpCode::InvokeBaseMethod),
-            x if x == OpCode::Class.into() => Ok(OpCode::Class),
-            x if x == OpCode::Interface.into() => Ok(OpCode::Interface),
-            x if x == OpCode::NewInstance.into() => Ok(OpCode::NewInstance),
-            // ========================================================
-            // EXCEPTIONS
-            // ========================================================
-            x if x == OpCode::PushExceptionHandler.into() => Ok(OpCode::PushExceptionHandler),
-            x if x == OpCode::PopExceptionHandler.into() => Ok(OpCode::PopExceptionHandler),
-            x if x == OpCode::Throw.into() => Ok(OpCode::Throw),
-            x if x == OpCode::FinallyEnd.into() => Ok(OpCode::FinallyEnd),
+            53 => Ok(Self::InvokeMethod),
+            54 => Ok(Self::InvokeBaseMethod),
+            55 => Ok(Self::Class),
+            56 => Ok(Self::NewInstance),
+            57 => Ok(Self::Interface),
+
+            58 => Ok(Self::PushExceptionHandler),
+            59 => Ok(Self::PopExceptionHandler),
+            60 => Ok(Self::Throw),
+            61 => Ok(Self::FinallyEnd),
 
             _ => Err(()),
         }
@@ -245,10 +203,19 @@ mod tests {
 
     #[test]
     fn exception_opcodes_are_distinct() {
-        assert_ne!(OpCode::PushExceptionHandler, OpCode::PopExceptionHandler);
+        assert_ne!(
+            OpCode::PushExceptionHandler,
+            OpCode::PopExceptionHandler
+        );
 
-        assert_ne!(OpCode::Throw, OpCode::FinallyEnd);
+        assert_ne!(
+            OpCode::Throw,
+            OpCode::FinallyEnd
+        );
 
-        assert_ne!(OpCode::PushExceptionHandler, OpCode::Throw);
+        assert_ne!(
+            OpCode::PushExceptionHandler,
+            OpCode::Throw
+        );
     }
 }

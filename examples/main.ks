@@ -1,7 +1,11 @@
-let i = 0;
+function benchmark() {
+    let i = 0;
 
-while (i < 1000000) {
-    i = i + 1;
+    while (i < 1000000) {
+        i = i + 1;
+    }
+
+    return i;
 }
 
-println(i);
+println(benchmark());
