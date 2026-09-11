@@ -35,7 +35,6 @@ pub enum OpCode {
     GetLocal,
 
     Import,
-
     JumpIfFalse,
     Jump,
     Pop,
@@ -84,16 +83,17 @@ pub enum OpCode {
     AddLocalConst,
     LessLocalConst,
     JumpIfFalsePop,
+    LessLocalConstJump,
+    LoopLessAddLocalConst,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::JumpIfFalsePop as usize + 1;
+    pub const COUNT: usize = Self::LoopLessAddLocalConst as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     ///
-    /// Cette fonction est utilisée directement par le dispatcher VM
-    /// afin d'éviter le décodage par `match` de `TryFrom<u8>`.
+    /// Cette fonction est utilisée directement par le dispatcher VM.
     #[inline(always)]
     pub fn from_byte(value: u8) -> Result<Self, ()> {
         if value as usize >= Self::COUNT {
@@ -103,14 +103,11 @@ impl OpCode {
         // SAFETY:
         //
         // - OpCode est #[repr(u8)].
-        // - Les discriminants sont implicites.
-        // - Ils commencent à 0.
-        // - Ils sont contigus jusqu'à JumpIfFalsePop.
+        // - Les discriminants commencent à 0.
+        // - Ils sont contigus jusqu'à LessLocalConstJump.
         // - Le contrôle précédent garantit que `value` correspond
         //   à un discriminant valide.
-        Ok(unsafe {
-            std::mem::transmute::<u8, OpCode>(value)
-        })
+        Ok(unsafe { std::mem::transmute::<u8, OpCode>(value) })
     }
 }
 
@@ -140,9 +137,7 @@ mod tests {
         for value in 0..OpCode::COUNT {
             let byte = value as u8;
 
-            let opcode =
-                OpCode::try_from(byte)
-                    .expect("opcode valide attendu");
+            let opcode = OpCode::try_from(byte).expect("opcode valide attendu");
 
             assert_eq!(u8::from(opcode), byte);
         }
@@ -151,19 +146,14 @@ mod tests {
     #[test]
     fn from_byte_matches_try_from() {
         for value in 0u8..=u8::MAX {
-            assert_eq!(
-                OpCode::from_byte(value),
-                OpCode::try_from(value)
-            );
+            assert_eq!(OpCode::from_byte(value), OpCode::try_from(value));
         }
     }
 
     #[test]
     fn invalid_opcode_is_rejected() {
         for value in OpCode::COUNT..=u8::MAX as usize {
-            assert!(
-                OpCode::from_byte(value as u8).is_err()
-            );
+            assert!(OpCode::from_byte(value as u8).is_err());
         }
     }
 
@@ -173,24 +163,15 @@ mod tests {
         assert_eq!(OpCode::AddLocalConst as u8, 63);
         assert_eq!(OpCode::LessLocalConst as u8, 64);
         assert_eq!(OpCode::JumpIfFalsePop as u8, 65);
-        assert_eq!(OpCode::COUNT, 66);
+        assert_eq!(OpCode::LessLocalConstJump as u8, 66);
+        assert_eq!(OpCode::LoopLessAddLocalConst as u8, 67);
+        assert_eq!(OpCode::COUNT, 68);
     }
 
     #[test]
     fn exception_opcodes_are_distinct() {
-        assert_ne!(
-            OpCode::PushExceptionHandler,
-            OpCode::PopExceptionHandler
-        );
-
-        assert_ne!(
-            OpCode::Throw,
-            OpCode::FinallyEnd
-        );
-
-        assert_ne!(
-            OpCode::PushExceptionHandler,
-            OpCode::Throw
-        );
+        assert_ne!(OpCode::PushExceptionHandler, OpCode::PopExceptionHandler);
+        assert_ne!(OpCode::PopExceptionHandler, OpCode::Throw);
+        assert_ne!(OpCode::Throw, OpCode::FinallyEnd);
     }
 }

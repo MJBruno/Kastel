@@ -54,6 +54,13 @@ impl VirtualMachine {
             OpCode::AddLocalConst => {
                 self.add_local_const()?;
             }
+            OpCode::LessLocalConstJump => {
+                self.less_local_const_jump()?;
+            }
+
+            OpCode::LoopLessAddLocalConst => {
+                self.loop_less_add_local_const()?;
+            }
 
             OpCode::GetUpvalue => {
                 let index = self.read_byte()? as usize;

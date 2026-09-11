@@ -154,6 +154,162 @@ impl VirtualMachine {
 
         Ok(())
     }
+    #[inline(always)]
+    pub(crate) fn less_local_const_jump(&mut self) -> Result<(), RuntimeError> {
+        let slot = self.read_byte()? as usize;
+        let constant_index = self.read_byte()? as usize;
+        let offset = self.read_short()? as usize;
+
+        let (slot_start, constant) = {
+            let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
+
+            if slot >= frame.local_count {
+                return Err(RuntimeError::InvalidFunction);
+            }
+
+            let constant = frame
+                .chunk
+                .constants
+                .get(constant_index)
+                .ok_or(RuntimeError::InvalidFunction)?;
+
+            (frame.slot_start, constant)
+        };
+
+        let local_index = slot_start
+            .checked_add(1)
+            .and_then(|index| index.checked_add(slot))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let is_less = match (self.stack.get(local_index), constant) {
+            (Some(Value::Integer(local)), Value::Integer(constant)) => *local < *constant,
+
+            (Some(local), constant) => {
+                match Value::compare_numeric(local.clone(), constant.clone(), ComparisonOp::Less)? {
+                    Value::Boolean(value) => value,
+                    _ => return Err(RuntimeError::InvalidFunction),
+                }
+            }
+
+            (None, _) => {
+                return Err(RuntimeError::StackUnderflow);
+            }
+        };
+
+        if !is_less {
+            let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
+
+            let new_ip = frame
+                .ip
+                .checked_add(offset)
+                .ok_or(RuntimeError::InvalidFunction)?;
+
+            if new_ip >= frame.chunk.code.len() {
+                return Err(RuntimeError::InvalidFunction);
+            }
+
+            self.frames
+                .last_mut()
+                .ok_or(RuntimeError::InvalidFunction)?
+                .ip = new_ip;
+        }
+
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn loop_less_add_local_const(&mut self) -> Result<(), RuntimeError> {
+        let instruction_start = self
+            .frames
+            .last()
+            .ok_or(RuntimeError::InvalidFunction)?
+            .ip
+            .checked_sub(1)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let slot = self.read_byte()? as usize;
+        let limit_index = self.read_byte()? as usize;
+        let increment_index = self.read_byte()? as usize;
+
+        let (slot_start, limit, increment) = {
+            let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
+
+            if slot >= frame.local_count {
+                return Err(RuntimeError::InvalidFunction);
+            }
+
+            let limit = frame
+                .chunk
+                .constants
+                .get(limit_index)
+                .ok_or(RuntimeError::InvalidFunction)?;
+
+            let increment = frame
+                .chunk
+                .constants
+                .get(increment_index)
+                .ok_or(RuntimeError::InvalidFunction)?;
+
+            (frame.slot_start, limit, increment)
+        };
+
+        let local_index = slot_start
+            .checked_add(1)
+            .and_then(|index| index.checked_add(slot))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let target = self
+            .stack
+            .get_mut(local_index)
+            .ok_or(RuntimeError::StackUnderflow)?;
+
+        match (&*target, limit, increment) {
+            (Value::Integer(local), Value::Integer(limit), Value::Integer(increment)) => {
+                if *local >= *limit {
+                    return Ok(());
+                }
+
+                *target = Value::Integer(local.wrapping_add(*increment));
+            }
+
+            (Value::Float(local), Value::Float(limit), Value::Float(increment)) => {
+                if *local >= *limit {
+                    return Ok(());
+                }
+
+                *target = Value::Float(*local + *increment);
+            }
+
+            (local, limit, increment) => {
+                let condition =
+                    Value::compare_numeric(local.clone(), limit.clone(), ComparisonOp::Less)?;
+
+                let is_less = match condition {
+                    Value::Boolean(value) => value,
+
+                    _ => {
+                        return Err(RuntimeError::InvalidFunction);
+                    }
+                };
+
+                if !is_less {
+                    return Ok(());
+                }
+
+                let result =
+                    Value::binary_numeric_op(local.clone(), increment.clone(), NumericOp::Add)?;
+
+                *target = result;
+            }
+        }
+
+        self.frames
+            .last_mut()
+            .ok_or(RuntimeError::InvalidFunction)?
+            .ip = instruction_start;
+
+        Ok(())
+    }
 
     #[inline(always)]
     pub(crate) fn not(&mut self) -> Result<(), RuntimeError> {
