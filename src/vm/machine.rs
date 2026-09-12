@@ -28,15 +28,37 @@ pub mod iterators;
 pub mod methods;
 pub mod modules;
 pub mod objects;
+pub mod profiling;
 pub mod properties;
 pub mod stack;
 pub mod variables;
 
 #[derive(Clone)]
+#[allow(dead_code)]
+pub(crate) enum HotLoopCache {
+    Integer {
+        instruction_start: usize,
+        local_index: usize,
+        limit: i64,
+        increment: i64,
+    },
+    Float {
+        instruction_start: usize,
+        local_index: usize,
+        limit: f64,
+        increment: f64,
+    },
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
 pub struct CallFrame {
     pub(crate) closure: Gc<Object>,
+    pub(crate) chunk: Rc<crate::bytecode::chunk::Chunk>,
     pub(crate) ip: usize,
     pub(crate) slot_start: usize,
+    pub(crate) local_count: usize,
+    pub(crate) hot_loop_cache: Option<HotLoopCache>,
 }
 
 // ============================================================
@@ -120,6 +142,13 @@ pub struct VirtualMachine {
 
     pub current_line: usize,
     pub current_column: usize,
+
+    #[cfg(feature = "profile")]
+    pub(crate) profile_counts: [u64; 256],
+
+
+    #[cfg(feature = "profile")]
+    pub(crate) profile_read_bytes: u64,
 }
 
 impl VirtualMachine {
@@ -132,6 +161,8 @@ impl VirtualMachine {
         module_path: Option<PathBuf>,
         module_loader: ModuleLoader,
     ) -> Self {
+        let chunk = Rc::new(function.chunk.clone());
+        let local_count = function.local_count as usize;
         let closure = Object::new_closure(function, Vec::new());
 
         let mut vm = Self {
@@ -141,24 +172,30 @@ impl VirtualMachine {
 
             frames: vec![CallFrame {
                 closure,
+                chunk,
                 ip: 0,
                 slot_start: 0,
+                local_count,
+                hot_loop_cache: None,
             }],
 
             exception_handlers: Vec::new(),
-
             pending_exception: None,
-
             open_upvalues: Vec::new(),
-
             natives: HashMap::new(),
 
             module_loader,
-
             module_path,
 
             current_line: 0,
             current_column: 0,
+
+            #[cfg(feature = "profile")]
+            profile_counts: [0; 256],
+
+
+            #[cfg(feature = "profile")]
+            profile_read_bytes: 0,
         };
 
         register_natives(&mut vm.globals);
@@ -167,6 +204,8 @@ impl VirtualMachine {
     }
 
     pub fn execute_repl(&mut self, function: Rc<Function>) -> Result<Option<Value>, RuntimeError> {
+        let chunk = Rc::new(function.chunk.clone());
+        let local_count = function.local_count as usize;
         let closure = Object::new_closure(function, Vec::new());
 
         self.stack.clear();
@@ -175,8 +214,11 @@ impl VirtualMachine {
         self.frames.clear();
         self.frames.push(CallFrame {
             closure,
+            chunk,
             ip: 0,
             slot_start: 0,
+            local_count,
+            hot_loop_cache: None,
         });
 
         self.exception_handlers.clear();

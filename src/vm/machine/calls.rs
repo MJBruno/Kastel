@@ -1,20 +1,32 @@
+use std::rc::Rc;
+
 use super::bytecode::frame_closure;
 use super::{CallFrame, VirtualMachine};
 
 use crate::error::runtime_error::RuntimeError;
+use crate::runtime::gc;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 
 impl VirtualMachine {
+    // ============================================================
+    // CALL
+    // ============================================================
+
     pub(crate) fn call(
         &mut self,
         closure: Gc<Object>,
         arg_count: usize,
     ) -> Result<(), RuntimeError> {
-        let arity = {
-            let closure = frame_closure(&closure);
-            closure.function.arity
+        let (arity, local_count, chunk) = {
+            let closure_ref = frame_closure(&closure);
+
+            (
+                closure_ref.function.arity,
+                closure_ref.function.local_count as usize,
+                Rc::new(closure_ref.function.chunk.clone()),
+            )
         };
 
         if arg_count != arity {
@@ -41,12 +53,18 @@ impl VirtualMachine {
 
         self.frames.push(CallFrame {
             closure,
+            chunk,
             ip: 0,
             slot_start: callee_index,
+            local_count,
+            hot_loop_cache: None,
         });
-
         Ok(())
     }
+
+    // ============================================================
+    // EXECUTE CALL
+    // ============================================================
 
     pub(crate) fn execute_call(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
         let required = arg_count
@@ -129,6 +147,10 @@ impl VirtualMachine {
         }
     }
 
+    // ============================================================
+    // SYNCHRONOUS INVOCATION
+    // ============================================================
+
     pub(crate) fn invoke_sync(
         &mut self,
         callee: Value,
@@ -146,6 +168,18 @@ impl VirtualMachine {
         self.execute_call(arguments.len())?;
 
         while self.frames.len() > base_frame_len {
+            if cfg!(feature = "debug_trace") {
+                self.debug_machine()?;
+            }
+
+            if gc::should_collect() {
+                self.collect_garbage();
+            }
+
+            let (line, column) = self.current_position()?;
+            self.current_line = line;
+            self.current_column = column;
+
             let instruction = self.read_byte()?;
 
             match self.dispatch(instruction) {
@@ -165,9 +199,9 @@ impl VirtualMachine {
                             return Err(error);
                         }
 
-                        Err(propagation_error) => {
+                        Err(error) => {
                             self.stack.truncate(base_stack_len);
-                            return Err(propagation_error);
+                            return Err(error);
                         }
                     }
                 }
@@ -185,6 +219,10 @@ impl VirtualMachine {
 
         Ok(result)
     }
+
+    // ============================================================
+    // RETURN
+    // ============================================================
 
     pub(crate) fn execute_return(&mut self) -> Result<(), RuntimeError> {
         let frame = self

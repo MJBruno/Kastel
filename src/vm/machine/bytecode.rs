@@ -1,63 +1,85 @@
 use std::cell::Ref;
 
 use super::{CallFrame, VirtualMachine};
-use crate::error::runtime_error::RuntimeError;
-use crate::runtime::closure::Closure;
-use crate::runtime::gc_handle::Gc;
-use crate::runtime::object::Object;
-use crate::runtime::value::Value;
+
+use crate::{
+    error::runtime_error::RuntimeError, runtime::closure::Closure, runtime::gc_handle::Gc,
+    runtime::object::Object, runtime::value::Value,
+};
 
 pub(crate) fn frame_closure(handle: &Gc<Object>) -> Ref<'_, Closure> {
     Ref::map(handle.borrow(), |object| match object {
         Object::Closure(closure) => closure,
+
         _ => unreachable!("CallFrame.closure est toujours un Object::Closure"),
     })
 }
 
 impl VirtualMachine {
+    #[inline]
     pub(crate) fn current_frame(&self) -> Result<&CallFrame, RuntimeError> {
         self.frames.last().ok_or(RuntimeError::InvalidFunction)
     }
 
+    #[inline]
     pub(crate) fn current_frame_mut(&mut self) -> Result<&mut CallFrame, RuntimeError> {
         self.frames.last_mut().ok_or(RuntimeError::InvalidFunction)
     }
 
+    #[inline(always)]
     pub(crate) fn read_byte(&mut self) -> Result<u8, RuntimeError> {
+        #[cfg(feature = "profile")]
+        self.profile_read_byte();
+
         let frame = self
             .frames
             .last_mut()
             .ok_or(RuntimeError::InvalidFunction)?;
 
-        let byte = {
-            let closure = frame_closure(&frame.closure);
+        let ip = frame.ip;
 
-            closure
-                .function
-                .chunk
-                .code
-                .get(frame.ip)
-                .copied()
-                .ok_or(RuntimeError::InvalidFunction)?
-        };
+        if ip >= frame.chunk.code.len() {
+            return Err(RuntimeError::InvalidFunction);
+        }
 
-        frame.ip = frame
-            .ip
-            .checked_add(1)
-            .ok_or(RuntimeError::InvalidFunction)?;
+        // La vérification ci-dessus garantit que l'accès est valide.
+        let byte = unsafe { *frame.chunk.code.get_unchecked(ip) };
+
+        frame.ip = ip + 1;
 
         Ok(byte)
     }
+
+    #[inline(always)]
     pub(crate) fn read_short(&mut self) -> Result<u16, RuntimeError> {
-        let high = self.read_byte()? as u16;
-        let low = self.read_byte()? as u16;
+        #[cfg(feature = "profile")]
+        {
+            self.profile_read_byte();
+            self.profile_read_byte();
+        }
+
+        let frame = self
+            .frames
+            .last_mut()
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let ip = frame.ip;
+
+        if ip.checked_add(1).is_none() || ip + 1 >= frame.chunk.code.len() {
+            return Err(RuntimeError::InvalidFunction);
+        }
+
+        let high = frame.chunk.code[ip] as u16;
+        let low = frame.chunk.code[ip + 1] as u16;
+
+        frame.ip = ip + 2;
+
         Ok((high << 8) | low)
     }
 
+    #[inline]
     pub(crate) fn read_constant(&self, index: u8) -> Result<Value, RuntimeError> {
-        let frame = self.current_frame()?;
-        frame_closure(&frame.closure)
-            .function
+        self.current_frame()?
             .chunk
             .constants
             .get(index as usize)
@@ -65,14 +87,17 @@ impl VirtualMachine {
             .ok_or(RuntimeError::InvalidFunction)
     }
 
+    #[inline(always)]
     pub(crate) fn read_constant_byte(&mut self) -> Result<Value, RuntimeError> {
         let index = self.read_byte()?;
+
         self.read_constant(index)
     }
 
+    #[inline]
     pub(crate) fn current_position(&self) -> Result<(usize, usize), RuntimeError> {
         let frame = self.current_frame()?;
-        let closure = frame_closure(&frame.closure);
-        Ok(closure.function.chunk.position_at(frame.ip))
+
+        Ok(frame.chunk.position_at(frame.ip))
     }
 }

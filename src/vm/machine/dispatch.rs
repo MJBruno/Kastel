@@ -1,178 +1,273 @@
 use super::VirtualMachine;
 
 use crate::{
-    bytecode::chunk::OpCode, error::runtime_error::RuntimeError, runtime::{object::Object, value::{ComparisonOp, NumericOp, Value}},
+    error::runtime_error::RuntimeError,
+    runtime::{
+        object::Object,
+        value::{ComparisonOp, NumericOp, Value},
+    },
 };
 
 impl VirtualMachine {
-    pub(crate) fn dispatch(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
-        let opcode =
-            OpCode::try_from(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
-
-        match opcode {
+    #[inline(always)]
+    pub(crate) fn dispatch(
+        &mut self,
+        instruction: u8,
+    ) -> Result<bool, RuntimeError> {
+        let result = match instruction {
             // ========================================================
             // CONSTANTS / GLOBALS
             // ========================================================
-            OpCode::Constant => {
+            0 => {
                 let constant = self.read_constant_byte()?;
                 self.push(constant);
+                Ok(false)
             }
 
-            OpCode::DefineGlobal => {
+            21 => {
                 self.define_global()?;
+                Ok(false)
             }
 
-            OpCode::GetGlobal => {
-                self.get_global()?;
-            }
-
-            OpCode::SetGlobal => {
+            22 => {
                 self.set_global()?;
+                Ok(false)
             }
 
-            OpCode::GetLocal => {
-                self.get_local()?;
+            23 => {
+                self.get_global()?;
+                Ok(false)
             }
 
-            OpCode::SetLocal => {
+            24 => {
                 self.set_local()?;
+                Ok(false)
             }
 
-            OpCode::GetUpvalue => {
+            25 => {
+                self.get_local()?;
+                Ok(false)
+            }
+
+            62 => {
+                self.set_local_pop()?;
+                Ok(false)
+            }
+
+            63 => {
+                self.add_local_const()?;
+                Ok(false)
+            }
+
+            68 => {
+                self.add_local_local()?;
+                Ok(false)
+            }
+
+            66 => {
+                self.less_local_const_jump()?;
+                Ok(false)
+            }
+
+            67 => {
+                self.loop_less_add_local_const()?;
+                Ok(false)
+            }
+
+            47 => {
                 let index = self.read_byte()? as usize;
                 self.get_upvalue(index)?;
+                Ok(false)
             }
 
-            OpCode::SetUpvalue => {
+            48 => {
                 let index = self.read_byte()? as usize;
                 self.set_upvalue(index)?;
+                Ok(false)
             }
 
             // ========================================================
             // LITERALS
             // ========================================================
-            OpCode::True => {
-                self.push(Value::Boolean(true));
-            }
-
-            OpCode::False => {
-                self.push(Value::Boolean(false));
-            }
-
-            OpCode::Nil => {
+            1 => {
                 self.push(Value::Nil);
+                Ok(false)
+            }
+
+            2 => {
+                self.push(Value::Boolean(true));
+                Ok(false)
+            }
+
+            3 => {
+                self.push(Value::Boolean(false));
+                Ok(false)
             }
 
             // ========================================================
             // ARITHMETIC
             // ========================================================
-            OpCode::Add => {
+            9 => {
                 self.add()?;
+                Ok(false)
             }
 
-            OpCode::Subtract => {
+            10 => {
                 self.numeric_binary(NumericOp::Subtract)?;
+                Ok(false)
             }
 
-            OpCode::Multiply => {
+            11 => {
                 self.numeric_binary(NumericOp::Multiply)?;
+                Ok(false)
             }
 
-            OpCode::Divide => {
+            12 => {
                 self.numeric_binary(NumericOp::Divide)?;
+                Ok(false)
             }
 
-            OpCode::Modulo => {
+            13 => {
                 self.numeric_binary(NumericOp::Modulo)?;
+                Ok(false)
             }
 
-            OpCode::Negate => {
+            14 => {
                 self.negate()?;
+                Ok(false)
             }
 
             // ========================================================
             // BITWISE
             // ========================================================
-            OpCode::BitAnd => {
+            15 => {
                 self.bitwise_binary(0)?;
+                Ok(false)
             }
 
-            OpCode::BitOr => {
+            16 => {
                 self.bitwise_binary(1)?;
+                Ok(false)
             }
 
-            OpCode::BitXor => {
+            17 => {
                 self.bitwise_binary(2)?;
+                Ok(false)
             }
 
-            OpCode::BitNot => {
+            18 => {
                 self.bitwise_not()?;
+                Ok(false)
             }
 
-            OpCode::ShiftLeft => {
+            19 => {
                 self.shift(true)?;
+                Ok(false)
             }
 
-            OpCode::ShiftRight => {
+            20 => {
                 self.shift(false)?;
+                Ok(false)
             }
 
             // ========================================================
             // COMPARISON
             // ========================================================
-            OpCode::Equal => {
+            4 => {
                 let b = self.pop()?;
                 let a = self.pop()?;
 
                 self.push(Value::Boolean(Value::equals(a, b)));
+                Ok(false)
             }
 
-            OpCode::Greater => {
+            5 => {
                 self.compare(ComparisonOp::Greater)?;
+                Ok(false)
             }
 
-            OpCode::Less => {
+            6 => {
                 self.compare(ComparisonOp::Less)?;
+                Ok(false)
             }
 
-            OpCode::Not => {
+            64 => {
+                self.less_local_const()?;
+                Ok(false)
+            }
+
+            7 => {
                 self.not()?;
+                Ok(false)
             }
 
-            OpCode::Is => {
+            8 => {
                 let right = self.pop()?;
                 let left = self.pop()?;
 
                 let result = Self::is_value_instance_of(&left, &right)?;
 
                 self.push(Value::Boolean(result));
+                Ok(false)
             }
 
             // ========================================================
-            // OBJECT / PROPERTY
+            // MODULES
             // ========================================================
-            OpCode::GetProperty => {
-                self.get_property()?;
-            }
-
-            OpCode::SetProperty => {
-                self.set_property()?;
+            26 => {
+                self.import_module()?;
+                Ok(false)
             }
 
             // ========================================================
-            // ARRAY / OBJECT
+            // CONTROL FLOW
             // ========================================================
-            OpCode::Array => {
+            27 => {
+                self.jump_if_false()?;
+                Ok(false)
+            }
+
+            28 => {
+                self.jump()?;
+                Ok(false)
+            }
+
+            29 => {
+                self.pop()?;
+                Ok(false)
+            }
+
+            65 => {
+                self.jump_if_false_pop()?;
+                Ok(false)
+            }
+
+            // ========================================================
+            // CALL / FUNCTIONS
+            // ========================================================
+            31 => {
+                let arg_count = self.read_byte()? as usize;
+
+                self.execute_call(arg_count)?;
+                Ok(false)
+            }
+
+            46 => {
+                self.op_closure()?;
+                Ok(false)
+            }
+
+            // ========================================================
+            // ARRAYS
+            // ========================================================
+            32 => {
                 let count = self.read_byte()? as usize;
+
                 self.op_array(count)?;
+                Ok(false)
             }
 
-            OpCode::Object => {
-                let pair_count = self.read_byte()? as usize;
-                self.op_object(pair_count)?;
-            }
-
-            OpCode::GetIndex => {
+            33 => {
                 if let Some(Value::Object(handle)) =
                     self.stack.get(self.stack.len().saturating_sub(2))
                 {
@@ -189,14 +284,18 @@ impl VirtualMachine {
                             self.op_get_dict_index()?;
                         }
 
-                        _ => return Err(RuntimeError::NotIndexable),
+                        _ => {
+                            return Err(RuntimeError::NotIndexable);
+                        }
                     }
                 } else {
                     return Err(RuntimeError::NotIndexable);
                 }
+
+                Ok(false)
             }
 
-            OpCode::SetIndex => {
+            34 => {
                 if let Some(Value::Object(handle)) =
                     self.stack.get(self.stack.len().saturating_sub(3))
                 {
@@ -213,164 +312,179 @@ impl VirtualMachine {
                             self.op_set_dict_index()?;
                         }
 
-                        _ => return Err(RuntimeError::NotIndexable),
+                        _ => {
+                            return Err(RuntimeError::NotIndexable);
+                        }
                     }
                 } else {
                     return Err(RuntimeError::NotIndexable);
                 }
+
+                Ok(false)
             }
 
-            OpCode::ArrayLength => {
+            35 => {
                 self.op_array_length()?;
+                Ok(false)
             }
 
-            OpCode::ArrayPush => {
+            36 => {
                 self.op_array_push()?;
+                Ok(false)
             }
 
-            OpCode::ArrayPop => {
+            37 => {
                 self.op_array_pop()?;
+                Ok(false)
             }
 
-            OpCode::ArrayInsert => {
+            38 => {
                 self.op_array_insert()?;
+                Ok(false)
             }
 
-            OpCode::ArrayRemove => {
+            39 => {
                 self.op_array_remove()?;
+                Ok(false)
             }
 
-            OpCode::ArrayClear => {
+            40 => {
                 self.op_array_clear()?;
+                Ok(false)
             }
 
-            OpCode::ArrayContains => {
+            41 => {
                 self.op_array_contains()?;
+                Ok(false)
+            }
+
+            // ========================================================
+            // OBJECT
+            // ========================================================
+            42 => {
+                let pair_count = self.read_byte()? as usize;
+
+                self.op_object(pair_count)?;
+                Ok(false)
             }
 
             // ========================================================
             // ITERATORS
             // ========================================================
-            OpCode::GetIterator => {
+            43 => {
                 self.op_get_iterator()?;
+                Ok(false)
             }
 
-            OpCode::IteratorHasNext => {
+            44 => {
                 self.op_iterator_has_next()?;
+                Ok(false)
             }
 
-            OpCode::IteratorNext => {
+            45 => {
                 self.op_iterator_next()?;
+                Ok(false)
             }
 
             // ========================================================
-            // FUNCTIONS / CLOSURES
+            // PROPERTIES
             // ========================================================
-            OpCode::Closure => {
-                self.op_closure()?;
+            51 => {
+                self.get_property()?;
+                Ok(false)
             }
 
-            OpCode::Call => {
-                let arg_count = self.read_byte()? as usize;
-                self.execute_call(arg_count)?;
+            52 => {
+                self.set_property()?;
+                Ok(false)
             }
 
-            OpCode::InvokeMethod => {
+            // ========================================================
+            // METHOD CALLS
+            // ========================================================
+            53 => {
                 let method_constant = self.read_byte()? as usize;
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_invoke_method(method_constant, arg_count)?;
+                Ok(false)
             }
 
-            OpCode::InvokeBaseMethod => {
+            54 => {
                 let method_constant = self.read_byte()? as usize;
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_invoke_base_method(method_constant, arg_count)?;
+                Ok(false)
             }
 
             // ========================================================
-            // CLASS / INTERFACE
+            // CLASSES / INTERFACES
             // ========================================================
-            OpCode::Interface => {
-                let base_count = self.read_byte()? as usize;
-                let method_count = self.read_byte()? as usize;
-
-                self.op_interface(base_count, method_count)?;
-            }
-
-            OpCode::Class => {
+            55 => {
                 let base_count = self.read_byte()? as usize;
                 let method_count = self.read_byte()? as usize;
 
                 self.op_class(base_count, method_count)?;
+                Ok(false)
             }
 
-            OpCode::NewInstance => {
+            56 => {
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_new_instance(arg_count)?;
+                Ok(false)
             }
 
-            // ========================================================
-            // MODULES
-            // ========================================================
-            OpCode::Import => {
-                self.import_module()?;
-            }
+            57 => {
+                let base_count = self.read_byte()? as usize;
+                let method_count = self.read_byte()? as usize;
 
-            // ========================================================
-            // CONTROL FLOW
-            // ========================================================
-            OpCode::Jump => {
-                self.jump()?;
-            }
-
-            OpCode::JumpIfFalse => {
-                self.jump_if_false()?;
-            }
-
-            OpCode::Loop => {
-                self.loop_back()?;
-            }
-
-            OpCode::Pop => {
-                self.pop()?;
+                self.op_interface(base_count, method_count)?;
+                Ok(false)
             }
 
             // ========================================================
             // RETURN / HALT
             // ========================================================
-            OpCode::Return => {
+            49 => {
                 self.execute_return()?;
-
-                return Ok(self.frames.is_empty());
+                Ok(self.frames.is_empty())
             }
 
-            OpCode::Halt => {
-                return Ok(true);
+            50 => {
+                Ok(true)
             }
 
             // ========================================================
             // EXCEPTIONS
             // ========================================================
-            OpCode::PushExceptionHandler => {
+            58 => {
                 self.op_push_exception_handler()?;
+                Ok(false)
             }
 
-            OpCode::PopExceptionHandler => {
+            59 => {
                 self.op_pop_exception_handler()?;
+                Ok(false)
             }
 
-            OpCode::Throw => {
+            60 => {
                 self.op_throw()?;
+                Ok(false)
             }
 
-            OpCode::FinallyEnd => {
+            61 => {
                 self.op_finally_end()?;
+                Ok(false)
             }
-        }
 
-        Ok(false)
+            // ========================================================
+            // INVALID
+            // ========================================================
+            _ => Err(RuntimeError::InvalidOpcode(instruction)),
+        };
+
+        result
     }
 }

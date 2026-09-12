@@ -6,28 +6,85 @@ use crate::runtime::value::Value;
 
 impl VirtualMachine {
     pub fn run(&mut self) -> Result<(), RuntimeError> {
+        let mut gc_check_counter = 0usize;
+
         loop {
             if cfg!(feature = "debug_trace") {
                 self.debug_machine()?;
             }
 
-            if gc::should_collect() {
-                self.collect_garbage();
-            }
+            gc_check_counter += 1;
 
-            let (line, column) = self.current_position()?;
-            self.current_line = line;
-            self.current_column = column;
+            if gc_check_counter >= 256 {
+                gc_check_counter = 0;
+
+                if gc::should_collect() {
+                    self.collect_garbage();
+                }
+            }
 
             let instruction = self.read_byte()?;
 
-            match self.dispatch(instruction) {
-                Ok(true) => return Ok(()),
+            #[cfg(feature = "profile")]
+            self.profile_instruction(instruction);
+
+            let result = match instruction {
+                // ========================================================
+                // HOT DISPATCH
+                // ========================================================
+
+                30 => {
+                    self.loop_back()?;
+                    Ok(false)
+                }
+
+                63 => {
+                    self.add_local_const()?;
+                    Ok(false)
+                }
+
+                64 => {
+                    self.less_local_const()?;
+                    Ok(false)
+                }
+
+                66 => {
+                    self.less_local_const_jump()?;
+                    Ok(false)
+                }
+
+                67 => {
+                    self.loop_less_add_local_const()?;
+                    Ok(false)
+                }
+
+                68 => {
+                    self.add_local_local()?;
+                    Ok(false)
+                }
+
+                // ========================================================
+                // GENERAL DISPATCH
+                // ========================================================
+
+                _ => self.dispatch(instruction),
+            };
+
+            match result {
+                Ok(true) => {
+                    self.print_profile();
+                    return Ok(());
+                }
 
                 Ok(false) => {}
 
                 Err(error) => {
+                    let (line, column) = self.current_position()?;
+                    self.current_line = line;
+                    self.current_column = column;
+
                     if !self.propagate_runtime_error(error.clone())? {
+                        self.print_profile();
                         return Err(error);
                     }
                 }
@@ -39,7 +96,19 @@ impl VirtualMachine {
         &mut self,
         error: RuntimeError,
     ) -> Result<bool, RuntimeError> {
-        self.propagate_runtime_error_until(error, 0)
+        match error {
+            RuntimeError::Thrown(value) => self.propagate_thrown(value),
+
+            error => {
+                let value = self.runtime_error_value(&error)?;
+
+                if self.propagate_thrown(value)? {
+                    Ok(true)
+                } else {
+                    Err(error)
+                }
+            }
+        }
     }
 
     pub(crate) fn propagate_runtime_error_until(
@@ -49,13 +118,13 @@ impl VirtualMachine {
     ) -> Result<bool, RuntimeError> {
         match error {
             RuntimeError::Thrown(value) => {
-                self.propagate_thrown(value, min_frame_len)
+                self.propagate_thrown_until(value, min_frame_len)
             }
 
             error => {
                 let value = self.runtime_error_value(&error)?;
 
-                if self.propagate_thrown(value, min_frame_len)? {
+                if self.propagate_thrown_until(value, min_frame_len)? {
                     Ok(true)
                 } else {
                     Err(error)
@@ -102,6 +171,13 @@ impl VirtualMachine {
     }
 
     pub(crate) fn propagate_thrown(
+        &mut self,
+        value: Value,
+    ) -> Result<bool, RuntimeError> {
+        self.propagate_thrown_until(value, 0)
+    }
+
+    pub(crate) fn propagate_thrown_until(
         &mut self,
         value: Value,
         min_frame_len: usize,
