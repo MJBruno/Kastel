@@ -146,8 +146,6 @@ pub struct VirtualMachine {
     #[cfg(feature = "profile")]
     pub(crate) profile_counts: [u64; 256],
 
-    #[cfg(feature = "profile")]
-    pub(crate) profile_times: [std::time::Duration; 256],
 
     #[cfg(feature = "profile")]
     pub(crate) profile_read_bytes: u64,
@@ -195,8 +193,6 @@ impl VirtualMachine {
             #[cfg(feature = "profile")]
             profile_counts: [0; 256],
 
-            #[cfg(feature = "profile")]
-            profile_times: [std::time::Duration::ZERO; 256],
 
             #[cfg(feature = "profile")]
             profile_read_bytes: 0,

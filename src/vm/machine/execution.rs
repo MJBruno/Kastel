@@ -25,7 +25,52 @@ impl VirtualMachine {
 
             let instruction = self.read_byte()?;
 
-            match self.dispatch(instruction) {
+            #[cfg(feature = "profile")]
+            self.profile_instruction(instruction);
+
+            let result = match instruction {
+                // ========================================================
+                // HOT DISPATCH
+                // ========================================================
+
+                30 => {
+                    self.loop_back()?;
+                    Ok(false)
+                }
+
+                63 => {
+                    self.add_local_const()?;
+                    Ok(false)
+                }
+
+                64 => {
+                    self.less_local_const()?;
+                    Ok(false)
+                }
+
+                66 => {
+                    self.less_local_const_jump()?;
+                    Ok(false)
+                }
+
+                67 => {
+                    self.loop_less_add_local_const()?;
+                    Ok(false)
+                }
+
+                68 => {
+                    self.add_local_local()?;
+                    Ok(false)
+                }
+
+                // ========================================================
+                // GENERAL DISPATCH
+                // ========================================================
+
+                _ => self.dispatch(instruction),
+            };
+
+            match result {
                 Ok(true) => {
                     self.print_profile();
                     return Ok(());

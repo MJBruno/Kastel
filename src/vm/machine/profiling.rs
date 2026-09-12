@@ -27,23 +27,7 @@ impl VirtualMachine {
 
                 let opcode = OpCode::try_from(instruction as u8).ok()?;
 
-                let sample_count = count.div_ceil(4096);
-
-                let sampled_time = self.profile_times[instruction];
-
-                let estimated_time = if sample_count > 0 {
-                    sampled_time.mul_f64(4096.0)
-                } else {
-                    std::time::Duration::ZERO
-                };
-
-                let average_ns = if sample_count > 0 {
-                    sampled_time.as_nanos() as f64 / sample_count as f64
-                } else {
-                    0.0
-                };
-
-                Some((format!("{opcode:?}"), count, estimated_time, average_ns))
+                Some((format!("{opcode:?}"), count))
             })
             .collect::<Vec<_>>();
 
@@ -64,18 +48,11 @@ impl VirtualMachine {
         }
 
         eprintln!();
-        eprintln!(
-            "{:<20} {:>12} {:>14} {:>14}",
-            "Opcode", "count", "est. time", "sample ns"
-        );
+        eprintln!("{:<28} {:>12}", "Opcode", "count");
+        eprintln!("{:-<28} {:-<12}", "", "");
 
-        eprintln!("{:-<20} {:-<12} {:-<14} {:-<14}", "", "", "", "");
-
-        for (name, count, estimated_time, average_ns) in entries {
-            eprintln!(
-                "{:<20} {:>12} {:>14?} {:>12.1} ns",
-                name, count, estimated_time, average_ns
-            );
+        for (name, count) in entries {
+            eprintln!("{:<28} {:>12}", name, count);
         }
 
         eprintln!("========================================");

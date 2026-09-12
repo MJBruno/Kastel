@@ -85,12 +85,12 @@ pub enum OpCode {
     JumpIfFalsePop,
     LessLocalConstJump,
     LoopLessAddLocalConst,
+    AddLocalLocal,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::LoopLessAddLocalConst as usize + 1;
-
+    pub const COUNT: usize = Self::AddLocalLocal as usize + 1;
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     ///
     /// Cette fonction est utilisée directement par le dispatcher VM.
@@ -165,7 +165,8 @@ mod tests {
         assert_eq!(OpCode::JumpIfFalsePop as u8, 65);
         assert_eq!(OpCode::LessLocalConstJump as u8, 66);
         assert_eq!(OpCode::LoopLessAddLocalConst as u8, 67);
-        assert_eq!(OpCode::COUNT, 68);
+        assert_eq!(OpCode::AddLocalLocal as u8, 68);
+        assert_eq!(OpCode::COUNT, 69);
     }
 
     #[test]

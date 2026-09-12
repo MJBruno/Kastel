@@ -160,12 +160,18 @@ impl VirtualMachine {
         let constant_index = self.read_byte()? as usize;
         let offset = self.read_short()? as usize;
 
-        let (slot_start, constant) = {
+        let (local_index, constant) = {
             let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
 
             if slot >= frame.local_count {
                 return Err(RuntimeError::InvalidFunction);
             }
+
+            let local_index = frame
+                .slot_start
+                .checked_add(1)
+                .and_then(|index| index.checked_add(slot))
+                .ok_or(RuntimeError::InvalidFunction)?;
 
             let constant = frame
                 .chunk
@@ -173,31 +179,53 @@ impl VirtualMachine {
                 .get(constant_index)
                 .ok_or(RuntimeError::InvalidFunction)?;
 
-            (frame.slot_start, constant)
+            (local_index, constant)
         };
 
-        let local_index = slot_start
-            .checked_add(1)
-            .and_then(|index| index.checked_add(slot))
-            .ok_or(RuntimeError::InvalidFunction)?;
+        // Hot path : Integer < Integer.
+        if let (Some(Value::Integer(local)), Value::Integer(constant)) =
+            (self.stack.get(local_index), constant)
+        {
+            if *local >= *constant {
+                let frame = self
+                    .frames
+                    .last_mut()
+                    .ok_or(RuntimeError::InvalidFunction)?;
 
-        let is_less = match (self.stack.get(local_index), constant) {
-            (Some(Value::Integer(local)), Value::Integer(constant)) => *local < *constant,
+                let new_ip = frame
+                    .ip
+                    .checked_add(offset)
+                    .ok_or(RuntimeError::InvalidFunction)?;
 
-            (Some(local), constant) => {
-                match Value::compare_numeric(local.clone(), constant.clone(), ComparisonOp::Less)? {
-                    Value::Boolean(value) => value,
-                    _ => return Err(RuntimeError::InvalidFunction),
+                if new_ip >= frame.chunk.code.len() {
+                    return Err(RuntimeError::InvalidFunction);
                 }
+
+                frame.ip = new_ip;
             }
 
-            (None, _) => {
-                return Err(RuntimeError::StackUnderflow);
-            }
+            return Ok(());
+        }
+
+        // Fallback : autres types numériques.
+        let local = self
+            .stack
+            .get(local_index)
+            .cloned()
+            .ok_or(RuntimeError::StackUnderflow)?;
+
+        let constant = constant.clone();
+
+        let is_less = match Value::compare_numeric(local, constant, ComparisonOp::Less)? {
+            Value::Boolean(value) => value,
+            _ => return Err(RuntimeError::InvalidFunction),
         };
 
         if !is_less {
-            let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
+            let frame = self
+                .frames
+                .last_mut()
+                .ok_or(RuntimeError::InvalidFunction)?;
 
             let new_ip = frame
                 .ip
@@ -208,10 +236,7 @@ impl VirtualMachine {
                 return Err(RuntimeError::InvalidFunction);
             }
 
-            self.frames
-                .last_mut()
-                .ok_or(RuntimeError::InvalidFunction)?
-                .ip = new_ip;
+            frame.ip = new_ip;
         }
 
         Ok(())
@@ -508,7 +533,77 @@ impl VirtualMachine {
 
         Ok(())
     }
+    #[inline(always)]
+    pub(crate) fn add_local_local(&mut self) -> Result<(), RuntimeError> {
+        let left_slot = self.read_byte()? as usize;
+        let right_slot = self.read_byte()? as usize;
 
+        let (left_index, right_index) = {
+            let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
+
+            if left_slot >= frame.local_count || right_slot >= frame.local_count {
+                return Err(RuntimeError::InvalidFunction);
+            }
+
+            let left_index = frame
+                .slot_start
+                .checked_add(1)
+                .and_then(|index| index.checked_add(left_slot))
+                .ok_or(RuntimeError::InvalidFunction)?;
+
+            let right_index = frame
+                .slot_start
+                .checked_add(1)
+                .and_then(|index| index.checked_add(right_slot))
+                .ok_or(RuntimeError::InvalidFunction)?;
+
+            (left_index, right_index)
+        };
+
+        // Hot path : Integer + Integer.
+        if let (Some(Value::Integer(left)), Some(Value::Integer(right))) =
+            (self.stack.get(left_index), self.stack.get(right_index))
+        {
+            let result = left.wrapping_add(*right);
+
+            let target = self
+                .stack
+                .get_mut(left_index)
+                .ok_or(RuntimeError::StackUnderflow)?;
+
+            *target = Value::Integer(result);
+
+            return Ok(());
+        }
+
+        // Fallback : conserve exactement la sémantique de `add()`.
+        let left = self
+            .stack
+            .get(left_index)
+            .cloned()
+            .ok_or(RuntimeError::StackUnderflow)?;
+
+        let right = self
+            .stack
+            .get(right_index)
+            .cloned()
+            .ok_or(RuntimeError::StackUnderflow)?;
+
+        let result = match (left.as_string_value(), right.as_string_value()) {
+            (Some(left), Some(right)) => Value::new_string(format!("{left}{right}")),
+
+            _ => Value::binary_numeric_op(left, right, NumericOp::Add)?,
+        };
+
+        let target = self
+            .stack
+            .get_mut(left_index)
+            .ok_or(RuntimeError::StackUnderflow)?;
+
+        *target = result;
+
+        Ok(())
+    }
     #[inline(always)]
     pub(crate) fn not(&mut self) -> Result<(), RuntimeError> {
         let value = self.pop()?;

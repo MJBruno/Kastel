@@ -36,17 +36,20 @@ impl VirtualMachine {
             .last_mut()
             .ok_or(RuntimeError::InvalidFunction)?;
 
-        if frame.ip >= frame.chunk.code.len() {
+        let ip = frame.ip;
+
+        if ip >= frame.chunk.code.len() {
             return Err(RuntimeError::InvalidFunction);
         }
 
-        let byte = frame.chunk.code[frame.ip];
+        // La vérification ci-dessus garantit que l'accès est valide.
+        let byte = unsafe { *frame.chunk.code.get_unchecked(ip) };
 
-        frame.ip += 1;
+        frame.ip = ip + 1;
 
         Ok(byte)
     }
-   
+
     #[inline(always)]
     pub(crate) fn read_short(&mut self) -> Result<u16, RuntimeError> {
         #[cfg(feature = "profile")]

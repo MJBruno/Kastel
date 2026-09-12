@@ -30,10 +30,14 @@ impl VirtualMachine {
         Ok(())
     }
 
+    #[inline(always)]
     pub(crate) fn loop_back(&mut self) -> Result<(), RuntimeError> {
         let offset = self.read_short()? as usize;
 
-        let frame = self.current_frame()?;
+        let frame = self
+            .frames
+            .last_mut()
+            .ok_or(RuntimeError::InvalidFunction)?;
 
         let new_ip = frame
             .ip
@@ -44,7 +48,7 @@ impl VirtualMachine {
             return Err(RuntimeError::InvalidFunction);
         }
 
-        self.current_frame_mut()?.ip = new_ip;
+        frame.ip = new_ip;
 
         Ok(())
     }

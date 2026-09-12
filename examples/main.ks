@@ -1,11 +1,13 @@
 function benchmark() {
     let i = 0;
+    let sum = 0;
 
-    while (i < 1000000) {
-        i += 1;
+    while i < 1_000_000 {
+        sum = sum + i;
+        i = i + 1;
     }
 
-    return i;
+    println(sum);
 }
 
-println(benchmark());
+benchmark();

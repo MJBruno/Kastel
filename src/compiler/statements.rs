@@ -6,7 +6,7 @@ use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
 use super::variables::{Global, VariableLocation};
-
+#[allow(dead_code)]
 impl Compiler {
     pub(crate) fn register_export(&mut self, name: &str) -> Result<(), CompileError> {
         if self.exports.iter().any(|export| export == name) {
@@ -60,6 +60,44 @@ impl Compiler {
 
             Statement::Assignment { target, value } => match target {
                 AssignmentTarget::Variable(name) => {
+                    let local_local_optimized = match value {
+                        Expression::Binary {
+                            left,
+                            operator: BinaryOp::Add,
+                            right,
+                        } => match (left.as_ref(), right.as_ref()) {
+                            (Expression::Variable(left_name), Expression::Variable(right_name))
+                                if left_name == name =>
+                            {
+                                let left_location = self.resolve_variable(left_name)?;
+                                let right_location = self.resolve_variable(right_name)?;
+
+                                match (left_location, right_location) {
+                                    (
+                                        VariableLocation::Local(left_slot),
+                                        VariableLocation::Local(right_slot),
+                                    ) => {
+                                        self.emit_bytes(OpCode::AddLocalLocal, left_slot as u8);
+
+                                        self.emit_byte(right_slot as u8);
+
+                                        true
+                                    }
+
+                                    _ => false,
+                                }
+                            }
+
+                            _ => false,
+                        },
+
+                        _ => false,
+                    };
+
+                    if local_local_optimized {
+                        return Ok(());
+                    }
+
                     /*
                      * Fast path :
                      *
@@ -68,13 +106,8 @@ impl Compiler {
                      * devient :
                      *
                      *     AddLocalConst <slot> <constant>
-                     *
-                     * Cette optimisation est volontairement limitée à :
-                     *
-                     *     local = local + literal numérique
-                     *
-                     * Tout autre cas utilise le chemin normal.
                      */
+                    #[allow(unused_variables)]
                     let optimized = match value {
                         Expression::Binary {
                             left,
@@ -118,56 +151,6 @@ impl Compiler {
 
                         _ => false,
                     };
-
-                    if !optimized {
-                        self.compile_expression(value)?;
-                        self.compile_variable_set(name)?;
-
-                        /*
-                         * Une affectation utilisée comme statement ne laisse
-                         * aucune valeur sur la pile.
-                         *
-                         * Pour un local, SetLocalPop fusionne :
-                         *
-                         *     SetLocal
-                         *     Pop
-                         *
-                         * en une seule instruction.
-                         *
-                         * Pour global/upvalue, le chemin existant est conservé.
-                         */
-                        let location = self.resolve_variable(name)?;
-
-                        match location {
-                            VariableLocation::Local(slot) => {
-                                /*
-                                 * compile_expression(value) a déjà placé
-                                 * la valeur sur la pile.
-                                 *
-                                 * On remplace directement le dernier opcode
-                                 * SetLocal émis par compile_variable_set().
-                                 */
-                                let opcode_offset =
-                                    self.chunk.code.len().checked_sub(2).ok_or_else(|| {
-                                        CompileError::InternalCompilerError(
-                                            "bytecode d'affectation locale invalide".to_string(),
-                                        )
-                                    })?;
-
-                                if self.chunk.code[opcode_offset] == OpCode::SetLocal.into()
-                                    && self.chunk.code[opcode_offset + 1] == slot as u8
-                                {
-                                    self.chunk.code[opcode_offset] = OpCode::SetLocalPop.into();
-                                } else {
-                                    self.emit_opcode(OpCode::Pop);
-                                }
-                            }
-
-                            VariableLocation::Global | VariableLocation::Upvalue(_) => {
-                                self.emit_opcode(OpCode::Pop);
-                            }
-                        }
-                    }
                 }
 
                 AssignmentTarget::Index { object, index } => {

@@ -20,7 +20,7 @@ pub enum VariableLocation {
     Global,
     Upvalue(usize),
 }
-
+#[allow(dead_code)]
 impl Compiler {
     // ============================================================
     //                      VARIABLES
