@@ -4,11 +4,7 @@ use super::VirtualMachine;
 
 use crate::{
     error::runtime_error::RuntimeError,
-    runtime::{
-        gc_handle::Gc,
-        object::Object,
-        value::Value,
-    },
+    runtime::{gc_handle::Gc, object::Object, value::Value},
 };
 
 impl VirtualMachine {
@@ -107,8 +103,7 @@ impl VirtualMachine {
 
         self.stack.truncate(start);
 
-        let class_value =
-            Value::new_class(class_name, superclass, interfaces, methods);
+        let class_value = Value::new_class(class_name, superclass, interfaces, methods);
 
         let class_handle = match &class_value {
             Value::Object(handle) => handle.clone(),
@@ -140,7 +135,6 @@ impl VirtualMachine {
         Ok(())
     }
 
-  
     // ========================================================
     // INTERFACE VALIDATION
     // ========================================================
@@ -153,11 +147,7 @@ impl VirtualMachine {
             let object = interface.borrow();
 
             match &*object {
-                Object::Interface {
-                    bases,
-                    methods,
-                    ..
-                } => (bases.clone(), methods.clone()),
+                Object::Interface { bases, methods, .. } => (bases.clone(), methods.clone()),
 
                 _ => return Err(RuntimeError::TypeError),
             }
@@ -180,9 +170,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    fn validate_interfaces(
-        class: &Gc<Object>,
-    ) -> Result<(), RuntimeError> {
+    fn validate_interfaces(class: &Gc<Object>) -> Result<(), RuntimeError> {
         let interfaces = {
             let object = class.borrow();
 
@@ -204,14 +192,10 @@ impl VirtualMachine {
 
             let mut requirements = HashMap::<String, usize>::new();
 
-            Self::collect_interface_methods(
-                interface.clone(),
-                &mut requirements,
-            )?;
+            Self::collect_interface_methods(interface.clone(), &mut requirements)?;
 
             for (name, required_arity) in requirements {
-                let method =
-                    Self::find_class_method_from(class.clone(), &name);
+                let method = Self::find_class_method_from(class.clone(), &name);
 
                 let Some(method) = method else {
                     return Err(RuntimeError::InterfaceMethodMissing {
@@ -324,8 +308,7 @@ impl VirtualMachine {
 
             let arity = match arity_value {
                 Value::Integer(value) if *value >= 0 => {
-                    usize::try_from(*value)
-                        .map_err(|_| RuntimeError::TypeError)?
+                    usize::try_from(*value).map_err(|_| RuntimeError::TypeError)?
                 }
 
                 _ => return Err(RuntimeError::TypeError),
@@ -346,10 +329,7 @@ impl VirtualMachine {
     // NEW INSTANCE
     // ========================================================
 
-    pub(crate) fn op_new_instance(
-        &mut self,
-        arg_count: usize,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_new_instance(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
         let required = arg_count
             .checked_add(1)
             .ok_or(RuntimeError::InvalidFunction)?;
@@ -458,32 +438,28 @@ impl VirtualMachine {
                 let mut current = Some(value_class);
 
                 while let Some(class) = current {
-                    if Gc::ptr_eq(&class, target_handle) {
+                    let class_handle = match class.as_ref() {
+                        Some(handle) => handle,
+                        None => break,
+                    };
+
+                    if Gc::ptr_eq(class_handle, target_handle) {
                         return Ok(true);
                     }
 
                     current = {
-                        let object = class.borrow();
+                        let object = class_handle.borrow();
 
                         match &*object {
-                            Object::Class { superclass, .. } => {
-                                superclass.clone()
-                            }
-
+                            Object::Class { superclass, .. } => Some(superclass.clone()),
                             _ => None,
                         }
                     };
                 }
-
                 Ok(false)
             }
 
-            1 => {
-                Self::class_implements_interface(
-                    value_class,
-                    target_handle.clone(),
-                )
-            }
+            1 => Self::class_implements_interface(value_class.unwrap(), target_handle.clone()),
 
             _ => Err(RuntimeError::TypeError),
         }

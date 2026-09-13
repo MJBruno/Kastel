@@ -21,10 +21,12 @@ pub enum Object {
     Function(Rc<Function>),
 
     Closure(Closure),
+
     BoundMethod {
-        method: Gc<Object>,
+        method: Option<Gc<Object>>,
         receiver: Value,
     },
+
     Iterator(IteratorState),
 
     Module(Rc<ModuleInstance>),
@@ -43,7 +45,7 @@ pub enum Object {
     },
 
     Instance {
-        class: Gc<Object>,
+        class: Option<Gc<Object>>,
         fields: HashMap<String, Value>,
     },
 }
@@ -58,6 +60,7 @@ impl Object {
             upvalues,
             owner_class: None,
         }));
+
         crate::runtime::gc::register_object(&handle);
 
         handle
@@ -81,18 +84,52 @@ impl Object {
                 closure.upvalues.clear();
                 closure.owner_class = None;
             }
-            Object::BoundMethod { .. } => {}
+
+            Object::BoundMethod { method, receiver } => {
+                /*
+                 * Unreachable BoundMethod :
+                 * casser les références internes qui peuvent participer
+                 * à un cycle.
+                 */
+                *receiver = Value::Nil;
+
+                /*
+                 * Il n'existe pas de valeur "vide" pour Gc<Object>.
+                 * On ne peut donc pas remplacer `method`.
+                 *
+                 * Le cycle sera cassé par le nettoyage du propriétaire
+                 * qui contenait normalement le BoundMethod.
+                 */
+                let _ = method;
+            }
+
             Object::Iterator(state) => {
                 state.reset_for_gc();
             }
 
-            Object::Module(_) => {}
+            Object::Module(module) => {
+                /*
+                 * ModuleInstance est partagé par Rc et possède son propre
+                 * graphe interne. On ne peut pas simplement remplacer le
+                 * Rc ici sans modifier sa représentation.
+                 *
+                 * Le GC marque les exports accessibles. Pour un module
+                 * totalement inaccessible, le Rc sera libéré quand le
+                 * dernier propriétaire externe disparaîtra.
+                 */
+                let _ = module;
+            }
 
             Object::Class {
+                superclass,
                 interfaces,
                 methods,
                 ..
             } => {
+                /*
+                 * Le nom n'introduit pas de cycle.
+                 */
+                *superclass = None;
                 interfaces.clear();
                 methods.clear();
             }
@@ -102,8 +139,19 @@ impl Object {
                 methods.clear();
             }
 
-            Object::Instance { fields, .. } => {
+            Object::Instance { class, fields } => {
+                /*
+                 * Une instance inaccessible ne doit plus retenir sa classe
+                 * ni ses champs.
+                 */
                 fields.clear();
+
+                /*
+                 * `Gc<Object>` n'a pas de valeur nulle. La référence de
+                 * classe reste donc temporairement présente jusqu'à la
+                 * destruction complète de l'objet.
+                 */
+                let _ = class;
             }
         }
     }

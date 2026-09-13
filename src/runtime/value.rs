@@ -78,7 +78,10 @@ impl Value {
         Self::new_heap_object(Object::Array(elements))
     }
     pub fn new_bound_method(method: Gc<Object>, receiver: Value) -> Self {
-        Self::new_heap_object(Object::BoundMethod { method, receiver })
+        Self::new_heap_object(Object::BoundMethod {
+            method: Some(method),
+            receiver,
+        })
     }
     pub fn new_class(
         name: String,
@@ -106,7 +109,7 @@ impl Value {
     }
     pub fn new_instance(class: Gc<Object>) -> Self {
         Self::new_heap_object(Object::Instance {
-            class,
+            class: Some(class),
             fields: HashMap::new(),
         })
     }
@@ -497,8 +500,8 @@ impl Value {
                     let mut current = Some(class.clone());
 
                     while let Some(class_handle) = current {
+                        let class_handle = class_handle.unwrap();
                         let object = class_handle.borrow();
-
                         match &*object {
                             Object::Class {
                                 methods,
@@ -520,7 +523,7 @@ impl Value {
                                     ));
                                 }
 
-                                current = superclass.clone();
+                                current = Some(superclass.clone());
                             }
 
                             _ => {
@@ -695,19 +698,19 @@ impl std::fmt::Display for Value {
                     write!(f, "<class '{}'>", name)
                 }
 
-                Object::Instance { class, .. } => {
-                    let class = class.borrow();
+                Object::Instance { class, .. } => match class.as_ref() {
+                    Some(class_handle) => {
+                        let class_ref = class_handle.borrow();
 
-                    match &*class {
-                        Object::Class { name, .. } => {
-                            write!(f, "<{} instance>", name)
-                        }
-
-                        _ => {
-                            write!(f, "<instance>")
+                        match &*class_ref {
+                            Object::Class { name, .. } => {
+                                write!(f, "<{} instance>", name)
+                            }
+                            _ => write!(f, "<instance>"),
                         }
                     }
-                }
+                    None => write!(f, "<instance>"),
+                },
                 Object::Interface { name, .. } => {
                     write!(f, "<interface '{}'>", name)
                 }

@@ -6,13 +6,25 @@ use crate::runtime::value::Value;
 
 impl VirtualMachine {
     pub fn run(&mut self) -> Result<(), RuntimeError> {
+<<<<<<< HEAD
         let mut gc_check_counter = 0usize;
 
+=======
+        self.run_internal(true)
+    }
+    #[allow(dead_code)]
+    pub(crate) fn run_without_gc(&mut self) -> Result<(), RuntimeError> {
+        self.run_internal(false)
+    }
+
+    fn run_internal(&mut self, allow_gc: bool) -> Result<(), RuntimeError> {
+>>>>>>> b172e95 (LSP)
         loop {
             if cfg!(feature = "debug_trace") {
                 self.debug_machine()?;
             }
 
+<<<<<<< HEAD
             gc_check_counter += 1;
 
             if gc_check_counter >= 256 {
@@ -22,6 +34,16 @@ impl VirtualMachine {
                     self.collect_garbage();
                 }
             }
+=======
+            if allow_gc && gc::should_collect() {
+                self.collect_garbage();
+            }
+
+            let (line, column) = self.current_position()?;
+
+            self.current_line = line;
+            self.current_column = column;
+>>>>>>> b172e95 (LSP)
 
             let instruction = self.read_byte()?;
 
@@ -117,9 +139,13 @@ impl VirtualMachine {
         min_frame_len: usize,
     ) -> Result<bool, RuntimeError> {
         match error {
+<<<<<<< HEAD
             RuntimeError::Thrown(value) => {
                 self.propagate_thrown_until(value, min_frame_len)
             }
+=======
+            RuntimeError::Thrown(value) => self.propagate_thrown(value, min_frame_len),
+>>>>>>> b172e95 (LSP)
 
             error => {
                 let value = self.runtime_error_value(&error)?;
@@ -133,10 +159,7 @@ impl VirtualMachine {
         }
     }
 
-    fn runtime_error_value(
-        &self,
-        error: &RuntimeError,
-    ) -> Result<Value, RuntimeError> {
+    fn runtime_error_value(&self, error: &RuntimeError) -> Result<Value, RuntimeError> {
         match error {
             RuntimeError::TypeError
             | RuntimeError::DivisionByZero
@@ -154,15 +177,11 @@ impl VirtualMachine {
             | RuntimeError::ObjectFieldNotFound { .. }
             | RuntimeError::NotIterable
             | RuntimeError::IteratorExhausted
-            | RuntimeError::InvalidShiftAmount => {
-                Ok(Value::new_string(error.to_string()))
-            }
+            | RuntimeError::InvalidShiftAmount => Ok(Value::new_string(error.to_string())),
 
             RuntimeError::Thrown(value) => Ok(value.clone()),
 
-            RuntimeError::WithLocation { source, .. } => {
-                self.runtime_error_value(source)
-            }
+            RuntimeError::WithLocation { source, .. } => self.runtime_error_value(source),
 
             RuntimeError::StackUnderflow
             | RuntimeError::InvalidOpcode(_)
@@ -189,20 +208,14 @@ impl VirtualMachine {
 
             let current_frame_index = self.frames.len() - 1;
 
-            let Some(handler_index) = self
-                .exception_handlers
-                .iter()
-                .rposition(|handler| {
-                    handler.frame_index >= min_frame_len
-                        && handler.frame_index <= current_frame_index
-                })
-            else {
+            let Some(handler_index) = self.exception_handlers.iter().rposition(|handler| {
+                handler.frame_index >= min_frame_len && handler.frame_index <= current_frame_index
+            }) else {
                 self.close_current_frame_for_exception()?;
                 continue;
             };
 
-            let handler_frame =
-                self.exception_handlers[handler_index].frame_index;
+            let handler_frame = self.exception_handlers[handler_index].frame_index;
 
             while self.frames.len() > handler_frame + 1 {
                 self.close_current_frame_for_exception()?;
@@ -213,10 +226,10 @@ impl VirtualMachine {
             }
 
             let catch_ip = self.exception_handlers[handler_index].catch_ip;
-            let finally_ip =
-                self.exception_handlers[handler_index].finally_ip;
-            let stack_height =
-                self.exception_handlers[handler_index].stack_height;
+
+            let finally_ip = self.exception_handlers[handler_index].finally_ip;
+
+            let stack_height = self.exception_handlers[handler_index].stack_height;
 
             self.restore_exception_stack(stack_height)?;
 
@@ -224,6 +237,7 @@ impl VirtualMachine {
                 self.exception_handlers[handler_index].catch_ip = None;
 
                 self.push(value);
+
                 self.current_frame_mut()?.ip = catch_ip;
 
                 return Ok(true);
