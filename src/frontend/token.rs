@@ -138,7 +138,7 @@ impl Token {
         match text {
             "let" => Some(TokenKind::Let),
             "const" => Some(TokenKind::Const),
-            "function" => Some(TokenKind::Function),
+            "func" => Some(TokenKind::Function),
             "return" => Some(TokenKind::Return),
             "if" => Some(TokenKind::If),
             "else" => Some(TokenKind::Else),
