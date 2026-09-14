@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            asset: kastel-lsp-win32-x64.exe
+            binary: kastel-lsp.exe
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            asset: kastel-lsp-linux-x64
+            binary: kastel-lsp
+
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            asset: kastel-lsp-darwin-x64
+            binary: kastel-lsp
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            asset: kastel-lsp-darwin-arm64
+            binary: kastel-lsp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        working-directory: kastel-lsp
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary
+        shell: bash
+        run: |
+          cp "kastel-lsp/target/${{ matrix.target }}/release/${{ matrix.binary }}" \
+             "${{ matrix.asset }}"
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
