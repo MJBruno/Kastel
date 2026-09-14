@@ -1,4 +1,4 @@
-from dog import *;
+from animals.dog import Dog,details;
 
 let m = new Dog("Milou");
 

@@ -12,10 +12,7 @@ export class Dog : Animal {
     func init(name) {
         this.name = name
     }
-
-    
 }
-
 
 export func details() {
     println("Terminer")
