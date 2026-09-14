@@ -124,19 +124,55 @@ impl VirtualMachine {
 
                 match object_kind {
                     0 => {
-                        let callable = receiver.get_property(&method_name)?;
+                        let class_handle = {
+                            let object = handle.borrow();
 
-                        self.push(callable);
+                            match &*object {
+                                Object::Instance { class, .. } => {
+                                    class.clone().ok_or(RuntimeError::TypeError)?
+                                }
+
+                                _ => return Err(RuntimeError::TypeError),
+                            }
+                        };
+
+                        let method = Self::find_class_method_from(class_handle, &method_name)
+                            .ok_or(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            })?;
+
+                        let method_handle = match method {
+                            Value::Object(method_handle)
+                                if matches!(&*method_handle.borrow(), Object::Closure(_)) =>
+                            {
+                                method_handle
+                            }
+
+                            _ => return Err(RuntimeError::NotCallable),
+                        };
+
+                        /*
+                         * obj.method(a, b)
+                         *
+                         * devient :
+                         *
+                         * method(obj, a, b)
+                         *
+                         * La closure de méthode attend `this` comme premier paramètre.
+                         */
+
+                        self.push(Value::Object(method_handle));
+                        self.push(receiver);
 
                         for argument in args.iter().skip(1) {
                             self.push(argument.clone());
                         }
 
-                        self.execute_call(arg_count)?;
+                        self.execute_call(arg_count + 1)?;
 
                         return Ok(());
                     }
-
                     1 => self.invoke_iterator_method(&method_name, &args)?,
 
                     2 => match crate::stdlib::string::dispatch_method(&method_name, &args)? {

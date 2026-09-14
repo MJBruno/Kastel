@@ -1,10 +1,6 @@
+from dog import *;
 
-let person = {
-    name: "Nicholas",
-    age: 29, 
-    job: "Software Engineer",
-    sayName: () => {
-            println(person.name);
-        }
-}
+let m = new Dog("Milou");
 
+m.speak();
+details();

@@ -17,193 +17,271 @@ impl Chunk {
 
         let instruction = self.code[offset];
 
-        match instruction {
+        let opcode = match OpCode::from_byte(instruction) {
+            Ok(opcode) => opcode,
+            Err(()) => {
+                println!("OP_UNKNOWN {instruction}");
+                return offset + 1;
+            }
+        };
+
+        match opcode {
             // =====================================================
             // CONSTANTS
             // =====================================================
-            x if x == OpCode::Constant.into() => self.constant_instruction("OP_CONSTANT", offset),
-
-            x if x == OpCode::DefineGlobal.into() => {
-                self.constant_instruction("OP_DEFINE_GLOBAL", offset)
-            }
-
-            x if x == OpCode::GetGlobal.into() => {
-                self.constant_instruction("OP_GET_GLOBAL", offset)
-            }
-
-            // =====================================================
-            // LOCALS / UPVALUES
-            // =====================================================
-            x if x == OpCode::GetLocal.into() => self.byte_instruction("OP_GET_LOCAL", offset),
-
-            x if x == OpCode::SetLocal.into() => self.byte_instruction("OP_SET_LOCAL", offset),
-
-            x if x == OpCode::GetUpvalue.into() => self.byte_instruction("OP_GET_UPVALUE", offset),
-
-            x if x == OpCode::SetUpvalue.into() => self.byte_instruction("OP_SET_UPVALUE", offset),
-            x if x == OpCode::Import.into() => self.constant_instruction("OP_IMPORT", offset),
-
-            x if x == OpCode::GetProperty.into() => {
-                self.constant_instruction("OP_GET_PROPERTY", offset)
-            }
-
-            x if x == OpCode::SetProperty.into() => {
-                self.constant_instruction("OP_SET_PROPERTY", offset)
-            }
-            // =====================================================
-            // ARITHMETIC
-            // =====================================================
-            x if x == OpCode::Add.into() => self.simple_instruction("OP_ADD", offset),
-
-            x if x == OpCode::Subtract.into() => self.simple_instruction("OP_SUBTRACT", offset),
-
-            x if x == OpCode::Multiply.into() => self.simple_instruction("OP_MULTIPLY", offset),
-
-            x if x == OpCode::Divide.into() => self.simple_instruction("OP_DIVIDE", offset),
-
-            x if x == OpCode::Modulo.into() => self.simple_instruction("OP_MODULO", offset),
-
-            x if x == OpCode::Negate.into() => self.simple_instruction("OP_NEGATE", offset),
-
-            x if x == OpCode::BitAnd.into() => self.simple_instruction("OP_BIT_AND", offset),
-            x if x == OpCode::BitOr.into() => self.simple_instruction("OP_BIT_OR", offset),
-            x if x == OpCode::BitXor.into() => self.simple_instruction("OP_BIT_XOR", offset),
-            x if x == OpCode::BitNot.into() => self.simple_instruction("OP_BIT_NOT", offset),
-            x if x == OpCode::ShiftLeft.into() => self.simple_instruction("OP_SHIFT_LEFT", offset),
-            x if x == OpCode::ShiftRight.into() => {
-                self.simple_instruction("OP_SHIFT_RIGHT", offset)
-            }
-
-            // =====================================================
-            // COMPARISON
-            // =====================================================
-            x if x == OpCode::Equal.into() => self.simple_instruction("OP_EQUAL", offset),
-
-            x if x == OpCode::Greater.into() => self.simple_instruction("OP_GREATER", offset),
-
-            x if x == OpCode::Less.into() => self.simple_instruction("OP_LESS", offset),
-
-            x if x == OpCode::Not.into() => self.simple_instruction("OP_NOT", offset),
+            OpCode::Constant => self.constant_instruction("OP_CONSTANT", offset),
 
             // =====================================================
             // LITERALS
             // =====================================================
-            x if x == OpCode::Nil.into() => self.simple_instruction("OP_NIL", offset),
+            OpCode::Nil => self.simple_instruction("OP_NIL", offset),
 
-            x if x == OpCode::True.into() => self.simple_instruction("OP_TRUE", offset),
+            OpCode::True => self.simple_instruction("OP_TRUE", offset),
 
-            x if x == OpCode::False.into() => self.simple_instruction("OP_FALSE", offset),
+            OpCode::False => self.simple_instruction("OP_FALSE", offset),
+
+            // =====================================================
+            // COMPARISON / LOGICAL
+            // =====================================================
+            OpCode::Equal => self.simple_instruction("OP_EQUAL", offset),
+
+            OpCode::Greater => self.simple_instruction("OP_GREATER", offset),
+
+            OpCode::Less => self.simple_instruction("OP_LESS", offset),
+
+            OpCode::Not => self.simple_instruction("OP_NOT", offset),
+
+            OpCode::Is => self.constant_instruction("OP_IS", offset),
+
+            // =====================================================
+            // ARITHMETIC
+            // =====================================================
+            OpCode::Add => self.simple_instruction("OP_ADD", offset),
+
+            OpCode::Subtract => self.simple_instruction("OP_SUBTRACT", offset),
+
+            OpCode::Multiply => self.simple_instruction("OP_MULTIPLY", offset),
+
+            OpCode::Divide => self.simple_instruction("OP_DIVIDE", offset),
+
+            OpCode::Modulo => self.simple_instruction("OP_MODULO", offset),
+
+            OpCode::Negate => self.simple_instruction("OP_NEGATE", offset),
+
+            // =====================================================
+            // BITWISE
+            // =====================================================
+            OpCode::BitAnd => self.simple_instruction("OP_BIT_AND", offset),
+
+            OpCode::BitOr => self.simple_instruction("OP_BIT_OR", offset),
+
+            OpCode::BitXor => self.simple_instruction("OP_BIT_XOR", offset),
+
+            OpCode::BitNot => self.simple_instruction("OP_BIT_NOT", offset),
+
+            OpCode::ShiftLeft => self.simple_instruction("OP_SHIFT_LEFT", offset),
+
+            OpCode::ShiftRight => self.simple_instruction("OP_SHIFT_RIGHT", offset),
 
             // =====================================================
             // GLOBALS
             // =====================================================
-            x if x == OpCode::SetGlobal.into() => {
-                self.constant_instruction("OP_SET_GLOBAL", offset)
-            }
+            OpCode::DefineGlobal => self.constant_instruction("OP_DEFINE_GLOBAL", offset),
+
+            OpCode::SetGlobal => self.constant_instruction("OP_SET_GLOBAL", offset),
+
+            OpCode::GetGlobal => self.constant_instruction("OP_GET_GLOBAL", offset),
+
+            // =====================================================
+            // LOCALS / UPVALUES
+            // =====================================================
+            OpCode::SetLocal => self.byte_instruction("OP_SET_LOCAL", offset),
+
+            OpCode::GetLocal => self.byte_instruction("OP_GET_LOCAL", offset),
+
+            OpCode::GetUpvalue => self.byte_instruction("OP_GET_UPVALUE", offset),
+
+            OpCode::SetUpvalue => self.byte_instruction("OP_SET_UPVALUE", offset),
+
+            // =====================================================
+            // MODULES
+            // =====================================================
+            OpCode::Import => self.constant_instruction("OP_IMPORT", offset),
+
+            OpCode::ImportAll => self.constant_instruction("OP_IMPORT_ALL", offset),
 
             // =====================================================
             // CONTROL FLOW
             // =====================================================
-            x if x == OpCode::JumpIfFalse.into() => self.jump_instruction("OP_JUMP", offset, false),
+            OpCode::JumpIfFalse => self.jump_instruction("OP_JUMP_IF_FALSE", offset, false),
 
-            x if x == OpCode::Jump.into() => self.jump_instruction("OP_JUMP", offset, false),
+            OpCode::Jump => self.jump_instruction("OP_JUMP", offset, false),
 
-            x if x == OpCode::Loop.into() => self.jump_instruction("OP_LOOP", offset, true),
+            OpCode::Loop => self.jump_instruction("OP_LOOP", offset, true),
 
             // =====================================================
             // STACK / CALL
             // =====================================================
-            x if x == OpCode::Pop.into() => self.simple_instruction("OP_POP", offset),
+            OpCode::Pop => self.simple_instruction("OP_POP", offset),
 
-            x if x == OpCode::Call.into() => self.byte_instruction("OP_CALL", offset),
+            OpCode::Call => self.byte_instruction("OP_CALL", offset),
 
             // =====================================================
-            // ARRAYS
+            // ARRAYS / OBJECTS
             // =====================================================
-            x if x == OpCode::Array.into() => self.byte_instruction("OP_ARRAY", offset),
+            OpCode::Array => self.byte_instruction("OP_ARRAY", offset),
 
-            x if x == OpCode::Object.into() => self.byte_instruction("OP_OBJECT", offset),
+            OpCode::Object => self.byte_instruction("OP_OBJECT", offset),
 
-            x if x == OpCode::GetIterator.into() => {
-                self.simple_instruction("OP_GET_ITERATOR", offset)
-            }
+            OpCode::GetIndex => self.simple_instruction("OP_GET_INDEX", offset),
 
-            x if x == OpCode::IteratorHasNext.into() => {
-                self.simple_instruction("OP_ITERATOR_HAS_NEXT", offset)
-            }
+            OpCode::SetIndex => self.simple_instruction("OP_SET_INDEX", offset),
 
-            x if x == OpCode::IteratorNext.into() => {
-                self.simple_instruction("OP_ITERATOR_NEXT", offset)
-            }
+            OpCode::ArrayLength => self.simple_instruction("OP_ARRAY_LENGTH", offset),
 
-            x if x == OpCode::GetIndex.into() => self.simple_instruction("OP_GET_INDEX", offset),
+            OpCode::ArrayPush => self.simple_instruction("OP_ARRAY_PUSH", offset),
 
-            x if x == OpCode::SetIndex.into() => self.simple_instruction("OP_SET_INDEX", offset),
+            OpCode::ArrayPop => self.simple_instruction("OP_ARRAY_POP", offset),
 
-            x if x == OpCode::ArrayLength.into() => {
-                self.simple_instruction("OP_ARRAY_LENGTH", offset)
-            }
+            OpCode::ArrayInsert => self.simple_instruction("OP_ARRAY_INSERT", offset),
 
-            x if x == OpCode::ArrayPush.into() => self.simple_instruction("OP_ARRAY_PUSH", offset),
+            OpCode::ArrayRemove => self.simple_instruction("OP_ARRAY_REMOVE", offset),
 
-            x if x == OpCode::ArrayPop.into() => self.simple_instruction("OP_ARRAY_POP", offset),
+            OpCode::ArrayClear => self.simple_instruction("OP_ARRAY_CLEAR", offset),
 
-            x if x == OpCode::ArrayInsert.into() => {
-                self.simple_instruction("OP_ARRAY_INSERT", offset)
-            }
+            OpCode::ArrayContains => self.simple_instruction("OP_ARRAY_CONTAINS", offset),
 
-            x if x == OpCode::ArrayRemove.into() => {
-                self.simple_instruction("OP_ARRAY_REMOVE", offset)
-            }
+            // =====================================================
+            // ITERATORS
+            // =====================================================
+            OpCode::GetIterator => self.simple_instruction("OP_GET_ITERATOR", offset),
 
-            x if x == OpCode::ArrayClear.into() => {
-                self.simple_instruction("OP_ARRAY_CLEAR", offset)
-            }
+            OpCode::IteratorHasNext => self.simple_instruction("OP_ITERATOR_HAS_NEXT", offset),
 
-            x if x == OpCode::ArrayContains.into() => {
-                self.simple_instruction("OP_ARRAY_CONTAINS", offset)
-            }
+            OpCode::IteratorNext => self.simple_instruction("OP_ITERATOR_NEXT", offset),
 
             // =====================================================
             // CLOSURES
             // =====================================================
-            x if x == OpCode::Closure.into() => self.closure_instruction(offset),
+            OpCode::Closure => self.closure_instruction(offset),
+
+            // =====================================================
+            // PROPERTIES
+            // =====================================================
+            OpCode::GetProperty => self.constant_instruction("OP_GET_PROPERTY", offset),
+
+            OpCode::SetProperty => self.constant_instruction("OP_SET_PROPERTY", offset),
+
+            // =====================================================
+            // METHODS
+            // =====================================================
+            OpCode::InvokeMethod => self.constant_instruction("OP_INVOKE_METHOD", offset),
+
+            OpCode::InvokeBaseMethod => self.constant_instruction("OP_INVOKE_BASE_METHOD", offset),
+
+            // =====================================================
+            // CLASSES / INSTANCES / INTERFACES
+            // =====================================================
+            OpCode::Class => self.constant_instruction("OP_CLASS", offset),
+
+            OpCode::NewInstance => self.byte_instruction("OP_NEW_INSTANCE", offset),
+
+            OpCode::Interface => self.constant_instruction("OP_INTERFACE", offset),
+
+            // =====================================================
+            // EXCEPTIONS
+            // =====================================================
+            OpCode::PushExceptionHandler => {
+                self.simple_instruction("OP_PUSH_EXCEPTION_HANDLER", offset)
+            }
+
+            OpCode::PopExceptionHandler => {
+                self.simple_instruction("OP_POP_EXCEPTION_HANDLER", offset)
+            }
+
+            OpCode::Throw => self.simple_instruction("OP_THROW", offset),
+
+            OpCode::FinallyEnd => self.simple_instruction("OP_FINALLY_END", offset),
 
             // =====================================================
             // RETURN / HALT
             // =====================================================
-            x if x == OpCode::Return.into() => self.simple_instruction("OP_RETURN", offset),
+            OpCode::Return => self.simple_instruction("OP_RETURN", offset),
 
-            x if x == OpCode::Halt.into() => self.simple_instruction("OP_HALT", offset),
+            OpCode::Halt => self.simple_instruction("OP_HALT", offset),
 
-            _ => {
-                println!("OP_UNKNOWN {instruction}");
-                offset + 1
+            // =====================================================
+            // SUPER-INSTRUCTIONS
+            // =====================================================
+            OpCode::SetLocalPop => self.byte_instruction("OP_SET_LOCAL_POP", offset),
+
+            OpCode::AddLocalConst => self.byte_instruction("OP_ADD_LOCAL_CONST", offset),
+
+            OpCode::LessLocalConst => self.byte_instruction("OP_LESS_LOCAL_CONST", offset),
+
+            OpCode::JumpIfFalsePop => self.jump_instruction("OP_JUMP_IF_FALSE_POP", offset, false),
+
+            OpCode::LessLocalConstJump => {
+                self.constant_jump_instruction("OP_LESS_LOCAL_CONST_JUMP", offset)
             }
+
+            OpCode::LoopLessAddLocalConst => self.loop_less_add_local_const_instruction(offset),
+
+            OpCode::AddLocalLocal => self.two_byte_instruction("OP_ADD_LOCAL_LOCAL", offset),
         }
     }
+
+    // =============================================================
+    // SIMPLE
+    // =============================================================
 
     fn simple_instruction(&self, name: &str, offset: usize) -> usize {
         println!("{name}");
         offset + 1
     }
 
+    // =============================================================
+    // ONE BYTE OPERAND
+    // =============================================================
+
     fn byte_instruction(&self, name: &str, offset: usize) -> usize {
         if offset + 1 >= self.code.len() {
-            println!("{name:<16} <missing operand>");
+            println!("{name:<24} <missing operand>");
             return self.code.len();
         }
 
-        let slot = self.code[offset + 1];
+        let operand = self.code[offset + 1];
 
-        println!("{name:<16} {:4}", slot);
+        println!("{name:<24} {:4}", operand);
 
         offset + 2
     }
 
+    // =============================================================
+    // TWO BYTE OPERANDS
+    // =============================================================
+
+    fn two_byte_instruction(&self, name: &str, offset: usize) -> usize {
+        if offset + 2 >= self.code.len() {
+            println!("{name:<24} <missing operands>");
+            return self.code.len();
+        }
+
+        let first = self.code[offset + 1];
+        let second = self.code[offset + 2];
+
+        println!("{name:<24} {:4} {:4}", first, second);
+
+        offset + 3
+    }
+
+    // =============================================================
+    // CONSTANT OPERAND
+    // =============================================================
+
     fn constant_instruction(&self, name: &str, offset: usize) -> usize {
         if offset + 1 >= self.code.len() {
-            println!("{name:<16} <missing operand>");
+            println!("{name:<24} <missing operand>");
             return self.code.len();
         }
 
@@ -211,20 +289,24 @@ impl Chunk {
 
         match self.constants.get(constant_index) {
             Some(constant) => {
-                println!("{name:<16} {:4} '{constant}'", constant_index);
+                println!("{name:<24} {:4} '{constant}'", constant_index);
             }
 
             None => {
-                println!("{name:<16} {:4} <invalid constant>", constant_index);
+                println!("{name:<24} {:4} <invalid constant>", constant_index);
             }
         }
 
         offset + 2
     }
 
+    // =============================================================
+    // JUMP
+    // =============================================================
+
     fn jump_instruction(&self, name: &str, offset: usize, backward: bool) -> usize {
         if offset + 2 >= self.code.len() {
-            println!("{:<20} <missing operand>", name);
+            println!("{name:<24} <missing operands>");
             return self.code.len();
         }
 
@@ -234,19 +316,139 @@ impl Chunk {
         let jump = ((high << 8) | low) as usize;
 
         let target = if backward {
-            offset + 3 - jump
+            match offset
+                .checked_add(3)
+                .and_then(|value| value.checked_sub(jump))
+            {
+                Some(target) => target,
+                None => {
+                    println!("{name:<24} {:4} -> <invalid target>", jump);
+                    return offset + 3;
+                }
+            }
         } else {
-            offset + 3 + jump
+            match offset
+                .checked_add(3)
+                .and_then(|value| value.checked_add(jump))
+            {
+                Some(target) => target,
+                None => {
+                    println!("{name:<24} {:4} -> <invalid target>", jump);
+                    return offset + 3;
+                }
+            }
         };
 
-        println!("{:<20} {:4} -> {:04}", name, jump, target);
+        println!("{name:<24} {:4} -> {:04}", jump, target);
 
         offset + 3
     }
 
+    // =============================================================
+    // CONSTANT + JUMP
+    // =============================================================
+
+    fn constant_jump_instruction(&self, name: &str, offset: usize) -> usize {
+        if offset + 3 >= self.code.len() {
+            println!("{name:<24} <missing operands>");
+            return self.code.len();
+        }
+
+        let constant_index = self.code[offset + 1] as usize;
+
+        let high = self.code[offset + 2] as u16;
+        let low = self.code[offset + 3] as u16;
+
+        let jump = ((high << 8) | low) as usize;
+
+        let target = match offset
+            .checked_add(4)
+            .and_then(|value| value.checked_add(jump))
+        {
+            Some(target) => target,
+            None => {
+                println!("{name:<24} {:4} <invalid jump target>", constant_index);
+                return offset + 4;
+            }
+        };
+
+        match self.constants.get(constant_index) {
+            Some(constant) => {
+                println!(
+                    "{name:<24} const={:4} '{}' jump={:4} -> {:04}",
+                    constant_index, constant, jump, target
+                );
+            }
+
+            None => {
+                println!(
+                    "{name:<24} const={:4} <invalid constant> jump={:4} -> {:04}",
+                    constant_index, jump, target
+                );
+            }
+        }
+
+        offset + 4
+    }
+
+    // =============================================================
+    // SUPER-INSTRUCTION
+    // =============================================================
+
+    fn loop_less_add_local_const_instruction(&self, offset: usize) -> usize {
+        if offset + 4 >= self.code.len() {
+            println!("{:<24} <missing operands>", "OP_LOOP_LESS_ADD_LOCAL_CONST");
+            return self.code.len();
+        }
+
+        let local = self.code[offset + 1];
+        let constant_index = self.code[offset + 2] as usize;
+
+        let high = self.code[offset + 3] as u16;
+        let low = self.code[offset + 4] as u16;
+
+        let jump = ((high << 8) | low) as usize;
+
+        let target = match offset
+            .checked_add(5)
+            .and_then(|value| value.checked_sub(jump))
+        {
+            Some(target) => target,
+            None => {
+                println!(
+                    "{:<24} local={} const={} jump={} -> <invalid target>",
+                    "OP_LOOP_LESS_ADD_LOCAL_CONST", local, constant_index, jump
+                );
+                return offset + 5;
+            }
+        };
+
+        match self.constants.get(constant_index) {
+            Some(constant) => {
+                println!(
+                    "{:<24} local={} const={} '{}' jump={} -> {:04}",
+                    "OP_LOOP_LESS_ADD_LOCAL_CONST", local, constant_index, constant, jump, target
+                );
+            }
+
+            None => {
+                println!(
+                    "{:<24} local={} const={} <invalid constant> jump={} -> {:04}",
+                    "OP_LOOP_LESS_ADD_LOCAL_CONST", local, constant_index, jump, target
+                );
+            }
+        }
+
+        offset + 5
+    }
+
+    // =============================================================
+    // CLOSURE
+    // =============================================================
+
     fn closure_instruction(&self, offset: usize) -> usize {
         if offset + 1 >= self.code.len() {
-            println!("{:<20} <missing function constant>", "OP_CLOSURE");
+            println!("{:<24} <missing function constant>", "OP_CLOSURE");
             return self.code.len();
         }
 
@@ -254,12 +456,12 @@ impl Chunk {
 
         match self.constants.get(constant_index) {
             Some(constant) => {
-                println!("{:<20} {:4} '{constant}'", "OP_CLOSURE", constant_index);
+                println!("{:<24} {:4} '{constant}'", "OP_CLOSURE", constant_index);
             }
 
             None => {
                 println!(
-                    "{:<20} {:4} <invalid constant>",
+                    "{:<24} {:4} <invalid constant>",
                     "OP_CLOSURE", constant_index
                 );
             }
@@ -272,6 +474,7 @@ impl Chunk {
                     return offset + 2;
                 }
             },
+
             _ => {
                 return offset + 2;
             }

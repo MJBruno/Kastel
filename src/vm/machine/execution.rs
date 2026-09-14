@@ -1,5 +1,6 @@
 use super::VirtualMachine;
 
+use crate::bytecode::chunk::OpCode;
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::gc;
 use crate::runtime::value::Value;
@@ -51,32 +52,42 @@ impl VirtualMachine {
                 // ========================================================
                 // HOT DISPATCH
                 // ========================================================
-                30 => {
+                x if x == OpCode::Loop as u8 => {
                     self.loop_back()?;
                     Ok(false)
                 }
 
-                63 => {
+                x if x == OpCode::SetLocalPop as u8 => {
+                    self.set_local_pop()?;
+                    Ok(false)
+                }
+
+                x if x == OpCode::AddLocalConst as u8 => {
                     self.add_local_const()?;
                     Ok(false)
                 }
 
-                64 => {
+                x if x == OpCode::LessLocalConst as u8 => {
                     self.less_local_const()?;
                     Ok(false)
                 }
 
-                66 => {
+                x if x == OpCode::JumpIfFalsePop as u8 => {
+                    self.jump_if_false_pop()?;
+                    Ok(false)
+                }
+
+                x if x == OpCode::LessLocalConstJump as u8 => {
                     self.less_local_const_jump()?;
                     Ok(false)
                 }
 
-                67 => {
+                x if x == OpCode::LoopLessAddLocalConst as u8 => {
                     self.loop_less_add_local_const()?;
                     Ok(false)
                 }
 
-                68 => {
+                x if x == OpCode::AddLocalLocal as u8 => {
                     self.add_local_local()?;
                     Ok(false)
                 }
