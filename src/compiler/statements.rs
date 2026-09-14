@@ -6,6 +6,7 @@ use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
 use super::variables::{Global, VariableLocation};
+
 #[allow(dead_code)]
 impl Compiler {
     pub(crate) fn register_export(&mut self, name: &str) -> Result<(), CompileError> {
@@ -78,9 +79,7 @@ impl Compiler {
                                         VariableLocation::Local(right_slot),
                                     ) => {
                                         self.emit_bytes(OpCode::AddLocalLocal, left_slot as u8);
-
                                         self.emit_byte(right_slot as u8);
-
                                         true
                                     }
 
@@ -275,10 +274,6 @@ impl Compiler {
         bases: &[String],
         methods: &[FunctionMethod],
     ) -> Result<(), CompileError> {
-        // ========================================================
-        // LIMITES BYTECODE
-        // ========================================================
-
         if bases.len() > u8::MAX as usize {
             return Err(CompileError::TooManyObjectFields);
         }
@@ -287,66 +282,17 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        // ========================================================
-        // VÉRIFICATION DU NOM
-        // ========================================================
-
         if !self.in_function && self.scope_depth == 0 && self.globals.borrow().contains_key(name) {
             return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
-
-        // ========================================================
-        // BASES
-        //
-        // Une classe peut avoir :
-        //
-        //     class Dog : Animal
-        //
-        // ou :
-        //
-        //     class User : Printable, Named
-        //
-        // ou :
-        //
-        //     class Admin : User, Printable, Serializable
-        //
-        // Le runtime déterminera quelles bases sont des classes
-        // et lesquelles sont des interfaces.
-        //
-        // Stack :
-        //
-        //     base1
-        //     base2
-        //     ...
-        // ========================================================
 
         for base in bases {
             self.compile_variable_get(base)?;
         }
 
-        // ========================================================
-        // NOM DE LA CLASSE
-        // ========================================================
-
         let class_name_constant = self.identifier_constant(name)?;
 
         self.emit_bytes(OpCode::Constant, class_name_constant);
-
-        // ========================================================
-        // MÉTHODES
-        //
-        // Stack après cette étape :
-        //
-        //     base1
-        //     base2
-        //     ...
-        //     class_name
-        //     method_name
-        //     closure
-        //     method_name
-        //     closure
-        //     ...
-        // ========================================================
 
         for method in methods {
             let method_name_constant = self.identifier_constant(&method.name)?;
@@ -361,21 +307,9 @@ impl Compiler {
             self.emit_closure(function_constant, &function.upvalues);
         }
 
-        // ========================================================
-        // CRÉATION DE LA CLASSE
-        //
-        // Operandes :
-        //
-        //     Class <base_count:u8> <method_count:u8>
-        // ========================================================
-
         self.emit_byte(OpCode::Class.into());
         self.emit_byte(bases.len() as u8);
         self.emit_byte(methods.len() as u8);
-
-        // ========================================================
-        // BINDING DE LA CLASSE
-        // ========================================================
 
         if !self.in_function && self.scope_depth == 0 {
             let name_constant = self.identifier_constant(name)?;
@@ -390,10 +324,6 @@ impl Compiler {
                 },
             );
         } else {
-<<<<<<< HEAD
-=======
-            // Classe locale / nested.
->>>>>>> 6a6d144 (Stabilisation de kastel)
             let slot =
                 self.context
                     .borrow_mut()
@@ -429,25 +359,13 @@ impl Compiler {
             return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
 
-        // ========================================================
-        // INTERFACES PARENTES
-        // ========================================================
-
         for base in bases {
             self.compile_variable_get(base)?;
         }
 
-        // ========================================================
-        // NOM
-        // ========================================================
-
         let name_constant = self.identifier_constant(name)?;
 
         self.emit_bytes(OpCode::Constant, name_constant);
-
-        // ========================================================
-        // MÉTHODES
-        // ========================================================
 
         for method in methods {
             let method_constant = self.identifier_constant(&method.name)?;
@@ -459,17 +377,9 @@ impl Compiler {
             self.emit_bytes(OpCode::Constant, arity_constant);
         }
 
-        // ========================================================
-        // CREATE INTERFACE
-        // ========================================================
-
         self.emit_byte(OpCode::Interface.into());
         self.emit_byte(bases.len() as u8);
         self.emit_byte(methods.len() as u8);
-
-        // ========================================================
-        // BIND
-        // ========================================================
 
         if !self.in_function && self.scope_depth == 0 {
             let name_constant = self.identifier_constant(name)?;
@@ -524,10 +434,6 @@ impl Compiler {
             ));
         }
 
-        // ========================================================
-        // HANDLER
-        // ========================================================
-
         self.emit_opcode(OpCode::PushExceptionHandler);
 
         let catch_operand = self.chunk.code.len();
@@ -535,10 +441,6 @@ impl Compiler {
 
         let finally_operand = self.chunk.code.len();
         self.emit_u16(u16::MAX);
-
-        // ========================================================
-        // TRY
-        // ========================================================
 
         if let Some(body) = finally_body {
             self.push_finally_block(body);
@@ -555,10 +457,6 @@ impl Compiler {
         self.end_scope();
 
         let normal_end_jump = self.emit_jump(OpCode::Jump);
-
-        // ========================================================
-        // CATCH
-        // ========================================================
 
         let mut catch_end_jump = None;
 
@@ -585,10 +483,6 @@ impl Compiler {
             catch_ip = self.chunk.code.len();
         }
 
-        // ========================================================
-        // FINALLY
-        // ========================================================
-
         if finally_body.is_some() {
             self.pop_finally_block();
         }
@@ -611,19 +505,11 @@ impl Compiler {
             None
         };
 
-        // ========================================================
-        // PATCH CATCH
-        // ========================================================
-
         if catch_body.is_some() {
             self.patch_u16(catch_operand, catch_ip)?;
         } else {
             self.patch_u16(catch_operand, u16::MAX as usize)?;
         }
-
-        // ========================================================
-        // PATCH FINALLY
-        // ========================================================
 
         if let Some(ip) = finally_ip {
             self.patch_u16(finally_operand, ip)?;
@@ -631,18 +517,10 @@ impl Compiler {
             self.patch_u16(finally_operand, u16::MAX as usize)?;
         }
 
-        // ========================================================
-        // CATCH -> FINALLY / END
-        // ========================================================
-
         if let Some(jump) = catch_end_jump {
             let target = finally_ip.unwrap_or(self.chunk.code.len());
             self.patch_jump_to(jump, target)?;
         }
-
-        // ========================================================
-        // TRY -> FINALLY / END
-        // ========================================================
 
         let normal_target = finally_ip.unwrap_or(self.chunk.code.len());
         self.patch_jump_to(normal_end_jump, normal_target)?;
@@ -821,9 +699,7 @@ impl Compiler {
 
             Pattern::Literal(literal) => {
                 self.compile_expression(expression)?;
-
                 self.compile_literal_pattern(literal)?;
-
                 self.emit_opcode(OpCode::Equal);
 
                 Ok(self.emit_jump(OpCode::JumpIfFalse))
@@ -908,7 +784,6 @@ impl Compiler {
             let false_jump = self.compile_pattern_test_expression(expression, pattern)?;
 
             self.emit_opcode(OpCode::Pop);
-
             self.emit_opcode(OpCode::True);
 
             let success_jump = self.emit_jump(OpCode::Jump);
@@ -967,7 +842,6 @@ impl Compiler {
         self.compile_literal_pattern(start_literal)?;
 
         self.emit_opcode(OpCode::Less);
-<<<<<<< HEAD
         self.emit_opcode(OpCode::Not);
 
         let lower_false_jump = self.emit_jump(OpCode::JumpIfFalse);
@@ -976,25 +850,10 @@ impl Compiler {
 
         self.compile_expression(expression)?;
 
-=======
-
-        self.emit_opcode(OpCode::Not);
-
-        let lower_false_jump = self.emit_jump(OpCode::JumpIfFalse);
-
-        self.emit_opcode(OpCode::Pop);
-
-        self.compile_expression(expression)?;
-
->>>>>>> 6a6d144 (Stabilisation de kastel)
         self.compile_literal_pattern(end_literal)?;
 
         if inclusive {
             self.emit_opcode(OpCode::Greater);
-<<<<<<< HEAD
-=======
-
->>>>>>> 6a6d144 (Stabilisation de kastel)
             self.emit_opcode(OpCode::Not);
         } else {
             self.emit_opcode(OpCode::Less);
@@ -1013,9 +872,7 @@ impl Compiler {
         let upper_result_jump = self.emit_jump(OpCode::Jump);
 
         self.patch_jump(result_jump)?;
-
         self.patch_jump(lower_result_jump)?;
-
         self.patch_jump(upper_result_jump)?;
 
         Ok(self.emit_jump(OpCode::JumpIfFalse))
@@ -1066,7 +923,6 @@ impl Compiler {
         self.patch_jump(length_false_jump)?;
 
         self.emit_opcode(OpCode::Pop);
-<<<<<<< HEAD
         self.emit_opcode(OpCode::False);
 
         let length_result_jump = self.emit_jump(OpCode::Jump);
@@ -1081,36 +937,12 @@ impl Compiler {
 
             let result_jump = self.emit_jump(OpCode::Jump);
 
-=======
-
-        self.emit_opcode(OpCode::False);
-
-        let length_result_jump = self.emit_jump(OpCode::Jump);
-
-        let mut element_result_jumps = Vec::new();
-
-        for false_jump in element_false_jumps {
-            self.patch_jump(false_jump)?;
-
-            self.emit_opcode(OpCode::Pop);
-
-            self.emit_opcode(OpCode::False);
-
-            let result_jump = self.emit_jump(OpCode::Jump);
-
->>>>>>> 6a6d144 (Stabilisation de kastel)
             element_result_jumps.push(result_jump);
         }
 
         self.patch_jump(success_jump)?;
-<<<<<<< HEAD
         self.patch_jump(length_result_jump)?;
 
-=======
-
-        self.patch_jump(length_result_jump)?;
-
->>>>>>> 6a6d144 (Stabilisation de kastel)
         for jump in element_result_jumps {
             self.patch_jump(jump)?;
         }
@@ -1196,15 +1028,6 @@ impl Compiler {
 
         let module_name = module.parts.join(".");
 
-<<<<<<< HEAD
-        for item in items {
-            let binding_name = item.alias.as_deref().unwrap_or(&item.name);
-
-            if self.globals.borrow().contains_key(binding_name) {
-                return Err(CompileError::VariableAlreadyDeclared(
-                    binding_name.to_string(),
-                ));
-=======
         // ------------------------------------------------------------
         // from dog import *
         // ------------------------------------------------------------
@@ -1212,37 +1035,16 @@ impl Compiler {
         if items.len() == 1 && items[0].name == "*" {
             if items[0].alias.is_some() {
                 return Err(CompileError::InvalidImport);
->>>>>>> 6a6d144 (Stabilisation de kastel)
             }
 
             let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
 
-<<<<<<< HEAD
-            self.emit_bytes(OpCode::Import, module_constant);
-
-            let property_constant = self.identifier_constant(&item.name)?;
-
-            self.emit_bytes(OpCode::GetProperty, property_constant);
-
-            let binding_constant = self.identifier_constant(binding_name)?;
-
-            self.emit_bytes(OpCode::DefineGlobal, binding_constant);
-
-            self.globals.borrow_mut().insert(
-                binding_name.to_string(),
-                Global {
-                    constant: binding_constant,
-                    mutable: false,
-                },
-            );
-=======
             self.emit_bytes(OpCode::ImportAll, module_constant);
 
             self.imported_modules.insert(module_name);
             self.wildcard_imported = true;
 
             return Ok(());
->>>>>>> 6a6d144 (Stabilisation de kastel)
         }
 
         // ------------------------------------------------------------
@@ -1299,32 +1101,6 @@ impl Compiler {
             return Err(CompileError::InvalidImport);
         }
 
-<<<<<<< HEAD
-        let module_name = path.join(".");
-
-        let binding_name = path.first().ok_or(CompileError::InvalidImport)?;
-
-        if self.imported_modules.contains(binding_name) {
-            return Ok(());
-        }
-
-        if self.globals.borrow().contains_key(binding_name) {
-            return Err(CompileError::VariableAlreadyDeclared(binding_name.clone()));
-        }
-
-        let module_constant = self.make_constant(Value::new_string(module_name))?;
-
-        self.emit_bytes(OpCode::Import, module_constant);
-
-        let name_constant = self.identifier_constant(binding_name)?;
-
-        self.emit_bytes(OpCode::DefineGlobal, name_constant);
-
-        self.globals.borrow_mut().insert(
-            binding_name.clone(),
-            Global {
-                constant: name_constant,
-=======
         // ------------------------------------------------------------
         // import module;
         // import module.Export;
@@ -1352,11 +1128,11 @@ impl Compiler {
         // ------------------------------------------------------------
         // import dog.Dog;
         // => variable globale "Dog"
-        // ------------------------------------------------------------
         //
         // import dog;
         // => variable globale "dog"
-        //
+        // ------------------------------------------------------------
+
         let binding_name =
             export_name.unwrap_or_else(|| module_parts.last().map(String::as_str).unwrap_or(""));
 
@@ -1408,17 +1184,12 @@ impl Compiler {
             binding_name.to_string(),
             Global {
                 constant: binding_constant,
->>>>>>> 6a6d144 (Stabilisation de kastel)
                 mutable: false,
             },
         );
 
-<<<<<<< HEAD
-        self.imported_modules.insert(binding_name.clone());
-=======
         // Évite de recharger le même module.
         self.imported_modules.insert(module_name);
->>>>>>> 6a6d144 (Stabilisation de kastel)
 
         Ok(())
     }
@@ -1427,11 +1198,6 @@ impl Compiler {
     // EXPORT
     // ============================================================
 
-<<<<<<< HEAD
-=======
-    // src/compiler/statements.rs
-
->>>>>>> 6a6d144 (Stabilisation de kastel)
     pub(crate) fn compile_export(&mut self, statement: &Statement) -> Result<(), CompileError> {
         if self.in_function || self.scope_depth != 0 {
             return Err(CompileError::InvalidExport);
@@ -1446,8 +1212,6 @@ impl Compiler {
             Statement::Function { name, .. } => {
                 self.register_export(name)?;
                 self.compile_statement(statement)?;
-<<<<<<< HEAD
-=======
             }
 
             Statement::Class { name, .. } => {
@@ -1458,7 +1222,6 @@ impl Compiler {
             Statement::Interface { name, .. } => {
                 self.register_export(name)?;
                 self.compile_statement(statement)?;
->>>>>>> 6a6d144 (Stabilisation de kastel)
             }
 
             _ => {
@@ -1486,14 +1249,8 @@ impl Compiler {
                     },
                 ) if matches!(statement.as_ref(), Statement::Expression { .. }) => {
                     self.current_line = *line;
-<<<<<<< HEAD
                     self.current_column = *column;
 
-=======
-
-                    self.current_column = *column;
-
->>>>>>> 6a6d144 (Stabilisation de kastel)
                     if let Statement::Expression { expression } = statement.as_ref() {
                         self.compile_expression(expression)?;
                     }

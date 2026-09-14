@@ -6,44 +6,41 @@ use crate::runtime::value::Value;
 
 impl VirtualMachine {
     pub fn run(&mut self) -> Result<(), RuntimeError> {
-<<<<<<< HEAD
-        let mut gc_check_counter = 0usize;
-
-=======
         self.run_internal(true)
     }
+
     #[allow(dead_code)]
     pub(crate) fn run_without_gc(&mut self) -> Result<(), RuntimeError> {
         self.run_internal(false)
     }
 
     fn run_internal(&mut self, allow_gc: bool) -> Result<(), RuntimeError> {
->>>>>>> b172e95 (LSP)
+        let mut gc_check_counter = 0usize;
+
         loop {
             if cfg!(feature = "debug_trace") {
                 self.debug_machine()?;
             }
 
-<<<<<<< HEAD
-            gc_check_counter += 1;
+            // Vérifier le GC périodiquement plutôt qu'à chaque instruction.
+            if allow_gc {
+                gc_check_counter += 1;
 
-            if gc_check_counter >= 256 {
-                gc_check_counter = 0;
+                if gc_check_counter >= 256 {
+                    gc_check_counter = 0;
 
-                if gc::should_collect() {
-                    self.collect_garbage();
+                    if gc::should_collect() {
+                        self.collect_garbage();
+                    }
                 }
             }
-=======
-            if allow_gc && gc::should_collect() {
-                self.collect_garbage();
-            }
 
+            // Mettre à jour la position source avant l'exécution
+            // de l'instruction courante.
             let (line, column) = self.current_position()?;
 
             self.current_line = line;
             self.current_column = column;
->>>>>>> b172e95 (LSP)
 
             let instruction = self.read_byte()?;
 
@@ -54,7 +51,6 @@ impl VirtualMachine {
                 // ========================================================
                 // HOT DISPATCH
                 // ========================================================
-
                 30 => {
                     self.loop_back()?;
                     Ok(false)
@@ -88,7 +84,6 @@ impl VirtualMachine {
                 // ========================================================
                 // GENERAL DISPATCH
                 // ========================================================
-
                 _ => self.dispatch(instruction),
             };
 
@@ -102,6 +97,7 @@ impl VirtualMachine {
 
                 Err(error) => {
                     let (line, column) = self.current_position()?;
+
                     self.current_line = line;
                     self.current_column = column;
 
@@ -139,13 +135,7 @@ impl VirtualMachine {
         min_frame_len: usize,
     ) -> Result<bool, RuntimeError> {
         match error {
-<<<<<<< HEAD
-            RuntimeError::Thrown(value) => {
-                self.propagate_thrown_until(value, min_frame_len)
-            }
-=======
-            RuntimeError::Thrown(value) => self.propagate_thrown(value, min_frame_len),
->>>>>>> b172e95 (LSP)
+            RuntimeError::Thrown(value) => self.propagate_thrown_until(value, min_frame_len),
 
             error => {
                 let value = self.runtime_error_value(&error)?;
@@ -189,10 +179,7 @@ impl VirtualMachine {
         }
     }
 
-    pub(crate) fn propagate_thrown(
-        &mut self,
-        value: Value,
-    ) -> Result<bool, RuntimeError> {
+    pub(crate) fn propagate_thrown(&mut self, value: Value) -> Result<bool, RuntimeError> {
         self.propagate_thrown_until(value, 0)
     }
 
@@ -226,9 +213,7 @@ impl VirtualMachine {
             }
 
             let catch_ip = self.exception_handlers[handler_index].catch_ip;
-
             let finally_ip = self.exception_handlers[handler_index].finally_ip;
-
             let stack_height = self.exception_handlers[handler_index].stack_height;
 
             self.restore_exception_stack(stack_height)?;

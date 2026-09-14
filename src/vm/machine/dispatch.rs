@@ -1,10 +1,7 @@
 use super::VirtualMachine;
 
 use crate::{
-<<<<<<< HEAD
-=======
     bytecode::chunk::OpCode,
->>>>>>> 6a6d144 (Stabilisation de kastel)
     error::runtime_error::RuntimeError,
     runtime::{
         object::Object,
@@ -14,170 +11,39 @@ use crate::{
 
 impl VirtualMachine {
     #[inline(always)]
-    pub(crate) fn dispatch(
-        &mut self,
-        instruction: u8,
-    ) -> Result<bool, RuntimeError> {
-        let result = match instruction {
+    pub(crate) fn dispatch(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
+        let opcode =
+            OpCode::from_byte(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
+
+        match opcode {
             // ========================================================
-            // CONSTANTS / GLOBALS
+            // CONSTANTS
             // ========================================================
-            0 => {
+            OpCode::Constant => {
                 let constant = self.read_constant_byte()?;
                 self.push(constant);
                 Ok(false)
             }
 
-            21 => {
-                self.define_global()?;
-                Ok(false)
-            }
-
-            22 => {
-                self.set_global()?;
-                Ok(false)
-            }
-
-            23 => {
-                self.get_global()?;
-                Ok(false)
-            }
-
-            24 => {
-                self.set_local()?;
-                Ok(false)
-            }
-
-            25 => {
-                self.get_local()?;
-                Ok(false)
-            }
-
-            62 => {
-                self.set_local_pop()?;
-                Ok(false)
-            }
-
-            63 => {
-                self.add_local_const()?;
-                Ok(false)
-            }
-
-            68 => {
-                self.add_local_local()?;
-                Ok(false)
-            }
-
-            66 => {
-                self.less_local_const_jump()?;
-                Ok(false)
-            }
-
-            67 => {
-                self.loop_less_add_local_const()?;
-                Ok(false)
-            }
-
-            47 => {
-                let index = self.read_byte()? as usize;
-                self.get_upvalue(index)?;
-                Ok(false)
-            }
-
-            48 => {
-                let index = self.read_byte()? as usize;
-                self.set_upvalue(index)?;
-                Ok(false)
-            }
-
-            // ========================================================
-            // LITERALS
-            // ========================================================
-            1 => {
+            OpCode::Nil => {
                 self.push(Value::Nil);
                 Ok(false)
             }
 
-            2 => {
+            OpCode::True => {
                 self.push(Value::Boolean(true));
                 Ok(false)
             }
 
-            3 => {
+            OpCode::False => {
                 self.push(Value::Boolean(false));
                 Ok(false)
             }
 
             // ========================================================
-            // ARITHMETIC
+            // COMPARISON / LOGICAL
             // ========================================================
-            9 => {
-                self.add()?;
-                Ok(false)
-            }
-
-            10 => {
-                self.numeric_binary(NumericOp::Subtract)?;
-                Ok(false)
-            }
-
-            11 => {
-                self.numeric_binary(NumericOp::Multiply)?;
-                Ok(false)
-            }
-
-            12 => {
-                self.numeric_binary(NumericOp::Divide)?;
-                Ok(false)
-            }
-
-            13 => {
-                self.numeric_binary(NumericOp::Modulo)?;
-                Ok(false)
-            }
-
-            14 => {
-                self.negate()?;
-                Ok(false)
-            }
-
-            // ========================================================
-            // BITWISE
-            // ========================================================
-            15 => {
-                self.bitwise_binary(0)?;
-                Ok(false)
-            }
-
-            16 => {
-                self.bitwise_binary(1)?;
-                Ok(false)
-            }
-
-            17 => {
-                self.bitwise_binary(2)?;
-                Ok(false)
-            }
-
-            18 => {
-                self.bitwise_not()?;
-                Ok(false)
-            }
-
-            19 => {
-                self.shift(true)?;
-                Ok(false)
-            }
-
-            20 => {
-                self.shift(false)?;
-                Ok(false)
-            }
-
-            // ========================================================
-            // COMPARISON
-            // ========================================================
-            4 => {
+            OpCode::Equal => {
                 let b = self.pop()?;
                 let a = self.pop()?;
 
@@ -185,27 +51,22 @@ impl VirtualMachine {
                 Ok(false)
             }
 
-            5 => {
+            OpCode::Greater => {
                 self.compare(ComparisonOp::Greater)?;
                 Ok(false)
             }
 
-            6 => {
+            OpCode::Less => {
                 self.compare(ComparisonOp::Less)?;
                 Ok(false)
             }
 
-            64 => {
-                self.less_local_const()?;
-                Ok(false)
-            }
-
-            7 => {
+            OpCode::Not => {
                 self.not()?;
                 Ok(false)
             }
 
-            8 => {
+            OpCode::Is => {
                 let right = self.pop()?;
                 let left = self.pop()?;
 
@@ -216,62 +77,175 @@ impl VirtualMachine {
             }
 
             // ========================================================
+            // ARITHMETIC
+            // ========================================================
+            OpCode::Add => {
+                self.add()?;
+                Ok(false)
+            }
+
+            OpCode::Subtract => {
+                self.numeric_binary(NumericOp::Subtract)?;
+                Ok(false)
+            }
+
+            OpCode::Multiply => {
+                self.numeric_binary(NumericOp::Multiply)?;
+                Ok(false)
+            }
+
+            OpCode::Divide => {
+                self.numeric_binary(NumericOp::Divide)?;
+                Ok(false)
+            }
+
+            OpCode::Modulo => {
+                self.numeric_binary(NumericOp::Modulo)?;
+                Ok(false)
+            }
+
+            OpCode::Negate => {
+                self.negate()?;
+                Ok(false)
+            }
+
+            // ========================================================
+            // BITWISE
+            // ========================================================
+            OpCode::BitAnd => {
+                self.bitwise_binary(0)?;
+                Ok(false)
+            }
+
+            OpCode::BitOr => {
+                self.bitwise_binary(1)?;
+                Ok(false)
+            }
+
+            OpCode::BitXor => {
+                self.bitwise_binary(2)?;
+                Ok(false)
+            }
+
+            OpCode::BitNot => {
+                self.bitwise_not()?;
+                Ok(false)
+            }
+
+            OpCode::ShiftLeft => {
+                self.shift(true)?;
+                Ok(false)
+            }
+
+            OpCode::ShiftRight => {
+                self.shift(false)?;
+                Ok(false)
+            }
+
+            // ========================================================
+            // GLOBALS / LOCALS
+            // ========================================================
+            OpCode::DefineGlobal => {
+                self.define_global()?;
+                Ok(false)
+            }
+
+            OpCode::SetGlobal => {
+                self.set_global()?;
+                Ok(false)
+            }
+
+            OpCode::GetGlobal => {
+                self.get_global()?;
+                Ok(false)
+            }
+
+            OpCode::SetLocal => {
+                self.set_local()?;
+                Ok(false)
+            }
+
+            OpCode::GetLocal => {
+                self.get_local()?;
+                Ok(false)
+            }
+
+            // ========================================================
             // MODULES
             // ========================================================
-            26 => {
+            OpCode::Import => {
                 self.import_module()?;
+                Ok(false)
+            }
+
+            OpCode::ImportAll => {
+                self.import_all()?;
                 Ok(false)
             }
 
             // ========================================================
             // CONTROL FLOW
             // ========================================================
-            27 => {
+            OpCode::JumpIfFalse => {
                 self.jump_if_false()?;
                 Ok(false)
             }
 
-            28 => {
+            OpCode::Jump => {
                 self.jump()?;
                 Ok(false)
             }
 
-            29 => {
+            OpCode::Pop => {
                 self.pop()?;
                 Ok(false)
             }
 
-            65 => {
-                self.jump_if_false_pop()?;
+            OpCode::Loop => {
+                self.loop_back()?;
                 Ok(false)
             }
 
             // ========================================================
             // CALL / FUNCTIONS
             // ========================================================
-            31 => {
+            OpCode::Call => {
                 let arg_count = self.read_byte()? as usize;
 
                 self.execute_call(arg_count)?;
                 Ok(false)
             }
 
-            46 => {
+            OpCode::Closure => {
                 self.op_closure()?;
+                Ok(false)
+            }
+
+            OpCode::GetUpvalue => {
+                let index = self.read_byte()? as usize;
+
+                self.get_upvalue(index)?;
+                Ok(false)
+            }
+
+            OpCode::SetUpvalue => {
+                let index = self.read_byte()? as usize;
+
+                self.set_upvalue(index)?;
                 Ok(false)
             }
 
             // ========================================================
             // ARRAYS
             // ========================================================
-            32 => {
+            OpCode::Array => {
                 let count = self.read_byte()? as usize;
 
                 self.op_array(count)?;
                 Ok(false)
             }
 
-            33 => {
+            OpCode::GetIndex => {
                 if let Some(Value::Object(handle)) =
                     self.stack.get(self.stack.len().saturating_sub(2))
                 {
@@ -299,7 +273,7 @@ impl VirtualMachine {
                 Ok(false)
             }
 
-            34 => {
+            OpCode::SetIndex => {
                 if let Some(Value::Object(handle)) =
                     self.stack.get(self.stack.len().saturating_sub(3))
                 {
@@ -327,45 +301,45 @@ impl VirtualMachine {
                 Ok(false)
             }
 
-            35 => {
+            OpCode::ArrayLength => {
                 self.op_array_length()?;
                 Ok(false)
             }
 
-            36 => {
+            OpCode::ArrayPush => {
                 self.op_array_push()?;
                 Ok(false)
             }
 
-            37 => {
+            OpCode::ArrayPop => {
                 self.op_array_pop()?;
                 Ok(false)
             }
 
-            38 => {
+            OpCode::ArrayInsert => {
                 self.op_array_insert()?;
                 Ok(false)
             }
 
-            39 => {
+            OpCode::ArrayRemove => {
                 self.op_array_remove()?;
                 Ok(false)
             }
 
-            40 => {
+            OpCode::ArrayClear => {
                 self.op_array_clear()?;
                 Ok(false)
             }
 
-            41 => {
+            OpCode::ArrayContains => {
                 self.op_array_contains()?;
                 Ok(false)
             }
 
             // ========================================================
-            // OBJECT
+            // OBJECTS
             // ========================================================
-            42 => {
+            OpCode::Object => {
                 let pair_count = self.read_byte()? as usize;
 
                 self.op_object(pair_count)?;
@@ -375,17 +349,17 @@ impl VirtualMachine {
             // ========================================================
             // ITERATORS
             // ========================================================
-            43 => {
+            OpCode::GetIterator => {
                 self.op_get_iterator()?;
                 Ok(false)
             }
 
-            44 => {
+            OpCode::IteratorHasNext => {
                 self.op_iterator_has_next()?;
                 Ok(false)
             }
 
-            45 => {
+            OpCode::IteratorNext => {
                 self.op_iterator_next()?;
                 Ok(false)
             }
@@ -393,12 +367,12 @@ impl VirtualMachine {
             // ========================================================
             // PROPERTIES
             // ========================================================
-            51 => {
+            OpCode::GetProperty => {
                 self.get_property()?;
                 Ok(false)
             }
 
-            52 => {
+            OpCode::SetProperty => {
                 self.set_property()?;
                 Ok(false)
             }
@@ -406,7 +380,7 @@ impl VirtualMachine {
             // ========================================================
             // METHOD CALLS
             // ========================================================
-            53 => {
+            OpCode::InvokeMethod => {
                 let method_constant = self.read_byte()? as usize;
                 let arg_count = self.read_byte()? as usize;
 
@@ -414,7 +388,7 @@ impl VirtualMachine {
                 Ok(false)
             }
 
-            54 => {
+            OpCode::InvokeBaseMethod => {
                 let method_constant = self.read_byte()? as usize;
                 let arg_count = self.read_byte()? as usize;
 
@@ -425,7 +399,7 @@ impl VirtualMachine {
             // ========================================================
             // CLASSES / INTERFACES
             // ========================================================
-            55 => {
+            OpCode::Class => {
                 let base_count = self.read_byte()? as usize;
                 let method_count = self.read_byte()? as usize;
 
@@ -433,86 +407,91 @@ impl VirtualMachine {
                 Ok(false)
             }
 
-            56 => {
+            OpCode::NewInstance => {
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_new_instance(arg_count)?;
                 Ok(false)
             }
 
-            57 => {
+            OpCode::Interface => {
                 let base_count = self.read_byte()? as usize;
                 let method_count = self.read_byte()? as usize;
 
-<<<<<<< HEAD
                 self.op_interface(base_count, method_count)?;
                 Ok(false)
-=======
-            OpCode::ImportAll => {
-                self.import_all()?;
-            }
-
-            // ========================================================
-            // CONTROL FLOW
-            // ========================================================
-            OpCode::Jump => {
-                self.jump()?;
-            }
-
-            OpCode::JumpIfFalse => {
-                self.jump_if_false()?;
-            }
-
-            OpCode::Loop => {
-                self.loop_back()?;
-            }
-
-            OpCode::Pop => {
-                self.pop()?;
->>>>>>> 6a6d144 (Stabilisation de kastel)
-            }
-
-            // ========================================================
-            // RETURN / HALT
-            // ========================================================
-            49 => {
-                self.execute_return()?;
-                Ok(self.frames.is_empty())
-            }
-
-            50 => {
-                Ok(true)
             }
 
             // ========================================================
             // EXCEPTIONS
             // ========================================================
-            58 => {
+            OpCode::PushExceptionHandler => {
                 self.op_push_exception_handler()?;
                 Ok(false)
             }
 
-            59 => {
+            OpCode::PopExceptionHandler => {
                 self.op_pop_exception_handler()?;
                 Ok(false)
             }
 
-            60 => {
+            OpCode::Throw => {
                 self.op_throw()?;
                 Ok(false)
             }
 
-            61 => {
+            OpCode::FinallyEnd => {
                 self.op_finally_end()?;
                 Ok(false)
             }
 
             // ========================================================
-            // INVALID
+            // RETURN / HALT
             // ========================================================
-            _ => Err(RuntimeError::InvalidOpcode(instruction)),
-        };
+            OpCode::Return => {
+                self.execute_return()?;
+                Ok(self.frames.is_empty())
+            }
 
-        result
+            OpCode::Halt => Ok(true),
+
+            // ========================================================
+            // SUPER-INSTRUCTIONS
+            // ========================================================
+            OpCode::SetLocalPop => {
+                self.set_local_pop()?;
+                Ok(false)
+            }
+
+            OpCode::AddLocalConst => {
+                self.add_local_const()?;
+                Ok(false)
+            }
+
+            OpCode::LessLocalConst => {
+                self.less_local_const()?;
+                Ok(false)
+            }
+
+            OpCode::JumpIfFalsePop => {
+                self.jump_if_false_pop()?;
+                Ok(false)
+            }
+
+            OpCode::LessLocalConstJump => {
+                self.less_local_const_jump()?;
+                Ok(false)
+            }
+
+            OpCode::LoopLessAddLocalConst => {
+                self.loop_less_add_local_const()?;
+                Ok(false)
+            }
+
+            OpCode::AddLocalLocal => {
+                self.add_local_local()?;
+                Ok(false)
+            }
+        }
     }
 }

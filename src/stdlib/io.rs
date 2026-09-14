@@ -1,11 +1,8 @@
-
 use std::collections::HashMap;
 use std::io::{self, Write};
 
 use crate::{
-    compiler::compiler::Compiler,
-    error::runtime_error::RuntimeError,
-    runtime::value::Value,
+    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 use super::string::format_string;
@@ -26,9 +23,7 @@ fn render_arguments(args: &[Value]) -> Result<String, RuntimeError> {
         return Ok(first.to_string());
     }
 
-    let format = first
-        .as_string_value()
-        .ok_or(RuntimeError::TypeError)?;
+    let format = first.as_string_value().ok_or(RuntimeError::TypeError)?;
 
     format_string(&format, &args[1..])
 }
@@ -75,28 +70,17 @@ pub fn native_input(args: &[Value]) -> Result<Value, RuntimeError> {
         .read_line(&mut buffer)
         .map_err(|_| RuntimeError::NativeError)?;
 
-    let value = buffer
-        .trim_end_matches(['\n', '\r'])
-        .to_string();
+    let value = buffer.trim_end_matches(['\n', '\r']).to_string();
 
     Ok(Value::new_string(value))
 }
 
 pub fn register(globals: &mut HashMap<String, Value>) {
-    globals.insert(
-        "print".to_string(),
-        Value::NativeFunction(native_print),
-    );
+    globals.insert("print".to_string(), Value::NativeFunction(native_print));
 
-    globals.insert(
-        "println".to_string(),
-        Value::NativeFunction(native_println),
-    );
+    globals.insert("println".to_string(), Value::NativeFunction(native_println));
 
-    globals.insert(
-        "input".to_string(),
-        Value::NativeFunction(native_input),
-    );
+    globals.insert("input".to_string(), Value::NativeFunction(native_input));
 }
 
 pub fn register_compiler(compiler: &mut Compiler) {
@@ -104,4 +88,3 @@ pub fn register_compiler(compiler: &mut Compiler) {
     let _ = compiler.define_native("println");
     let _ = compiler.define_native("input");
 }
-

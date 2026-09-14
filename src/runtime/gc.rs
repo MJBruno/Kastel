@@ -15,8 +15,8 @@ fn trace_enabled() -> bool {
 }
 
 thread_local! {
-    static REGISTRY: RefCell<GcRegistry> =
-        RefCell::new(GcRegistry::new());
+static REGISTRY: RefCell<GcRegistry> =
+RefCell::new(GcRegistry::new());
 }
 
 struct GcRegistry {
@@ -42,7 +42,6 @@ pub fn register_object(handle: &Gc<Object>) {
         let mut registry = registry.borrow_mut();
 
         registry.objects.push(handle.downgrade());
-
         registry.allocations_since_collect += 1;
     });
 }
@@ -52,7 +51,6 @@ pub fn register_upvalue(handle: &Rc<RefCell<ObjUpvalue>>) {
         let mut registry = registry.borrow_mut();
 
         registry.upvalues.push(Rc::downgrade(handle));
-
         registry.allocations_since_collect += 1;
     });
 }
@@ -126,7 +124,6 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
         let mut registry = registry.borrow_mut();
 
         let objects_before = registry.objects.len();
-
         let mut objects_broken = 0usize;
 
         registry.objects.retain(|weak| match weak.upgrade() {
@@ -135,7 +132,6 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
 
                 if !state.objects.contains(&id) {
                     rc.borrow_mut().break_cycle();
-
                     objects_broken += 1;
                 }
 
@@ -146,7 +142,6 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
         });
 
         let upvalues_before = registry.upvalues.len();
-
         let mut upvalues_broken = 0usize;
 
         registry.upvalues.retain(|weak| match weak.upgrade() {
@@ -155,7 +150,6 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
 
                 if !state.upvalues.contains(&id) {
                     rc.borrow_mut().closed = None;
-
                     upvalues_broken += 1;
                 }
 
@@ -167,28 +161,11 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
 
         let broken = objects_broken + upvalues_broken;
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-        // Heuristique proportionnelle à la taille du tas VIVANT après la
-        // collecte (mesurée juste après les .retain() ci-dessus) plutôt
-        // qu'un doublement aveugle du seuil précédent : le rythme de
-        // collecte s'adapte à ce qui survit réellement, comme dans
-        // V8/CPython, pas au nombre brut d'allocations.
+        // Adapter le prochain seuil à la taille du tas vivant.
         let live_count = registry.objects.len() + registry.upvalues.len();
 
         registry.allocations_since_collect = 0;
         registry.threshold = (live_count * 8).max(4096);
-=======
-        registry.threshold =
-            (live_count * 2).max(256);
->>>>>>> b172e95 (LSP)
-=======
-        let live_count = registry.objects.len() + registry.upvalues.len();
-
-        registry.allocations_since_collect = 0;
-
-        registry.threshold = (live_count * 2).max(256);
->>>>>>> 6a6d144 (Stabilisation de kastel)
 
         if trace_enabled() {
             eprintln!(

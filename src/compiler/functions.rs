@@ -16,11 +16,7 @@ impl Compiler {
     // CLOSURE
     // ============================================================
 
-    pub(crate) fn emit_closure(
-        &mut self,
-        function_constant: u8,
-        upvalues: &[Upvalue],
-    ) {
+    pub(crate) fn emit_closure(&mut self, function_constant: u8, upvalues: &[Upvalue]) {
         self.emit_bytes(OpCode::Closure, function_constant);
 
         for upvalue in upvalues {
@@ -44,25 +40,15 @@ impl Compiler {
         // ========================================================
 
         if !self.in_function && self.scope_depth == 0 {
-            let name_constant = if self.predeclared_functions
-                .contains(name)
-            {
+            let name_constant = if self.predeclared_functions.contains(name) {
                 self.globals
                     .borrow()
                     .get(name)
                     .map(|global| global.constant)
-                    .ok_or_else(|| {
-                        CompileError::VariableAlreadyDeclared(
-                            name.to_string(),
-                        )
-                    })?
+                    .ok_or_else(|| CompileError::VariableAlreadyDeclared(name.to_string()))?
             } else {
                 if self.globals.borrow().contains_key(name) {
-                    return Err(
-                        CompileError::VariableAlreadyDeclared(
-                            name.to_string(),
-                        ),
-                    );
+                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
                 }
 
                 let constant = self.identifier_constant(name)?;
@@ -78,22 +64,14 @@ impl Compiler {
                 constant
             };
 
-            let function =
-                self.compile_function(name, params, body)?;
+            let function = self.compile_function(name, params, body)?;
 
-            let function_constant = self.make_constant(
-                Value::new_function(Rc::new(function.clone())),
-            )?;
+            let function_constant =
+                self.make_constant(Value::new_function(Rc::new(function.clone())))?;
 
-            self.emit_closure(
-                function_constant,
-                &function.upvalues,
-            );
+            self.emit_closure(function_constant, &function.upvalues);
 
-            self.emit_bytes(
-                OpCode::DefineGlobal,
-                name_constant,
-            );
+            self.emit_bytes(OpCode::DefineGlobal, name_constant);
 
             return Ok(());
         }
@@ -102,37 +80,25 @@ impl Compiler {
         // LOCAL / NESTED FUNCTION
         // ========================================================
 
-        let function =
-            self.compile_function(name, params, body)?;
+        let function = self.compile_function(name, params, body)?;
 
-        let function_constant = self.make_constant(
-            Value::new_function(Rc::new(function.clone())),
-        )?;
+        let function_constant =
+            self.make_constant(Value::new_function(Rc::new(function.clone())))?;
 
-        self.emit_closure(
-            function_constant,
-            &function.upvalues,
-        );
+        self.emit_closure(function_constant, &function.upvalues);
 
         let slot = self
             .context
             .borrow_mut()
             .locals
-            .declare_local(
-                name,
-                self.scope_depth,
-                true,
-            )?;
+            .declare_local(name, self.scope_depth, true)?;
 
         self.context
             .borrow_mut()
             .locals
             .mark_initialized(self.scope_depth);
 
-        debug_assert_eq!(
-            self.context.borrow().locals.len() - 1,
-            slot as usize
-        );
+        debug_assert_eq!(self.context.borrow().locals.len() - 1, slot as usize);
 
         Ok(())
     }
@@ -149,11 +115,8 @@ impl Compiler {
     ) -> Result<Function, CompileError> {
         let enclosing = Rc::clone(&self.context);
 
-        let mut compiler = Compiler::new_function(
-            name.to_string(),
-            Rc::clone(&self.globals),
-            enclosing,
-        );
+        let mut compiler =
+            Compiler::new_function(name.to_string(), Rc::clone(&self.globals), enclosing);
 
         for param in params {
             compiler.add_parametre(param)?;
@@ -200,9 +163,7 @@ impl Compiler {
         }
 
         match value {
-            Some(expression) => {
-                self.compile_expression(expression)?
-            }
+            Some(expression) => self.compile_expression(expression)?,
 
             None => self.emit_opcode(OpCode::Nil),
         }
@@ -224,16 +185,11 @@ impl Compiler {
         params: &[String],
         body: &[Statement],
     ) -> Result<Function, CompileError> {
-        let mut method_params =
-            Vec::with_capacity(params.len() + 1);
+        let mut method_params = Vec::with_capacity(params.len() + 1);
 
         method_params.push("this".to_string());
         method_params.extend(params.iter().cloned());
 
-        self.compile_function(
-            name,
-            &method_params,
-            body,
-        )
+        self.compile_function(name, &method_params, body)
     }
 }

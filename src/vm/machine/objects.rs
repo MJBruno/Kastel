@@ -2,17 +2,11 @@ use super::VirtualMachine;
 
 use crate::{
     error::runtime_error::RuntimeError,
-    runtime::{
-        object::Object,
-        value::Value,
-    },
+    runtime::{object::Object, value::Value},
 };
 
 impl VirtualMachine {
-    pub(crate) fn op_object(
-        &mut self,
-        pair_count: usize,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_object(&mut self, pair_count: usize) -> Result<(), RuntimeError> {
         let total = pair_count
             .checked_mul(2)
             .ok_or(RuntimeError::InvalidFunction)?;
@@ -27,10 +21,7 @@ impl VirtualMachine {
         for index in 0..pair_count {
             let base = start + index * 2;
 
-            fields.push((
-                self.stack[base].clone(),
-                self.stack[base + 1].clone(),
-            ));
+            fields.push((self.stack[base].clone(), self.stack[base + 1].clone()));
         }
 
         self.stack.truncate(start);
@@ -39,9 +30,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_get_dict_index(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_get_dict_index(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
         }
@@ -71,9 +60,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_set_dict_index(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_set_dict_index(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 3 {
             return Err(RuntimeError::StackUnderflow);
         }

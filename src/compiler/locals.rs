@@ -78,9 +78,7 @@ impl LocalTable {
                 }
 
                 if local.name == name {
-                    return Err(CompileError::VariableAlreadyDeclared(
-                        name.to_string(),
-                    ));
+                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
                 }
             }
         }
@@ -110,9 +108,7 @@ impl LocalTable {
             }
 
             if local.depth.is_none() {
-                return Err(CompileError::VariableUseInInitializer(
-                    name.to_string(),
-                ));
+                return Err(CompileError::VariableUseInInitializer(name.to_string()));
             }
 
             return Ok(Some(local.mutable));
@@ -137,9 +133,7 @@ impl LocalTable {
             }
 
             if local.depth.is_none() {
-                return Err(CompileError::VariableUseInInitializer(
-                    name.to_string(),
-                ));
+                return Err(CompileError::VariableUseInInitializer(name.to_string()));
             }
 
             return Ok(Some(local.slot));

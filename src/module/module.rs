@@ -6,11 +6,11 @@ use std::{
     rc::Rc,
 };
 
-use crate::{error::compile_error::CompileError, stdlib::execute_native};
 use crate::frontend::lexer::Lexer;
 use crate::frontend::parser::Parser;
 use crate::vm::machine::VirtualMachine;
 use crate::{compiler::compiler::Compiler, runtime::value::Value};
+use crate::{error::compile_error::CompileError, stdlib::execute_native};
 
 #[derive(Debug, PartialEq)]
 pub struct ModuleInstance {

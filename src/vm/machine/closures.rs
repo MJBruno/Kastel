@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
-use super::bytecode::frame_closure;
 use super::VirtualMachine;
+use super::bytecode::frame_closure;
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::object::Object;
 use crate::runtime::value::Value;
@@ -14,7 +14,13 @@ impl VirtualMachine {
             let frame = self.current_frame()?;
             let closure = frame_closure(&frame.closure);
 
-            match closure.function.chunk.constants.get(constant_index).cloned() {
+            match closure
+                .function
+                .chunk
+                .constants
+                .get(constant_index)
+                .cloned()
+            {
                 Some(Value::Object(handle)) => match &*handle.borrow() {
                     Object::Function(function) => Rc::clone(function),
                     _ => return Err(RuntimeError::InvalidFunction),
@@ -55,10 +61,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn get_upvalue(
-        &mut self,
-        index: usize,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn get_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
         let upvalue = {
             let frame = self.current_frame()?;
 
@@ -88,10 +91,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn set_upvalue(
-        &mut self,
-        index: usize,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn set_upvalue(&mut self, index: usize) -> Result<(), RuntimeError> {
         let upvalue = {
             let frame = self.current_frame()?;
 

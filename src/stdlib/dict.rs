@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler,
-    error::runtime_error::RuntimeError,
-    runtime::object::Object,
+    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::object::Object,
     runtime::value::Value,
 };
 
@@ -26,9 +24,7 @@ pub fn native_dict(args: &[Value]) -> Result<Value, RuntimeError> {
 //                         GET
 // ============================================================
 
-pub fn native_dict_get(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_get(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 2,
@@ -43,9 +39,7 @@ pub fn native_dict_get(
 //                         SET
 // ============================================================
 
-pub fn native_dict_set(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_set(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 3 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 3,
@@ -62,9 +56,7 @@ pub fn native_dict_set(
 //                         HAS
 // ============================================================
 
-pub fn native_dict_has(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_has(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 2,
@@ -72,18 +64,14 @@ pub fn native_dict_has(
         });
     }
 
-    Ok(Value::Boolean(
-        args[0].dict_contains(&args[1])?,
-    ))
+    Ok(Value::Boolean(args[0].dict_contains(&args[1])?))
 }
 
 // ============================================================
 //                        REMOVE
 // ============================================================
 
-pub fn native_dict_remove(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_remove(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 2,
@@ -98,9 +86,7 @@ pub fn native_dict_remove(
 //                         LENGTH
 // ============================================================
 
-pub fn native_dict_length(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_length(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -115,9 +101,7 @@ pub fn native_dict_length(
 //                          KEYS
 // ============================================================
 
-pub fn native_dict_keys(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_keys(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -132,9 +116,7 @@ pub fn native_dict_keys(
 //                         VALUES
 // ============================================================
 
-pub fn native_dict_values(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_values(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -149,9 +131,7 @@ pub fn native_dict_values(
 //                          ITEMS
 // ============================================================
 
-pub fn native_dict_items(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_items(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -166,9 +146,7 @@ pub fn native_dict_items(
 //                          CLEAR
 // ============================================================
 
-pub fn native_dict_clear(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_clear(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -185,9 +163,7 @@ pub fn native_dict_clear(
 //                         GET_OR
 // ============================================================
 
-pub fn native_dict_get_or(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_get_or(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 3 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 3,
@@ -206,9 +182,7 @@ pub fn native_dict_get_or(
 //                          UPDATE
 // ============================================================
 
-pub fn native_dict_update(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_update(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 2,
@@ -240,9 +214,7 @@ pub fn native_dict_update(
 //                           COPY
 // ============================================================
 
-pub fn native_dict_copy(
-    args: &[Value],
-) -> Result<Value, RuntimeError> {
+pub fn native_dict_copy(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -270,10 +242,7 @@ pub fn native_dict_copy(
 //                      METHOD DISPATCH
 // ============================================================
 
-pub fn dispatch_method(
-    name: &str,
-    args: &[Value],
-) -> Result<Option<Value>, RuntimeError> {
+pub fn dispatch_method(name: &str, args: &[Value]) -> Result<Option<Value>, RuntimeError> {
     match name {
         "length" => Ok(Some(native_dict_length(args)?)),
         "get" => Ok(Some(native_dict_get(args)?)),
@@ -291,12 +260,8 @@ pub fn dispatch_method(
     }
 }
 
- 
 pub fn register(globals: &mut HashMap<String, Value>) {
-    globals.insert(
-        "dict".to_string(),
-        Value::NativeFunction(native_dict),
-    );
+    globals.insert("dict".to_string(), Value::NativeFunction(native_dict));
 }
 
 // ============================================================

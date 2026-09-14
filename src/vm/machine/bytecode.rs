@@ -50,7 +50,6 @@ impl VirtualMachine {
         Ok(byte)
     }
 
-<<<<<<< HEAD
     #[inline(always)]
     pub(crate) fn read_short(&mut self) -> Result<u16, RuntimeError> {
         #[cfg(feature = "profile")]
@@ -74,25 +73,13 @@ impl VirtualMachine {
         let low = frame.chunk.code[ip + 1] as u16;
 
         frame.ip = ip + 2;
-=======
-    pub(crate) fn read_short(&mut self) -> Result<u16, RuntimeError> {
-        let high = self.read_byte()? as u16;
-        let low = self.read_byte()? as u16;
->>>>>>> b172e95 (LSP)
 
         Ok((high << 8) | low)
     }
 
     #[inline]
     pub(crate) fn read_constant(&self, index: u8) -> Result<Value, RuntimeError> {
-<<<<<<< HEAD
         self.current_frame()?
-=======
-        let frame = self.current_frame()?;
-
-        frame_closure(&frame.closure)
-            .function
->>>>>>> b172e95 (LSP)
             .chunk
             .constants
             .get(index as usize)
@@ -110,13 +97,7 @@ impl VirtualMachine {
     #[inline]
     pub(crate) fn current_position(&self) -> Result<(usize, usize), RuntimeError> {
         let frame = self.current_frame()?;
-<<<<<<< HEAD
 
         Ok(frame.chunk.position_at(frame.ip))
-=======
-        let closure = frame_closure(&frame.closure);
-
-        Ok(closure.function.chunk.position_at(frame.ip))
->>>>>>> b172e95 (LSP)
     }
 }

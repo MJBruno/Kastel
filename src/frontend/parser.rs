@@ -985,157 +985,128 @@ impl Parser {
     // IMPORT
     // ============================================================
 
-   fn parse_import_statement(&mut self) -> Result<Statement, ParserError> {
-    let module = self.parse_module_path()?;
+    fn parse_import_statement(&mut self) -> Result<Statement, ParserError> {
+        let module = self.parse_module_path()?;
 
-    // ------------------------------------------------------------
-    // import dog;
-    // ------------------------------------------------------------
-    if !self.check(TokenKind::LeftBrace) {
-        return Ok(Statement::Import {
-            path: module.parts,
-        });
-    }
-
-    // ------------------------------------------------------------
-    // import dog { Dog, Animal, details };
-    // ------------------------------------------------------------
-
-    self.consume(
-        TokenKind::LeftBrace,
-        "'{' attendu après le nom du module",
-    )?;
-
-    let mut items = Vec::new();
-
-    if self.check(TokenKind::RightBrace) {
-        return Err(ParserError {
-            message: "La liste d'import ne peut pas être vide".to_string(),
-            line: self.peek().line,
-            column: self.peek().column,
-        });
-    }
-
-    loop {
-        let name = self.consume(
-            TokenKind::Identifier,
-            "Nom exporté attendu",
-        )?;
-
-        let alias = if self.match_token(TokenKind::As) {
-            Some(
-                self.consume(
-                    TokenKind::Identifier,
-                    "Alias attendu après 'as'",
-                )?
-                .lexeme,
-            )
-        } else {
-            None
-        };
-
-        items.push(ImportItem {
-            name: name.lexeme,
-            alias,
-        });
-
-        if !self.match_token(TokenKind::Comma) {
-            break;
+        // ------------------------------------------------------------
+        // import dog;
+        // ------------------------------------------------------------
+        if !self.check(TokenKind::LeftBrace) {
+            return Ok(Statement::Import { path: module.parts });
         }
+
+        // ------------------------------------------------------------
+        // import dog { Dog, Animal, details };
+        // ------------------------------------------------------------
+
+        self.consume(TokenKind::LeftBrace, "'{' attendu après le nom du module")?;
+
+        let mut items = Vec::new();
 
         if self.check(TokenKind::RightBrace) {
             return Err(ParserError {
-                message: "Nom exporté attendu après ','".to_string(),
+                message: "La liste d'import ne peut pas être vide".to_string(),
                 line: self.peek().line,
                 column: self.peek().column,
             });
         }
-    }
 
-    self.consume(
-        TokenKind::RightBrace,
-        "'}' attendu après la liste des imports",
-    )?;
+        loop {
+            let name = self.consume(TokenKind::Identifier, "Nom exporté attendu")?;
 
-    Ok(Statement::FromImport {
-        module,
-        items,
-    })
-}
+            let alias = if self.match_token(TokenKind::As) {
+                Some(
+                    self.consume(TokenKind::Identifier, "Alias attendu après 'as'")?
+                        .lexeme,
+                )
+            } else {
+                None
+            };
 
-fn parse_from_import_statement(&mut self) -> Result<Statement, ParserError> {
-    let module = self.parse_module_path()?;
+            items.push(ImportItem {
+                name: name.lexeme,
+                alias,
+            });
 
-    self.consume(
-        TokenKind::Import,
-        "'import' attendu après le nom du module",
-    )?;
+            if !self.match_token(TokenKind::Comma) {
+                break;
+            }
 
-    // ------------------------------------------------------------
-    // from dog import *
-    // ------------------------------------------------------------
+            if self.check(TokenKind::RightBrace) {
+                return Err(ParserError {
+                    message: "Nom exporté attendu après ','".to_string(),
+                    line: self.peek().line,
+                    column: self.peek().column,
+                });
+            }
+        }
 
-    if self.match_token(TokenKind::Star) {
-        return Ok(Statement::FromImport {
-            module,
-            items: vec![ImportItem {
-                name: "*".to_string(),
-                alias: None,
-            }],
-        });
-    }
-
-    // ------------------------------------------------------------
-    // from dog import Dog, Animal, details
-    // ------------------------------------------------------------
-
-    let mut items = Vec::new();
-
-    loop {
-        let name = self.consume(
-            TokenKind::Identifier,
-            "Nom exporté attendu",
+        self.consume(
+            TokenKind::RightBrace,
+            "'}' attendu après la liste des imports",
         )?;
 
-        let alias = if self.match_token(TokenKind::As) {
-            Some(
-                self.consume(
-                    TokenKind::Identifier,
-                    "Alias attendu après 'as'",
-                )?
-                .lexeme,
-            )
-        } else {
-            None
-        };
-
-        items.push(ImportItem {
-            name: name.lexeme,
-            alias,
-        });
-
-        if !self.match_token(TokenKind::Comma) {
-            break;
-        }
-
-        if self.check(TokenKind::Star) {
-            return Err(ParserError {
-                message: "'*' ne peut pas être combiné avec d'autres imports".to_string(),
-                line: self.peek().line,
-                column: self.peek().column,
-            });
-        }
+        Ok(Statement::FromImport { module, items })
     }
 
-    Ok(Statement::FromImport {
-        module,
-        items,
-    })
-}
+    fn parse_from_import_statement(&mut self) -> Result<Statement, ParserError> {
+        let module = self.parse_module_path()?;
 
-  
+        self.consume(TokenKind::Import, "'import' attendu après le nom du module")?;
 
-  
+        // ------------------------------------------------------------
+        // from dog import *
+        // ------------------------------------------------------------
+
+        if self.match_token(TokenKind::Star) {
+            return Ok(Statement::FromImport {
+                module,
+                items: vec![ImportItem {
+                    name: "*".to_string(),
+                    alias: None,
+                }],
+            });
+        }
+
+        // ------------------------------------------------------------
+        // from dog import Dog, Animal, details
+        // ------------------------------------------------------------
+
+        let mut items = Vec::new();
+
+        loop {
+            let name = self.consume(TokenKind::Identifier, "Nom exporté attendu")?;
+
+            let alias = if self.match_token(TokenKind::As) {
+                Some(
+                    self.consume(TokenKind::Identifier, "Alias attendu après 'as'")?
+                        .lexeme,
+                )
+            } else {
+                None
+            };
+
+            items.push(ImportItem {
+                name: name.lexeme,
+                alias,
+            });
+
+            if !self.match_token(TokenKind::Comma) {
+                break;
+            }
+
+            if self.check(TokenKind::Star) {
+                return Err(ParserError {
+                    message: "'*' ne peut pas être combiné avec d'autres imports".to_string(),
+                    line: self.peek().line,
+                    column: self.peek().column,
+                });
+            }
+        }
+
+        Ok(Statement::FromImport { module, items })
+    }
+
     fn parse_export_statement(&mut self) -> Result<Statement, ParserError> {
         let statement = if self.match_token(TokenKind::Let) {
             let mut declarations = self.parse_variable_declaration(true)?;

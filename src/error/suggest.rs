@@ -38,12 +38,17 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// au plus 1/3 de la longueur du nom recherché, arrondi, minimum 1).
 /// Évite de proposer des suggestions absurdes entre deux noms totalement
 /// différents juste parce que c'est le "moins pire" de la liste.
-pub fn closest_match<'a>(target: &str, candidates: impl Iterator<Item = &'a str>) -> Option<String> {
+pub fn closest_match<'a>(
+    target: &str,
+    candidates: impl Iterator<Item = &'a str>,
+) -> Option<String> {
     let threshold = (target.chars().count() / 3).max(1);
 
     candidates
         .map(|candidate| (candidate, levenshtein(target, candidate)))
-        .filter(|(candidate, distance)| *distance > 0 && *distance <= threshold && !candidate.is_empty())
+        .filter(|(candidate, distance)| {
+            *distance > 0 && *distance <= threshold && !candidate.is_empty()
+        })
         .min_by_key(|(_, distance)| *distance)
         .map(|(candidate, _)| candidate.to_string())
 }

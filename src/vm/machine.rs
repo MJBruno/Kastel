@@ -146,7 +146,6 @@ pub struct VirtualMachine {
     #[cfg(feature = "profile")]
     pub(crate) profile_counts: [u64; 256],
 
-
     #[cfg(feature = "profile")]
     pub(crate) profile_read_bytes: u64,
 }
@@ -193,7 +192,6 @@ impl VirtualMachine {
             #[cfg(feature = "profile")]
             profile_counts: [0; 256],
 
-
             #[cfg(feature = "profile")]
             profile_read_bytes: 0,
         };
@@ -204,15 +202,11 @@ impl VirtualMachine {
     }
 
     pub fn execute_repl(&mut self, function: Rc<Function>) -> Result<Option<Value>, RuntimeError> {
-<<<<<<< HEAD
-        let chunk = Rc::new(function.chunk.clone());
-        let local_count = function.local_count as usize;
-=======
-        // Fermer les upvalues de l'ancien environnement AVANT
-        // de supprimer la stack.
+        // Fermer les upvalues de l'ancien environnement avant de supprimer la stack.
         self.close_upvalues(0)?;
 
->>>>>>> b172e95 (LSP)
+        let chunk = Rc::new(function.chunk.clone());
+        let local_count = function.local_count as usize;
         let closure = Object::new_closure(function, Vec::new());
 
         self.stack.clear();
@@ -245,7 +239,6 @@ impl VirtualMachine {
             Ok(None)
         }
     }
-
     pub fn execute_module(
         function: Rc<Function>,
         exports: &[String],
