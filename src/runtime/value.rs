@@ -492,44 +492,49 @@ impl Value {
         match self {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::Module(_) => self.module_get(name),
+
                 Object::Instance { class, fields } => {
                     if let Some(value) = fields.get(name) {
                         return Ok(value.clone());
                     }
 
-                    let mut current = Some(class.clone());
+                    let mut current = class.clone();
 
                     while let Some(class_handle) = current {
-                        let class_handle = class_handle.unwrap();
-                        let object = class_handle.borrow();
-                        match &*object {
-                            Object::Class {
-                                methods,
-                                superclass,
-                                ..
-                            } => {
-                                if let Some(method) = methods.get(name) {
-                                    let method_handle = match method {
-                                        Value::Object(handle) => handle.clone(),
+                        let next_superclass = {
+                            let class_object = class_handle.borrow();
 
-                                        _ => {
-                                            return Err(RuntimeError::TypeError);
-                                        }
-                                    };
+                            match &*class_object {
+                                Object::Class {
+                                    methods,
+                                    superclass,
+                                    ..
+                                } => {
+                                    if let Some(method) = methods.get(name) {
+                                        let method_handle = match method {
+                                            Value::Object(handle) => handle.clone(),
 
-                                    return Ok(Value::new_bound_method(
-                                        method_handle,
-                                        self.clone(),
-                                    ));
+                                            _ => {
+                                                return Err(RuntimeError::TypeError);
+                                            }
+                                        };
+
+                                        return Ok(Value::new_bound_method(
+                                            method_handle,
+                                            self.clone(),
+                                        ));
+                                    }
+
+                                    superclass.clone()
                                 }
 
-                                current = Some(superclass.clone());
+                                _ => {
+                                    return Err(RuntimeError::TypeError);
+                                }
                             }
+                        };
 
-                            _ => {
-                                return Err(RuntimeError::TypeError);
-                            }
-                        }
+                        current = next_superclass;
                     }
 
                     Err(RuntimeError::ObjectFieldNotFound {
@@ -537,6 +542,7 @@ impl Value {
                         suggestion: None,
                     })
                 }
+
                 Object::Dict(entries) => entries
                     .iter()
                     .find(|(key, _)| match key {

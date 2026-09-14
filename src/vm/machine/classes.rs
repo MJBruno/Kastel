@@ -423,6 +423,10 @@ impl VirtualMachine {
             }
         };
 
+        let Some(value_class) = value_class else {
+            return Ok(false);
+        };
+
         let target_kind = {
             let object = target_handle.borrow();
 
@@ -437,13 +441,8 @@ impl VirtualMachine {
             0 => {
                 let mut current = Some(value_class);
 
-                while let Some(class) = current {
-                    let class_handle = match class.as_ref() {
-                        Some(handle) => handle,
-                        None => break,
-                    };
-
-                    if Gc::ptr_eq(class_handle, target_handle) {
+                while let Some(class_handle) = current {
+                    if Gc::ptr_eq(&class_handle, target_handle) {
                         return Ok(true);
                     }
 
@@ -451,15 +450,17 @@ impl VirtualMachine {
                         let object = class_handle.borrow();
 
                         match &*object {
-                            Object::Class { superclass, .. } => Some(superclass.clone()),
+                            Object::Class { superclass, .. } => superclass.clone(),
+
                             _ => None,
                         }
                     };
                 }
+
                 Ok(false)
             }
 
-            1 => Self::class_implements_interface(value_class.unwrap(), target_handle.clone()),
+            1 => Self::class_implements_interface(value_class, target_handle.clone()),
 
             _ => Err(RuntimeError::TypeError),
         }

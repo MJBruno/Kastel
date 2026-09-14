@@ -46,6 +46,10 @@ fn main() {
     let mut client =
         LspClient::new();
 
+    // ============================================================
+    // INITIALIZE
+    // ============================================================
+
     println!("→ initialize");
 
     let initialize_id =
@@ -105,12 +109,20 @@ fn main() {
 
     println!("← initialize OK");
 
+    // ============================================================
+    // INITIALIZED
+    // ============================================================
+
     println!("→ initialized");
 
     client.send_notification(
         "initialized",
         json!({}),
     );
+
+    // ============================================================
+    // DID OPEN
+    // ============================================================
 
     println!("→ didOpen main.ks");
 
@@ -144,10 +156,15 @@ fn main() {
         diagnostics["params"]["diagnostics"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .is_empty(),
+        "valid source unexpectedly produced diagnostics"
     );
 
     println!("← diagnostics OK");
+
+    // ============================================================
+    // DOCUMENT SYMBOL
+    // ============================================================
 
     println!(
         "→ documentSymbol main.ks"
@@ -205,6 +222,10 @@ fn main() {
         "← documentSymbol main.ks OK"
     );
 
+    // ============================================================
+    // IMPORTED DOCUMENT SYMBOLS
+    // ============================================================
+
     println!(
         "→ documentSymbol math/xx.ks"
     );
@@ -261,6 +282,10 @@ fn main() {
         "← imported module symbols OK"
     );
 
+    // ============================================================
+    // HOVER
+    // ============================================================
+
     println!("→ hover VALUE");
 
     let hover_id =
@@ -299,7 +324,13 @@ fn main() {
 
     println!("← hover OK");
 
-    println!("→ definition VALUE");
+    // ============================================================
+    // DEFINITION
+    // ============================================================
+
+    println!(
+        "→ definition VALUE"
+    );
 
     let definition_id =
         client.next_id();
@@ -376,6 +407,10 @@ fn main() {
 
     println!("← definition OK");
 
+    // ============================================================
+    // REFERENCES
+    // ============================================================
+
     println!("→ references VALUE");
 
     let references_id =
@@ -449,6 +484,10 @@ fn main() {
     );
 
     println!("← references OK");
+
+    // ============================================================
+    // RENAME
+    // ============================================================
 
     println!("→ rename VALUE");
 
@@ -552,6 +591,10 @@ fn main() {
 
     println!("← rename OK");
 
+    // ============================================================
+    // COMPLETION
+    // ============================================================
+
     println!("→ completion");
 
     let completion_id =
@@ -610,7 +653,114 @@ fn main() {
 
     println!("← completion OK");
 
-    println!("→ didChange");
+    // ============================================================
+    // DID CHANGE : INTRODUCE SYNTAX ERROR
+    // ============================================================
+
+    println!(
+        "→ didChange invalid source"
+    );
+
+    let invalid_source =
+        "import math.xx\n\
+         \n\
+         func main() {\n\
+             print(VALUE)\n\
+         \n";
+
+    client.send_notification(
+        "textDocument/didChange",
+        json!({
+            "textDocument": {
+                "uri": main_uri,
+                "version": 2
+            },
+            "contentChanges": [
+                {
+                    "text": invalid_source
+                }
+            ]
+        }),
+    );
+
+    let diagnostics =
+        client
+            .read_notification(
+                "textDocument/publishDiagnostics",
+            )
+            .expect(
+                "missing invalid-source diagnostics",
+            );
+
+    assert_eq!(
+        diagnostics["params"]["uri"],
+        main_uri
+    );
+
+    let invalid_diagnostics =
+        diagnostics["params"]["diagnostics"]
+            .as_array()
+            .expect(
+                "diagnostics is not an array",
+            );
+
+    assert!(
+        !invalid_diagnostics.is_empty(),
+        "invalid Kastel source produced no diagnostics"
+    );
+
+    for diagnostic
+        in invalid_diagnostics
+    {
+        assert!(
+            diagnostic["message"]
+                .as_str()
+                .is_some(),
+            "diagnostic has no message"
+        );
+
+        assert_eq!(
+            diagnostic["source"],
+            "kastel"
+        );
+
+        assert_eq!(
+            diagnostic["severity"],
+            1
+        );
+
+        assert!(
+            diagnostic["range"]["start"]["line"]
+                .is_number()
+        );
+
+        assert!(
+            diagnostic["range"]["start"]["character"]
+                .is_number()
+        );
+
+        assert!(
+            diagnostic["range"]["end"]["line"]
+                .is_number()
+        );
+
+        assert!(
+            diagnostic["range"]["end"]["character"]
+                .is_number()
+        );
+    }
+
+    println!(
+        "← invalid diagnostics OK"
+    );
+
+    // ============================================================
+    // DID CHANGE : REPAIR SOURCE
+    // ============================================================
+
+    println!(
+        "→ didChange valid source"
+    );
 
     let changed_source =
         "import math.xx\n\
@@ -625,7 +775,7 @@ fn main() {
         json!({
             "textDocument": {
                 "uri": main_uri,
-                "version": 2
+                "version": 3
             },
             "contentChanges": [
                 {
@@ -641,7 +791,7 @@ fn main() {
                 "textDocument/publishDiagnostics",
             )
             .expect(
-                "missing didChange diagnostics",
+                "missing repaired-source diagnostics",
             );
 
     assert_eq!(
@@ -653,10 +803,17 @@ fn main() {
         diagnostics["params"]["diagnostics"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .is_empty(),
+        "repaired source still has diagnostics"
     );
 
-    println!("← didChange OK");
+    println!(
+        "← repaired diagnostics OK"
+    );
+
+    // ============================================================
+    // DID CLOSE
+    // ============================================================
 
     println!("→ didClose");
 
@@ -683,7 +840,18 @@ fn main() {
         main_uri
     );
 
+    assert!(
+        diagnostics["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
     println!("← didClose OK");
+
+    // ============================================================
+    // SHUTDOWN
+    // ============================================================
 
     println!("→ shutdown");
 
@@ -715,14 +883,12 @@ fn main() {
 
     println!("← shutdown OK");
 
+    // ============================================================
+    // EXIT
+    // ============================================================
+
     println!("→ exit");
 
-    /*
-     * Après shutdown, le serveur peut déjà avoir
-     * fermé son extrémité du pipe. `exit` ne possède
-     * aucune réponse attendue : une BrokenPipe est
-     * donc ignorée ici.
-     */
     client.send_notification_ignore_error(
         "exit",
         Value::Null,
@@ -901,7 +1067,9 @@ impl LspClient {
                 "params": params
             });
 
-        self.write_message(message);
+        self.write_message(
+            message,
+        );
     }
 
     fn send_notification(
@@ -916,7 +1084,9 @@ impl LspClient {
                 "params": params
             });
 
-        self.write_message(message);
+        self.write_message(
+            message,
+        );
     }
 
     fn send_notification_ignore_error(
@@ -932,7 +1102,9 @@ impl LspClient {
             });
 
         let _ =
-            self.write_message_result(message);
+            self.write_message_result(
+                message,
+            );
     }
 
     fn write_message(

@@ -26,7 +26,10 @@ impl Compiler {
     //                      VARIABLES
     // ============================================================
 
-    pub(crate) fn resolve_variable(&mut self, name: &str) -> Result<VariableLocation, CompileError> {
+    pub(crate) fn resolve_variable(
+        &mut self,
+        name: &str,
+    ) -> Result<VariableLocation, CompileError> {
         // ============================================================
         // 1. LOCAL
         // ============================================================
@@ -44,7 +47,7 @@ impl Compiler {
         }
 
         // ============================================================
-        // 3. GLOBAL
+        // 3. GLOBAL CONNU
         // ============================================================
 
         if self.globals.borrow().contains_key(name) {
@@ -52,7 +55,20 @@ impl Compiler {
         }
 
         // ============================================================
-        // 4. INEXISTANTE
+        // 4. WILDCARD IMPORT
+        //
+        // from dog import *
+        //
+        // Les exports ne sont connus qu'au chargement du module.
+        // Le runtime les placera dans globals.
+        // ============================================================
+
+        if self.wildcard_imported {
+            return Ok(VariableLocation::Global);
+        }
+
+        // ============================================================
+        // 5. INEXISTANTE
         // ============================================================
 
         let suggestion = {
@@ -61,7 +77,10 @@ impl Compiler {
 
             crate::error::suggest::closest_match(
                 name,
-                context.locals.names().chain(globals.keys().map(String::as_str)),
+                context
+                    .locals
+                    .names()
+                    .chain(globals.keys().map(String::as_str)),
             )
         };
 

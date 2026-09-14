@@ -1,6 +1,10 @@
 use super::VirtualMachine;
 
 use crate::{
+<<<<<<< HEAD
+=======
+    bytecode::chunk::OpCode,
+>>>>>>> 6a6d144 (Stabilisation de kastel)
     error::runtime_error::RuntimeError,
     runtime::{
         object::Object,
@@ -440,8 +444,32 @@ impl VirtualMachine {
                 let base_count = self.read_byte()? as usize;
                 let method_count = self.read_byte()? as usize;
 
+<<<<<<< HEAD
                 self.op_interface(base_count, method_count)?;
                 Ok(false)
+=======
+            OpCode::ImportAll => {
+                self.import_all()?;
+            }
+
+            // ========================================================
+            // CONTROL FLOW
+            // ========================================================
+            OpCode::Jump => {
+                self.jump()?;
+            }
+
+            OpCode::JumpIfFalse => {
+                self.jump_if_false()?;
+            }
+
+            OpCode::Loop => {
+                self.loop_back()?;
+            }
+
+            OpCode::Pop => {
+                self.pop()?;
+>>>>>>> 6a6d144 (Stabilisation de kastel)
             }
 
             // ========================================================

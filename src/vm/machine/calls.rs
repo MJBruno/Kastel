@@ -107,7 +107,11 @@ impl VirtualMachine {
                 };
 
                 if let Some((method, receiver)) = bound {
-                    self.stack[callee_index] = Value::Object(method.unwrap());
+                    let Some(method) = method else {
+                        return Err(RuntimeError::InvalidFunction);
+                    };
+
+                    self.stack[callee_index] = Value::Object(method);
 
                     self.stack.insert(callee_index + 1, receiver);
 
@@ -120,7 +124,12 @@ impl VirtualMachine {
                     return Ok(());
                 }
 
-                if matches!(&*handle.borrow(), Object::Closure(_)) {
+                let is_closure = {
+                    let object = handle.borrow();
+                    matches!(&*object, Object::Closure(_))
+                };
+
+                if is_closure {
                     self.call(handle, arg_count)?;
                     return Ok(());
                 }

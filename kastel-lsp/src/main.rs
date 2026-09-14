@@ -130,40 +130,28 @@ impl Transport {
 }
 
 fn main() -> io::Result<()> {
-    let mut transport =
-        Transport::new();
+    eprintln!("Kastel LSP starting");
 
-    let mut server =
-        Server::new();
+    let mut transport = Transport::new();
+    let mut server = Server::new();
 
-    while let Some(value) =
-        transport.read_message()?
-    {
+    while let Some(value) = transport.read_message()? {
+        eprintln!("Received LSP message");
+
         let request: RpcRequest =
             serde_json::from_value(value)
                 .map_err(io::Error::other)?;
 
-        let messages =
-            server.handle(request);
+        let messages = server.handle(request);
 
         for message in messages {
             match message {
-                ServerMessage::Response(
-                    response,
-                ) => {
-                    transport
-                        .send_message(
-                            &response,
-                        )?;
+                ServerMessage::Response(response) => {
+                    transport.send_message(&response)?;
                 }
 
-                ServerMessage::Notification(
-                    notification,
-                ) => {
-                    transport
-                        .send_value(
-                            &notification,
-                        )?;
+                ServerMessage::Notification(notification) => {
+                    transport.send_value(&notification)?;
                 }
             }
         }
@@ -172,6 +160,8 @@ fn main() -> io::Result<()> {
             break;
         }
     }
+
+    eprintln!("Kastel LSP stopped");
 
     Ok(())
 }

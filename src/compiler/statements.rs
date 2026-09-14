@@ -390,6 +390,10 @@ impl Compiler {
                 },
             );
         } else {
+<<<<<<< HEAD
+=======
+            // Classe locale / nested.
+>>>>>>> 6a6d144 (Stabilisation de kastel)
             let slot =
                 self.context
                     .borrow_mut()
@@ -963,6 +967,7 @@ impl Compiler {
         self.compile_literal_pattern(start_literal)?;
 
         self.emit_opcode(OpCode::Less);
+<<<<<<< HEAD
         self.emit_opcode(OpCode::Not);
 
         let lower_false_jump = self.emit_jump(OpCode::JumpIfFalse);
@@ -971,10 +976,25 @@ impl Compiler {
 
         self.compile_expression(expression)?;
 
+=======
+
+        self.emit_opcode(OpCode::Not);
+
+        let lower_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+
+        self.emit_opcode(OpCode::Pop);
+
+        self.compile_expression(expression)?;
+
+>>>>>>> 6a6d144 (Stabilisation de kastel)
         self.compile_literal_pattern(end_literal)?;
 
         if inclusive {
             self.emit_opcode(OpCode::Greater);
+<<<<<<< HEAD
+=======
+
+>>>>>>> 6a6d144 (Stabilisation de kastel)
             self.emit_opcode(OpCode::Not);
         } else {
             self.emit_opcode(OpCode::Less);
@@ -1046,6 +1066,7 @@ impl Compiler {
         self.patch_jump(length_false_jump)?;
 
         self.emit_opcode(OpCode::Pop);
+<<<<<<< HEAD
         self.emit_opcode(OpCode::False);
 
         let length_result_jump = self.emit_jump(OpCode::Jump);
@@ -1060,12 +1081,36 @@ impl Compiler {
 
             let result_jump = self.emit_jump(OpCode::Jump);
 
+=======
+
+        self.emit_opcode(OpCode::False);
+
+        let length_result_jump = self.emit_jump(OpCode::Jump);
+
+        let mut element_result_jumps = Vec::new();
+
+        for false_jump in element_false_jumps {
+            self.patch_jump(false_jump)?;
+
+            self.emit_opcode(OpCode::Pop);
+
+            self.emit_opcode(OpCode::False);
+
+            let result_jump = self.emit_jump(OpCode::Jump);
+
+>>>>>>> 6a6d144 (Stabilisation de kastel)
             element_result_jumps.push(result_jump);
         }
 
         self.patch_jump(success_jump)?;
+<<<<<<< HEAD
         self.patch_jump(length_result_jump)?;
 
+=======
+
+        self.patch_jump(length_result_jump)?;
+
+>>>>>>> 6a6d144 (Stabilisation de kastel)
         for jump in element_result_jumps {
             self.patch_jump(jump)?;
         }
@@ -1151,7 +1196,70 @@ impl Compiler {
 
         let module_name = module.parts.join(".");
 
+<<<<<<< HEAD
         for item in items {
+            let binding_name = item.alias.as_deref().unwrap_or(&item.name);
+
+            if self.globals.borrow().contains_key(binding_name) {
+                return Err(CompileError::VariableAlreadyDeclared(
+                    binding_name.to_string(),
+                ));
+=======
+        // ------------------------------------------------------------
+        // from dog import *
+        // ------------------------------------------------------------
+
+        if items.len() == 1 && items[0].name == "*" {
+            if items[0].alias.is_some() {
+                return Err(CompileError::InvalidImport);
+>>>>>>> 6a6d144 (Stabilisation de kastel)
+            }
+
+            let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
+
+<<<<<<< HEAD
+            self.emit_bytes(OpCode::Import, module_constant);
+
+            let property_constant = self.identifier_constant(&item.name)?;
+
+            self.emit_bytes(OpCode::GetProperty, property_constant);
+
+            let binding_constant = self.identifier_constant(binding_name)?;
+
+            self.emit_bytes(OpCode::DefineGlobal, binding_constant);
+
+            self.globals.borrow_mut().insert(
+                binding_name.to_string(),
+                Global {
+                    constant: binding_constant,
+                    mutable: false,
+                },
+            );
+=======
+            self.emit_bytes(OpCode::ImportAll, module_constant);
+
+            self.imported_modules.insert(module_name);
+            self.wildcard_imported = true;
+
+            return Ok(());
+>>>>>>> 6a6d144 (Stabilisation de kastel)
+        }
+
+        // ------------------------------------------------------------
+        // from dog import Dog, Animal, details
+        //
+        // import dog {
+        //     Dog,
+        //     Animal,
+        //     details
+        // }
+        // ------------------------------------------------------------
+
+        for item in items {
+            if item.name == "*" {
+                return Err(CompileError::InvalidImport);
+            }
+
             let binding_name = item.alias.as_deref().unwrap_or(&item.name);
 
             if self.globals.borrow().contains_key(binding_name) {
@@ -1181,6 +1289,8 @@ impl Compiler {
             );
         }
 
+        self.imported_modules.insert(module_name);
+
         Ok(())
     }
 
@@ -1189,6 +1299,7 @@ impl Compiler {
             return Err(CompileError::InvalidImport);
         }
 
+<<<<<<< HEAD
         let module_name = path.join(".");
 
         let binding_name = path.first().ok_or(CompileError::InvalidImport)?;
@@ -1213,11 +1324,101 @@ impl Compiler {
             binding_name.clone(),
             Global {
                 constant: name_constant,
+=======
+        // ------------------------------------------------------------
+        // import module;
+        // import module.Export;
+        //
+        // Exemples :
+        //     import dog;
+        //     import dog.Dog;
+        //     import animals.dog.Dog;
+        // ------------------------------------------------------------
+
+        let (module_parts, export_name) = if path.len() >= 2 {
+            let split_at = path.len() - 1;
+
+            (&path[..split_at], Some(path[split_at].as_str()))
+        } else {
+            (&path[..], None)
+        };
+
+        if module_parts.is_empty() {
+            return Err(CompileError::InvalidImport);
+        }
+
+        let module_name = module_parts.join(".");
+
+        // ------------------------------------------------------------
+        // import dog.Dog;
+        // => variable globale "Dog"
+        // ------------------------------------------------------------
+        //
+        // import dog;
+        // => variable globale "dog"
+        //
+        let binding_name =
+            export_name.unwrap_or_else(|| module_parts.last().map(String::as_str).unwrap_or(""));
+
+        if binding_name.is_empty() {
+            return Err(CompileError::InvalidImport);
+        }
+
+        if self.globals.borrow().contains_key(binding_name) {
+            return Err(CompileError::VariableAlreadyDeclared(
+                binding_name.to_string(),
+            ));
+        }
+
+        // ------------------------------------------------------------
+        // Charger le module
+        // ------------------------------------------------------------
+
+        let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
+
+        self.emit_bytes(OpCode::Import, module_constant);
+
+        // ------------------------------------------------------------
+        // Si un export est demandé :
+        //
+        // import dog.Dog;
+        //
+        // devient :
+        //
+        // IMPORT "dog"
+        // GET_PROPERTY "Dog"
+        // DEFINE_GLOBAL "Dog"
+        // ------------------------------------------------------------
+
+        if let Some(export_name) = export_name {
+            let property_constant = self.identifier_constant(export_name)?;
+
+            self.emit_bytes(OpCode::GetProperty, property_constant);
+        }
+
+        // ------------------------------------------------------------
+        // Déclarer la variable globale
+        // ------------------------------------------------------------
+
+        let binding_constant = self.identifier_constant(binding_name)?;
+
+        self.emit_bytes(OpCode::DefineGlobal, binding_constant);
+
+        self.globals.borrow_mut().insert(
+            binding_name.to_string(),
+            Global {
+                constant: binding_constant,
+>>>>>>> 6a6d144 (Stabilisation de kastel)
                 mutable: false,
             },
         );
 
+<<<<<<< HEAD
         self.imported_modules.insert(binding_name.clone());
+=======
+        // Évite de recharger le même module.
+        self.imported_modules.insert(module_name);
+>>>>>>> 6a6d144 (Stabilisation de kastel)
 
         Ok(())
     }
@@ -1226,6 +1427,11 @@ impl Compiler {
     // EXPORT
     // ============================================================
 
+<<<<<<< HEAD
+=======
+    // src/compiler/statements.rs
+
+>>>>>>> 6a6d144 (Stabilisation de kastel)
     pub(crate) fn compile_export(&mut self, statement: &Statement) -> Result<(), CompileError> {
         if self.in_function || self.scope_depth != 0 {
             return Err(CompileError::InvalidExport);
@@ -1240,6 +1446,19 @@ impl Compiler {
             Statement::Function { name, .. } => {
                 self.register_export(name)?;
                 self.compile_statement(statement)?;
+<<<<<<< HEAD
+=======
+            }
+
+            Statement::Class { name, .. } => {
+                self.register_export(name)?;
+                self.compile_statement(statement)?;
+            }
+
+            Statement::Interface { name, .. } => {
+                self.register_export(name)?;
+                self.compile_statement(statement)?;
+>>>>>>> 6a6d144 (Stabilisation de kastel)
             }
 
             _ => {
@@ -1267,8 +1486,14 @@ impl Compiler {
                     },
                 ) if matches!(statement.as_ref(), Statement::Expression { .. }) => {
                     self.current_line = *line;
+<<<<<<< HEAD
                     self.current_column = *column;
 
+=======
+
+                    self.current_column = *column;
+
+>>>>>>> 6a6d144 (Stabilisation de kastel)
                     if let Statement::Expression { expression } = statement.as_ref() {
                         self.compile_expression(expression)?;
                     }
