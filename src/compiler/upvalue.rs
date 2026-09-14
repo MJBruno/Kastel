@@ -11,7 +11,11 @@ impl Compiler {
     // UPVALUES
     // ============================================================
 
-    pub(crate) fn add_upvalue(&mut self, index: usize, is_local: bool) -> Result<usize, CompileError> {
+    pub(crate) fn add_upvalue(
+        &mut self,
+        index: usize,
+        is_local: bool,
+    ) -> Result<usize, CompileError> {
         let mut context = self.context.borrow_mut();
 
         for (i, upvalue) in context.upvalues.iter().enumerate() {

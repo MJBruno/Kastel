@@ -45,6 +45,7 @@ impl VirtualMachine {
         }
 
         let callee_index = self.stack.len() - required;
+
         let current_frame = self.current_frame()?;
 
         if callee_index < current_frame.slot_start {
@@ -76,6 +77,7 @@ impl VirtualMachine {
         }
 
         let callee_index = self.stack.len() - required;
+
         let current_frame = self.current_frame()?;
 
         if callee_index < current_frame.slot_start {
@@ -105,7 +107,12 @@ impl VirtualMachine {
                 };
 
                 if let Some((method, receiver)) = bound {
+                    let Some(method) = method else {
+                        return Err(RuntimeError::InvalidFunction);
+                    };
+
                     self.stack[callee_index] = Value::Object(method);
+
                     self.stack.insert(callee_index + 1, receiver);
 
                     let bound_arg_count = arg_count
@@ -113,10 +120,16 @@ impl VirtualMachine {
                         .ok_or(RuntimeError::InvalidFunction)?;
 
                     self.execute_call(bound_arg_count)?;
+
                     return Ok(());
                 }
 
-                if matches!(&*handle.borrow(), Object::Closure(_)) {
+                let is_closure = {
+                    let object = handle.borrow();
+                    matches!(&*object, Object::Closure(_))
+                };
+
+                if is_closure {
                     self.call(handle, arg_count)?;
                     return Ok(());
                 }
@@ -129,9 +142,13 @@ impl VirtualMachine {
                     .checked_add(1)
                     .ok_or(RuntimeError::InvalidFunction)?;
 
+                let args_end = args_start
+                    .checked_add(arg_count)
+                    .ok_or(RuntimeError::InvalidFunction)?;
+
                 let args = self
                     .stack
-                    .get(args_start..)
+                    .get(args_start..args_end)
                     .ok_or(RuntimeError::StackUnderflow)?
                     .to_vec();
 
@@ -248,6 +265,7 @@ impl VirtualMachine {
         self.frames.pop().ok_or(RuntimeError::InvalidFunction)?;
 
         self.stack.truncate(frame.slot_start);
+
         self.prune_exception_handlers();
 
         if !self.frames.is_empty() {

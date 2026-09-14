@@ -1,13 +1,9 @@
-use super::bytecode::frame_closure;
 use super::VirtualMachine;
+use super::bytecode::frame_closure;
 
 use crate::{
     error::runtime_error::RuntimeError,
-    runtime::{
-        gc_handle::Gc,
-        object::Object,
-        value::Value,
-    },
+    runtime::{gc_handle::Gc, object::Object, value::Value},
     stdlib::{array, dict},
 };
 
@@ -16,17 +12,11 @@ impl VirtualMachine {
     //                     METHOD RESOLUTION
     // ============================================================
 
-    pub(crate) fn find_class_method_from(
-        class: Gc<Object>,
-        name: &str,
-    ) -> Option<Value> {
+    pub(crate) fn find_class_method_from(class: Gc<Object>, name: &str) -> Option<Value> {
         Self::find_method_in_hierarchy(Some(class), name)
     }
 
-    pub(crate) fn find_base_method(
-        class: Gc<Object>,
-        name: &str,
-    ) -> Option<Value> {
+    pub(crate) fn find_base_method(class: Gc<Object>, name: &str) -> Option<Value> {
         let parent = {
             let object = class.borrow();
 
@@ -39,10 +29,7 @@ impl VirtualMachine {
         Self::find_method_in_hierarchy(parent, name)
     }
 
-    fn find_method_in_hierarchy(
-        mut current: Option<Gc<Object>>,
-        name: &str,
-    ) -> Option<Value> {
+    fn find_method_in_hierarchy(mut current: Option<Gc<Object>>, name: &str) -> Option<Value> {
         while let Some(handle) = current {
             let object = handle.borrow();
 
@@ -118,10 +105,7 @@ impl VirtualMachine {
                 let mut iterator_args = args.clone();
                 iterator_args[0] = iterator;
 
-                self.invoke_iterator_method(
-                    &method_name,
-                    &iterator_args,
-                )?
+                self.invoke_iterator_method(&method_name, &iterator_args)?
             }
 
             Value::Object(handle) => {
@@ -140,8 +124,7 @@ impl VirtualMachine {
 
                 match object_kind {
                     0 => {
-                        let callable =
-                            receiver.get_property(&method_name)?;
+                        let callable = receiver.get_property(&method_name)?;
 
                         self.push(callable);
 
@@ -154,61 +137,37 @@ impl VirtualMachine {
                         return Ok(());
                     }
 
-                    1 => {
-                        self.invoke_iterator_method(
-                            &method_name,
-                            &args,
-                        )?
-                    }
+                    1 => self.invoke_iterator_method(&method_name, &args)?,
 
-                    2 => {
-                        match crate::stdlib::string::dispatch_method(
-                            &method_name,
-                            &args,
-                        )? {
-                            Some(result) => result,
+                    2 => match crate::stdlib::string::dispatch_method(&method_name, &args)? {
+                        Some(result) => result,
 
-                            None => {
-                                return Err(
-                                    RuntimeError::ObjectFieldNotFound {
-                                        name: method_name,
-                                        suggestion: None,
-                                    },
-                                );
-                            }
+                        None => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
                         }
-                    }
+                    },
 
                     3 => {
-                        if let Some(result) =
-                            array::dispatch_method(&method_name, &args)?
-                        {
+                        if let Some(result) = array::dispatch_method(&method_name, &args)? {
                             result
                         } else {
-                            self.invoke_array_functional(
-                                &method_name,
-                                &args,
-                            )?
+                            self.invoke_array_functional(&method_name, &args)?
                         }
                     }
 
-                    4 => {
-                        match dict::dispatch_method(
-                            &method_name,
-                            &args,
-                        )? {
-                            Some(result) => result,
+                    4 => match dict::dispatch_method(&method_name, &args)? {
+                        Some(result) => result,
 
-                            None => {
-                                return Err(
-                                    RuntimeError::ObjectFieldNotFound {
-                                        name: method_name,
-                                        suggestion: None,
-                                    },
-                                );
-                            }
+                        None => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
                         }
-                    }
+                    },
 
                     _ => {
                         return Err(RuntimeError::ObjectFieldNotFound {
@@ -235,8 +194,8 @@ impl VirtualMachine {
         method_constant: usize,
         arg_count: usize,
     ) -> Result<(), RuntimeError> {
-        let method_constant = u8::try_from(method_constant)
-            .map_err(|_| RuntimeError::InvalidFunction)?;
+        let method_constant =
+            u8::try_from(method_constant).map_err(|_| RuntimeError::InvalidFunction)?;
 
         let method_value = self.read_constant(method_constant)?;
 
@@ -282,19 +241,15 @@ impl VirtualMachine {
         let owner_class = {
             let closure = frame_closure(&frame.closure);
 
-            closure
-                .owner_class
-                .clone()
-                .ok_or(RuntimeError::TypeError)?
+            closure.owner_class.clone().ok_or(RuntimeError::TypeError)?
         };
 
-        let method =
-            Self::find_base_method(owner_class, &method_name).ok_or(
-                RuntimeError::ObjectFieldNotFound {
-                    name: method_name,
-                    suggestion: None,
-                },
-            )?;
+        let method = Self::find_base_method(owner_class, &method_name).ok_or(
+            RuntimeError::ObjectFieldNotFound {
+                name: method_name,
+                suggestion: None,
+            },
+        )?;
 
         self.push(method);
         self.push(this_value);
@@ -332,12 +287,7 @@ impl VirtualMachine {
                 let mut result = Vec::with_capacity(elements.len());
 
                 for element in elements {
-                    result.push(
-                        self.invoke_sync(
-                            callback.clone(),
-                            &[element],
-                        )?,
-                    );
+                    result.push(self.invoke_sync(callback.clone(), &[element])?);
                 }
 
                 Ok(Value::new_array(result))
@@ -357,10 +307,8 @@ impl VirtualMachine {
                 let mut result = Vec::new();
 
                 for element in elements {
-                    let keep = self.invoke_sync(
-                        callback.clone(),
-                        std::slice::from_ref(&element),
-                    )?;
+                    let keep =
+                        self.invoke_sync(callback.clone(), std::slice::from_ref(&element))?;
 
                     if keep.is_truthy() {
                         result.push(element);
@@ -383,10 +331,7 @@ impl VirtualMachine {
                 let mut accumulator = args[2].clone();
 
                 for element in elements {
-                    accumulator = self.invoke_sync(
-                        callback.clone(),
-                        &[accumulator, element],
-                    )?;
+                    accumulator = self.invoke_sync(callback.clone(), &[accumulator, element])?;
                 }
 
                 Ok(accumulator)
@@ -404,10 +349,7 @@ impl VirtualMachine {
                 let callback = args[1].clone();
 
                 for element in elements {
-                    let value = self.invoke_sync(
-                        callback.clone(),
-                        &[element],
-                    )?;
+                    let value = self.invoke_sync(callback.clone(), &[element])?;
 
                     if value.is_truthy() {
                         return Ok(Value::Boolean(true));
@@ -429,10 +371,7 @@ impl VirtualMachine {
                 let callback = args[1].clone();
 
                 for element in elements {
-                    let value = self.invoke_sync(
-                        callback.clone(),
-                        &[element],
-                    )?;
+                    let value = self.invoke_sync(callback.clone(), &[element])?;
 
                     if !value.is_truthy() {
                         return Ok(Value::Boolean(false));
@@ -449,9 +388,7 @@ impl VirtualMachine {
         }
     }
 
-    fn array_snapshot(
-        value: &Value,
-    ) -> Result<Vec<Value>, RuntimeError> {
+    fn array_snapshot(value: &Value) -> Result<Vec<Value>, RuntimeError> {
         match value {
             Value::Object(handle) => {
                 let object = handle.borrow();

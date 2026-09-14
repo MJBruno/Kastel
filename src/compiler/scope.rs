@@ -14,11 +14,7 @@ impl Compiler {
     pub(crate) fn end_scope(&mut self) {
         self.scope_depth -= 1;
 
-        let count = self
-            .context
-            .borrow_mut()
-            .locals
-            .pop_scope(self.scope_depth);
+        let count = self.context.borrow_mut().locals.pop_scope(self.scope_depth);
 
         for _ in 0..count {
             self.emit_opcode(OpCode::Pop);
@@ -29,15 +25,8 @@ impl Compiler {
     /// jusqu'à `target_depth`.
     ///
     /// Cette fonction ne modifie PAS la table des locals.
-    pub(crate) fn emit_scope_cleanup(
-        &mut self,
-        target_depth: usize,
-    ) {
-        let count = self
-            .context
-            .borrow()
-            .locals
-            .cleanup_count(target_depth);
+    pub(crate) fn emit_scope_cleanup(&mut self, target_depth: usize) {
+        let count = self.context.borrow().locals.cleanup_count(target_depth);
 
         for _ in 0..count {
             self.emit_opcode(OpCode::Pop);
@@ -50,10 +39,6 @@ impl Compiler {
     pub(crate) fn discard_scope(&mut self) {
         self.scope_depth -= 1;
 
-        self.context
-            .borrow_mut()
-            .locals
-            .pop_scope(self.scope_depth);
+        self.context.borrow_mut().locals.pop_scope(self.scope_depth);
     }
 }
-

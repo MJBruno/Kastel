@@ -1,8 +1,7 @@
 use std::{
     env,
     ffi::OsStr,
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
 };
@@ -136,8 +135,7 @@ fn parse_args() -> Result<(Mode, PathBuf), String> {
             "--update" => {
                 if mode != Mode::Check {
                     return Err(
-                        "--update et --clean ne peuvent pas être utilisés ensemble."
-                            .to_string(),
+                        "--update et --clean ne peuvent pas être utilisés ensemble.".to_string()
                     );
                 }
 
@@ -147,8 +145,7 @@ fn parse_args() -> Result<(Mode, PathBuf), String> {
             "--clean" => {
                 if mode != Mode::Check {
                     return Err(
-                        "--update et --clean ne peuvent pas être utilisés ensemble."
-                            .to_string(),
+                        "--update et --clean ne peuvent pas être utilisés ensemble.".to_string()
                     );
                 }
 
@@ -189,25 +186,18 @@ fn build_kastel() -> Result<PathBuf, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .status()
-        .map_err(|error| {
-            format!("Impossible de lancer Cargo : {error}")
-        })?;
+        .map_err(|error| format!("Impossible de lancer Cargo : {error}"))?;
 
     if !status.success() {
-        return Err(
-            "Erreur : impossible de compiler Kastel.".to_string()
-        );
+        return Err("Erreur : impossible de compiler Kastel.".to_string());
     }
 
-    let current_exe = env::current_exe().map_err(|error| {
-        format!(
-            "Impossible de déterminer le chemin du test runner : {error}"
-        )
-    })?;
+    let current_exe = env::current_exe()
+        .map_err(|error| format!("Impossible de déterminer le chemin du test runner : {error}"))?;
 
-    let debug_dir = current_exe.parent().ok_or_else(|| {
-        "Répertoire de l'exécutable introuvable.".to_string()
-    })?;
+    let debug_dir = current_exe
+        .parent()
+        .ok_or_else(|| "Répertoire de l'exécutable introuvable.".to_string())?;
 
     let executable_name = if cfg!(windows) {
         "kastel.exe"
@@ -228,11 +218,7 @@ fn build_kastel() -> Result<PathBuf, String> {
 }
 
 fn cargo_program() -> &'static str {
-    if cfg!(windows) {
-        "cargo.exe"
-    } else {
-        "cargo"
-    }
+    if cfg!(windows) { "cargo.exe" } else { "cargo" }
 }
 
 /*
@@ -256,9 +242,7 @@ fn cargo_program() -> &'static str {
 fn collect_tests(dir: &Path) -> Result<Vec<PathBuf>, io::Error> {
     let mut tests = Vec::new();
 
-    let normalized_name = dir
-        .file_name()
-        .and_then(|value| value.to_str());
+    let normalized_name = dir.file_name().and_then(|value| value.to_str());
 
     match normalized_name {
         Some("errors") | Some("regression") => {
@@ -270,17 +254,11 @@ fn collect_tests(dir: &Path) -> Result<Vec<PathBuf>, io::Error> {
             let regression_dir = dir.join("regression");
 
             if errors_dir.is_dir() {
-                collect_tests_recursive(
-                    &errors_dir,
-                    &mut tests,
-                )?;
+                collect_tests_recursive(&errors_dir, &mut tests)?;
             }
 
             if regression_dir.is_dir() {
-                collect_tests_recursive(
-                    &regression_dir,
-                    &mut tests,
-                )?;
+                collect_tests_recursive(&regression_dir, &mut tests)?;
             }
         }
     }
@@ -290,10 +268,7 @@ fn collect_tests(dir: &Path) -> Result<Vec<PathBuf>, io::Error> {
     Ok(tests)
 }
 
-fn collect_tests_recursive(
-    dir: &Path,
-    tests: &mut Vec<PathBuf>,
-) -> Result<(), io::Error> {
+fn collect_tests_recursive(dir: &Path, tests: &mut Vec<PathBuf>) -> Result<(), io::Error> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -311,47 +286,33 @@ fn collect_tests_recursive(
     Ok(())
 }
 
-fn run_test(
-    executable: &Path,
-    test_path: &Path,
-    mode: Mode,
-) -> TestResult {
-    let output = match Command::new(executable)
-        .arg(test_path)
-        .output()
-    {
+fn run_test(executable: &Path, test_path: &Path, mode: Mode) -> TestResult {
+    let output = match Command::new(executable).arg(test_path).output() {
         Ok(output) => output,
 
         Err(error) => {
             return TestResult {
                 path: test_path.to_path_buf(),
                 passed: false,
-                message: format!(
-                    "Impossible d'exécuter Kastel : {error}"
-                ),
+                message: format!("Impossible d'exécuter Kastel : {error}"),
             };
         }
     };
 
-    let stdout = normalize_output(
-        &String::from_utf8_lossy(&output.stdout),
-    );
+    let stdout = normalize_output(&String::from_utf8_lossy(&output.stdout));
 
-    let stderr = normalize_output(
-        &String::from_utf8_lossy(&output.stderr),
-    );
+    let stderr = normalize_output(&String::from_utf8_lossy(&output.stderr));
 
     let is_error_test = is_error_test(test_path);
 
-    let has_kastel_error =
-        stdout.contains("Erreur dans")
-            || stderr.contains("Erreur dans")
-            || stdout.contains("Erreur de compilation")
-            || stderr.contains("Erreur de compilation")
-            || stdout.contains("Erreur d'exécution")
-            || stderr.contains("Erreur d'exécution")
-            || stdout.contains("Erreur(s) de parsing")
-            || stderr.contains("Erreur(s) de parsing");
+    let has_kastel_error = stdout.contains("Erreur dans")
+        || stderr.contains("Erreur dans")
+        || stdout.contains("Erreur de compilation")
+        || stderr.contains("Erreur de compilation")
+        || stdout.contains("Erreur d'exécution")
+        || stderr.contains("Erreur d'exécution")
+        || stdout.contains("Erreur(s) de parsing")
+        || stderr.contains("Erreur(s) de parsing");
 
     /*
      * ------------------------------------------------------------
@@ -370,9 +331,8 @@ fn run_test(
         return TestResult {
             path: test_path.to_path_buf(),
             passed: false,
-            message:
-                "Une erreur Kastel était attendue, mais aucune erreur n'a été détectée."
-                    .to_string(),
+            message: "Une erreur Kastel était attendue, mais aucune erreur n'a été détectée."
+                .to_string(),
         };
     }
 
@@ -388,8 +348,7 @@ fn run_test(
             passed: false,
             message: format!(
                 "Erreur Kastel inattendue.\n\nstdout:\n{}\n\nstderr:\n{}",
-                stdout,
-                stderr
+                stdout, stderr
             ),
         };
     }
@@ -419,10 +378,7 @@ fn run_test(
         return TestResult {
             path: test_path.to_path_buf(),
             passed: true,
-            message: format!(
-                "Sortie attendue générée : {}",
-                display_path(&expected_path)
-            ),
+            message: format!("Sortie attendue générée : {}", display_path(&expected_path)),
         };
     }
 
@@ -470,8 +426,7 @@ fn run_test(
                 "Sortie différente de la sortie attendue.\n\n\
                  Attendu:\n{}\n\n\
                  Obtenu:\n{}",
-                expected,
-                stdout
+                expected, stdout
             ),
         };
     }
@@ -484,9 +439,8 @@ fn run_test(
 }
 
 fn is_error_test(path: &Path) -> bool {
-    path.components().any(|component| {
-        component.as_os_str() == OsStr::new("errors")
-    })
+    path.components()
+        .any(|component| component.as_os_str() == OsStr::new("errors"))
 }
 
 fn normalize_output(value: &str) -> String {
@@ -510,10 +464,7 @@ fn indent(value: &str) -> String {
 }
 
 fn print_summary(results: &[TestResult]) {
-    let passed = results
-        .iter()
-        .filter(|result| result.passed)
-        .count();
+    let passed = results.iter().filter(|result| result.passed).count();
 
     let failed = results.len() - passed;
 
@@ -544,9 +495,7 @@ fn clean_expected_files(dir: &Path) -> ExitCode {
         Ok(value) => value,
 
         Err(error) => {
-            eprintln!(
-                "Erreur lecture des dossiers de tests : {error}"
-            );
+            eprintln!("Erreur lecture des dossiers de tests : {error}");
 
             return ExitCode::FAILURE;
         }
@@ -556,16 +505,8 @@ fn clean_expected_files(dir: &Path) -> ExitCode {
     let mut errors = 0usize;
 
     for directory in directories {
-        if let Err(error) = clean_expected_recursive(
-            &directory,
-            &mut removed,
-            &mut errors,
-        ) {
-            eprintln!(
-                "Erreur dans {} : {}",
-                display_path(&directory),
-                error
-            );
+        if let Err(error) = clean_expected_recursive(&directory, &mut removed, &mut errors) {
+            eprintln!("Erreur dans {} : {}", display_path(&directory), error);
 
             errors += 1;
         }
@@ -582,17 +523,11 @@ fn clean_expected_files(dir: &Path) -> ExitCode {
     }
 }
 
-fn clean_directories(
-    dir: &Path,
-) -> Result<Vec<PathBuf>, io::Error> {
-    let normalized_name = dir
-        .file_name()
-        .and_then(|value| value.to_str());
+fn clean_directories(dir: &Path) -> Result<Vec<PathBuf>, io::Error> {
+    let normalized_name = dir.file_name().and_then(|value| value.to_str());
 
     match normalized_name {
-        Some("errors") | Some("regression") => {
-            Ok(vec![dir.to_path_buf()])
-        }
+        Some("errors") | Some("regression") => Ok(vec![dir.to_path_buf()]),
 
         _ => {
             let mut directories = Vec::new();
@@ -623,21 +558,14 @@ fn clean_expected_recursive(
         let path = entry.path();
 
         if path.is_dir() {
-            clean_expected_recursive(
-                &path,
-                removed,
-                errors,
-            )?;
+            clean_expected_recursive(&path, removed, errors)?;
             continue;
         }
 
         if path.extension() == Some(OsStr::new("expected")) {
             match fs::remove_file(&path) {
                 Ok(()) => {
-                    println!(
-                        "DELETE {}",
-                        display_path(&path)
-                    );
+                    println!("DELETE {}", display_path(&path));
 
                     *removed += 1;
                 }
@@ -657,7 +585,6 @@ fn clean_expected_recursive(
 
     Ok(())
 }
-
 
 // cargo run --bin test_runner -- --update
 // cargo run --bin test_runner

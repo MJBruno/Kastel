@@ -124,7 +124,6 @@ impl Lexer {
                     tokens.push(self.make_token(TokenKind::Comma, ","));
                 }
 
-           
                 ':' => {
                     tokens.push(self.make_token(TokenKind::Colon, ":"));
                 }
@@ -202,7 +201,7 @@ impl Lexer {
                         tokens.push(self.make_token(TokenKind::Percent, "%"));
                     }
                 }
-                
+
                 // ====================================================
                 // .
                 // ..

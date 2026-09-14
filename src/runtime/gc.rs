@@ -8,50 +8,15 @@ use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
 use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
-use crate::vm::machine::CallFrame;
-// ================================================================
-// TRAÇAGE DU GC
-//
-// Feature Cargo `trace_gc`, symétrique à `debug_trace` (qui trace les
-// instructions de la VM) : même mécanisme, même endroit (Cargo.toml),
-// pour que les deux traçages restent cohérents et faciles à combiner :
-//
-//   cargo build --features trace_gc                    # GC seul
-//   cargo build --features debug_trace                 # VM seule
-//   cargo build --features "debug_trace,trace_gc"       # les deux
-//
-// Inspiré du DEBUG_LOG_GC de clox (Crafting Interpreters, ch. 26).
-// ================================================================
+use crate::vm::machine::{CallFrame, PendingException};
 
 fn trace_enabled() -> bool {
     cfg!(feature = "trace_gc")
 }
 
-// ================================================================
-// REGISTRE GLOBAL
-//
-// UN SEUL registre pour tout ce qui est `Gc<Object>` — String, Array,
-// Dict, Function, Closure, Iterator, Module confondus. C'est le bénéfice
-// direct de l'unification `Value::Object(Gc<Object>)` : avant cette
-// refonte, il fallait un `Vec<Weak<...>>` PAR TYPE (5 registres séparés,
-// 5 fonctions de marquage, 5 blocs de sweep dupliqués). Maintenant, une
-// seule identité de "ce que le GC suit" — `Gc<Object>` — et une seule
-// fonction de marquage qui distribue en interne selon la variante
-// rencontrée (voir `mark_object` plus bas).
-//
-// Les upvalues (`ObjUpvalue`, définies dans vm/machine.rs) restent
-// suivies séparément : ce sont des cellules internes au mécanisme de
-// capture des closures, pas des valeurs Kastel de première classe — elles
-// ne font pas partie du diagramme Value/Object voulu ici.
-//
-// Kastel est mono-thread (tout le code utilise Rc/RefCell, jamais
-// Arc/Mutex), donc un registre thread_local est sûr et évite de devoir
-// faire transiter un `&mut Gc` à travers toutes les fonctions qui créent
-// un objet (native.rs, value.rs, machine.rs...).
-// ================================================================
-
 thread_local! {
-    static REGISTRY: RefCell<GcRegistry> = RefCell::new(GcRegistry::new());
+static REGISTRY: RefCell<GcRegistry> =
+RefCell::new(GcRegistry::new());
 }
 
 struct GcRegistry {
@@ -67,80 +32,53 @@ impl GcRegistry {
             objects: Vec::new(),
             upvalues: Vec::new(),
             allocations_since_collect: 0,
-            // Seuil initial modeste ; recalculé après chaque collecte en
-            // fonction de ce qui survit réellement (voir plus bas), même
-            // heuristique que `next_gc` dans clox mais proportionnelle au
-            // tas vivant plutôt qu'un doublement aveugle.
             threshold: 256,
         }
     }
 }
 
-/// Enregistre un objet fraîchement alloué. Unique point d'entrée pour
-/// TOUT ce qui devient un `Gc<Object>` — appelé depuis `Gc::new` elle-même
-/// n'est pas possible sans coupler `gc_handle.rs` au registre, donc c'est
-/// aux constructeurs de haut niveau (`Value::new_string`, `new_array`,
-/// `objet::new_closure`, ...) d'appeler ceci juste après `Gc::new(...)`.
 pub fn register_object(handle: &Gc<Object>) {
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
+
         registry.objects.push(handle.downgrade());
         registry.allocations_since_collect += 1;
     });
 }
 
-/// Enregistre une upvalue fraîchement capturée.
 pub fn register_upvalue(handle: &Rc<RefCell<ObjUpvalue>>) {
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
+
         registry.upvalues.push(Rc::downgrade(handle));
         registry.allocations_since_collect += 1;
     });
 }
 
-/// Indique si le nombre d'allocations depuis la dernière collecte dépasse
-/// le seuil courant. La VM appelle ceci entre deux instructions (jamais au
-/// milieu d'un opcode) pour décider de déclencher `collect`.
 pub fn should_collect() -> bool {
     REGISTRY.with(|registry| {
         let registry = registry.borrow();
+
         registry.allocations_since_collect >= registry.threshold
     })
 }
 
-/// Racines de la collecte : tout ce qui est directement accessible depuis
-/// la VM et doit donc être considéré comme vivant, même si inatteignable
-/// autrement (pile d'exécution, globales, closures des frames d'appel,
-/// upvalues encore ouvertes).
 pub struct GcRoots<'a> {
     pub stack: &'a [Value],
     pub globals: &'a HashMap<String, Value>,
     pub frames: &'a [CallFrame],
     pub open_upvalues: &'a [Rc<RefCell<ObjUpvalue>>],
+
+    pub(crate) pending_exception: &'a Option<PendingException>,
 }
 
-/// Identités déjà marquées pendant un passage de collecte. Deux
-/// ensembles seulement désormais (objets unifiés + upvalues), contre 5
-/// avant cette refonte.
 #[derive(Default)]
 struct MarkState {
     objects: HashSet<usize>,
     upvalues: HashSet<usize>,
 }
 
-/// Exécute un passage complet de collecte de cycles.
-///
-/// 1. MARK : parcourt récursivement toutes les racines et marque (par
-///    identité de pointeur) chaque `Gc<Object>`/upvalue atteignable.
-/// 2. SWEEP : tout objet toujours enregistré et toujours vivant
-///    (`Weak::upgrade` réussit) mais jamais marqué ne peut être maintenu en
-///    vie que par un cycle de références internes — `Object::break_cycle`
-///    vide son contenu pour casser le cycle, ce qui laisse le comptage de
-///    références de Rc terminer normalement le nettoyage (potentiellement
-///    en cascade sur tout le reste du cycle).
-///
-/// Retourne le nombre de cycles cassés (utile pour du diagnostic).
-pub fn collect(roots: GcRoots) -> usize {
+pub fn collect(roots: GcRoots<'_>) -> usize {
     let started_at = Instant::now();
 
     if trace_enabled() {
@@ -149,20 +87,29 @@ pub fn collect(roots: GcRoots) -> usize {
 
     let mut state = MarkState::default();
 
+    // VM stack
     for value in roots.stack {
         mark_value(value, &mut state);
     }
 
+    // Globals
     for value in roots.globals.values() {
         mark_value(value, &mut state);
     }
 
+    // Closures des frames actifs
     for frame in roots.frames {
         mark_object(&frame.closure, &mut state);
     }
 
+    // Upvalues ouvertes
     for upvalue in roots.open_upvalues {
         mark_upvalue(upvalue, &mut state);
+    }
+
+    // Exception suspendue pendant finally
+    if let Some(exception) = roots.pending_exception {
+        mark_value(&exception.value, &mut state);
     }
 
     if trace_enabled() {
@@ -177,28 +124,25 @@ pub fn collect(roots: GcRoots) -> usize {
         let mut registry = registry.borrow_mut();
 
         let objects_before = registry.objects.len();
-        let mut objects_broken = 0;
+        let mut objects_broken = 0usize;
 
         registry.objects.retain(|weak| match weak.upgrade() {
             Some(rc) => {
                 let id = Rc::as_ptr(&rc) as usize;
 
                 if !state.objects.contains(&id) {
-                    // Vivant (refcount > 0) mais inatteignable depuis les
-                    // racines : ne peut être maintenu en vie que par un
-                    // cycle. On casse le cycle en vidant son contenu.
                     rc.borrow_mut().break_cycle();
                     objects_broken += 1;
                 }
 
-                true // toujours vivant (même vidé) : on le garde en registre
+                true
             }
 
-            None => false, // complètement libéré : on peut l'oublier
+            None => false,
         });
 
         let upvalues_before = registry.upvalues.len();
-        let mut upvalues_broken = 0;
+        let mut upvalues_broken = 0usize;
 
         registry.upvalues.retain(|weak| match weak.upgrade() {
             Some(rc) => {
@@ -217,11 +161,7 @@ pub fn collect(roots: GcRoots) -> usize {
 
         let broken = objects_broken + upvalues_broken;
 
-        // Heuristique proportionnelle à la taille du tas VIVANT après la
-        // collecte (mesurée juste après les .retain() ci-dessus) plutôt
-        // qu'un doublement aveugle du seuil précédent : le rythme de
-        // collecte s'adapte à ce qui survit réellement, comme dans
-        // V8/CPython, pas au nombre brut d'allocations.
+        // Adapter le prochain seuil à la taille du tas vivant.
         let live_count = registry.objects.len() + registry.upvalues.len();
 
         registry.allocations_since_collect = 0;
@@ -229,15 +169,22 @@ pub fn collect(roots: GcRoots) -> usize {
 
         if trace_enabled() {
             eprintln!(
-                "   sweep: objets {objects_before} -> {} ({objects_broken} cycles cassés)",
-                registry.objects.len()
+                "   sweep: objets {} -> {} ({} cycles cassés)",
+                objects_before,
+                registry.objects.len(),
+                objects_broken
             );
+
             eprintln!(
-                "          upvalues {upvalues_before} -> {} ({upvalues_broken} cycles cassés)",
-                registry.upvalues.len()
+                "          upvalues {} -> {} ({} cycles cassés)",
+                upvalues_before,
+                registry.upvalues.len(),
+                upvalues_broken
             );
+
             eprintln!(
-                "-- gc end (total: {broken} cycles cassés, {:.3}ms, prochain seuil: {})",
+                "-- gc end ({} cycles cassés, {:.3}ms, prochain seuil: {})",
+                broken,
                 started_at.elapsed().as_secs_f64() * 1000.0,
                 registry.threshold
             );
@@ -253,15 +200,9 @@ fn mark_value(value: &Value, state: &mut MarkState) {
     }
 }
 
-/// Marque un `Gc<Object>` et recurse dans son contenu selon sa variante
-/// réelle. C'est le SEUL endroit de tout le GC qui a besoin de connaître
-/// la forme interne d'`Object` — avant cette refonte, cette connaissance
-/// était éclatée entre `mark_array`/`mark_closure`/`mark_object`/
-/// `mark_iterator`, une fonction par type.
 fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
     let id = handle.as_id();
 
-    // Évite les boucles infinies dans le graphe d'objets.
     if !state.objects.insert(id) {
         return;
     }
@@ -276,21 +217,18 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
         }
 
         Object::Dict(fields) => {
-            for (_, value) in fields {
+            for (key, value) in fields {
+                mark_value(key, state);
                 mark_value(value, state);
             }
         }
 
         Object::Function(function) => {
-            for constant in &function.chunk.constants {
-                mark_value(constant, state);
-            }
+            mark_function(function, state);
         }
 
         Object::Closure(closure) => {
-            for constant in &closure.function.chunk.constants {
-                mark_value(constant, state);
-            }
+            mark_function(&closure.function, state);
 
             for upvalue in &closure.upvalues {
                 mark_upvalue(upvalue, state);
@@ -300,10 +238,15 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
                 mark_object(owner_class, state);
             }
         }
+
         Object::BoundMethod { method, receiver } => {
-            mark_object(method, state);
+            if let Some(method) = method {
+                mark_object(method, state);
+            }
+
             mark_value(receiver, state);
         }
+
         Object::Iterator(iterator) => {
             iterator.visit_values(|value| {
                 mark_value(value, state);
@@ -340,13 +283,13 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
                 mark_object(base, state);
             }
 
-            // Les méthodes restent des signatures ici,
-            // donc aucun Value à marquer.
             let _ = methods;
         }
 
         Object::Instance { class, fields } => {
-            mark_object(class, state);
+            if let Some(class) = class {
+                mark_object(class, state);
+            }
 
             for value in fields.values() {
                 mark_value(value, state);
@@ -354,7 +297,7 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
         }
     }
 }
-#[allow(dead_code)]
+
 fn mark_function(function: &Function, state: &mut MarkState) {
     for constant in &function.chunk.constants {
         mark_value(constant, state);
@@ -368,10 +311,9 @@ fn mark_upvalue(upvalue: &Rc<RefCell<ObjUpvalue>>, state: &mut MarkState) {
         return;
     }
 
-    // Tant que l'upvalue est ouverte, la valeur vit sur la pile de la VM
-    // (déjà couverte par le scan de `roots.stack`). Une fois fermée, elle
-    // ne vit plus que dans `closed` : c'est là qu'un cycle peut se cacher.
-    if let Some(value) = &upvalue.borrow().closed {
+    let upvalue_ref = upvalue.borrow();
+
+    if let Some(value) = &upvalue_ref.closed {
         mark_value(value, state);
     }
 }

@@ -9,7 +9,6 @@ pub struct Upvalue {
     pub is_local: bool,
 }
 
-
 #[allow(dead_code)]
 impl Upvalue {
     pub fn new(index: u8, is_local: bool) -> Self {
@@ -28,9 +27,6 @@ pub struct ObjUpvalue {
 
 impl ObjUpvalue {
     pub fn new(slot: usize) -> Self {
-        Self {
-            slot,
-            closed: None,
-        }
+        Self { slot, closed: None }
     }
 }

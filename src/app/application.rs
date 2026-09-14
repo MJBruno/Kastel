@@ -1,8 +1,7 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
-    env,
-    fs,
+    env, fs,
     io::{self, Write},
     path::PathBuf,
     process::ExitCode,
@@ -10,16 +9,10 @@ use std::{
 };
 
 use crate::{
-    compiler::{
-        compiler::Compiler,
-        variables::Global,
-    },
+    compiler::{compiler::Compiler, variables::Global},
     error::kastel_error::KastelError,
     error::runtime_error::RuntimeError,
-    frontend::{
-        lexer::Lexer,
-        parser::Parser,
-    },
+    frontend::{lexer::Lexer, parser::Parser},
     runtime::value::Value,
     stdlib::execute_native,
     vm::machine::VirtualMachine,
@@ -35,11 +28,7 @@ impl Application {
             let path = match PathBuf::from(&args[1]).canonicalize() {
                 Ok(path) => path,
                 Err(error) => {
-                    eprintln!(
-                        "Erreur : impossible de résoudre '{}': {}",
-                        args[1],
-                        error
-                    );
+                    eprintln!("Erreur : impossible de résoudre '{}': {}", args[1], error);
                     return ExitCode::FAILURE;
                 }
             };
@@ -71,10 +60,7 @@ impl Application {
     }
 }
 
-fn execute(
-    source: &str,
-    module_path: Option<PathBuf>,
-) -> Result<(), KastelError> {
+fn execute(source: &str, module_path: Option<PathBuf>) -> Result<(), KastelError> {
     let tokens = Lexer::new(source.to_string()).scan_token()?;
     let statements = Parser::new(tokens).parse()?;
 
@@ -125,10 +111,7 @@ impl ReplSession {
         }
     }
 
-    fn execute(
-        &mut self,
-        source: &str,
-    ) -> Result<Option<Value>, KastelError> {
+    fn execute(&mut self, source: &str) -> Result<Option<Value>, KastelError> {
         let tokens = Lexer::new(source.to_string()).scan_token()?;
         let statements = Parser::new(tokens).parse()?;
 
@@ -136,13 +119,9 @@ impl ReplSession {
             return Ok(None);
         }
 
-        let compiler = Compiler::new_with_globals(
-            Rc::clone(&self.compiler_globals),
-        );
+        let compiler = Compiler::new_with_globals(Rc::clone(&self.compiler_globals));
 
-        let function = Rc::new(
-            compiler.compile_repl(&statements)?,
-        );
+        let function = Rc::new(compiler.compile_repl(&statements)?);
 
         let result = self.vm.execute_repl(function)?;
 
@@ -296,8 +275,5 @@ fn input_complete(source: &str) -> bool {
         }
     }
 
-    !string
-        && braces == 0
-        && brackets == 0
-        && parentheses == 0
+    !string && braces == 0 && brackets == 0 && parentheses == 0
 }

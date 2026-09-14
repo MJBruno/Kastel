@@ -78,7 +78,10 @@ impl Value {
         Self::new_heap_object(Object::Array(elements))
     }
     pub fn new_bound_method(method: Gc<Object>, receiver: Value) -> Self {
-        Self::new_heap_object(Object::BoundMethod { method, receiver })
+        Self::new_heap_object(Object::BoundMethod {
+            method: Some(method),
+            receiver,
+        })
     }
     pub fn new_class(
         name: String,
@@ -106,7 +109,7 @@ impl Value {
     }
     pub fn new_instance(class: Gc<Object>) -> Self {
         Self::new_heap_object(Object::Instance {
-            class,
+            class: Some(class),
             fields: HashMap::new(),
         })
     }
@@ -489,44 +492,49 @@ impl Value {
         match self {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::Module(_) => self.module_get(name),
+
                 Object::Instance { class, fields } => {
                     if let Some(value) = fields.get(name) {
                         return Ok(value.clone());
                     }
 
-                    let mut current = Some(class.clone());
+                    let mut current = class.clone();
 
                     while let Some(class_handle) = current {
-                        let object = class_handle.borrow();
+                        let next_superclass = {
+                            let class_object = class_handle.borrow();
 
-                        match &*object {
-                            Object::Class {
-                                methods,
-                                superclass,
-                                ..
-                            } => {
-                                if let Some(method) = methods.get(name) {
-                                    let method_handle = match method {
-                                        Value::Object(handle) => handle.clone(),
+                            match &*class_object {
+                                Object::Class {
+                                    methods,
+                                    superclass,
+                                    ..
+                                } => {
+                                    if let Some(method) = methods.get(name) {
+                                        let method_handle = match method {
+                                            Value::Object(handle) => handle.clone(),
 
-                                        _ => {
-                                            return Err(RuntimeError::TypeError);
-                                        }
-                                    };
+                                            _ => {
+                                                return Err(RuntimeError::TypeError);
+                                            }
+                                        };
 
-                                    return Ok(Value::new_bound_method(
-                                        method_handle,
-                                        self.clone(),
-                                    ));
+                                        return Ok(Value::new_bound_method(
+                                            method_handle,
+                                            self.clone(),
+                                        ));
+                                    }
+
+                                    superclass.clone()
                                 }
 
-                                current = superclass.clone();
+                                _ => {
+                                    return Err(RuntimeError::TypeError);
+                                }
                             }
+                        };
 
-                            _ => {
-                                return Err(RuntimeError::TypeError);
-                            }
-                        }
+                        current = next_superclass;
                     }
 
                     Err(RuntimeError::ObjectFieldNotFound {
@@ -534,6 +542,7 @@ impl Value {
                         suggestion: None,
                     })
                 }
+
                 Object::Dict(entries) => entries
                     .iter()
                     .find(|(key, _)| match key {
@@ -605,7 +614,6 @@ impl Value {
     }
 }
 
- 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -695,19 +703,19 @@ impl std::fmt::Display for Value {
                     write!(f, "<class '{}'>", name)
                 }
 
-                Object::Instance { class, .. } => {
-                    let class = class.borrow();
+                Object::Instance { class, .. } => match class.as_ref() {
+                    Some(class_handle) => {
+                        let class_ref = class_handle.borrow();
 
-                    match &*class {
-                        Object::Class { name, .. } => {
-                            write!(f, "<{} instance>", name)
-                        }
-
-                        _ => {
-                            write!(f, "<instance>")
+                        match &*class_ref {
+                            Object::Class { name, .. } => {
+                                write!(f, "<{} instance>", name)
+                            }
+                            _ => write!(f, "<instance>"),
                         }
                     }
-                }
+                    None => write!(f, "<instance>"),
+                },
                 Object::Interface { name, .. } => {
                     write!(f, "<interface '{}'>", name)
                 }
@@ -719,7 +727,6 @@ impl std::fmt::Display for Value {
     }
 }
 
- 
 impl Value {
     // ============================================================
     // TRUTHINESS

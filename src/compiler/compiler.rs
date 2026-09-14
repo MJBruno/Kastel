@@ -6,10 +6,10 @@ use crate::bytecode::chunk::{Chunk, OpCode};
 use crate::error::compile_error::CompileError;
 use crate::frontend::ast::Statement;
 use crate::runtime::function::Function;
-use crate::runtime::upvalue::Upvalue;
+// use crate::runtime::upvalue::Upvalue;
 
 use super::context::{CompilerContext, CompilerContextRef};
-use super::locals::LocalTable;
+// use super::locals::LocalTable;
 use super::loops::LoopContext;
 use super::variables::Global;
 
@@ -26,6 +26,8 @@ pub struct Compiler {
 
     pub(crate) exports: Vec<String>,
     pub(crate) imported_modules: HashSet<String>,
+
+    pub(crate) wildcard_imported: bool,
 
     pub(crate) predeclared_functions: HashSet<String>,
 
@@ -53,12 +55,11 @@ impl Compiler {
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
+            wildcard_imported: false,
         }
     }
 
-    pub(crate) fn new_with_globals(
-        globals: Rc<RefCell<HashMap<String, Global>>>,
-    ) -> Self {
+    pub(crate) fn new_with_globals(globals: Rc<RefCell<HashMap<String, Global>>>) -> Self {
         Self {
             globals,
             chunk: Chunk::new(),
@@ -74,6 +75,7 @@ impl Compiler {
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
+            wildcard_imported: false,
         }
     }
 
@@ -97,6 +99,7 @@ impl Compiler {
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
+            wildcard_imported: false,
         }
     }
 
@@ -104,18 +107,12 @@ impl Compiler {
     // MAIN COMPILER
     // ============================================================
 
-    pub fn compile(
-        self,
-        statements: &[Statement],
-    ) -> Result<Function, CompileError> {
+    pub fn compile(self, statements: &[Statement]) -> Result<Function, CompileError> {
         let (function, _) = self.compile_module(statements)?;
         Ok(function)
     }
 
-    pub fn define_native(
-        &mut self,
-        name: &str,
-    ) -> Result<(), CompileError> {
+    pub fn define_native(&mut self, name: &str) -> Result<(), CompileError> {
         let constant = self.identifier_constant(name)?;
 
         self.globals.borrow_mut().insert(
@@ -144,26 +141,15 @@ impl Compiler {
         Ok(())
     }
 
-    fn predeclare_global_function(
-        &mut self,
-        statement: &Statement,
-    ) -> Result<(), CompileError> {
+    fn predeclare_global_function(&mut self, statement: &Statement) -> Result<(), CompileError> {
         match statement {
-            Statement::Positioned { statement, .. } => {
-                self.predeclare_global_function(statement)
-            }
+            Statement::Positioned { statement, .. } => self.predeclare_global_function(statement),
 
-            Statement::Export { statement } => {
-                self.predeclare_global_function(statement)
-            }
+            Statement::Export { statement } => self.predeclare_global_function(statement),
 
             Statement::Function { name, .. } => {
                 if self.globals.borrow().contains_key(name) {
-                    return Err(
-                        CompileError::VariableAlreadyDeclared(
-                            name.clone(),
-                        ),
-                    );
+                    return Err(CompileError::VariableAlreadyDeclared(name.clone()));
                 }
 
                 let constant = self.identifier_constant(name)?;
@@ -189,18 +175,15 @@ impl Compiler {
     // CONTEXTE
     // ============================================================
 
-    pub(crate) fn locals(&self) -> LocalTable {
-        self.context.borrow().locals.clone()
-    }
+    // pub(crate) fn locals(&self) -> LocalTable {
+    //     self.context.borrow().locals.clone()
+    // }
 
-    pub(crate) fn upvalues(&self) -> Vec<Upvalue> {
-        self.context.borrow().upvalues.clone()
-    }
+    // pub(crate) fn upvalues(&self) -> Vec<Upvalue> {
+    //     self.context.borrow().upvalues.clone()
+    // }
 
-    pub(crate) fn attach_location(
-        &self,
-        error: CompileError,
-    ) -> CompileError {
+    pub(crate) fn attach_location(&self, error: CompileError) -> CompileError {
         match error {
             CompileError::WithLocation { .. } => error,
 
@@ -216,10 +199,7 @@ impl Compiler {
     // FINALLY
     // ============================================================
 
-    pub(crate) fn push_finally_block(
-        &mut self,
-        body: &[Statement],
-    ) {
+    pub(crate) fn push_finally_block(&mut self, body: &[Statement]) {
         self.finally_blocks.push(body.to_vec());
     }
 
@@ -227,9 +207,7 @@ impl Compiler {
         self.finally_blocks.pop();
     }
 
-    pub(crate) fn compile_active_finally(
-        &mut self,
-    ) -> Result<(), CompileError> {
+    pub(crate) fn compile_active_finally(&mut self) -> Result<(), CompileError> {
         let finally_blocks = self.finally_blocks.clone();
 
         for body in finally_blocks.iter().rev() {
@@ -263,10 +241,8 @@ impl Compiler {
 
         self.emit_opcode(OpCode::Halt);
 
-        let local_count = u8::try_from(
-            self.context.borrow().locals.max_slots(),
-        )
-        .map_err(|_| CompileError::TooManyLocals)?;
+        let local_count = u8::try_from(self.context.borrow().locals.max_slots())
+            .map_err(|_| CompileError::TooManyLocals)?;
 
         let function = Function {
             name: "<script>".to_string(),
@@ -278,5 +254,11 @@ impl Compiler {
         };
 
         Ok((function, self.exports))
+    }
+}
+
+impl Default for Compiler {
+    fn default() -> Self {
+        Self::new()
     }
 }

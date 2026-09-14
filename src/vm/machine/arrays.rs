@@ -1,15 +1,9 @@
 use super::VirtualMachine;
 
-use crate::{
-    error::runtime_error::RuntimeError,
-    runtime::value::Value,
-};
+use crate::{error::runtime_error::RuntimeError, runtime::value::Value};
 
 impl VirtualMachine {
-    pub(crate) fn op_array(
-        &mut self,
-        count: usize,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array(&mut self, count: usize) -> Result<(), RuntimeError> {
         if self.stack.len() < count {
             return Err(RuntimeError::StackUnderflow);
         }
@@ -23,9 +17,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_get_array_index(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_get_array_index(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
         }
@@ -42,9 +34,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_set_array_index(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_set_array_index(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 3 {
             return Err(RuntimeError::StackUnderflow);
         }
@@ -61,9 +51,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_length(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_length(&mut self) -> Result<(), RuntimeError> {
         let array = self.peek()?.clone();
         let length = array.array_len()? as i64;
 
@@ -73,9 +61,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_push(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_push(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
         }
@@ -92,9 +78,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_pop(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_pop(&mut self) -> Result<(), RuntimeError> {
         let array = self.peek()?.clone();
         let value = array.array_pop()?;
 
@@ -104,9 +88,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_insert(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_insert(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 3 {
             return Err(RuntimeError::StackUnderflow);
         }
@@ -124,9 +106,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_remove(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_remove(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
         }
@@ -142,9 +122,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_clear(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_clear(&mut self) -> Result<(), RuntimeError> {
         let array = self.peek()?.clone();
 
         array.array_clear()?;
@@ -153,9 +131,7 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn op_array_contains(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_array_contains(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);
         }
@@ -175,8 +151,7 @@ impl VirtualMachine {
     fn array_index(value: Value) -> Result<usize, RuntimeError> {
         match value {
             Value::Integer(index) if index >= 0 => {
-                usize::try_from(index)
-                    .map_err(|_| RuntimeError::TypeError)
+                usize::try_from(index).map_err(|_| RuntimeError::TypeError)
             }
 
             Value::Float(index)

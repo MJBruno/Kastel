@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler,
-    error::runtime_error::RuntimeError,
-    runtime::value::Value,
+    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 // ============================================================
@@ -11,9 +9,7 @@ use crate::{
 // ============================================================
 
 fn expect_string(value: &Value) -> Result<String, RuntimeError> {
-    value
-        .as_string_value()
-        .ok_or(RuntimeError::TypeError)
+    value.as_string_value().ok_or(RuntimeError::TypeError)
 }
 
 fn expect_integer(value: &Value) -> Result<i64, RuntimeError> {
@@ -47,10 +43,7 @@ fn expect_non_negative_count(value: &Value) -> Result<usize, RuntimeError> {
 //                         FORMAT
 // ============================================================
 
-pub(crate) fn format_string(
-    format: &str,
-    args: &[Value],
-) -> Result<String, RuntimeError> {
+pub(crate) fn format_string(format: &str, args: &[Value]) -> Result<String, RuntimeError> {
     let mut result = String::with_capacity(format.len());
 
     let mut chars = format.chars().peekable();
@@ -60,12 +53,12 @@ pub(crate) fn format_string(
         if character == '{' && chars.peek() == Some(&'}') {
             chars.next();
 
-            let value = args.get(arg_index).ok_or(
-                RuntimeError::WrongArgumentCount {
+            let value = args
+                .get(arg_index)
+                .ok_or(RuntimeError::WrongArgumentCount {
                     expected: arg_index + 1,
                     found: args.len(),
-                },
-            )?;
+                })?;
 
             result.push_str(&value.to_string());
             arg_index += 1;
@@ -98,9 +91,7 @@ pub fn native_format(args: &[Value]) -> Result<Value, RuntimeError> {
 
     let format = expect_string(first)?;
 
-    Ok(Value::new_string(
-        format_string(&format, &args[1..])?,
-    ))
+    Ok(Value::new_string(format_string(&format, &args[1..])?))
 }
 
 // pub fn native_strlen(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -124,9 +115,7 @@ pub fn native_lower(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    Ok(Value::new_string(
-        expect_string(&args[0])?.to_lowercase(),
-    ))
+    Ok(Value::new_string(expect_string(&args[0])?.to_lowercase()))
 }
 
 pub fn native_upper(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -137,9 +126,7 @@ pub fn native_upper(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    Ok(Value::new_string(
-        expect_string(&args[0])?.to_uppercase(),
-    ))
+    Ok(Value::new_string(expect_string(&args[0])?.to_uppercase()))
 }
 
 pub fn native_trim(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -345,11 +332,7 @@ pub fn native_slice(args: &[Value]) -> Result<Value, RuntimeError> {
         return Ok(Value::new_string(String::new()));
     }
 
-    let result: String = value
-        .chars()
-        .skip(start)
-        .take(end - start)
-        .collect();
+    let result: String = value.chars().skip(start).take(end - start).collect();
 
     Ok(Value::new_string(result))
 }
@@ -373,11 +356,7 @@ pub fn native_substring(args: &[Value]) -> Result<Value, RuntimeError> {
     let start = start as usize;
     let length = length as usize;
 
-    let result: String = value
-        .chars()
-        .skip(start)
-        .take(length)
-        .collect();
+    let result: String = value.chars().skip(start).take(length).collect();
 
     Ok(Value::new_string(result))
 }
@@ -438,9 +417,7 @@ pub fn native_join(args: &[Value]) -> Result<Value, RuntimeError> {
             let object = handle.borrow();
 
             match &*object {
-                crate::runtime::object::Object::Array(values) => {
-                    values.clone()
-                }
+                crate::runtime::object::Object::Array(values) => values.clone(),
 
                 _ => return Err(RuntimeError::TypeError),
             }
@@ -593,10 +570,7 @@ pub fn native_reverse(args: &[Value]) -> Result<Value, RuntimeError> {
 //                     METHOD DISPATCH
 // ============================================================
 
-pub fn dispatch_method(
-    name: &str,
-    args: &[Value],
-) -> Result<Option<Value>, RuntimeError> {
+pub fn dispatch_method(name: &str, args: &[Value]) -> Result<Option<Value>, RuntimeError> {
     let result = match name {
         "length" => Some(native_length(args)?),
 
@@ -663,10 +637,7 @@ pub fn dispatch_method(
 // ============================================================
 
 pub fn register(globals: &mut HashMap<String, Value>) {
-    globals.insert(
-        "format".to_string(),
-        Value::NativeFunction(native_format),
-    );
+    globals.insert("format".to_string(), Value::NativeFunction(native_format));
 }
 
 pub fn register_compiler(compiler: &mut Compiler) {

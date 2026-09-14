@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use crate::app::application::Application;
 mod app;
 mod bytecode;
 mod compiler;
@@ -10,6 +9,8 @@ mod module;
 mod runtime;
 mod stdlib;
 mod vm;
+
+use crate::app::application::Application;
 
 fn main() -> std::process::ExitCode {
     let start = Instant::now();

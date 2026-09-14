@@ -1,5 +1,3 @@
-use std::convert::TryFrom;
-
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpCode {
@@ -35,6 +33,8 @@ pub enum OpCode {
     GetLocal,
 
     Import,
+    ImportAll,
+
     JumpIfFalse,
     Jump,
     Pop,
@@ -91,9 +91,8 @@ pub enum OpCode {
 impl OpCode {
     /// Nombre total d'opcodes valides.
     pub const COUNT: usize = Self::AddLocalLocal as usize + 1;
+
     /// Conversion rapide d'un octet de bytecode vers OpCode.
-    ///
-    /// Cette fonction est utilisée directement par le dispatcher VM.
     #[inline(always)]
     pub fn from_byte(value: u8) -> Result<Self, ()> {
         if value as usize >= Self::COUNT {
@@ -104,7 +103,7 @@ impl OpCode {
         //
         // - OpCode est #[repr(u8)].
         // - Les discriminants commencent à 0.
-        // - Ils sont contigus jusqu'à LessLocalConstJump.
+        // - Ils sont contigus.
         // - Le contrôle précédent garantit que `value` correspond
         //   à un discriminant valide.
         Ok(unsafe { std::mem::transmute::<u8, OpCode>(value) })
@@ -159,14 +158,14 @@ mod tests {
 
     #[test]
     fn opcode_count_is_correct() {
-        assert_eq!(OpCode::SetLocalPop as u8, 62);
-        assert_eq!(OpCode::AddLocalConst as u8, 63);
-        assert_eq!(OpCode::LessLocalConst as u8, 64);
-        assert_eq!(OpCode::JumpIfFalsePop as u8, 65);
-        assert_eq!(OpCode::LessLocalConstJump as u8, 66);
-        assert_eq!(OpCode::LoopLessAddLocalConst as u8, 67);
-        assert_eq!(OpCode::AddLocalLocal as u8, 68);
-        assert_eq!(OpCode::COUNT, 69);
+        assert_eq!(OpCode::SetLocalPop as u8, 63);
+        assert_eq!(OpCode::AddLocalConst as u8, 64);
+        assert_eq!(OpCode::LessLocalConst as u8, 65);
+        assert_eq!(OpCode::JumpIfFalsePop as u8, 66);
+        assert_eq!(OpCode::LessLocalConstJump as u8, 67);
+        assert_eq!(OpCode::LoopLessAddLocalConst as u8, 68);
+        assert_eq!(OpCode::AddLocalLocal as u8, 69);
+        assert_eq!(OpCode::COUNT, 70);
     }
 
     #[test]

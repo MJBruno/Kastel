@@ -6,6 +6,15 @@ use crate::runtime::value::Value;
 
 impl VirtualMachine {
     pub fn run(&mut self) -> Result<(), RuntimeError> {
+        self.run_internal(true)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn run_without_gc(&mut self) -> Result<(), RuntimeError> {
+        self.run_internal(false)
+    }
+
+    fn run_internal(&mut self, allow_gc: bool) -> Result<(), RuntimeError> {
         let mut gc_check_counter = 0usize;
 
         loop {
@@ -13,15 +22,25 @@ impl VirtualMachine {
                 self.debug_machine()?;
             }
 
-            gc_check_counter += 1;
+            // Vérifier le GC périodiquement plutôt qu'à chaque instruction.
+            if allow_gc {
+                gc_check_counter += 1;
 
-            if gc_check_counter >= 256 {
-                gc_check_counter = 0;
+                if gc_check_counter >= 256 {
+                    gc_check_counter = 0;
 
-                if gc::should_collect() {
-                    self.collect_garbage();
+                    if gc::should_collect() {
+                        self.collect_garbage();
+                    }
                 }
             }
+
+            // Mettre à jour la position source avant l'exécution
+            // de l'instruction courante.
+            let (line, column) = self.current_position()?;
+
+            self.current_line = line;
+            self.current_column = column;
 
             let instruction = self.read_byte()?;
 
@@ -32,7 +51,6 @@ impl VirtualMachine {
                 // ========================================================
                 // HOT DISPATCH
                 // ========================================================
-
                 30 => {
                     self.loop_back()?;
                     Ok(false)
@@ -66,7 +84,6 @@ impl VirtualMachine {
                 // ========================================================
                 // GENERAL DISPATCH
                 // ========================================================
-
                 _ => self.dispatch(instruction),
             };
 
@@ -80,6 +97,7 @@ impl VirtualMachine {
 
                 Err(error) => {
                     let (line, column) = self.current_position()?;
+
                     self.current_line = line;
                     self.current_column = column;
 
@@ -117,9 +135,7 @@ impl VirtualMachine {
         min_frame_len: usize,
     ) -> Result<bool, RuntimeError> {
         match error {
-            RuntimeError::Thrown(value) => {
-                self.propagate_thrown_until(value, min_frame_len)
-            }
+            RuntimeError::Thrown(value) => self.propagate_thrown_until(value, min_frame_len),
 
             error => {
                 let value = self.runtime_error_value(&error)?;
@@ -133,10 +149,7 @@ impl VirtualMachine {
         }
     }
 
-    fn runtime_error_value(
-        &self,
-        error: &RuntimeError,
-    ) -> Result<Value, RuntimeError> {
+    fn runtime_error_value(&self, error: &RuntimeError) -> Result<Value, RuntimeError> {
         match error {
             RuntimeError::TypeError
             | RuntimeError::DivisionByZero
@@ -154,15 +167,11 @@ impl VirtualMachine {
             | RuntimeError::ObjectFieldNotFound { .. }
             | RuntimeError::NotIterable
             | RuntimeError::IteratorExhausted
-            | RuntimeError::InvalidShiftAmount => {
-                Ok(Value::new_string(error.to_string()))
-            }
+            | RuntimeError::InvalidShiftAmount => Ok(Value::new_string(error.to_string())),
 
             RuntimeError::Thrown(value) => Ok(value.clone()),
 
-            RuntimeError::WithLocation { source, .. } => {
-                self.runtime_error_value(source)
-            }
+            RuntimeError::WithLocation { source, .. } => self.runtime_error_value(source),
 
             RuntimeError::StackUnderflow
             | RuntimeError::InvalidOpcode(_)
@@ -170,10 +179,7 @@ impl VirtualMachine {
         }
     }
 
-    pub(crate) fn propagate_thrown(
-        &mut self,
-        value: Value,
-    ) -> Result<bool, RuntimeError> {
+    pub(crate) fn propagate_thrown(&mut self, value: Value) -> Result<bool, RuntimeError> {
         self.propagate_thrown_until(value, 0)
     }
 
@@ -189,20 +195,14 @@ impl VirtualMachine {
 
             let current_frame_index = self.frames.len() - 1;
 
-            let Some(handler_index) = self
-                .exception_handlers
-                .iter()
-                .rposition(|handler| {
-                    handler.frame_index >= min_frame_len
-                        && handler.frame_index <= current_frame_index
-                })
-            else {
+            let Some(handler_index) = self.exception_handlers.iter().rposition(|handler| {
+                handler.frame_index >= min_frame_len && handler.frame_index <= current_frame_index
+            }) else {
                 self.close_current_frame_for_exception()?;
                 continue;
             };
 
-            let handler_frame =
-                self.exception_handlers[handler_index].frame_index;
+            let handler_frame = self.exception_handlers[handler_index].frame_index;
 
             while self.frames.len() > handler_frame + 1 {
                 self.close_current_frame_for_exception()?;
@@ -213,10 +213,8 @@ impl VirtualMachine {
             }
 
             let catch_ip = self.exception_handlers[handler_index].catch_ip;
-            let finally_ip =
-                self.exception_handlers[handler_index].finally_ip;
-            let stack_height =
-                self.exception_handlers[handler_index].stack_height;
+            let finally_ip = self.exception_handlers[handler_index].finally_ip;
+            let stack_height = self.exception_handlers[handler_index].stack_height;
 
             self.restore_exception_stack(stack_height)?;
 
@@ -224,6 +222,7 @@ impl VirtualMachine {
                 self.exception_handlers[handler_index].catch_ip = None;
 
                 self.push(value);
+
                 self.current_frame_mut()?.ip = catch_ip;
 
                 return Ok(true);

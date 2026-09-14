@@ -119,14 +119,17 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
 
             Object::Interface { .. } => "interface".to_string(),
 
-            Object::Instance { class, .. } => {
-                let class = class.borrow();
+            Object::Instance { class, .. } => match class.as_ref() {
+                Some(class_handle) => {
+                    let class_ref = class_handle.borrow();
 
-                match &*class {
-                    Object::Class { name, .. } => name.clone(),
-                    _ => "instance".to_string(),
+                    match &*class_ref {
+                        Object::Class { name, .. } => name.clone(),
+                        _ => "instance".to_string(),
+                    }
                 }
-            }
+                None => "instance".to_string(),
+            },
         },
     };
 

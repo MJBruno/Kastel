@@ -3,9 +3,7 @@ use super::VirtualMachine;
 use crate::error::runtime_error::RuntimeError;
 
 impl VirtualMachine {
-    pub(crate) fn op_push_exception_handler(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_push_exception_handler(&mut self) -> Result<(), RuntimeError> {
         let catch_raw = self.read_short()?;
         let finally_raw = self.read_short()?;
 
@@ -24,9 +22,7 @@ impl VirtualMachine {
         self.register_exception_handler(catch_ip, finally_ip)
     }
 
-    pub(crate) fn op_pop_exception_handler(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_pop_exception_handler(&mut self) -> Result<(), RuntimeError> {
         self.unregister_exception_handler().map(|_| ())
     }
 
@@ -36,9 +32,7 @@ impl VirtualMachine {
         Err(RuntimeError::Thrown(value))
     }
 
-    pub(crate) fn op_finally_end(
-        &mut self,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn op_finally_end(&mut self) -> Result<(), RuntimeError> {
         let Some(pending) = self.pending_exception.take() else {
             return Ok(());
         };

@@ -8,6 +8,7 @@ impl VirtualMachine {
             globals: &self.globals,
             frames: &self.frames,
             open_upvalues: &self.open_upvalues,
+            pending_exception: &self.pending_exception,
         })
     }
 }

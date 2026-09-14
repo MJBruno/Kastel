@@ -146,7 +146,6 @@ pub struct VirtualMachine {
     #[cfg(feature = "profile")]
     pub(crate) profile_counts: [u64; 256],
 
-
     #[cfg(feature = "profile")]
     pub(crate) profile_read_bytes: u64,
 }
@@ -193,7 +192,6 @@ impl VirtualMachine {
             #[cfg(feature = "profile")]
             profile_counts: [0; 256],
 
-
             #[cfg(feature = "profile")]
             profile_read_bytes: 0,
         };
@@ -204,6 +202,9 @@ impl VirtualMachine {
     }
 
     pub fn execute_repl(&mut self, function: Rc<Function>) -> Result<Option<Value>, RuntimeError> {
+        // Fermer les upvalues de l'ancien environnement avant de supprimer la stack.
+        self.close_upvalues(0)?;
+
         let chunk = Rc::new(function.chunk.clone());
         let local_count = function.local_count as usize;
         let closure = Object::new_closure(function, Vec::new());
@@ -223,6 +224,8 @@ impl VirtualMachine {
 
         self.exception_handlers.clear();
         self.pending_exception = None;
+
+        // Les upvalues ont maintenant été fermées correctement.
         self.open_upvalues.clear();
 
         self.current_line = 0;
@@ -236,7 +239,6 @@ impl VirtualMachine {
             Ok(None)
         }
     }
-
     pub fn execute_module(
         function: Rc<Function>,
         exports: &[String],
@@ -256,21 +258,15 @@ impl VirtualMachine {
         let mut values = HashMap::with_capacity(exports.len());
 
         for name in exports {
-            let value = vm
-                .globals
-                .get(name)
-                .cloned()
-                .ok_or(RuntimeError::ModuleError(format!(
-                    "Export '{}' was not initialized",
-                    name
-                )))?;
+            let value = vm.globals.get(name).cloned().ok_or_else(|| {
+                RuntimeError::ModuleError(format!("Export '{}' was not initialized", name))
+            })?;
 
             values.insert(name.clone(), value);
         }
 
         Ok(values)
     }
-
     // ============================================================
     // UPVALUES
     // ============================================================
@@ -281,7 +277,6 @@ impl VirtualMachine {
     ) -> Result<Rc<RefCell<ObjUpvalue>>, RuntimeError> {
         let (slot_start, local_count) = {
             let frame = self.current_frame()?;
-
             let closure = crate::vm::machine::bytecode::frame_closure(&frame.closure);
 
             (frame.slot_start, closure.function.local_count as usize)
@@ -300,10 +295,12 @@ impl VirtualMachine {
             return Err(RuntimeError::InvalidFunction);
         }
 
-        for upvalue in &self.open_upvalues {
-            if upvalue.borrow().slot == absolute_slot {
-                return Ok(Rc::clone(upvalue));
-            }
+        if let Some(existing) = self
+            .open_upvalues
+            .iter()
+            .find(|upvalue| upvalue.borrow().slot == absolute_slot)
+        {
+            return Ok(Rc::clone(existing));
         }
 
         let upvalue = Rc::new(RefCell::new(ObjUpvalue::new(absolute_slot)));
@@ -316,9 +313,19 @@ impl VirtualMachine {
     }
 
     pub(crate) fn close_upvalues(&mut self, last: usize) -> Result<(), RuntimeError> {
-        let mut remaining = Vec::with_capacity(self.open_upvalues.len());
+        // Valider toutes les positions avant de modifier la liste.
+        for upvalue in &self.open_upvalues {
+            let upvalue_ref = upvalue.borrow();
 
-        for upvalue in self.open_upvalues.drain(..) {
+            if upvalue_ref.slot >= last && upvalue_ref.closed.is_none() {
+                if upvalue_ref.slot >= self.stack.len() {
+                    return Err(RuntimeError::InvalidFunction);
+                }
+            }
+        }
+
+        // Fermer les upvalues qui appartiennent au frame supprimé.
+        for upvalue in &self.open_upvalues {
             let slot = upvalue.borrow().slot;
 
             if slot >= last {
@@ -329,16 +336,16 @@ impl VirtualMachine {
                     .ok_or(RuntimeError::InvalidFunction)?;
 
                 upvalue.borrow_mut().closed = Some(value);
-            } else {
-                remaining.push(upvalue);
             }
         }
 
-        self.open_upvalues = remaining;
+        // Ne conserver ouvertes que les upvalues appartenant aux
+        // frames encore actifs.
+        self.open_upvalues
+            .retain(|upvalue| upvalue.borrow().slot < last);
 
         Ok(())
     }
-
     // ============================================================
     // EXCEPTION HANDLERS
     // ============================================================
