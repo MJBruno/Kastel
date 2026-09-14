@@ -35,28 +35,6 @@ impl ModuleResolver {
 
         path.canonicalize().ok()
     }
-
-    pub fn path_to_uri(&self, path: &Path) -> Option<String> {
-        let path = path.canonicalize().ok()?;
-
-        #[cfg(windows)]
-        {
-            let mut path = path.to_string_lossy().to_string();
-
-            if let Some(stripped) = path.strip_prefix(r"\\?\") {
-                path = stripped.to_string();
-            }
-
-            path = path.replace('\\', "/");
-
-            Some(format!("file:///{}", path))
-        }
-
-        #[cfg(not(windows))]
-        {
-            Some(format!("file://{}", path.to_string_lossy()))
-        }
-    }
 }
 
 #[cfg(test)]
@@ -86,37 +64,6 @@ mod tests {
         let resolved = resolver.resolve(&main_file, &parts).unwrap();
 
         assert_eq!(resolved, module_file.canonicalize().unwrap());
-
-        let _ = std::fs::remove_dir_all(temp);
-    }
-
-    #[test]
-    fn windows_path_to_uri_has_no_extended_prefix() {
-        let temp = std::env::temp_dir().join("kastel_lsp_uri_test");
-
-        std::fs::create_dir_all(&temp).unwrap();
-
-        let file = temp.join("test.ks");
-
-        std::fs::write(&file, "").unwrap();
-
-        let resolver = ModuleResolver::new(Some(temp.clone()));
-
-        let uri = resolver.path_to_uri(&file).unwrap();
-
-        #[cfg(windows)]
-        {
-            assert!(uri.starts_with("file:///"));
-
-            assert!(!uri.contains("\\\\?\\"));
-
-            assert!(!uri.contains("\\"));
-        }
-
-        #[cfg(not(windows))]
-        {
-            assert!(uri.starts_with("file://"));
-        }
 
         let _ = std::fs::remove_dir_all(temp);
     }

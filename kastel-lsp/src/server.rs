@@ -4,6 +4,7 @@ use crate::diagnostics::build_diagnostics;
 use crate::document_protocol::{parse_did_change, parse_did_open};
 use crate::module_resolver::ModuleResolver;
 use crate::protocol::{RpcRequest, RpcResponse};
+use crate::uri_util::{path_to_uri, uri_to_path};
 use crate::workspace::Workspace;
 
 pub enum ServerMessage {
@@ -62,6 +63,12 @@ impl Server {
 
             "textDocument/documentSymbol" => {
                 if let Some(message) = self.document_symbols(request.id, request.params) {
+                    messages.push(message);
+                }
+            }
+
+            "textDocument/documentHighlight" => {
+                if let Some(message) = self.document_highlight(request.id, request.params) {
                     messages.push(message);
                 }
             }
@@ -128,7 +135,7 @@ impl Server {
             .and_then(|value| value.get("rootUri"))
             .and_then(Value::as_str)
         {
-            if let Some(path) = file_uri_to_path(root_uri) {
+            if let Some(path) = uri_to_path(root_uri) {
                 self.module_resolver = Some(ModuleResolver::new(Some(path)));
             }
         }
@@ -143,12 +150,31 @@ impl Server {
                     "referencesProvider": true,
                     "renameProvider": true,
                     "documentSymbolProvider": true,
+                    "documentHighlightProvider": true,
                     "completionProvider": {
                         "triggerCharacters": [".", ":"]
                     }
                 }
             }),
         )
+    }
+
+    /// Construit le message `publishDiagnostics` complet :
+    /// lexer + parser (stockés dans le document) + sémantique.
+    fn diagnostics_for(&self, uri: &str) -> Option<Value> {
+        let document = self.workspace.get(uri)?;
+
+        let mut all = document.diagnostics.clone();
+
+        all.extend(
+            crate::semantic::analyze(&self.workspace, uri)
+        );
+
+        Some(build_diagnostics(
+            uri,
+            &document.text,
+            all,
+        ))
     }
 
     fn did_open(&mut self, params: Option<Value>) -> Option<Value> {
@@ -160,19 +186,13 @@ impl Server {
 
         self.load_imports(&uri);
 
-        let document = self.workspace.get(&uri)?;
-
         eprintln!(
             "Opened document: {} ({} document(s))",
             uri,
             self.workspace.len()
         );
 
-        Some(build_diagnostics(
-            &uri,
-            &document.text,
-            document.diagnostics.clone(),
-        ))
+        self.diagnostics_for(&uri)
     }
 
     fn did_change(&mut self, params: Option<Value>) -> Option<Value> {
@@ -190,11 +210,7 @@ impl Server {
 
         eprintln!("Updated document: {} -> version {}", uri, document.version);
 
-        Some(build_diagnostics(
-            &uri,
-            &document.text,
-            document.diagnostics.clone(),
-        ))
+        self.diagnostics_for(&uri)
     }
 
     fn did_close(&mut self, params: Option<Value>) -> Option<Value> {
@@ -243,7 +259,7 @@ impl Server {
             }
 
             Statement::Import { path } => {
-                let Some(current_file) = file_uri_to_path(uri) else {
+                let Some(current_file) = uri_to_path(uri) else {
                     return;
                 };
 
@@ -253,9 +269,7 @@ impl Server {
                     return;
                 };
 
-                let Some(module_uri) = resolver.path_to_uri(&module_path) else {
-                    return;
-                };
+                let module_uri = path_to_uri(&module_path);
 
                 if self.workspace.get(&module_uri).is_none() {
                     if let Err(error) = self.workspace.open_file(module_uri.clone(), &module_path) {
@@ -334,6 +348,31 @@ impl Server {
         Some(ServerMessage::Response(RpcResponse::new(
             id,
             Value::Array(result),
+        )))
+    }
+
+    fn document_highlight(&self, id: Option<Value>, params: Option<Value>) -> Option<ServerMessage> {
+        let id = id?;
+        let params = params?;
+
+        let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+
+        let position = params.get("position")?;
+
+        let line = position.get("line")?.as_u64()? as u32;
+
+        let character = position.get("character")?.as_u64()? as u32;
+
+        let result = crate::document_highlight::build_document_highlight(
+            &self.workspace,
+            uri,
+            line,
+            character,
+        );
+
+        Some(ServerMessage::Response(RpcResponse::new(
+            id,
+            result.unwrap_or(Value::Null),
         )))
     }
 
@@ -457,19 +496,5 @@ impl Server {
 
     pub fn is_shutdown(&self) -> bool {
         self.shutdown
-    }
-}
-
-fn file_uri_to_path(uri: &str) -> Option<std::path::PathBuf> {
-    let path = uri.strip_prefix("file:///")?;
-
-    #[cfg(windows)]
-    {
-        Some(std::path::PathBuf::from(path.replace('/', "\\")))
-    }
-
-    #[cfg(not(windows))]
-    {
-        Some(std::path::PathBuf::from(format!("/{path}")))
     }
 }

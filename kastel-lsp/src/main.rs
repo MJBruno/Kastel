@@ -6,18 +6,23 @@ mod analyzer;
 mod completion;
 mod definition;
 mod diagnostics;
+mod document_highlight;
 mod document_protocol;
 mod hover;
+mod language; // ← AJOUT
 mod lsp_position;
 mod module_resolver;
 mod position;
 mod protocol;
 mod references;
 mod rename;
+mod semantic; // ← AJOUT
 mod server;
 mod source_position;
 mod span;
 mod symbols;
+mod text_util;
+mod uri_util;
 mod workspace;
 
 use protocol::{RpcRequest, RpcResponse};
@@ -42,8 +47,7 @@ impl Transport {
         loop {
             let mut line = String::new();
 
-            let bytes =
-                self.reader.read_line(&mut line)?;
+            let bytes = self.reader.read_line(&mut line)?;
 
             if bytes == 0 {
                 return Ok(None);
@@ -53,74 +57,39 @@ impl Transport {
                 break;
             }
 
-            if let Some(value) =
-                line.strip_prefix("Content-Length:")
-            {
-                content_length = Some(
-                    value
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|_| {
-                            io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "invalid Content-Length",
-                            )
-                        })?,
-                );
+            if let Some(value) = line.strip_prefix("Content-Length:") {
+                content_length = Some(value.trim().parse::<usize>().map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "invalid Content-Length")
+                })?);
             }
         }
 
-        let length =
-            content_length.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "missing Content-Length",
-                )
-            })?;
+        let length = content_length
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length"))?;
 
-        let mut body =
-            vec![0u8; length];
+        let mut body = vec![0u8; length];
 
         self.reader.read_exact(&mut body)?;
 
-        let message =
-            serde_json::from_slice(&body)
-                .map_err(io::Error::other)?;
+        let message = serde_json::from_slice(&body).map_err(io::Error::other)?;
 
         Ok(Some(message))
     }
 
-    fn send_message(
-        &mut self,
-        message: &RpcResponse,
-    ) -> io::Result<()> {
-        let body =
-            serde_json::to_vec(message)
-                .map_err(io::Error::other)?;
+    fn send_message(&mut self, message: &RpcResponse) -> io::Result<()> {
+        let body = serde_json::to_vec(message).map_err(io::Error::other)?;
 
         self.write_body(&body)
     }
 
-    fn send_value(
-        &mut self,
-        message: &Value,
-    ) -> io::Result<()> {
-        let body =
-            serde_json::to_vec(message)
-                .map_err(io::Error::other)?;
+    fn send_value(&mut self, message: &Value) -> io::Result<()> {
+        let body = serde_json::to_vec(message).map_err(io::Error::other)?;
 
         self.write_body(&body)
     }
 
-    fn write_body(
-        &mut self,
-        body: &[u8],
-    ) -> io::Result<()> {
-        write!(
-            self.stdout,
-            "Content-Length: {}\r\n\r\n",
-            body.len()
-        )?;
+    fn write_body(&mut self, body: &[u8]) -> io::Result<()> {
+        write!(self.stdout, "Content-Length: {}\r\n\r\n", body.len())?;
 
         self.stdout.write_all(body)?;
         self.stdout.flush()?;
@@ -138,9 +107,7 @@ fn main() -> io::Result<()> {
     while let Some(value) = transport.read_message()? {
         eprintln!("Received LSP message");
 
-        let request: RpcRequest =
-            serde_json::from_value(value)
-                .map_err(io::Error::other)?;
+        let request: RpcRequest = serde_json::from_value(value).map_err(io::Error::other)?;
 
         let messages = server.handle(request);
 
