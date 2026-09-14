@@ -9,14 +9,14 @@ mod diagnostics;
 mod document_highlight;
 mod document_protocol;
 mod hover;
-mod language; // ← AJOUT
+mod language;
 mod lsp_position;
 mod module_resolver;
 mod position;
 mod protocol;
 mod references;
 mod rename;
-mod semantic; // ← AJOUT
+mod semantic;
 mod server;
 mod source_position;
 mod span;
@@ -24,6 +24,7 @@ mod symbols;
 mod text_util;
 mod uri_util;
 mod workspace;
+mod workspace_index; // ← AJOUT
 
 use protocol::{RpcRequest, RpcResponse};
 use server::{Server, ServerMessage};

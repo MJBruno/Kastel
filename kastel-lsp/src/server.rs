@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde_json::{Value, json};
 
 use crate::diagnostics::build_diagnostics;
@@ -6,6 +8,7 @@ use crate::module_resolver::ModuleResolver;
 use crate::protocol::{RpcRequest, RpcResponse};
 use crate::uri_util::{path_to_uri, uri_to_path};
 use crate::workspace::Workspace;
+use crate::workspace_index;
 
 pub enum ServerMessage {
     Response(RpcResponse),
@@ -136,7 +139,9 @@ impl Server {
             .and_then(Value::as_str)
         {
             if let Some(path) = uri_to_path(root_uri) {
-                self.module_resolver = Some(ModuleResolver::new(Some(path)));
+                self.module_resolver = Some(ModuleResolver::new(Some(path.clone())));
+
+                self.index_workspace(&path);
             }
         }
 
@@ -157,6 +162,43 @@ impl Server {
                 }
             }),
         )
+    }
+
+    /// Charge tous les `.ks` du workspace dans le `Workspace`
+    /// en mémoire, sans écraser les documents déjà ouverts par
+    /// l'éditeur (au cas où `initialize` serait rappelé).
+    fn index_workspace(&mut self, root: &Path) {
+        let files = workspace_index::scan(root);
+
+        let total = files.len();
+        let mut loaded = 0usize;
+
+        for file in files {
+            let uri = path_to_uri(&file);
+
+            if self.workspace.get(&uri).is_some() {
+                continue;
+            }
+
+            match self.workspace.open_file(uri.clone(), &file) {
+                Ok(()) => {
+                    loaded += 1;
+                }
+                Err(error) => {
+                    eprintln!(
+                        "Failed to index {}: {}",
+                        uri,
+                        error
+                    );
+                }
+            }
+        }
+
+        eprintln!(
+            "Workspace indexed: {} loaded / {} scanned",
+            loaded,
+            total
+        );
     }
 
     /// Construit le message `publishDiagnostics` complet :
