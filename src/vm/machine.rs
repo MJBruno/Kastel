@@ -31,6 +31,7 @@ pub mod objects;
 pub mod profiling;
 pub mod properties;
 pub mod stack;
+pub mod tuples;
 pub mod variables;
 
 #[derive(Clone)]

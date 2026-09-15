@@ -161,7 +161,7 @@ impl VirtualMachine {
                 let value = {
                     let object = array.borrow();
 
-                    let Object::Array(elements) = &*object else {
+                    let (Object::Array(elements) | Object::Tuple(elements)) = &*object else {
                         return Err(RuntimeError::TypeError);
                     };
 

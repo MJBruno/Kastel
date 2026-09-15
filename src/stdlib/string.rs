@@ -418,6 +418,7 @@ pub fn native_join(args: &[Value]) -> Result<Value, RuntimeError> {
 
             match &*object {
                 crate::runtime::object::Object::Array(values) => values.clone(),
+                crate::runtime::object::Object::Tuple(values) => values.clone(),
 
                 _ => return Err(RuntimeError::TypeError),
             }

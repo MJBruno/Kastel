@@ -105,11 +105,20 @@ impl IteratorState {
         match &self.kind {
             IteratorKind::Range { .. } => {}
 
-            IteratorKind::Array { .. } => {}
+            IteratorKind::Array { array, .. } => {
+                let value = Value::Object(array.clone());
+                visit(&value);
+            }
 
-            IteratorKind::Dict { .. } => {}
+            IteratorKind::Dict { dict, .. } => {
+                let value = Value::Object(dict.clone());
+                visit(&value);
+            }
 
-            IteratorKind::String { .. } => {}
+            IteratorKind::String { string, .. } => {
+                let value = Value::Object(string.clone());
+                visit(&value);
+            }
             IteratorKind::Map { source, callback } => {
                 visit(source);
                 visit(callback);
@@ -222,9 +231,15 @@ impl Value {
                     Object::Iterator(_) => Ok(self.clone()),
 
                     // -----------------------------------------------
-                    // ARRAY
+                    // ARRAY / TUPLE
+                    //
+                    // Un tuple s'itère exactement comme un array (même
+                    // représentation `Vec<Value>` en lecture) : on
+                    // réutilise donc le même IteratorKind::Array.
                     // -----------------------------------------------
-                    Object::Array(_) => Ok(Value::new_array_iterator(handle.clone())),
+                    Object::Array(_) | Object::Tuple(_) => {
+                        Ok(Value::new_array_iterator(handle.clone()))
+                    }
 
                     // -----------------------------------------------
                     // DICT
@@ -312,7 +327,7 @@ impl Value {
             IteratorKind::Array { array, index } => {
                 let array = array.borrow();
 
-                let Object::Array(elements) = &*array else {
+                let (Object::Array(elements) | Object::Tuple(elements)) = &*array else {
                     return Err(RuntimeError::TypeError);
                 };
 
@@ -387,7 +402,7 @@ impl Value {
             IteratorKind::Array { array, index } => {
                 let array = array.borrow();
 
-                let Object::Array(elements) = &*array else {
+                let (Object::Array(elements) | Object::Tuple(elements)) = &*array else {
                     return Err(RuntimeError::TypeError);
                 };
 

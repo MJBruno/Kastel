@@ -9,7 +9,8 @@ mod statements;
 
 use crate::error::parse_error::ParserError;
 use crate::frontend::ast::*;
-use crate::frontend::token::*;
+use crate::frontend::lexer::token::{Token, TokenKind};
+
 
 #[derive(Debug, Clone)]
 pub struct Parser {
@@ -142,8 +143,6 @@ impl Parser {
     }
 
     fn parse_string(&self, token: Token) -> Result<Expression, ParserError> {
-        let value = token.lexeme.trim_matches('"').to_string();
-
-        Ok(Expression::Literal(Literal::String(value)))
+        Ok(Expression::Literal(Literal::String(token.lexeme)))
     }
 }

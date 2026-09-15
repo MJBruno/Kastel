@@ -1,6 +1,6 @@
 use crate::error::lex_error::LexerError;
-use crate::frontend::token::Token;
-use crate::frontend::token::TokenKind;
+use crate::frontend::lexer::token::{Token, TokenKind};
+ 
 
 pub struct Lexer {
     source: Vec<char>,
@@ -80,8 +80,8 @@ impl Lexer {
                 // ====================================================
                 // CHAÎNES
                 // ====================================================
-                '"' => {
-                    tokens.push(self.string());
+                '"' | '\'' => {
+                    tokens.push(self.string(c));
                 }
 
                 // ====================================================
@@ -481,12 +481,12 @@ impl Lexer {
         Token::new(TokenKind::Number, text, self.line, start_column)
     }
 
-    fn string(&mut self) -> Token {
+    fn string(&mut self, delimiter: char) -> Token {
         let start_column = self.column - 1;
 
         let mut value = String::new();
 
-        while !self.is_at_end() && self.peek() != '"' {
+        while !self.is_at_end() && self.peek() != delimiter {
             let c = self.advance();
 
             if c == '\\' {
@@ -497,6 +497,7 @@ impl Lexer {
                     't' => value.push('\t'),
                     'r' => value.push('\r'),
                     '"' => value.push('"'),
+                    '\'' => value.push('\''),
                     '\\' => value.push('\\'),
                     _ => value.push(escaped),
                 }

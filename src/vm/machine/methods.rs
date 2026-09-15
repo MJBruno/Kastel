@@ -118,6 +118,7 @@ impl VirtualMachine {
                         Object::String(_) => 2,
                         Object::Array(_) => 3,
                         Object::Dict(_) => 4,
+                        Object::Tuple(_) => 6,
                         _ => 5,
                     }
                 };
@@ -195,6 +196,17 @@ impl VirtualMachine {
                     }
 
                     4 => match dict::dispatch_method(&method_name, &args)? {
+                        Some(result) => result,
+
+                        None => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    },
+
+                    6 => match crate::stdlib::tuple::dispatch_method(&method_name, &args)? {
                         Some(result) => result,
 
                         None => {

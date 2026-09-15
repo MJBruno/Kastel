@@ -86,11 +86,15 @@ pub enum OpCode {
     LessLocalConstJump,
     LoopLessAddLocalConst,
     AddLocalLocal,
+    /// Construit un tuple immuable à partir des N valeurs au sommet
+    /// de la pile — ajouté en dernier pour ne décaler aucun
+    /// discriminant existant (voir COUNT ci-dessous).
+    Tuple,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::AddLocalLocal as usize + 1;
+    pub const COUNT: usize = Self::Tuple as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -165,7 +169,8 @@ mod tests {
         assert_eq!(OpCode::LessLocalConstJump as u8, 67);
         assert_eq!(OpCode::LoopLessAddLocalConst as u8, 68);
         assert_eq!(OpCode::AddLocalLocal as u8, 69);
-        assert_eq!(OpCode::COUNT, 70);
+        assert_eq!(OpCode::Tuple as u8, 70);
+        assert_eq!(OpCode::COUNT, 71);
     }
 
     #[test]

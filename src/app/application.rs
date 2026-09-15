@@ -12,7 +12,7 @@ use crate::{
     compiler::{compiler::Compiler, variables::Global},
     error::kastel_error::KastelError,
     error::runtime_error::RuntimeError,
-    frontend::{lexer::Lexer, parser::Parser},
+    frontend::{lexer::lexer::Lexer, parser::Parser},
     runtime::value::Value,
     stdlib::execute_native,
     vm::machine::VirtualMachine,
@@ -61,13 +61,18 @@ impl Application {
 }
 
 fn execute(source: &str, module_path: Option<PathBuf>) -> Result<(), KastelError> {
-    let tokens = Lexer::new(source.to_string()).scan_token()?;
-    let statements = Parser::new(tokens).parse()?;
+    let tokens = Lexer::new(source.to_string())
+        .scan_token()
+        .map_err(KastelError::from)?;
+
+    let mut parser = Parser::new(tokens);
+
+    let statements = parser.parse().map_err(KastelError::from)?;
 
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
 
-    let function = Rc::new(compiler.compile(&statements)?);
+    let function = Rc::new(compiler.compile(&statements).map_err(KastelError::from)?);
 
     let mut vm = VirtualMachine::new(function, module_path);
 
@@ -90,30 +95,31 @@ struct ReplSession {
 }
 
 impl ReplSession {
-    fn new() -> Self {
+    fn new() -> Result<Self, KastelError> {
         let mut compiler = Compiler::new();
         execute_native(&mut compiler);
 
         let compiler_globals = Rc::clone(&compiler.globals);
 
-        let function = Rc::new(
-            compiler
-                .compile(&[])
-                .expect("compilation du contexte REPL impossible"),
-        );
+        let function = Rc::new(compiler.compile(&[]).map_err(KastelError::from)?);
 
         let vm = VirtualMachine::new(function, None);
 
-        Self {
+        Ok(Self {
             compiler_globals,
             vm,
             history: Vec::new(),
-        }
+        })
     }
 
     fn execute(&mut self, source: &str) -> Result<Option<Value>, KastelError> {
-        let tokens = Lexer::new(source.to_string()).scan_token()?;
-        let statements = Parser::new(tokens).parse()?;
+        let tokens = Lexer::new(source.to_string())
+            .scan_token()
+            .map_err(KastelError::from)?;
+
+        let mut parser = Parser::new(tokens);
+
+        let statements = parser.parse().map_err(KastelError::from)?;
 
         if statements.is_empty() {
             return Ok(None);
@@ -121,17 +127,30 @@ impl ReplSession {
 
         let compiler = Compiler::new_with_globals(Rc::clone(&self.compiler_globals));
 
-        let function = Rc::new(compiler.compile_repl(&statements)?);
+        let function = Rc::new(
+            compiler
+                .compile_repl(&statements)
+                .map_err(KastelError::from)?,
+        );
 
-        let result = self.vm.execute_repl(function)?;
+        let result = self
+            .vm
+            .execute_repl(function)
+            .map_err(|error| RuntimeError::WithLocation {
+                line: self.vm.current_line,
+                column: self.vm.current_column,
+                source: Box::new(error),
+            })
+            .map_err(KastelError::from)?;
 
         self.history.push(source.to_string());
 
         Ok(result)
     }
 
-    fn reset(&mut self) {
-        *self = Self::new();
+    fn reset(&mut self) -> Result<(), KastelError> {
+        *self = Self::new()?;
+        Ok(())
     }
 
     fn clear_screen() {
@@ -154,7 +173,14 @@ fn repl() {
     println!("Kastel REPL");
     println!("Tapez :help pour l'aide.");
 
-    let mut session = ReplSession::new();
+    let mut session = match ReplSession::new() {
+        Ok(session) => session,
+        Err(error) => {
+            eprintln!("Erreur d'initialisation du REPL : {error}");
+            return;
+        }
+    };
+
     let mut buffer = String::new();
 
     loop {
@@ -184,7 +210,6 @@ fn repl() {
         if buffer.is_empty() && line.starts_with(':') {
             match line.trim() {
                 ":help" => ReplSession::print_help(),
-
                 ":clear" => ReplSession::clear_screen(),
 
                 ":history" => {
@@ -193,10 +218,12 @@ fn repl() {
                     }
                 }
 
-                ":reset" => {
-                    session.reset();
-                    println!("Session réinitialisée.");
-                }
+                ":reset" => match session.reset() {
+                    Ok(()) => println!("Session réinitialisée."),
+                    Err(error) => {
+                        eprintln!("Erreur de réinitialisation : {error}")
+                    }
+                },
 
                 ":quit" | ":exit" => break,
 
@@ -217,15 +244,9 @@ fn repl() {
         }
 
         match session.execute(&buffer) {
-            Ok(Some(value)) => {
-                println!("{value}");
-            }
-
+            Ok(Some(value)) => println!("{value}"),
             Ok(None) => {}
-
-            Err(error) => {
-                eprintln!("{error}");
-            }
+            Err(error) => eprintln!("{error}"),
         }
 
         buffer.clear();
@@ -237,11 +258,11 @@ fn input_complete(source: &str) -> bool {
     let mut brackets = 0usize;
     let mut parentheses = 0usize;
 
-    let mut string = false;
+    let mut delimiter: Option<char> = None;
     let mut escaped = false;
 
     for character in source.chars() {
-        if string {
+        if let Some(active_delimiter) = delimiter {
             if escaped {
                 escaped = false;
                 continue;
@@ -252,15 +273,15 @@ fn input_complete(source: &str) -> bool {
                 continue;
             }
 
-            if character == '"' {
-                string = false;
+            if character == active_delimiter {
+                delimiter = None;
             }
 
             continue;
         }
 
         match character {
-            '"' => string = true,
+            '"' | '\'' => delimiter = Some(character),
 
             '{' => braces += 1,
             '}' => braces = braces.saturating_sub(1),
@@ -275,5 +296,5 @@ fn input_complete(source: &str) -> bool {
         }
     }
 
-    !string && braces == 0 && brackets == 0 && parentheses == 0
+    delimiter.is_none() && braces == 0 && brackets == 0 && parentheses == 0
 }

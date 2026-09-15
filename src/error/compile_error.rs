@@ -110,6 +110,7 @@ pub enum CompileError {
     InvalidJump,
     JumpTooLarge,
     TooManyObjectFields,
+    TooManyTupleElements,
 }
 
 impl std::fmt::Display for CompileError {
@@ -279,6 +280,9 @@ impl std::fmt::Display for CompileError {
             }
             CompileError::TooManyObjectFields => {
                 write!(f, "Trop de champs dans cet objet")
+            }
+            CompileError::TooManyTupleElements => {
+                write!(f, "Trop d'éléments dans le tuple")
             }
         }
     }

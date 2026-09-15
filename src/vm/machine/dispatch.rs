@@ -245,6 +245,13 @@ impl VirtualMachine {
                 Ok(false)
             }
 
+            OpCode::Tuple => {
+                let count = self.read_byte()? as usize;
+
+                self.op_tuple(count)?;
+                Ok(false)
+            }
+
             OpCode::GetIndex => {
                 if let Some(Value::Object(handle)) =
                     self.stack.get(self.stack.len().saturating_sub(2))
@@ -255,6 +262,11 @@ impl VirtualMachine {
                         Object::Array(_) => {
                             drop(object);
                             self.op_get_array_index()?;
+                        }
+
+                        Object::Tuple(_) => {
+                            drop(object);
+                            self.op_get_tuple_index()?;
                         }
 
                         Object::Dict(_) => {
@@ -283,6 +295,10 @@ impl VirtualMachine {
                         Object::Array(_) => {
                             drop(object);
                             self.op_set_array_index()?;
+                        }
+
+                        Object::Tuple(_) => {
+                            return Err(RuntimeError::ImmutableValue("tuple"));
                         }
 
                         Object::Dict(_) => {

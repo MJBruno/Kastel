@@ -187,6 +187,7 @@ impl VirtualMachine {
             RuntimeError::StackUnderflow
             | RuntimeError::InvalidOpcode(_)
             | RuntimeError::InvalidFunction => Err(error.clone()),
+            RuntimeError::ImmutableValue(_) => Err(error.clone()),
         }
     }
 

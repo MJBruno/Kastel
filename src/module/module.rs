@@ -6,8 +6,8 @@ use std::{
     rc::Rc,
 };
 
-use crate::frontend::lexer::Lexer;
-use crate::frontend::parser::Parser;
+
+use crate::frontend::{lexer::lexer::Lexer, parser::Parser};
 use crate::vm::machine::VirtualMachine;
 use crate::{compiler::compiler::Compiler, runtime::value::Value};
 use crate::{error::compile_error::CompileError, stdlib::execute_native};
@@ -230,5 +230,11 @@ impl ModuleLoader {
         let path = self.resolve(current_file, parts)?;
 
         self.load(path)
+    }
+}
+
+impl Default for ModuleLoader {
+    fn default() -> Self {
+        Self::new()
     }
 }

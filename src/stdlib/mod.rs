@@ -15,6 +15,7 @@ pub mod iterator;
 pub mod math;
 pub mod string;
 pub mod system;
+pub mod tuple;
 
 /// Enregistre toutes les fonctions natives dans les globals du runtime.
 pub fn register_natives(globals: &mut HashMap<String, Value>) {
@@ -22,6 +23,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     math::register(globals);
     string::register(globals);
     array::register(globals);
+    tuple::register(globals);
     dict::register(globals);
     // object::register(globals);
     iterator::register(globals);
@@ -35,6 +37,7 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     math::register_compiler(compiler);
     string::register_compiler(compiler);
     array::register_compiler(compiler);
+    tuple::register_compiler(compiler);
     dict::register_compiler(compiler);
     // object::register_compiler(compiler);
     iterator::register_compiler(compiler);

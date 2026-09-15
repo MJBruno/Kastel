@@ -103,6 +103,18 @@ impl Compiler {
                 self.emit_bytes(OpCode::Array, elements.len() as u8);
             }
 
+            Expression::Tuple(elements) => {
+                if elements.len() > u8::MAX as usize {
+                    return Err(CompileError::TooManyTupleElements);
+                }
+
+                for element in elements {
+                    self.compile_expression(element)?;
+                }
+
+                self.emit_bytes(OpCode::Tuple, elements.len() as u8);
+            }
+
             Expression::Object(fields) => {
                 if fields.len() > u8::MAX as usize {
                     return Err(CompileError::TooManyObjectFields);

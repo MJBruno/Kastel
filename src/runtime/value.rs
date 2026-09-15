@@ -258,6 +258,59 @@ impl Value {
     }
 
     // ============================================================
+    //                         TUPLE
+    // ============================================================
+    //
+    // Tuple = séquence ordonnée et IMMUABLE Kastel, produite par un
+    // littéral `(a, b, c)`. Partage sa représentation mémoire avec
+    // Array (`Vec<Value>` alloué sur le tas, suivi par le GC via
+    // `Object::Tuple`) mais n'expose volontairement aucune méthode de
+    // mutation : ni `set`, ni push/pop/insert/remove/clear.
+    // ============================================================
+
+    pub fn new_tuple(elements: Vec<Value>) -> Self {
+        Self::new_heap_object(Object::Tuple(elements))
+    }
+
+    pub fn tuple_get(&self, index: usize) -> Result<Value, RuntimeError> {
+        self.with_tuple(|tuple| {
+            tuple
+                .get(index)
+                .cloned()
+                .ok_or(RuntimeError::ArrayIndexOutOfBounds {
+                    index,
+                    length: tuple.len(),
+                })
+        })
+    }
+
+    pub fn tuple_len(&self) -> Result<usize, RuntimeError> {
+        self.with_tuple(|tuple| Ok(tuple.len()))
+    }
+
+    pub fn tuple_contains(&self, value: &Value) -> Result<bool, RuntimeError> {
+        self.with_tuple(|tuple| {
+            Ok(tuple
+                .iter()
+                .any(|element| Value::equals(element.clone(), value.clone())))
+        })
+    }
+
+    fn with_tuple<R>(
+        &self,
+        f: impl FnOnce(&Vec<Value>) -> Result<R, RuntimeError>,
+    ) -> Result<R, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Tuple(tuple) => f(tuple),
+                _ => Err(RuntimeError::NotIndexable),
+            },
+
+            _ => Err(RuntimeError::NotIndexable),
+        }
+    }
+
+    // ============================================================
     // FUNCTION
     // ============================================================
 
@@ -612,6 +665,72 @@ impl Value {
 
         Value::Object(handle)
     }
+
+    // ============================================================
+    //                    AFFICHAGE DES CONTENEURS
+    // ============================================================
+    //
+    // `Display` (ci-dessous) affiche une chaîne de premier niveau sans
+    // guillemets (`print("hi")` -> hi), exactement comme Python's
+    // `print`. Mais UNE FOIS IMBRIQUÉE dans un array/dict/tuple, une
+    // chaîne doit être visuellement distinguable des autres valeurs
+    // (`[1, "1"]` ne doit pas s'afficher `[1, 1]`) : c'est le rôle de
+    // `fmt_repr`, utilisé pour chaque ÉLÉMENT d'un conteneur. Comme
+    // `fmt_repr` retombe sur `Display` pour tout ce qui n'est pas une
+    // chaîne — y compris les conteneurs imbriqués, qui repassent par
+    // leurs propres arms `Array`/`Tuple`/`Dict` — la mise entre
+    // guillemets se propage automatiquement à n'importe quelle
+    // profondeur d'imbrication.
+
+    fn fmt_sequence(
+        f: &mut std::fmt::Formatter<'_>,
+        open: &str,
+        close: &str,
+        elements: &[Value],
+    ) -> std::fmt::Result {
+        write!(f, "{open}")?;
+
+        for (index, value) in elements.iter().enumerate() {
+            if index > 0 {
+                write!(f, ", ")?;
+            }
+
+            value.fmt_repr(f)?;
+        }
+
+        write!(f, "{close}")
+    }
+
+    fn fmt_repr(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::String(value) => {
+                    write!(f, "\"{}\"", Self::escape_string_repr(value))
+                }
+
+                _ => write!(f, "{self}"),
+            },
+
+            _ => write!(f, "{self}"),
+        }
+    }
+
+    fn escape_string_repr(value: &str) -> String {
+        let mut escaped = String::with_capacity(value.len());
+
+        for character in value.chars() {
+            match character {
+                '"' => escaped.push_str("\\\""),
+                '\\' => escaped.push_str("\\\\"),
+                '\n' => escaped.push_str("\\n"),
+                '\t' => escaped.push_str("\\t"),
+                '\r' => escaped.push_str("\\r"),
+                other => escaped.push(other),
+            }
+        }
+
+        escaped
+    }
 }
 
 impl std::fmt::Display for Value {
@@ -656,19 +775,18 @@ impl std::fmt::Display for Value {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::String(value) => write!(f, "{value}"),
 
-                Object::Array(array) => {
-                    write!(f, "[")?;
+                Object::Array(array) => Self::fmt_sequence(f, "[", "]", array),
 
-                    for (index, value) in array.iter().enumerate() {
-                        if index > 0 {
-                            write!(f, ", ")?;
-                        }
-
-                        write!(f, "{value}")?;
-                    }
-
-                    write!(f, "]")
+                // Tuple à un seul élément : virgule finale (`(1,)`) pour
+                // le distinguer visuellement d'un simple groupement
+                // `(1)`, comme la syntaxe littérale elle-même l'exige.
+                Object::Tuple(elements) if elements.len() == 1 => {
+                    write!(f, "(")?;
+                    elements[0].fmt_repr(f)?;
+                    write!(f, ",)")
                 }
+
+                Object::Tuple(elements) => Self::fmt_sequence(f, "(", ")", elements),
 
                 Object::Dict(fields) => {
                     write!(f, "{{")?;
@@ -678,7 +796,9 @@ impl std::fmt::Display for Value {
                             write!(f, ", ")?;
                         }
 
-                        write!(f, "{key}: {value}")?;
+                        key.fmt_repr(f)?;
+                        write!(f, ": ")?;
+                        value.fmt_repr(f)?;
                     }
 
                     write!(f, "}}")

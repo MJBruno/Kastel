@@ -245,6 +245,11 @@ pub enum Expression {
     Base,
     Array(Vec<Expression>),
 
+    /// `(a, b, c)`, `(a,)` (tuple à un élément), `()` (tuple vide).
+    /// Se distingue d'une simple expression parenthésée `(a)` par la
+    /// virgule : voir `Parser::primary` pour la règle de désambiguïsation.
+    Tuple(Vec<Expression>),
+
     Object(Vec<(String, Expression)>),
 
     Ternary {

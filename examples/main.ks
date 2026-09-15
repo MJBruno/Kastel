@@ -1,6 +1,4 @@
-from animals.dog import Dog,details;
+from animals.dog import Dog;
 
-let m = new Dog("Milou");
-
-m.speak();
-details();
+let d = new Dog("Milou");
+println("{}",d);

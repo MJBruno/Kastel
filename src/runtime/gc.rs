@@ -216,6 +216,12 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
             }
         }
 
+        Object::Tuple(elements) => {
+            for value in elements {
+                mark_value(value, state);
+            }
+        }
+
         Object::Dict(fields) => {
             for (key, value) in fields {
                 mark_value(key, state);

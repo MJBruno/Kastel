@@ -1,6 +1,7 @@
 use crate::error::parse_error::ParserError;
 use crate::frontend::ast::*;
-use crate::frontend::token::*;
+use crate::frontend::lexer::token::TokenKind;
+ 
 
 use super::Parser;
 
@@ -466,11 +467,48 @@ impl Parser {
             TokenKind::Function => self.parse_function_expression(),
 
             TokenKind::LeftParen => {
-                let expression = self.parse_expression()?;
+                // Tuple vide : `()`.
+                //
+                // (is_arrow_function_start() a déjà intercepté plus haut
+                // le cas `() => ...`, donc si on arrive ici avec des
+                // parenthèses vides, ce ne peut être qu'un tuple vide.)
+                if self.check(TokenKind::RightParen) {
+                    self.advance();
+
+                    return Ok(Expression::Tuple(Vec::new()));
+                }
+
+                let first = self.parse_expression()?;
+
+                // Une virgule après la première expression signale un
+                // tuple : `(1, 2, 3)` ou `(1,)` (tuple à un élément).
+                // Sans virgule, ce sont de simples parenthèses de
+                // groupement : `(1 + 2)` reste l'expression `1 + 2`.
+                if self.match_token(TokenKind::Comma) {
+                    let mut elements = vec![first];
+
+                    if !self.check(TokenKind::RightParen) {
+                        loop {
+                            elements.push(self.parse_expression()?);
+
+                            if !self.match_token(TokenKind::Comma) {
+                                break;
+                            }
+
+                            if self.check(TokenKind::RightParen) {
+                                break;
+                            }
+                        }
+                    }
+
+                    self.consume(TokenKind::RightParen, "')' attendu après le tuple")?;
+
+                    return Ok(Expression::Tuple(elements));
+                }
 
                 self.consume(TokenKind::RightParen, "')' attendu après l'expression")?;
 
-                Ok(expression)
+                Ok(first)
             }
 
             TokenKind::LeftBracket => {

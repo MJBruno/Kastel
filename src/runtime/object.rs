@@ -16,6 +16,12 @@ pub enum Object {
 
     Array(Vec<Value>),
 
+    /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
+    /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
+    /// le GC), mais aucune méthode de mutation ne l'expose : voir
+    /// `Value::new_tuple` / `Value::tuple_get` dans `runtime::value`.
+    Tuple(Vec<Value>),
+
     Dict(Vec<(Value, Value)>),
 
     Function(Rc<Function>),
@@ -71,6 +77,10 @@ impl Object {
             Object::String(_) => {}
 
             Object::Array(elements) => {
+                elements.clear();
+            }
+
+            Object::Tuple(elements) => {
                 elements.clear();
             }
 

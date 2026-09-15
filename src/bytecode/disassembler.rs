@@ -131,6 +131,8 @@ impl Chunk {
             // =====================================================
             OpCode::Array => self.byte_instruction("OP_ARRAY", offset),
 
+            OpCode::Tuple => self.byte_instruction("OP_TUPLE", offset),
+
             OpCode::Object => self.byte_instruction("OP_OBJECT", offset),
 
             OpCode::GetIndex => self.simple_instruction("OP_GET_INDEX", offset),

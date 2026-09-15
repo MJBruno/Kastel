@@ -52,8 +52,15 @@ impl VirtualMachine {
     }
 
     pub(crate) fn op_array_length(&mut self) -> Result<(), RuntimeError> {
-        let array = self.peek()?.clone();
-        let length = array.array_len()? as i64;
+        let value = self.peek()?.clone();
+
+        // `.length` est compilé de façon générique (voir
+        // `compile_array_member`) pour n'importe quel receveur ; on
+        // essaie donc Array puis, à défaut, Tuple.
+        let length = match value.array_len() {
+            Ok(length) => length,
+            Err(_) => value.tuple_len()?,
+        } as i64;
 
         self.pop()?;
         self.push(Value::Integer(length));

@@ -30,6 +30,10 @@ pub enum RuntimeError {
     NotIndexable,
     NotObject,
 
+    /// Tentative de mutation d'une valeur immuable (ex. `tuple[0] = x`).
+    /// Porte le nom du type concerné pour le message d'erreur.
+    ImmutableValue(&'static str),
+
     ModuleError(String),
 
     ObjectFieldNotFound {
@@ -162,6 +166,13 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::NotObject => {
                 write!(f, "Value is not an object.")
+            }
+
+            RuntimeError::ImmutableValue(type_name) => {
+                write!(
+                    f,
+                    "Impossible de modifier une valeur de type '{type_name}' : elle est immuable."
+                )
             }
 
             RuntimeError::StackUnderflow => {

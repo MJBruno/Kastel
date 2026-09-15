@@ -1,8 +1,4 @@
- 
 export class Animal {
-    func init() {
-        println("constructeur animal");
-    }
     func speak() {
         println("animal");
     }
