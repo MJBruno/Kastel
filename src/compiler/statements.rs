@@ -169,6 +169,15 @@ impl Compiler {
                     if !optimized {
                         self.compile_expression(value)?;
                         self.compile_variable_set(name)?;
+
+                        // `SetLocal` / `SetGlobal` / `SetUpvalue` laissent la valeur
+                        // affectée sur la pile (peek, pas pop) afin qu'une affectation
+                        // puisse être utilisée comme une expression. Ici on est dans
+                        // une instruction (`sum += x;`), donc cette valeur est inutilisée
+                        // et doit être retirée, sans quoi elle s'accumule sur la pile à
+                        // chaque itération d'une boucle et désynchronise les slots des
+                        // variables locales déclarées ensuite (voir `for..in` + `continue`).
+                        self.emit_opcode(OpCode::Pop);
                     }
                 }
 
@@ -688,9 +697,17 @@ impl Compiler {
 
         self.emit_opcode(OpCode::True);
 
-        let final_false_jump = self.emit_jump(OpCode::JumpIfFalse);
-
+        // `test_false_jump` doit être fusionné (patché) AVANT que l'on émette
+        // le `JumpIfFalse` final : sinon, le chemin "échec" saute par-dessus
+        // ce dernier (il atterrit après lui) et ce jump ne lit alors jamais la
+        // valeur `false` laissée par le test — il ne se déclenche donc jamais,
+        // quel que soit le pattern, et l'exécution retombe systématiquement
+        // dans le corps du bras courant (voir compile_range_pattern_expression
+        // / compile_array_pattern_expression pour l'ordre correct : patch
+        // d'abord, puis émission du JumpIfFalse qui lit la valeur fusionnée).
         self.patch_jump(test_false_jump)?;
+
+        let final_false_jump = self.emit_jump(OpCode::JumpIfFalse);
 
         Ok(final_false_jump)
     }
