@@ -34,7 +34,7 @@ impl Chunk {
             // =====================================================
             // LITERALS
             // =====================================================
-            OpCode::Nil => self.simple_instruction("OP_NIL", offset),
+            OpCode::None => self.simple_instruction("OP_NONE", offset),
 
             OpCode::True => self.simple_instruction("OP_TRUE", offset),
 

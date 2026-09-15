@@ -1,0 +1,13 @@
+let t = (10, 20, 30);
+println(t.length());
+println(t.get(1));
+println(t.contains(30));
+println(t.index_of(20));
+println(t.first());
+println(t.last());
+let a = t.to_array();
+a[0] = 99;
+println(a[0]);
+println(t.get(0));
+let empty = ();
+println(empty.length());

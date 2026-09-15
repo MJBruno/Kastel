@@ -49,7 +49,7 @@ pub fn native_dict_set(args: &[Value]) -> Result<Value, RuntimeError> {
 
     args[0].dict_set(&args[1], args[2].clone())?;
 
-    Ok(Value::Nil)
+    Ok(Value::None)
 }
 
 // ============================================================
@@ -156,7 +156,7 @@ pub fn native_dict_clear(args: &[Value]) -> Result<Value, RuntimeError> {
 
     args[0].dict_clear()?;
 
-    Ok(Value::Nil)
+    Ok(Value::None)
 }
 
 // ============================================================
@@ -207,7 +207,7 @@ pub fn native_dict_update(args: &[Value]) -> Result<Value, RuntimeError> {
         args[0].dict_set(&key, value)?;
     }
 
-    Ok(Value::Nil)
+    Ok(Value::None)
 }
 
 // ============================================================

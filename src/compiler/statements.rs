@@ -78,6 +78,14 @@ impl Compiler {
                                         VariableLocation::Local(left_slot),
                                         VariableLocation::Local(right_slot),
                                     ) => {
+                                        if let Some(false) =
+                                            self.context.borrow().locals.is_mutable(name)?
+                                        {
+                                            return Err(
+                                                CompileError::AssignmentToConstant(name.to_string())
+                                            );
+                                        }
+
                                         self.emit_bytes(OpCode::AddLocalLocal, left_slot as u8);
                                         self.emit_byte(right_slot as u8);
                                         true
@@ -106,7 +114,6 @@ impl Compiler {
                      *
                      *     AddLocalConst <slot> <constant>
                      */
-                    #[allow(unused_variables)]
                     let optimized = match value {
                         Expression::Binary {
                             left,
@@ -129,6 +136,14 @@ impl Compiler {
                                 match literal {
                                     Some(constant_value) => match self.resolve_variable(name)? {
                                         VariableLocation::Local(slot) => {
+                                            if let Some(false) =
+                                                self.context.borrow().locals.is_mutable(name)?
+                                            {
+                                                return Err(CompileError::AssignmentToConstant(
+                                                    name.to_string(),
+                                                ));
+                                            }
+
                                             let constant = self.make_constant(constant_value)?;
 
                                             self.emit_bytes(OpCode::AddLocalConst, slot as u8);
@@ -150,6 +165,11 @@ impl Compiler {
 
                         _ => false,
                     };
+
+                    if !optimized {
+                        self.compile_expression(value)?;
+                        self.compile_variable_set(name)?;
+                    }
                 }
 
                 AssignmentTarget::Index { object, index } => {
@@ -749,8 +769,8 @@ impl Compiler {
                 self.emit_opcode(OpCode::False);
             }
 
-            Literal::Nil => {
-                self.emit_opcode(OpCode::Nil);
+            Literal::None => {
+                self.emit_opcode(OpCode::None);
             }
         }
 

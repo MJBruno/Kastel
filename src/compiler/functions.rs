@@ -126,7 +126,7 @@ impl Compiler {
             compiler.compile_statement(statement)?;
         }
 
-        compiler.emit_opcode(OpCode::Nil);
+        compiler.emit_opcode(OpCode::None);
         compiler.emit_opcode(OpCode::Return);
 
         let (upvalue_count, upvalues, local_count) = {
@@ -165,7 +165,7 @@ impl Compiler {
         match value {
             Some(expression) => self.compile_expression(expression)?,
 
-            None => self.emit_opcode(OpCode::Nil),
+            None => self.emit_opcode(OpCode::None),
         }
 
         self.compile_active_finally()?;

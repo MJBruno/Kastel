@@ -1,0 +1,11 @@
+let d = {name: 'Bruno', age: 30};
+println(d.length());
+println(d.get('name'));
+println(d.has('age'));
+println(d.has('missing'));
+d.set('city', 'Nosy Be');
+println(d.get('city'));
+d['age'] = 31;
+println(d['age']);
+println(d.remove('city'));
+println(d.has('city'));

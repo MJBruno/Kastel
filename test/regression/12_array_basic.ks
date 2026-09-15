@@ -1,0 +1,13 @@
+let a = [10, 20, 30];
+println(a.length);
+println(a[0]);
+a[1] = 25;
+println(a[1]);
+println(a.contains(25));
+println(a.index_of(30));
+println(a.first());
+println(a.last());
+println(a.pop());
+println(a.length);
+a.push(40);
+println(a.last());

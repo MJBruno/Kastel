@@ -134,10 +134,10 @@ impl Parser {
                 Pattern::Literal(Literal::Bool(false))
             }
 
-            TokenKind::Nil => {
+            TokenKind::None => {
                 self.advance();
 
-                Pattern::Literal(Literal::Nil)
+                Pattern::Literal(Literal::None)
             }
 
             // ========================================================

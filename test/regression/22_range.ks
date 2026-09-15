@@ -1,0 +1,11 @@
+let a = list(range(5));
+println(a.length);
+println(a[0]);
+println(a[4]);
+let b = list(range(2, 8, 2));
+println(b.length);
+println(b[2]);
+let c = list(range(5, 0, -1));
+println(c.length);
+println(c[0]);
+println(c[4]);

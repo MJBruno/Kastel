@@ -1,0 +1,12 @@
+let s = 'abcabc';
+println(s.index_of('bc'));
+println(s.last_index_of('bc'));
+println(s.slice(1, 4));
+println(s.substring(2, 5));
+println(s.reverse());
+println(s.repeat(2));
+println(s.char_at(3));
+println(s.is_empty());
+println('123'.is_digit());
+println('abc'.is_alpha());
+println('a1'.is_alphanumeric());

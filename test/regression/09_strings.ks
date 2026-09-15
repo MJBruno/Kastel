@@ -1,0 +1,11 @@
+let s = '  Bonjour Monde  ';
+println(s.length());
+println(s.get(2));
+println(s.contains('Monde'));
+println(s.starts_with('  Bon'));
+println(s.ends_with('de  '));
+println(s.upper());
+println(s.lower());
+println(s.trim());
+println(s.replace('Monde', 'Kastel'));
+println(s.replace_all('o', '0'));

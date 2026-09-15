@@ -101,7 +101,7 @@ impl Object {
                  * casser les références internes qui peuvent participer
                  * à un cycle.
                  */
-                *receiver = Value::Nil;
+                *receiver = Value::None;
 
                 /*
                  * Il n'existe pas de valeur "vide" pour Gc<Object>.

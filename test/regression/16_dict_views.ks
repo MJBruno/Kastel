@@ -1,0 +1,14 @@
+let d = {a: 1, b: 2};
+let keys = d.keys();
+let values = d.values();
+let items = d.items();
+println(keys.length);
+println(values.length);
+println(items.length);
+println(values[0]);
+let copy = d.copy();
+copy.set('c', 3);
+println(d.has('c'));
+println(copy.has('c'));
+d.clear();
+println(d.length());

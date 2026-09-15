@@ -1,0 +1,10 @@
+let it = range(1, 5).to_iterator();
+println(it.has_next());
+println(it.peek());
+println(it.next());
+println(it.next());
+println(it.count());
+let it2 = range(0, 10).skip(3).take(4);
+println(it2.collect().length);
+let it3 = range(1, 5).map(x => x * 2);
+println(it3.collect()[2]);

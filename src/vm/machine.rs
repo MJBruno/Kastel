@@ -33,7 +33,7 @@ pub mod properties;
 pub mod stack;
 pub mod tuples;
 pub mod variables;
-
+pub mod patterns;
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) enum HotLoopCache {
@@ -166,7 +166,7 @@ impl VirtualMachine {
         let closure = Object::new_closure(function, Vec::new());
 
         let mut vm = Self {
-            stack: vec![Value::Nil],
+            stack: vec![Value::None],
 
             globals: HashMap::new(),
 
@@ -211,7 +211,7 @@ impl VirtualMachine {
         let closure = Object::new_closure(function, Vec::new());
 
         self.stack.clear();
-        self.stack.push(Value::Nil);
+        self.stack.push(Value::None);
 
         self.frames.clear();
         self.frames.push(CallFrame {

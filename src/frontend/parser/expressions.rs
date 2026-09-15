@@ -456,7 +456,7 @@ impl Parser {
 
             TokenKind::False => Ok(Expression::Literal(Literal::Bool(false))),
 
-            TokenKind::Nil => Ok(Expression::Literal(Literal::Nil)),
+            TokenKind::None => Ok(Expression::Literal(Literal::None)),
 
             TokenKind::This => Ok(Expression::This),
 

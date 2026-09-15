@@ -2,7 +2,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpCode {
     Constant,
-    Nil,
+    None,
     True,
     False,
 

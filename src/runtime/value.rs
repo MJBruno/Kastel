@@ -55,7 +55,7 @@ pub enum Value {
     /// par type comme avant cette refonte.
     Object(Gc<Object>),
 
-    Nil,
+    None,
 }
 
 #[allow(dead_code)]
@@ -184,7 +184,7 @@ impl Value {
         self.with_array_mut(|array| {
             // Convention JS-like : pop() sur un tableau vide renvoie nil
             // plutôt que de lever une erreur.
-            Ok(array.pop().unwrap_or(Value::Nil))
+            Ok(array.pop().unwrap_or(Value::None))
         })
     }
 
@@ -756,8 +756,8 @@ impl std::fmt::Display for Value {
                 write!(f, "{value}")
             }
 
-            Value::Nil => {
-                write!(f, "null")
+            Value::None => {
+                write!(f, "None")
             }
 
             Value::NativeFunction(function) => {
@@ -854,7 +854,7 @@ impl Value {
 
     pub fn is_truthy(&self) -> bool {
         match self {
-            Value::Nil => false,
+            Value::None => false,
 
             Value::Boolean(value) => *value,
 
@@ -1016,7 +1016,7 @@ impl Value {
                 Gc::<Object>::ptr_eq(&a, &b)
             }
 
-            (Value::Nil, Value::Nil) => true,
+            (Value::None, Value::None) => true,
 
             _ => false,
         }

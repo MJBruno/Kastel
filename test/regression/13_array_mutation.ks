@@ -1,0 +1,12 @@
+let a = [1, 2, 3];
+a.insert(1, 9);
+println(a[1]);
+println(a.length);
+println(a.remove(1));
+println(a.length);
+a.reverse();
+println(a[0]);
+a.sort();
+println(a[0]);
+a.clear();
+println(a.length);

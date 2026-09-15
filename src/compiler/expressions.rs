@@ -18,7 +18,7 @@ impl Compiler {
                     Literal::Float(v) => Value::Float(*v),
                     Literal::String(v) => Value::new_string(v.clone()),
                     Literal::Bool(v) => Value::Boolean(*v),
-                    Literal::Nil => Value::Nil,
+                    Literal::None => Value::None,
                 };
 
                 let constant = self.make_constant(value)?;

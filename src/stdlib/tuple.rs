@@ -126,7 +126,7 @@ pub fn native_first(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     with_tuple(&args[0], |tuple| {
-        Ok(tuple.first().cloned().unwrap_or(Value::Nil))
+        Ok(tuple.first().cloned().unwrap_or(Value::None))
     })
 }
 
@@ -139,7 +139,7 @@ pub fn native_last(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     with_tuple(&args[0], |tuple| {
-        Ok(tuple.last().cloned().unwrap_or(Value::Nil))
+        Ok(tuple.last().cloned().unwrap_or(Value::None))
     })
 }
 

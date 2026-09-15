@@ -1,0 +1,16 @@
+println('42'.to_int());
+println('3.5'.to_float());
+println(str(123));
+println(int(3.9));
+println(float(7));
+println(bool(0));
+println(bool(1));
+println(type(10));
+println(type(2.5));
+println(type(true));
+println(type(None));
+println(type('x'));
+println(type([1, 2]));
+println(type((1, 2)));
+println(type({a: 1}));
+println(type(range(3)));

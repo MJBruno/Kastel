@@ -41,7 +41,7 @@ impl Compiler {
             }
 
             None => {
-                self.emit_opcode(OpCode::Nil);
+                self.emit_opcode(OpCode::None);
             }
         }
 
@@ -73,7 +73,7 @@ impl Compiler {
             }
 
             None => {
-                self.emit_opcode(OpCode::Nil);
+                self.emit_opcode(OpCode::None);
             }
         }
 

@@ -99,7 +99,7 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
 
         Value::Boolean(_) => "bool".to_string(),
 
-        Value::Nil => "nil".to_string(),
+        Value::None => "None".to_string(),
 
         Value::Range { .. } => "range".to_string(),
 
@@ -178,7 +178,7 @@ pub fn native_env(args: &[Value]) -> Result<Value, RuntimeError> {
     match env::var(name) {
         Ok(value) => Ok(Value::new_string(value)),
 
-        Err(env::VarError::NotPresent) => Ok(Value::Nil),
+        Err(env::VarError::NotPresent) => Ok(Value::None),
 
         Err(env::VarError::NotUnicode(_)) => Err(RuntimeError::NativeError),
     }

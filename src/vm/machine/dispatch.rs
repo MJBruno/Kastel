@@ -25,8 +25,8 @@ impl VirtualMachine {
                 Ok(false)
             }
 
-            OpCode::Nil => {
-                self.push(Value::Nil);
+            OpCode::None => {
+                self.push(Value::None);
                 Ok(false)
             }
 

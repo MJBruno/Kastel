@@ -131,7 +131,7 @@ pub fn native_pop(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    with_array_mut(&args[0], |array| Ok(array.pop().unwrap_or(Value::Nil)))
+    with_array_mut(&args[0], |array| Ok(array.pop().unwrap_or(Value::None)))
 }
 
 pub fn native_insert(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -223,7 +223,7 @@ pub fn native_set(args: &[Value]) -> Result<Value, RuntimeError> {
 
         array[index] = args[2].clone();
 
-        Ok(Value::Nil)
+        Ok(Value::None)
     })
 }
 
@@ -334,7 +334,7 @@ pub fn native_clear(args: &[Value]) -> Result<Value, RuntimeError> {
 
     with_array_mut(&args[0], |array| {
         array.clear();
-        Ok(Value::Nil)
+        Ok(Value::None)
     })
 }
 
@@ -347,7 +347,7 @@ pub fn native_first(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     with_array(&args[0], |array| {
-        Ok(array.first().cloned().unwrap_or(Value::Nil))
+        Ok(array.first().cloned().unwrap_or(Value::None))
     })
 }
 
@@ -360,7 +360,7 @@ pub fn native_last(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     with_array(&args[0], |array| {
-        Ok(array.last().cloned().unwrap_or(Value::Nil))
+        Ok(array.last().cloned().unwrap_or(Value::None))
     })
 }
 
@@ -405,7 +405,7 @@ fn compare_values(left: &Value, right: &Value) -> Ordering {
 
         (Value::Boolean(a), Value::Boolean(b)) => a.cmp(b),
 
-        (Value::Nil, Value::Nil) => Ordering::Equal,
+        (Value::None, Value::None) => Ordering::Equal,
 
         _ => Ordering::Equal,
     }
