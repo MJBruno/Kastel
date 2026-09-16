@@ -48,6 +48,15 @@ pub struct Diagnostic {
     /// ligne suit `help: ` directement, les suivantes sont indentées pour
     /// s'aligner dessous).
     pub help: Option<String>,
+
+    /// Quand l'erreur provient d'un AUTRE fichier que celui passé à
+    /// `render()` (typiquement : une erreur à l'intérieur d'un module
+    /// importé), ces deux champs remplacent respectivement `file` et
+    /// `source` reçus par `render()` — pour afficher le bon nom de
+    /// fichier après `-->` et extraire l'extrait de code du bon texte
+    /// source, plutôt que celui du fichier qui a déclenché l'import.
+    pub file_override: Option<String>,
+    pub source_override: Option<String>,
 }
 
 impl Diagnostic {
@@ -60,6 +69,8 @@ impl Diagnostic {
             expected: None,
             found: None,
             help: None,
+            file_override: None,
+            source_override: None,
         }
     }
 
@@ -80,6 +91,19 @@ impl Diagnostic {
 
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
+        self
+    }
+
+    /// Indique que ce diagnostic concerne un autre fichier que celui reçu
+    /// par `render()` (ex. le fichier d'un module importé) : `file` est le
+    /// nom affiché après `-->`, `source` son texte source complet (pour
+    /// en extraire l'extrait de code). Accepte `&str` / `String` /
+    /// `&String` indifféremment (`AsRef<str>`), pour ne pas avoir à s'en
+    /// soucier aux sites d'appel qui manipulent souvent des `&String`
+    /// issues d'un pattern-match.
+    pub fn with_source_file(mut self, file: impl AsRef<str>, source: impl AsRef<str>) -> Self {
+        self.file_override = Some(file.as_ref().to_string());
+        self.source_override = Some(source.as_ref().to_string());
         self
     }
 
@@ -118,8 +142,13 @@ impl Diagnostic {
     /// Rend le diagnostic complet avec l'extrait de code source, dans le
     /// style "rustc" décrit en en-tête de fichier. `file` est le nom
     /// affiché après `-->` (chemin du fichier, ou un nom conventionnel
-    /// comme `<repl>`).
+    /// comme `<repl>`) — sauf si ce diagnostic porte son propre
+    /// `file_override`/`source_override` (erreur dans un module importé),
+    /// auquel cas ceux-ci sont utilisés à la place.
     pub fn render(&self, source: &str, file: &str) -> String {
+        let source = self.source_override.as_deref().unwrap_or(source);
+        let file = self.file_override.as_deref().unwrap_or(file);
+
         let lines: Vec<&str> = source.lines().collect();
 
         let line_number = self.line.max(1);

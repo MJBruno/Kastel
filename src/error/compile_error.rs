@@ -39,8 +39,24 @@ pub enum CompileError {
     ReturnOutsidFunction,
     TooManyUpvalues,
     ExpectedDeclarationAfterExport,
-    ModuleParserErrors(Vec<ParserError>),
-    ModuleLexerErrors(Vec<LexerError>),
+
+    /// Erreurs de syntaxe rencontrées en parsant un module importé. On ne
+    /// garde que la première pour l'affichage (voir `to_diagnostic`) — le
+    /// parser continue après une erreur pour tenter de repérer d'autres
+    /// problèmes, mais ces erreurs "en cascade" n'aident pas l'utilisateur
+    /// et ne font que noyer la vraie cause. `path`/`source` sont le
+    /// fichier et le texte du MODULE (pas celui qui l'importe), pour
+    /// pouvoir afficher le bon extrait de code.
+    ModuleParserErrors {
+        path: String,
+        source: String,
+        errors: Vec<ParserError>,
+    },
+    ModuleLexerErrors {
+        path: String,
+        source: String,
+        errors: Vec<LexerError>,
+    },
 
     WrongArgumentCount {
         expected: i32,
@@ -79,17 +95,20 @@ pub enum CompileError {
 
     ModuleRuntimeError {
         path: String,
+        module_source: String,
         source: RuntimeError,
     },
 
     /// Erreur de compilation À L'INTÉRIEUR d'un module importé (avant même
-    /// son exécution) — porte le chemin du module concerné, pour qu'un
-    /// `CompileError::WithLocation` remonté depuis sa compilation indique
-    /// clairement DANS QUEL FICHIER se trouve la ligne/colonne fautive.
+    /// son exécution) — porte le chemin ET le texte source du module
+    /// concerné (`module_source`), pour qu'un diagnostic remonté depuis sa
+    /// compilation affiche le bon fichier et le bon extrait de code,
+    /// plutôt que ceux du fichier qui a déclenché l'import.
     #[allow(clippy::enum_variant_names)]
     ModuleCompileError {
         path: String,
-        source: Box<CompileError>,
+        module_source: String,
+        error: Box<CompileError>,
     },
 
     ExportNotFound {
@@ -217,15 +236,12 @@ impl std::fmt::Display for CompileError {
                 write!(f, "Erreur de syntaxe dans le module : {}", error.message)
             }
 
-            CompileError::ModuleRuntimeError { path, source } => {
+            CompileError::ModuleRuntimeError { path, source, .. } => {
                 write!(f, "Erreur d'exécution dans le module '{path}' : {source}")
             }
 
-            CompileError::ModuleCompileError { path, source } => {
-                write!(
-                    f,
-                    "Erreur de compilation dans le module '{path}' : {source}"
-                )
+            CompileError::ModuleCompileError { path, error, .. } => {
+                write!(f, "Erreur de compilation dans le module '{path}' : {error}")
             }
 
             CompileError::ExportNotFound { module, name } => {
@@ -241,35 +257,30 @@ impl std::fmt::Display for CompileError {
             CompileError::ExpectedDeclarationAfterExport => {
                 write!(f, "Déclaration attendue après 'export'")
             }
-            CompileError::ModuleParserErrors(errors) => {
-                for (index, error) in errors.iter().enumerate() {
-                    if index > 0 {
-                        writeln!(f)?;
-                    }
-
-                    write!(
+            CompileError::ModuleParserErrors { path, errors, .. } => {
+                // On n'affiche que la première erreur : le parser continue
+                // après une erreur pour tenter d'en repérer d'autres, mais
+                // ces erreurs "en cascade" ne font que noyer la vraie cause
+                // (voir aussi `KastelError::render` pour le même choix côté
+                // fichier principal).
+                match errors.first() {
+                    Some(error) => write!(
                         f,
-                        "Erreur de syntaxe dans le module à {}:{} : {}",
+                        "Erreur de syntaxe dans le module '{path}' à {}:{} : {}",
                         error.line, error.column, error.message
-                    )?;
+                    ),
+                    None => write!(f, "Erreur de syntaxe dans le module '{path}'"),
                 }
-
-                Ok(())
             }
-            CompileError::ModuleLexerErrors(lexer_errors) => {
-                for (index, error) in lexer_errors.iter().enumerate() {
-                    if index > 0 {
-                        writeln!(f)?;
-                    }
-
-                    write!(
+            CompileError::ModuleLexerErrors { path, errors, .. } => {
+                match errors.first() {
+                    Some(error) => write!(
                         f,
-                        "Erreur lexicale dans le module à {}:{} : {}",
+                        "Erreur lexicale dans le module '{path}' à {}:{} : {}",
                         error.line, error.column, error.message
-                    )?;
+                    ),
+                    None => write!(f, "Erreur lexicale dans le module '{path}'"),
                 }
-
-                Ok(())
             }
             CompileError::InvalidJump => {
                 write!(f, "Saut de bytecode invalide")
@@ -303,8 +314,20 @@ impl CompileError {
         } = self
         {
             let mut diagnostic = source.to_diagnostic();
-            diagnostic.line = *line;
-            diagnostic.column = *column;
+
+            // Si l'erreur interne pointe déjà vers un AUTRE fichier
+            // (`with_source_file`, typiquement une erreur à l'intérieur
+            // d'un module importé), on ne doit surtout pas écraser sa
+            // position avec celle du `from ... import` dans le fichier
+            // qui a déclenché l'import — sinon le diagnostic finirait par
+            // afficher "main.ks:1:1" avec un extrait de code du module.
+            // On ne prend la position englobante que pour une erreur qui
+            // concerne réellement CE fichier-ci.
+            if diagnostic.source_override.is_none() {
+                diagnostic.line = *line;
+                diagnostic.column = *column;
+            }
+
             return diagnostic;
         }
 
@@ -394,6 +417,55 @@ impl CompileError {
                     .with_len(path.len())
                     .with_help("vérifiez le chemin du module et son extension ('.ks').")
             }
+
+            // ------------------------------------------------------------
+            // Erreurs À L'INTÉRIEUR d'un module importé : on ne garde que
+            // la première (pas de cascade — voir le commentaire sur le
+            // Display de ces variantes), et surtout on bascule le
+            // diagnostic sur le fichier/texte du MODULE via
+            // `with_source_file`, pour que `-->` et l'extrait de code
+            // pointent dans le bon fichier plutôt que dans celui qui a
+            // fait l'import.
+            // ------------------------------------------------------------
+            CompileError::ModuleParserErrors {
+                path,
+                source,
+                errors,
+            } => match errors.first() {
+                Some(error) => Diagnostic::new(error.message.clone(), error.line, error.column)
+                    .with_source_file(path, source),
+
+                None => Diagnostic::new(format!("erreur de syntaxe dans le module '{path}'"), 0, 0)
+                    .with_source_file(path, source),
+            },
+
+            CompileError::ModuleLexerErrors {
+                path,
+                source,
+                errors,
+            } => match errors.first() {
+                Some(error) => Diagnostic::new(error.message.clone(), error.line, error.column)
+                    .with_source_file(path, source),
+
+                None => Diagnostic::new(format!("erreur lexicale dans le module '{path}'"), 0, 0)
+                    .with_source_file(path, source),
+            },
+
+            CompileError::ModuleCompileError {
+                path,
+                module_source,
+                error,
+            } => error
+                .to_diagnostic()
+                .with_source_file(path, module_source),
+
+            CompileError::ModuleRuntimeError {
+                path,
+                module_source,
+                source,
+            } => source
+                .to_diagnostic()
+                .with_source_file(path, module_source),
 
             CompileError::ExportNotFound { module, name } => Diagnostic::new(
                 format!("le module '{module}' n'exporte pas '{name}'"),

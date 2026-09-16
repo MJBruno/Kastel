@@ -100,23 +100,24 @@ impl KastelError {
         use crate::error::diagnostic::Diagnostic;
 
         match self {
-            KastelError::Lexer(errors) => errors
-                .iter()
-                .map(|error| {
-                    Diagnostic::new(error.message.clone(), error.line, error.column)
-                        .render(source, file)
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n"),
+            // On ne garde que la PREMIÈRE erreur : le lexer/parser
+            // continue après une erreur pour tenter d'en repérer d'autres
+            // (récupération d'erreur), mais ces erreurs "en cascade" sont
+            // presque toujours de simples conséquences de la première et
+            // ne font que noyer la vraie cause sous du bruit — voir aussi
+            // le même choix pour les erreurs de module
+            // (`CompileError::ModuleParserErrors`/`ModuleLexerErrors`).
+            KastelError::Lexer(errors) => match errors.first() {
+                Some(error) => Diagnostic::new(error.message.clone(), error.line, error.column)
+                    .render(source, file),
+                None => String::new(),
+            },
 
-            KastelError::Parser(errors) => errors
-                .iter()
-                .map(|error| {
-                    Diagnostic::new(error.message.clone(), error.line, error.column)
-                        .render(source, file)
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n"),
+            KastelError::Parser(errors) => match errors.first() {
+                Some(error) => Diagnostic::new(error.message.clone(), error.line, error.column)
+                    .render(source, file),
+                None => String::new(),
+            },
 
             KastelError::Compile(error) => error.to_diagnostic().render(source, file),
 

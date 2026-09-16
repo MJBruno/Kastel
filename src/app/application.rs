@@ -48,7 +48,12 @@ impl Application {
             match execute(&src, Some(path.clone())) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    eprintln!("{}", error.render(&src, &path.display().to_string()));
+                    let file_name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("<unknown>");
+
+                    eprintln!("{}", error.render(&src, file_name));
                     ExitCode::FAILURE
                 }
             }

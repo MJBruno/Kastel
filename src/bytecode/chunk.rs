@@ -64,3 +64,9 @@ impl Chunk {
         self.constants.len() - 1
     }
 }
+
+impl Default for Chunk {
+    fn default() -> Self {
+        Self::new()
+    }
+}

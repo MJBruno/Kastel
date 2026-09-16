@@ -253,8 +253,15 @@ impl RuntimeError {
         } = self
         {
             let mut diagnostic = source.to_diagnostic();
-            diagnostic.line = *line;
-            diagnostic.column = *column;
+
+            // Même précaution que côté `CompileError::to_diagnostic` : ne
+            // pas écraser la position d'une erreur qui pointe déjà vers un
+            // autre fichier (module importé).
+            if diagnostic.source_override.is_none() {
+                diagnostic.line = *line;
+                diagnostic.column = *column;
+            }
+
             return diagnostic;
         }
 

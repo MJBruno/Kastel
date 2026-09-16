@@ -147,17 +147,25 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         // 2. Lexer
         // ------------------------------------------------------------
-        let mut lexer = Lexer::new(source);
+        let mut lexer = Lexer::new(source.clone());
 
-        let tokens = lexer
-            .scan_token()
-            .map_err(CompileError::ModuleLexerErrors)?;
+        let tokens = lexer.scan_token().map_err(|errors| CompileError::ModuleLexerErrors {
+            path: path.display().to_string(),
+            source: source.clone(),
+            errors,
+        })?;
         // ------------------------------------------------------------
         // 3. Parser
         // ------------------------------------------------------------
         let mut parser = Parser::new(tokens);
 
-        let statements = parser.parse().map_err(CompileError::ModuleParserErrors)?;
+        let statements = parser
+            .parse()
+            .map_err(|errors| CompileError::ModuleParserErrors {
+                path: path.display().to_string(),
+                source: source.clone(),
+                errors,
+            })?;
         // ------------------------------------------------------------
         // 4. Compiler
         // ------------------------------------------------------------
@@ -168,7 +176,8 @@ impl ModuleLoader {
         let (function, exports) = compiler.compile_module(&statements).map_err(|error| {
             CompileError::ModuleCompileError {
                 path: path.display().to_string(),
-                source: Box::new(error),
+                module_source: source.clone(),
+                error: Box::new(error),
             }
         })?;
 
@@ -187,6 +196,7 @@ impl ModuleLoader {
         )
         .map_err(|error| CompileError::ModuleRuntimeError {
             path: path.display().to_string(),
+            module_source: source.clone(),
             source: error,
         })?;
         // ------------------------------------------------------------
