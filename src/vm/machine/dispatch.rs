@@ -322,36 +322,6 @@ impl VirtualMachine {
                 Ok(false)
             }
 
-            OpCode::ArrayPush => {
-                self.op_array_push()?;
-                Ok(false)
-            }
-
-            OpCode::ArrayPop => {
-                self.op_array_pop()?;
-                Ok(false)
-            }
-
-            OpCode::ArrayInsert => {
-                self.op_array_insert()?;
-                Ok(false)
-            }
-
-            OpCode::ArrayRemove => {
-                self.op_array_remove()?;
-                Ok(false)
-            }
-
-            OpCode::ArrayClear => {
-                self.op_array_clear()?;
-                Ok(false)
-            }
-
-            OpCode::ArrayContains => {
-                self.op_array_contains()?;
-                Ok(false)
-            }
-
             // ========================================================
             // OBJECTS
             // ========================================================
@@ -474,11 +444,6 @@ impl VirtualMachine {
             // ========================================================
             // SUPER-INSTRUCTIONS
             // ========================================================
-            OpCode::SetLocalPop => {
-                self.set_local_pop()?;
-                Ok(false)
-            }
-
             OpCode::AddLocalConst => {
                 self.add_local_const()?;
                 Ok(false)

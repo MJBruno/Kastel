@@ -141,18 +141,6 @@ impl Chunk {
 
             OpCode::ArrayLength => self.simple_instruction("OP_ARRAY_LENGTH", offset),
 
-            OpCode::ArrayPush => self.simple_instruction("OP_ARRAY_PUSH", offset),
-
-            OpCode::ArrayPop => self.simple_instruction("OP_ARRAY_POP", offset),
-
-            OpCode::ArrayInsert => self.simple_instruction("OP_ARRAY_INSERT", offset),
-
-            OpCode::ArrayRemove => self.simple_instruction("OP_ARRAY_REMOVE", offset),
-
-            OpCode::ArrayClear => self.simple_instruction("OP_ARRAY_CLEAR", offset),
-
-            OpCode::ArrayContains => self.simple_instruction("OP_ARRAY_CONTAINS", offset),
-
             // =====================================================
             // ITERATORS
             // =====================================================
@@ -215,8 +203,6 @@ impl Chunk {
             // =====================================================
             // SUPER-INSTRUCTIONS
             // =====================================================
-            OpCode::SetLocalPop => self.byte_instruction("OP_SET_LOCAL_POP", offset),
-
             OpCode::AddLocalConst => self.byte_instruction("OP_ADD_LOCAL_CONST", offset),
 
             OpCode::LessLocalConst => self.byte_instruction("OP_LESS_LOCAL_CONST", offset),

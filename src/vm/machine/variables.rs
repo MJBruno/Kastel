@@ -107,37 +107,6 @@ impl VirtualMachine {
     }
 
     #[inline(always)]
-    pub(crate) fn set_local_pop(&mut self) -> Result<(), RuntimeError> {
-        let slot = self.read_byte()? as usize;
-
-        let value = self.pop()?;
-
-        let (slot_start, local_count) = {
-            let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
-
-            (frame.slot_start, frame.local_count)
-        };
-
-        if slot >= local_count {
-            return Err(RuntimeError::InvalidFunction);
-        }
-
-        let index = slot_start
-            .checked_add(1)
-            .and_then(|index| index.checked_add(slot))
-            .ok_or(RuntimeError::InvalidFunction)?;
-
-        let target = self
-            .stack
-            .get_mut(index)
-            .ok_or(RuntimeError::StackUnderflow)?;
-
-        *target = value;
-
-        Ok(())
-    }
-
-    #[inline(always)]
     pub(crate) fn add_local_const(&mut self) -> Result<(), RuntimeError> {
         let slot = self.read_byte()? as usize;
         let constant_index = self.read_byte()? as usize;

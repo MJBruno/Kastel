@@ -44,12 +44,6 @@ pub enum OpCode {
     GetIndex,
     SetIndex,
     ArrayLength,
-    ArrayPush,
-    ArrayPop,
-    ArrayInsert,
-    ArrayRemove,
-    ArrayClear,
-    ArrayContains,
 
     Object,
 
@@ -79,7 +73,6 @@ pub enum OpCode {
     FinallyEnd,
 
     // Super-instructions
-    SetLocalPop,
     AddLocalConst,
     LessLocalConst,
     JumpIfFalsePop,
@@ -162,15 +155,14 @@ mod tests {
 
     #[test]
     fn opcode_count_is_correct() {
-        assert_eq!(OpCode::SetLocalPop as u8, 63);
-        assert_eq!(OpCode::AddLocalConst as u8, 64);
-        assert_eq!(OpCode::LessLocalConst as u8, 65);
-        assert_eq!(OpCode::JumpIfFalsePop as u8, 66);
-        assert_eq!(OpCode::LessLocalConstJump as u8, 67);
-        assert_eq!(OpCode::LoopLessAddLocalConst as u8, 68);
-        assert_eq!(OpCode::AddLocalLocal as u8, 69);
-        assert_eq!(OpCode::Tuple as u8, 70);
-        assert_eq!(OpCode::COUNT, 71);
+        assert_eq!(OpCode::AddLocalConst as u8, 57);
+        assert_eq!(OpCode::LessLocalConst as u8, 58);
+        assert_eq!(OpCode::JumpIfFalsePop as u8, 59);
+        assert_eq!(OpCode::LessLocalConstJump as u8, 60);
+        assert_eq!(OpCode::LoopLessAddLocalConst as u8, 61);
+        assert_eq!(OpCode::AddLocalLocal as u8, 62);
+        assert_eq!(OpCode::Tuple as u8, 63);
+        assert_eq!(OpCode::COUNT, 64);
     }
 
     #[test]

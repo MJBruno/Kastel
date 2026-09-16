@@ -57,11 +57,6 @@ impl VirtualMachine {
                     Ok(false)
                 }
 
-                x if x == OpCode::SetLocalPop as u8 => {
-                    self.set_local_pop()?;
-                    Ok(false)
-                }
-
                 x if x == OpCode::AddLocalConst as u8 => {
                     self.add_local_const()?;
                     Ok(false)

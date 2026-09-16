@@ -199,58 +199,6 @@ impl Value {
         self.with_array(|array| Ok(array.len()))
     }
 
-    pub fn array_push(&self, value: Value) -> Result<usize, RuntimeError> {
-        self.with_array_mut(|array| {
-            array.push(value);
-            Ok(array.len())
-        })
-    }
-
-    pub fn array_pop(&self) -> Result<Value, RuntimeError> {
-        self.with_array_mut(|array| {
-            // Convention JS-like : pop() sur un tableau vide renvoie nil
-            // plutôt que de lever une erreur.
-            Ok(array.pop().unwrap_or(Value::None))
-        })
-    }
-
-    pub fn array_insert(&self, index: usize, value: Value) -> Result<usize, RuntimeError> {
-        self.with_array_mut(|array| {
-            let length = array.len();
-
-            if index > length {
-                return Err(RuntimeError::ArrayIndexOutOfBounds { index, length });
-            }
-
-            array.insert(index, value);
-
-            Ok(array.len())
-        })
-    }
-
-    pub fn array_remove(&self, index: usize) -> Result<Value, RuntimeError> {
-        self.with_array_mut(|array| {
-            let length = array.len();
-
-            if index >= length {
-                return Err(RuntimeError::ArrayIndexOutOfBounds { index, length });
-            }
-
-            Ok(array.remove(index))
-        })
-    }
-
-    pub fn array_clear(&self) -> Result<(), RuntimeError> {
-        self.with_array_mut(|array| {
-            array.clear();
-            Ok(())
-        })
-    }
-
-    pub fn array_contains(&self, value: &Value) -> Result<bool, RuntimeError> {
-        self.with_array(|array| Ok(array.iter().any(|element| element == value)))
-    }
-
     /// Accès en lecture au `Vec<Value>` sous-jacent si cette valeur est
     /// bien un tableau, sinon `TypeError`. Centralise le "déballage"
     /// `Value::Object -> Object::Array` commun à toutes les méthodes

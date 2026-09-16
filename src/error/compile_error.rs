@@ -89,10 +89,6 @@ pub enum CompileError {
         message: String,
     },
 
-    ModuleLexerError(LexerError),
-
-    ModuleParserError(ParserError),
-
     ModuleRuntimeError {
         path: String,
         module_source: String,
@@ -226,14 +222,6 @@ impl std::fmt::Display for CompileError {
 
             CompileError::ModuleReadError { path, message } => {
                 write!(f, "Impossible de lire le module '{path}' : {message}")
-            }
-
-            CompileError::ModuleLexerError(error) => {
-                write!(f, "Erreur lexicale dans le module : {}", error.message)
-            }
-
-            CompileError::ModuleParserError(error) => {
-                write!(f, "Erreur de syntaxe dans le module : {}", error.message)
             }
 
             CompileError::ModuleRuntimeError { path, source, .. } => {
