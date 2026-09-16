@@ -1,13 +1,17 @@
-func classify(x) {
-    match x {
-        0 => return 'zero' 
-        1 | 2 | 3 => return 'small' 
-        4 .. 10 => return 'range' 
-        _ => return 'other' 
-    }
-}
+let int = 10;
+let float = 20;
+let str = 'hello';
+let bool = true;
+let type = 'custom';
+let clock = clock();
+let cwd = 'test';
+let env = 42;
 
-println(classify(0));
-println(classify(2));
-println(classify(7));
-println(classify(99));
+println(int);
+println(float);
+println(str);
+println(bool);
+println(type);
+println(clock);
+println(cwd);
+println(env);

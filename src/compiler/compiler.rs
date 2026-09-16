@@ -120,6 +120,7 @@ impl Compiler {
             Global {
                 constant,
                 mutable: true,
+                native: true,
             },
         );
 
@@ -148,19 +149,33 @@ impl Compiler {
             Statement::Export { statement } => self.predeclare_global_function(statement),
 
             Statement::Function { name, .. } => {
-                if self.globals.borrow().contains_key(name) {
-                    return Err(CompileError::VariableAlreadyDeclared(name.clone()));
+                let existing = self.globals.borrow().get(name).cloned();
+
+                if let Some(global) = existing {
+                    if !global.native {
+                        return Err(CompileError::VariableAlreadyDeclared(name.clone()));
+                    }
+
+                    self.globals.borrow_mut().insert(
+                        name.clone(),
+                        Global {
+                            constant: global.constant,
+                            mutable: true,
+                            native: false,
+                        },
+                    );
+                } else {
+                    let constant = self.identifier_constant(name)?;
+
+                    self.globals.borrow_mut().insert(
+                        name.clone(),
+                        Global {
+                            constant,
+                            mutable: true,
+                            native: false,
+                        },
+                    );
                 }
-
-                let constant = self.identifier_constant(name)?;
-
-                self.globals.borrow_mut().insert(
-                    name.clone(),
-                    Global {
-                        constant,
-                        mutable: true,
-                    },
-                );
 
                 self.predeclared_functions.insert(name.clone());
 

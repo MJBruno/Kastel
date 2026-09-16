@@ -313,8 +313,12 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        if !self.in_function && self.scope_depth == 0 && self.globals.borrow().contains_key(name) {
-            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+        if !self.in_function && self.scope_depth == 0 {
+            if let Some(global) = self.globals.borrow().get(name) {
+                if !global.native {
+                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+                }
+            }
         }
 
         for base in bases {
@@ -352,6 +356,7 @@ impl Compiler {
                 Global {
                     constant: name_constant,
                     mutable: true,
+                    native: false,
                 },
             );
         } else {
@@ -386,8 +391,12 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        if !self.in_function && self.scope_depth == 0 && self.globals.borrow().contains_key(name) {
-            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+        if !self.in_function && self.scope_depth == 0 {
+            if let Some(global) = self.globals.borrow().get(name) {
+                if !global.native {
+                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+                }
+            }
         }
 
         for base in bases {
@@ -422,6 +431,7 @@ impl Compiler {
                 Global {
                     constant: name_constant,
                     mutable: true,
+                    native: false,
                 },
             );
         } else {
@@ -1109,10 +1119,12 @@ impl Compiler {
 
             let binding_name = item.alias.as_deref().unwrap_or(&item.name);
 
-            if self.globals.borrow().contains_key(binding_name) {
-                return Err(CompileError::VariableAlreadyDeclared(
-                    binding_name.to_string(),
-                ));
+            if let Some(global) = self.globals.borrow().get(binding_name) {
+                if !global.native {
+                    return Err(CompileError::VariableAlreadyDeclared(
+                        binding_name.to_string(),
+                    ));
+                }
             }
 
             let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
@@ -1132,6 +1144,7 @@ impl Compiler {
                 Global {
                     constant: binding_constant,
                     mutable: false,
+                    native: false,
                 },
             );
         }
@@ -1185,10 +1198,12 @@ impl Compiler {
             return Err(CompileError::InvalidImport);
         }
 
-        if self.globals.borrow().contains_key(binding_name) {
-            return Err(CompileError::VariableAlreadyDeclared(
-                binding_name.to_string(),
-            ));
+        if let Some(global) = self.globals.borrow().get(binding_name) {
+            if !global.native {
+                return Err(CompileError::VariableAlreadyDeclared(
+                    binding_name.to_string(),
+                ));
+            }
         }
 
         // ------------------------------------------------------------
@@ -1230,6 +1245,7 @@ impl Compiler {
             Global {
                 constant: binding_constant,
                 mutable: false,
+                native: false,
             },
         );
 

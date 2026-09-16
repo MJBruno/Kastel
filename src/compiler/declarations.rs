@@ -61,8 +61,12 @@ impl Compiler {
         initializer: Option<&Expression>,
         mutable: bool,
     ) -> Result<(), CompileError> {
-        if self.globals.borrow().contains_key(name) {
-            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+        let existing = self.globals.borrow().get(name).cloned();
+
+        if let Some(global) = existing {
+            if !global.native {
+                return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+            }
         }
 
         let name_constant = self.identifier_constant(name)?;
@@ -84,6 +88,7 @@ impl Compiler {
             Global {
                 constant: name_constant,
                 mutable,
+                native: false,
             },
         );
 

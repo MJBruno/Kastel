@@ -10,6 +10,7 @@ use super::compiler::Compiler;
 pub struct Global {
     pub constant: u8,
     pub mutable: bool,
+    pub native: bool,
 }
 
 /// Indique l'emplacement où une variable a été résolue par le compilateur.

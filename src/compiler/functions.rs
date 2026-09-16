@@ -47,8 +47,10 @@ impl Compiler {
                     .map(|global| global.constant)
                     .ok_or_else(|| CompileError::VariableAlreadyDeclared(name.to_string()))?
             } else {
-                if self.globals.borrow().contains_key(name) {
-                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+                if let Some(global) = self.globals.borrow().get(name) {
+                    if !global.native {
+                        return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+                    }
                 }
 
                 let constant = self.identifier_constant(name)?;
@@ -58,6 +60,7 @@ impl Compiler {
                     Global {
                         constant,
                         mutable: true,
+                        native: false,
                     },
                 );
 
