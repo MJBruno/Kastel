@@ -179,7 +179,7 @@ impl VirtualMachine {
             | RuntimeError::NotIterable
             | RuntimeError::IteratorExhausted
             | RuntimeError::InvalidShiftAmount => Ok(Value::new_string(error.to_string())),
-
+            RuntimeError::NumericTypeError { .. } => Ok(Value::new_string(error.to_string())),
             RuntimeError::Thrown(value) => Ok(value.clone()),
 
             RuntimeError::WithLocation { source, .. } => self.runtime_error_value(source),

@@ -209,12 +209,23 @@ pub enum Expression {
     Unary {
         operator: UnaryOp,
         right: Box<Expression>,
+        /// Position du début de l'opérande (`right`), pour les diagnostics
+        /// d'erreur runtime (ex. `-"abc"`).
+        line: usize,
+        column: usize,
     },
 
     Binary {
         left: Box<Expression>,
         operator: BinaryOp,
         right: Box<Expression>,
+        /// Position du début de l'opérande droit (`right`) — c'est celle
+        /// utilisée par le compilateur pour positionner précisément les
+        /// erreurs runtime de type (ex. `expected/found` sur `name + age`
+        /// pointe sous `age`), plutôt que sur le début de l'instruction
+        /// entière comme c'était le cas auparavant.
+        line: usize,
+        column: usize,
     },
 
     Function {
@@ -225,20 +236,38 @@ pub enum Expression {
     Call {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
+        /// Position du `(` d'appel — utilisée pour les diagnostics runtime
+        /// (arité incorrecte, valeur non appelable...) : à défaut de
+        /// pouvoir pointer sous le nom de la fonction appelée (les
+        /// expressions comme `Variable` ne portent pas de position), on
+        /// pointe juste après elle, au début de la liste d'arguments.
+        line: usize,
+        column: usize,
     },
 
     Member {
         object: Box<Expression>,
         name: String,
+        /// Position du nom de membre lui-même (après le `.`), pour
+        /// pointer précisément sous le champ fautif (ex. `obj.inexistant`).
+        line: usize,
+        column: usize,
     },
 
     Index {
         object: Box<Expression>,
         index: Box<Expression>,
+        /// Position du début de l'expression d'index (entre `[` et `]`),
+        /// pour pointer sous l'index fautif (ex. `arr[10]`).
+        line: usize,
+        column: usize,
     },
     New {
         class_name: String,
         arguments: Vec<Expression>,
+        /// Position du nom de la classe instanciée.
+        line: usize,
+        column: usize,
     },
 
     This,

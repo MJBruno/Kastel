@@ -53,6 +53,8 @@ impl Compiler {
                 left,
                 operator,
                 right,
+                line,
+                column,
             } => match operator {
                 BinaryOp::And => {
                     self.compile_logical_and(left, right)?;
@@ -65,12 +67,31 @@ impl Compiler {
                 _ => {
                     self.compile_expression(left)?;
                     self.compile_expression(right)?;
+
+                    // Positionne l'instruction de l'opérateur lui-même sur
+                    // le début de l'opérande droit (ex. `age` dans
+                    // `name + age`) plutôt que de laisser la position de
+                    // l'instruction englobante : c'est ce qui permet au
+                    // caret des diagnostics runtime (type mismatch...) de
+                    // pointer sous l'opérande fautif plutôt que sous le
+                    // début de la ligne. Voir `RuntimeError::NumericTypeError`.
+                    self.current_line = *line;
+                    self.current_column = *column;
+
                     self.compile_binary(operator.clone());
                 }
             },
 
-            Expression::Unary { operator, right } => {
+            Expression::Unary {
+                operator,
+                right,
+                line,
+                column,
+            } => {
                 self.compile_expression(right)?;
+
+                self.current_line = *line;
+                self.current_column = *column;
 
                 match operator {
                     UnaryOp::Negate => self.emit_opcode(OpCode::Negate),
@@ -79,16 +100,21 @@ impl Compiler {
                 }
             }
 
-            Expression::Call { callee, arguments } => {
-                if let Expression::Member { object, name } = callee.as_ref() {
+            Expression::Call {
+                callee,
+                arguments,
+                line,
+                column,
+            } => {
+                if let Expression::Member { object, name, .. } = callee.as_ref() {
                     if matches!(object.as_ref(), Expression::Base) {
-                        return self.compile_base_method_call(name, arguments);
+                        return self.compile_base_method_call(name, arguments, *line, *column);
                     }
 
-                    return self.compile_method_call(object, name, arguments);
+                    return self.compile_method_call(object, name, arguments, *line, *column);
                 }
 
-                self.compile_call(callee, arguments)?;
+                self.compile_call(callee, arguments, *line, *column)?;
             }
 
             Expression::Array(elements) => {
@@ -131,20 +157,36 @@ impl Compiler {
                 self.emit_bytes(OpCode::Object, fields.len() as u8);
             }
 
-            Expression::Index { object, index } => {
+            Expression::Index {
+                object,
+                index,
+                line,
+                column,
+            } => {
                 self.compile_expression(object)?;
                 self.compile_expression(index)?;
+
+                self.current_line = *line;
+                self.current_column = *column;
 
                 self.emit_opcode(OpCode::GetIndex);
             }
 
-            Expression::Member { object, name } => {
+            Expression::Member {
+                object,
+                name,
+                line,
+                column,
+            } => {
                 if name == "length" {
-                    self.compile_array_member(object, name)?;
+                    self.compile_array_member(object, name, *line, *column)?;
                 } else {
                     self.compile_expression(object)?;
 
                     let name_constant = self.identifier_constant(name)?;
+
+                    self.current_line = *line;
+                    self.current_column = *column;
 
                     self.emit_bytes(OpCode::GetProperty, name_constant);
                 }
@@ -185,6 +227,8 @@ impl Compiler {
             Expression::New {
                 class_name,
                 arguments,
+                line,
+                column,
             } => {
                 if arguments.len() > u8::MAX as usize {
                     return Err(CompileError::TooManyArguments);
@@ -196,6 +240,9 @@ impl Compiler {
                     self.compile_expression(argument)?;
                 }
 
+                self.current_line = *line;
+                self.current_column = *column;
+
                 self.emit_bytes(OpCode::NewInstance, arguments.len() as u8);
             }
         }
@@ -206,6 +253,8 @@ impl Compiler {
         &mut self,
         name: &str,
         arguments: &[Expression],
+        line: usize,
+        column: usize,
     ) -> Result<(), CompileError> {
         if arguments.len() > u8::MAX as usize {
             return Err(CompileError::TooManyArguments);
@@ -219,6 +268,9 @@ impl Compiler {
         for argument in arguments {
             self.compile_expression(argument)?;
         }
+
+        self.current_line = line;
+        self.current_column = column;
 
         self.emit_byte(OpCode::InvokeBaseMethod.into());
         self.emit_byte(method_constant);
@@ -235,6 +287,8 @@ impl Compiler {
         object: &Expression,
         name: &str,
         arguments: &[Expression],
+        line: usize,
+        column: usize,
     ) -> Result<(), CompileError> {
         if arguments.len() > u8::MAX as usize {
             return Err(CompileError::TooManyArguments);
@@ -247,6 +301,9 @@ impl Compiler {
         for argument in arguments {
             self.compile_expression(argument)?;
         }
+
+        self.current_line = line;
+        self.current_column = column;
 
         self.emit_byte(OpCode::InvokeMethod.into());
         self.emit_byte(method_constant);
@@ -263,10 +320,16 @@ impl Compiler {
         &mut self,
         object: &Expression,
         name: &str,
+        line: usize,
+        column: usize,
     ) -> Result<(), CompileError> {
         match name {
             "length" => {
                 self.compile_expression(object)?;
+
+                self.current_line = line;
+                self.current_column = column;
+
                 self.emit_opcode(OpCode::ArrayLength);
 
                 Ok(())
@@ -286,6 +349,8 @@ impl Compiler {
         &mut self,
         callee: &Expression,
         arguments: &[Expression],
+        line: usize,
+        column: usize,
     ) -> Result<(), CompileError> {
         if arguments.len() > u8::MAX as usize {
             return Err(CompileError::TooManyArguments);
@@ -296,6 +361,9 @@ impl Compiler {
         for argument in arguments {
             self.compile_expression(argument)?;
         }
+
+        self.current_line = line;
+        self.current_column = column;
 
         self.emit_bytes(OpCode::Call, arguments.len() as u8);
 

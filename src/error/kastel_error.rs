@@ -84,3 +84,43 @@ impl fmt::Display for KastelError {
 }
 
 impl std::error::Error for KastelError {}
+
+impl KastelError {
+    /// Rend l'erreur en un ou plusieurs encarts façon rustc (voir
+    /// `error::diagnostic::Diagnostic`), en s'appuyant sur le texte source
+    /// pour afficher l'extrait de code fautif. `file` est le nom affiché
+    /// après `-->` (chemin du fichier exécuté, ou `<repl>` pour une
+    /// session interactive).
+    ///
+    /// C'est la fonction à utiliser pour afficher une erreur à
+    /// l'utilisateur (`Application::run`, REPL) ; le `Display` ci-dessus
+    /// reste le format plat "ligne X, colonne Y : message", conservé pour
+    /// le `Debug`/logs et pour ne rien casser côté `impl Error`.
+    pub fn render(&self, source: &str, file: &str) -> String {
+        use crate::error::diagnostic::Diagnostic;
+
+        match self {
+            KastelError::Lexer(errors) => errors
+                .iter()
+                .map(|error| {
+                    Diagnostic::new(error.message.clone(), error.line, error.column)
+                        .render(source, file)
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+
+            KastelError::Parser(errors) => errors
+                .iter()
+                .map(|error| {
+                    Diagnostic::new(error.message.clone(), error.line, error.column)
+                        .render(source, file)
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+
+            KastelError::Compile(error) => error.to_diagnostic().render(source, file),
+
+            KastelError::Runtime(error) => error.to_diagnostic().render(source, file),
+        }
+    }
+}

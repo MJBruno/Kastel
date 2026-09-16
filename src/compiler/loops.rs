@@ -76,6 +76,7 @@ impl Compiler {
                             left,
                             operator: BinaryOp::Add,
                             right,
+                            ..
                         } => {
                             let same_local = match (variable_name, left.as_ref()) {
                                 (Some(name), Expression::Variable(left_name)) => name == left_name,
@@ -106,6 +107,7 @@ impl Compiler {
                                 left: condition_left,
                                 operator: BinaryOp::Less,
                                 right: condition_right,
+                                ..
                             } => {
                                 let condition_name = match condition_left.as_ref() {
                                     Expression::Variable(name) => Some(name.as_str()),
@@ -187,6 +189,7 @@ impl Compiler {
                 left,
                 operator: BinaryOp::Less,
                 right,
+                ..
             } => {
                 let local_name = match left.as_ref() {
                     Expression::Variable(name) => Some(name.as_str()),

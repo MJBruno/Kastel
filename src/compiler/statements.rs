@@ -66,6 +66,7 @@ impl Compiler {
                             left,
                             operator: BinaryOp::Add,
                             right,
+                            ..
                         } => match (left.as_ref(), right.as_ref()) {
                             (Expression::Variable(left_name), Expression::Variable(right_name))
                                 if left_name == name =>
@@ -119,6 +120,7 @@ impl Compiler {
                             left,
                             operator: BinaryOp::Add,
                             right,
+                            ..
                         } => match left.as_ref() {
                             Expression::Variable(left_name) if left_name == name => {
                                 let literal = match right.as_ref() {
@@ -944,6 +946,10 @@ impl Compiler {
             let element_expression = Expression::Index {
                 object: Box::new(expression.clone()),
                 index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
+                // Expression synthétisée par le compilateur (pas de position
+                // source réelle) : aucune valeur pertinente à fournir ici.
+                line: 0,
+                column: 0,
             };
 
             let false_jump = self.compile_pattern_test_expression(&element_expression, pattern)?;
@@ -1020,6 +1026,8 @@ impl Compiler {
                     let element_expression = Expression::Index {
                         object: Box::new(expression.clone()),
                         index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
+                        line: 0,
+                        column: 0,
                     };
 
                     self.compile_pattern_bindings(&element_expression, child)?;

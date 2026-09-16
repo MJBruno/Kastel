@@ -1,4 +1,5 @@
 pub mod compile_error;
+pub mod diagnostic;
 pub mod kastel_error;
 pub mod lex_error;
 pub mod machine_error;

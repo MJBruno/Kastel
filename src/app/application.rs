@@ -48,8 +48,7 @@ impl Application {
             match execute(&src, Some(path.clone())) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    eprintln!("Erreur dans '{}' :", path.display());
-                    eprintln!("{error}");
+                    eprintln!("{}", error.render(&src, &path.display().to_string()));
                     ExitCode::FAILURE
                 }
             }
@@ -246,7 +245,7 @@ fn repl() {
         match session.execute(&buffer) {
             Ok(Some(value)) => println!("{value}"),
             Ok(None) => {}
-            Err(error) => eprintln!("{error}"),
+            Err(error) => eprintln!("{}", error.render(&buffer, "<repl>")),
         }
 
         buffer.clear();

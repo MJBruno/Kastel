@@ -84,16 +84,19 @@ impl Parser {
         }
 
         if let Some(operator) = self.match_compound_assignment() {
+            let (line, column) = (self.peek().line, self.peek().column);
             let value_expr = self.parse_expression()?;
 
             let target = self.expression_to_assignment_target(expression.clone())?;
 
-            let left = Self::assignment_target_to_expression(&target);
+            let left = Self::assignment_target_to_expression(&target, line, column);
 
             let value = Expression::Binary {
                 left: Box::new(left),
                 operator,
                 right: Box::new(value_expr),
+                line,
+                column,
             };
 
             return Ok(Statement::Assignment { target, value });
@@ -117,18 +120,26 @@ impl Parser {
         Some(operator)
     }
 
-    fn assignment_target_to_expression(target: &AssignmentTarget) -> Expression {
+    fn assignment_target_to_expression(
+        target: &AssignmentTarget,
+        line: usize,
+        column: usize,
+    ) -> Expression {
         match target {
             AssignmentTarget::Variable(name) => Expression::Variable(name.clone()),
 
             AssignmentTarget::Index { object, index } => Expression::Index {
                 object: object.clone(),
                 index: index.clone(),
+                line,
+                column,
             },
 
             AssignmentTarget::Member { object, name } => Expression::Member {
                 object: object.clone(),
                 name: name.clone(),
+                line,
+                column,
             },
         }
     }
@@ -140,9 +151,13 @@ impl Parser {
         match expression {
             Expression::Variable(name) => Ok(AssignmentTarget::Variable(name)),
 
-            Expression::Index { object, index } => Ok(AssignmentTarget::Index { object, index }),
+            Expression::Index { object, index, .. } => {
+                Ok(AssignmentTarget::Index { object, index })
+            }
 
-            Expression::Member { object, name } => Ok(AssignmentTarget::Member { object, name }),
+            Expression::Member { object, name, .. } => {
+                Ok(AssignmentTarget::Member { object, name })
+            }
 
             _ => {
                 let token = self.peek();
@@ -203,9 +218,21 @@ impl Parser {
         let then_branch = self.parse_block_statement()?;
 
         let else_branch = if self.match_token(TokenKind::Else) {
-            self.consume(TokenKind::LeftBrace, "'{' attendu après else")?;
+            if self.match_token(TokenKind::If) {
+                // `else if ...` : on ne consomme pas de `{` ici — le `if`
+                // imbriqué gère lui-même sa propre condition/accolades, et
+                // devient l'unique statement du else_branch. C'est la même
+                // convention que le dispatcher de plus haut niveau (voir
+                // `parse_statement`, qui consomme aussi `if` avant d'appeler
+                // `parse_if_statement`), ce qui permet d'enchaîner
+                // `if { } else if { } else if { } else { }` sans limite de
+                // profondeur.
+                Some(vec![self.parse_if_statement()?])
+            } else {
+                self.consume(TokenKind::LeftBrace, "'{' attendu après else")?;
 
-            Some(self.parse_block_statement()?)
+                Some(self.parse_block_statement()?)
+            }
         } else {
             None
         };

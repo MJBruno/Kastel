@@ -1,4 +1,4 @@
-use crate::runtime::value::Value;
+use crate::runtime::value::{NumericOp, Value};
 
 // ================================================================
 // RUNTIME_ERROR
@@ -44,6 +44,18 @@ pub enum RuntimeError {
     NotIterable,
     IteratorExhausted,
     InvalidShiftAmount,
+
+    /// Erreur de type enrichie pour une opération arithmétique binaire
+    /// (`+ - * / %`) entre deux types incompatibles — porte l'opération et
+    /// les deux types réellement rencontrés, pour un diagnostic
+    /// expected/found précis. `TypeError` (générique) reste utilisé pour
+    /// tous les autres cas (accès, appels, itération...) afin de ne pas
+    /// avoir à faire remonter cette information partout dans la VM.
+    NumericTypeError {
+        operation: NumericOp,
+        expected: &'static str,
+        found: &'static str,
+    },
 
     WithLocation {
         line: usize,
@@ -152,6 +164,19 @@ impl std::fmt::Display for RuntimeError {
                 write!(f, "Décalage invalide : doit être compris entre 0 et 63.")
             }
 
+            RuntimeError::NumericTypeError {
+                operation,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "Impossible de {} une valeur '{expected}' et une valeur '{found}' (opérateur '{}').",
+                    operation.verb(),
+                    operation.symbol()
+                )
+            }
+
             RuntimeError::WithLocation {
                 line,
                 column,
@@ -203,6 +228,176 @@ impl std::fmt::Display for RuntimeError {
                     method, interface, expected, found
                 )
             }
+        }
+    }
+}
+
+impl RuntimeError {
+    /// Construit le `Diagnostic` (position + titre + éventuels
+    /// expected/found/help) à afficher pour cette erreur.
+    ///
+    /// La position vient de la variante `WithLocation` la plus externe, si
+    /// présente (c'est toujours le cas pour une erreur qui a atteint la
+    /// frontière `Application::run` / REPL — voir `error/mod.rs`). Pour le
+    /// reste (titre, expected/found, help), seules les variantes qui
+    /// portent réellement l'information nécessaire la fournissent ; les
+    /// autres se contentent d'un titre basé sur leur `Display`, ce qui
+    /// reste honnête plutôt que d'inventer un expected/found fictif.
+    pub fn to_diagnostic(&self) -> crate::error::diagnostic::Diagnostic {
+        use crate::error::diagnostic::Diagnostic;
+
+        if let RuntimeError::WithLocation {
+            line,
+            column,
+            source,
+        } = self
+        {
+            let mut diagnostic = source.to_diagnostic();
+            diagnostic.line = *line;
+            diagnostic.column = *column;
+            return diagnostic;
+        }
+
+        match self {
+            RuntimeError::NumericTypeError {
+                operation,
+                expected,
+                found,
+            } => Diagnostic::new(
+                format!("impossible de {} un(e) '{expected}' et un(e) '{found}'", operation.verb()),
+                0,
+                0,
+            )
+            .with_expected(*expected)
+            .with_found(*found)
+            .with_help(format!(
+                "convertissez l'un des deux opérandes pour qu'ils soient du même type, \
+                 par exemple avec str(...) pour obtenir une chaîne, ou int(...) / float(...) \
+                 pour obtenir un nombre (opérateur '{}').",
+                operation.symbol()
+            )),
+
+            RuntimeError::DivisionByZero => Diagnostic::new("division par zéro", 0, 0).with_help(
+                "vérifiez que le diviseur n'est jamais nul avant l'opération \
+                 (par exemple avec `if diviseur != 0 { ... }`).",
+            ),
+
+            RuntimeError::WrongArgumentCount { expected, found } => {
+                Diagnostic::new("nombre d'arguments incorrect", 0, 0)
+                    .with_expected(format!("{expected} argument(s)"))
+                    .with_found(format!("{found} argument(s)"))
+            }
+
+            RuntimeError::ArrayIndexOutOfBounds { index, length } => {
+                Diagnostic::new("index de tableau hors limites", 0, 0)
+                    .with_expected(if *length == 0 {
+                        "un tableau non vide".to_string()
+                    } else {
+                        format!("un index entre 0 et {}", *length - 1)
+                    })
+                    .with_found(format!("{index}"))
+            }
+
+            RuntimeError::ArrayIndexNotInteger => Diagnostic::new(
+                "l'index d'un tableau doit être un entier",
+                0,
+                0,
+            )
+            .with_expected("integer"),
+
+            RuntimeError::ObjectFieldNotFound { name, suggestion } => {
+                let diagnostic = Diagnostic::new(
+                    format!("le champ '{name}' n'existe pas sur cet objet"),
+                    0,
+                    0,
+                )
+                .with_len(name.len());
+
+                match suggestion {
+                    Some(suggestion) => {
+                        diagnostic.with_help(format!("vouliez-vous dire '{suggestion}' ?"))
+                    }
+                    None => diagnostic,
+                }
+            }
+
+            RuntimeError::ImmutableValue(type_name) => Diagnostic::new(
+                format!("impossible de modifier une valeur de type '{type_name}' : elle est immuable"),
+                0,
+                0,
+            )
+            .with_help(format!(
+                "les valeurs de type '{type_name}' ne peuvent pas être modifiées en place ; \
+                 créez-en une nouvelle à la place."
+            )),
+
+            RuntimeError::NotCallable => {
+                Diagnostic::new("cette valeur n'est pas appelable", 0, 0)
+                    .with_expected("function")
+                    .with_help("vérifiez que vous appelez bien une fonction, une closure ou une méthode.")
+            }
+
+            RuntimeError::NotIterable => Diagnostic::new(
+                "cette valeur n'est pas itérable (utilisable dans un 'for..in')",
+                0,
+                0,
+            )
+            .with_expected("array, tuple, range, dict ou iterator"),
+
+            RuntimeError::NotIndexable => Diagnostic::new("cette valeur n'est pas indexable", 0, 0)
+                .with_expected("array, tuple, string ou object"),
+
+            RuntimeError::NotObject => {
+                Diagnostic::new("cette valeur n'est pas un objet", 0, 0).with_expected("object")
+            }
+
+            RuntimeError::IteratorExhausted => {
+                Diagnostic::new("cet itérateur est déjà épuisé", 0, 0).with_help(
+                    "vérifiez `has_next()` avant d'appeler `next()`, ou recréez l'itérateur.",
+                )
+            }
+
+            RuntimeError::InvalidShiftAmount => {
+                Diagnostic::new("décalage de bits invalide", 0, 0)
+                    .with_expected("un entier entre 0 et 63")
+            }
+
+            RuntimeError::ModuleError(message) => {
+                Diagnostic::new(format!("erreur de module : {message}"), 0, 0)
+            }
+
+            RuntimeError::Thrown(value) => {
+                Diagnostic::new(format!("exception non interceptée : {value}"), 0, 0).with_help(
+                    "encadrez le code qui peut lever cette exception avec `try { ... } catch (e) { ... }`.",
+                )
+            }
+
+            RuntimeError::InterfaceMethodMissing { interface, method } => Diagnostic::new(
+                format!("il manque la méthode '{method}' requise par l'interface '{interface}'"),
+                0,
+                0,
+            )
+            .with_help(format!("ajoutez `func {method}(...) {{ ... }}` à la classe.")),
+
+            RuntimeError::InterfaceMethodArityMismatch {
+                interface,
+                method,
+                expected,
+                found,
+            } => Diagnostic::new(
+                format!(
+                    "la méthode '{method}' de l'interface '{interface}' n'a pas la bonne arité"
+                ),
+                0,
+                0,
+            )
+            .with_expected(format!("{expected} paramètre(s)"))
+            .with_found(format!("{found} paramètre(s)")),
+
+            // Variantes sans donnée exploitable pour expected/found/help :
+            // on garde un titre honnête (dérivé de Display) plutôt que
+            // d'inventer une information qu'on n'a pas.
+            other => Diagnostic::new(other.to_string(), 0, 0),
         }
     }
 }

@@ -160,12 +160,15 @@ impl Parser {
         let mut expr = self.logical_and()?;
 
         while self.match_token(TokenKind::Or) {
+            let (line, column) = (self.peek().line, self.peek().column);
             let right = self.logical_and()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: BinaryOp::Or,
                 right: Box::new(right),
+                line,
+                column,
             };
         }
 
@@ -176,12 +179,15 @@ impl Parser {
         let mut expr = self.bitwise_or()?;
 
         while self.match_token(TokenKind::And) {
+            let (line, column) = (self.peek().line, self.peek().column);
             let right = self.bitwise_or()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: BinaryOp::And,
                 right: Box::new(right),
+                line,
+                column,
             };
         }
 
@@ -192,12 +198,15 @@ impl Parser {
         let mut expr = self.bitwise_xor()?;
 
         while self.match_token(TokenKind::Pipe) {
+            let (line, column) = (self.peek().line, self.peek().column);
             let right = self.bitwise_xor()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: BinaryOp::BitOr,
                 right: Box::new(right),
+                line,
+                column,
             };
         }
 
@@ -208,12 +217,15 @@ impl Parser {
         let mut expr = self.bitwise_and()?;
 
         while self.match_token(TokenKind::Caret) {
+            let (line, column) = (self.peek().line, self.peek().column);
             let right = self.bitwise_and()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: BinaryOp::BitXor,
                 right: Box::new(right),
+                line,
+                column,
             };
         }
 
@@ -224,12 +236,15 @@ impl Parser {
         let mut expr = self.comparison()?;
 
         while self.match_token(TokenKind::Ampersand) {
+            let (line, column) = (self.peek().line, self.peek().column);
             let right = self.comparison()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: BinaryOp::BitAnd,
                 right: Box::new(right),
+                line,
+                column,
             };
         }
 
@@ -260,12 +275,15 @@ impl Parser {
                 _ => unreachable!(),
             };
 
+            let (line, column) = (self.peek().line, self.peek().column);
             let right = self.shift()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
+                line,
+                column,
             };
         }
 
@@ -283,12 +301,15 @@ impl Parser {
                 _ => unreachable!(),
             };
 
+            let (line, column) = (self.peek().line, self.peek().column);
             let right = self.term()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
+                line,
+                column,
             };
         }
 
@@ -306,12 +327,15 @@ impl Parser {
                 _ => unreachable!(),
             };
 
+            let (line, column) = (self.peek().line, self.peek().column);
             let right = self.factor()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
+                line,
+                column,
             };
         }
 
@@ -330,12 +354,15 @@ impl Parser {
                 _ => unreachable!(),
             };
 
+            let (line, column) = (self.peek().line, self.peek().column);
             let right = self.unary()?;
 
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
+                line,
+                column,
             };
         }
 
@@ -344,29 +371,38 @@ impl Parser {
 
     fn unary(&mut self) -> Result<Expression, ParserError> {
         if self.match_token(TokenKind::Minus) {
+            let (line, column) = (self.peek().line, self.peek().column);
             let operand = self.unary()?;
 
             return Ok(Expression::Unary {
                 operator: UnaryOp::Negate,
                 right: Box::new(operand),
+                line,
+                column,
             });
         }
 
         if self.match_token(TokenKind::Not) {
+            let (line, column) = (self.peek().line, self.peek().column);
             let operand = self.unary()?;
 
             return Ok(Expression::Unary {
                 operator: UnaryOp::Not,
                 right: Box::new(operand),
+                line,
+                column,
             });
         }
 
         if self.match_token(TokenKind::Tilde) {
+            let (line, column) = (self.peek().line, self.peek().column);
             let operand = self.unary()?;
 
             return Ok(Expression::Unary {
                 operator: UnaryOp::BitNot,
                 right: Box::new(operand),
+                line,
+                column,
             });
         }
 
@@ -382,11 +418,13 @@ impl Parser {
 
         loop {
             if self.match_token(TokenKind::LeftParen) {
-                expression = self.parse_call(expression)?;
+                let (line, column) = (self.previous().line, self.previous().column);
+                expression = self.parse_call(expression, line, column)?;
                 continue;
             }
 
             if self.match_token(TokenKind::LeftBracket) {
+                let (line, column) = (self.peek().line, self.peek().column);
                 let index = self.parse_expression()?;
 
                 self.consume(TokenKind::RightBracket, "']' attendu après l'index")?;
@@ -394,6 +432,8 @@ impl Parser {
                 expression = Expression::Index {
                     object: Box::new(expression),
                     index: Box::new(index),
+                    line,
+                    column,
                 };
 
                 continue;
@@ -405,6 +445,8 @@ impl Parser {
 
                 expression = Expression::Member {
                     object: Box::new(expression),
+                    line: name.line,
+                    column: name.column,
                     name: name.lexeme,
                 };
 
@@ -417,7 +459,12 @@ impl Parser {
         Ok(expression)
     }
 
-    fn parse_call(&mut self, callee: Expression) -> Result<Expression, ParserError> {
+    fn parse_call(
+        &mut self,
+        callee: Expression,
+        line: usize,
+        column: usize,
+    ) -> Result<Expression, ParserError> {
         let mut arguments = Vec::new();
 
         if !self.check(TokenKind::RightParen) {
@@ -435,6 +482,8 @@ impl Parser {
         Ok(Expression::Call {
             callee: Box::new(callee),
             arguments,
+            line,
+            column,
         })
     }
 
@@ -599,6 +648,8 @@ impl Parser {
         Ok(Expression::New {
             class_name: class_name.lexeme,
             arguments,
+            line: class_name.line,
+            column: class_name.column,
         })
     }
     fn parse_function_expression(&mut self) -> Result<Expression, ParserError> {

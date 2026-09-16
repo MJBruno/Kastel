@@ -8,12 +8,38 @@ use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
 use crate::stdlib::NativeFn;
 
+#[derive(Debug, Clone, Copy)]
 pub enum NumericOp {
     Add,
     Subtract,
     Multiply,
     Divide,
     Modulo,
+}
+
+impl NumericOp {
+    /// Verbe à l'infinitif utilisé dans les diagnostics
+    /// (ex. "additionner", "diviser"...).
+    pub fn verb(&self) -> &'static str {
+        match self {
+            NumericOp::Add => "additionner",
+            NumericOp::Subtract => "soustraire",
+            NumericOp::Multiply => "multiplier",
+            NumericOp::Divide => "diviser",
+            NumericOp::Modulo => "calculer le modulo de",
+        }
+    }
+
+    /// Symbole de l'opérateur, utilisé dans les diagnostics.
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            NumericOp::Add => "+",
+            NumericOp::Subtract => "-",
+            NumericOp::Multiply => "*",
+            NumericOp::Divide => "/",
+            NumericOp::Modulo => "%",
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -872,10 +898,47 @@ impl Value {
     }
 
     // ============================================================
+    // TYPE NAME (pour les diagnostics d'erreur)
+    // ============================================================
+
+    /// Nom lisible du type de cette valeur, utilisé uniquement pour les
+    /// messages d'erreur (expected/found). Volontairement séparé de
+    /// `native_type()` (stdlib/system.rs, exposé au langage via `type()`)
+    /// pour ne rien risquer côté sémantique du langage : celui-ci reste
+    /// inchangé, celui-ci n'est utilisé que pour l'affichage.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Value::Integer(_) => "integer",
+            Value::Float(_) => "float",
+            Value::Boolean(_) => "boolean",
+            Value::None => "none",
+            Value::Range { .. } => "range",
+            Value::NativeFunction(_) => "function",
+
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::String(_) => "string",
+                Object::Array(_) => "array",
+                Object::Tuple(_) => "tuple",
+                Object::Dict(_) => "object",
+                Object::Function(_) | Object::Closure(_) => "function",
+                Object::Iterator(_) => "iterator",
+                Object::Module(_) => "module",
+                Object::BoundMethod { .. } => "function",
+                Object::Class { .. } => "class",
+                Object::Interface { .. } => "interface",
+                Object::Instance { .. } => "object",
+            },
+        }
+    }
+
+    // ============================================================
     // NUMERIC OPERATIONS
     // ============================================================
 
     pub fn binary_numeric_op(a: Value, b: Value, op: NumericOp) -> Result<Value, RuntimeError> {
+        let type_a = a.type_name();
+        let type_b = b.type_name();
+
         match (a, b) {
             // Int op Int -> Int (sauf division, toujours "vraie division"
             // façon Python 3 : 7 / 2 == 3.5, pas 3 — Kastel n'a pas
@@ -911,7 +974,11 @@ impl Value {
             (Value::Float(a), Value::Integer(b)) => Self::number_op(a, b as f64, op),
             (Value::Float(a), Value::Float(b)) => Self::number_op(a, b, op),
 
-            _ => Err(RuntimeError::TypeError),
+            _ => Err(RuntimeError::NumericTypeError {
+                operation: op,
+                expected: type_a,
+                found: type_b,
+            }),
         }
     }
 

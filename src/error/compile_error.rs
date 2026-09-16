@@ -287,3 +287,130 @@ impl std::fmt::Display for CompileError {
         }
     }
 }
+
+impl CompileError {
+    /// Équivalent de `RuntimeError::to_diagnostic` côté compilateur : voir
+    /// les commentaires de cette dernière pour la philosophie générale
+    /// (position récupérée depuis `WithLocation`, expected/found/help
+    /// uniquement là où l'information existe réellement).
+    pub fn to_diagnostic(&self) -> crate::error::diagnostic::Diagnostic {
+        use crate::error::diagnostic::Diagnostic;
+
+        if let CompileError::WithLocation {
+            line,
+            column,
+            source,
+        } = self
+        {
+            let mut diagnostic = source.to_diagnostic();
+            diagnostic.line = *line;
+            diagnostic.column = *column;
+            return diagnostic;
+        }
+
+        match self {
+            CompileError::UndefinedVariable { name, suggestion } => {
+                let diagnostic = Diagnostic::new(format!("variable '{name}' non définie"), 0, 0)
+                    .with_len(name.len());
+
+                match suggestion {
+                    Some(suggestion) => {
+                        diagnostic.with_help(format!("vouliez-vous dire '{suggestion}' ?"))
+                    }
+                    None => diagnostic,
+                }
+            }
+
+            CompileError::VariableAlreadyDeclared(name) => Diagnostic::new(
+                format!("la variable '{name}' est déjà déclarée dans cette portée"),
+                0,
+                0,
+            )
+            .with_len(name.len())
+            .with_help(format!(
+                "renommez l'une des deux déclarations, ou retirez `let`/`const` \
+                 si vous vouliez réaffecter '{name}'."
+            )),
+
+            CompileError::VariableUseInInitializer(name) => Diagnostic::new(
+                format!("'{name}' est utilisée dans son propre initialiseur"),
+                0,
+                0,
+            )
+            .with_len(name.len())
+            .with_help(format!(
+                "'{name}' n'existe pas encore au moment où son initialiseur s'exécute ; \
+                 utilisez un autre nom pour la valeur dont vous avez besoin."
+            )),
+
+            CompileError::AssignmentToConstant(name) => Diagnostic::new(
+                format!("impossible de réaffecter la constante '{name}'"),
+                0,
+                0,
+            )
+            .with_len(name.len())
+            .with_expected("une variable déclarée avec 'let'")
+            .with_found("une variable déclarée avec 'const'")
+            .with_help(format!("déclarez '{name}' avec `let` au lieu de `const` si elle doit changer.")),
+
+            CompileError::WrongArgumentCount { expected, found } => {
+                Diagnostic::new("nombre d'arguments incorrect", 0, 0)
+                    .with_expected(format!("{expected} argument(s)"))
+                    .with_found(format!("{found} argument(s)"))
+            }
+
+            CompileError::InvalidMemberAccess { name } => {
+                Diagnostic::new(format!("accès de membre invalide : '{name}'"), 0, 0)
+                    .with_len(name.len())
+            }
+
+            CompileError::BreakOutsideLoop => {
+                Diagnostic::new("'break' en dehors d'une boucle", 0, 0)
+                    .with_len(5)
+                    .with_help("'break' ne peut apparaître qu'à l'intérieur d'un 'while' ou d'un 'for'.")
+            }
+
+            CompileError::ContinueOutsideLoop => {
+                Diagnostic::new("'continue' en dehors d'une boucle", 0, 0)
+                    .with_len(8)
+                    .with_help("'continue' ne peut apparaître qu'à l'intérieur d'un 'while' ou d'un 'for'.")
+            }
+
+            CompileError::ReturnOutsidFunction => {
+                Diagnostic::new("'return' en dehors d'une fonction", 0, 0)
+                    .with_len(6)
+                    .with_help("'return' ne peut apparaître qu'à l'intérieur d'un 'func'.")
+            }
+
+            CompileError::TooManyUpvalues => Diagnostic::new(
+                "trop de variables capturées par cette closure",
+                0,
+                0,
+            )
+            .with_help("réduisez le nombre de variables externes utilisées dans cette fonction imbriquée."),
+
+            CompileError::ModuleNotFound(path) => {
+                Diagnostic::new(format!("module introuvable : '{path}'"), 0, 0)
+                    .with_len(path.len())
+                    .with_help("vérifiez le chemin du module et son extension ('.ks').")
+            }
+
+            CompileError::ExportNotFound { module, name } => Diagnostic::new(
+                format!("le module '{module}' n'exporte pas '{name}'"),
+                0,
+                0,
+            )
+            .with_len(name.len()),
+
+            CompileError::CircularImport(path) => {
+                Diagnostic::new(format!("import de module circulaire : '{path}'"), 0, 0)
+                    .with_help("un module ne peut pas s'importer lui-même, directement ou indirectement.")
+            }
+
+            // Variantes sans donnée exploitable pour expected/found/help :
+            // on garde un titre honnête (dérivé de Display) plutôt que
+            // d'inventer une information qu'on n'a pas.
+            other => Diagnostic::new(other.to_string(), 0, 0),
+        }
+    }
+}
