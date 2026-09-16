@@ -29,11 +29,17 @@ impl Parser {
             self.consume(TokenKind::FatArrow, "'=>' attendu après le pattern")?;
 
             let body = if self.match_token(TokenKind::LeftBrace) {
+                // Forme bloc :
+                // `pattern => { ... }`
                 self.parse_block_statement()?
             } else {
-                let expression = self.parse_expression()?;
-
-                vec![Statement::Expression { expression }]
+                // Forme statement simple :
+                // `pattern => return value;`
+                //
+                // `statement()` permet aussi de conserver les expressions
+                // (`pattern => foo();`) sous forme de Statement::Expression,
+                // tout en acceptant `return`, `let`, `throw`, etc.
+                self.statement()?
             };
 
             arms.push(MatchArm {
