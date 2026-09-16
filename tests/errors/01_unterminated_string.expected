@@ -1,0 +1,6 @@
+error: Chaîne non fermée
+
+  --> main.ks:1:24
+   |
+ 1 | println("unterminated);
+   |                        ^
