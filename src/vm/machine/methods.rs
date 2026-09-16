@@ -119,6 +119,7 @@ impl VirtualMachine {
                         Object::Array(_) => 3,
                         Object::Dict(_) => 4,
                         Object::Tuple(_) => 6,
+                        Object::Module(_) => 7,
                         _ => 5,
                     }
                 };
@@ -216,6 +217,42 @@ impl VirtualMachine {
                             });
                         }
                     },
+
+                    7 => {
+                        /*
+                         * module.function(a, b)
+                         *
+                         * Un export de module n'a pas de `this` : contrairement à
+                         * une méthode d'instance, on pousse directement la
+                         * fonction exportée puis les arguments (sans le
+                         * receveur, qui n'est que le module lui-même).
+                         */
+                        let exported = {
+                            let object = handle.borrow();
+
+                            match &*object {
+                                Object::Module(module) => module.get_export(&method_name).cloned(),
+                                _ => None,
+                            }
+                        };
+
+                        let Some(exported) = exported else {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        };
+
+                        self.push(exported);
+
+                        for argument in args.iter().skip(1) {
+                            self.push(argument.clone());
+                        }
+
+                        self.execute_call(arg_count)?;
+
+                        return Ok(());
+                    }
 
                     _ => {
                         return Err(RuntimeError::ObjectFieldNotFound {

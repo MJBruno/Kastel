@@ -29,6 +29,52 @@ fn unary_number(args: &[Value], operation: fn(f64) -> f64) -> Result<Value, Runt
     Ok(Value::Float(operation(value)))
 }
 
+/// Convertit un f64 (résultat de floor/ceil/round) en Integer, comme le
+/// font math.floor/math.ceil/round() en Python (qui renvoient un int,
+/// pas un float).
+fn float_to_integer(value: f64) -> Result<Value, RuntimeError> {
+    if !value.is_finite() || value < i64::MIN as f64 || value > i64::MAX as f64 {
+        return Err(RuntimeError::TypeError);
+    }
+
+    Ok(Value::Integer(value as i64))
+}
+
+fn unary_number_to_integer(
+    args: &[Value],
+    operation: fn(f64) -> f64,
+) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    let value = expect_number(&args[0])?;
+
+    float_to_integer(operation(value))
+}
+
+/// round() "à la Python" : arrondi au plus proche, et en cas d'égalité
+/// exacte (x.5), arrondi vers le nombre pair le plus proche ("banker's
+/// rounding"), contrairement à f64::round() de Rust qui arrondit
+/// toujours en s'éloignant de zéro.
+fn python_round(value: f64) -> f64 {
+    let floor = value.floor();
+    let diff = value - floor;
+
+    if diff < 0.5 {
+        floor
+    } else if diff > 0.5 {
+        floor + 1.0
+    } else if (floor.rem_euclid(2.0)) == 0.0 {
+        floor
+    } else {
+        floor + 1.0
+    }
+}
+
 pub fn native_abs(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
@@ -50,15 +96,15 @@ pub fn native_abs(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 pub fn native_floor(args: &[Value]) -> Result<Value, RuntimeError> {
-    unary_number(args, f64::floor)
+    unary_number_to_integer(args, f64::floor)
 }
 
 pub fn native_ceil(args: &[Value]) -> Result<Value, RuntimeError> {
-    unary_number(args, f64::ceil)
+    unary_number_to_integer(args, f64::ceil)
 }
 
 pub fn native_round(args: &[Value]) -> Result<Value, RuntimeError> {
-    unary_number(args, f64::round)
+    unary_number_to_integer(args, python_round)
 }
 
 pub fn native_sqrt(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -95,6 +141,20 @@ pub fn native_pow(args: &[Value]) -> Result<Value, RuntimeError> {
             expected: 2,
             found: args.len(),
         });
+    }
+
+    // Comme pow() en Python : deux entiers avec un exposant positif ou
+    // nul donnent un résultat entier (8, pas 8.0). Dès qu'un flottant
+    // ou un exposant négatif entre en jeu, le résultat est un Float.
+    if let (Value::Integer(base), Value::Integer(exponent)) = (&args[0], &args[1]) {
+        if *exponent >= 0 {
+            let exponent = u32::try_from(*exponent).map_err(|_| RuntimeError::TypeError)?;
+
+            return base
+                .checked_pow(exponent)
+                .map(Value::Integer)
+                .ok_or(RuntimeError::TypeError);
+        }
     }
 
     let base = expect_number(&args[0])?;
