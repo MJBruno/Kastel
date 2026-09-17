@@ -1,0 +1,11 @@
+error: impossible de additionner un(e) 'integer' et un(e) 'string'
+
+  --> numeric_type_error.ks:1:8
+   |
+ 1 | println(1 + "a");
+   |        ^
+   |
+   = expected: integer
+   = found: string
+
+help: convertissez l'un des deux opérandes pour qu'ils soient du même type, par exemple avec str(...) pour obtenir une chaîne, ou int(...) / float(...) pour obtenir un nombre (opérateur '+').

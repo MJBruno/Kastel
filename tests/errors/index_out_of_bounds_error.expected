@@ -1,0 +1,6 @@
+error: Array index out of bounds
+
+  --> index_out_of_bounds_error.ks:2:8
+   |
+ 2 | println(arr[10]);
+   |        ^

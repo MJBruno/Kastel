@@ -1,0 +1,6 @@
+error: le champ 'bar' n'existe pas sur cet objet
+
+  --> object_field_not_found_error.ks:8:8
+   |
+ 8 | println(f.bar);
+   |        ^^^

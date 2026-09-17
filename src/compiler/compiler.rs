@@ -148,7 +148,23 @@ impl Compiler {
 
             Statement::Export { statement } => self.predeclare_global_function(statement),
 
-            Statement::Function { name, .. } => {
+            /*
+             * Les fonctions, classes et interfaces globales partagent la
+             * même table de symboles de compilation (self.globals) : on
+             * les pré-déclare toutes ici, avant de compiler le moindre
+             * corps de fonction/méthode. Cela permet :
+             *   - les références en avant entre déclarations globales
+             *     (ex. une classe qui référence une classe définie plus
+             *     bas dans le fichier) ;
+             *   - l'auto-référence à l'intérieur d'une méthode (ex. une
+             *     méthode `add` de `Point` qui fait `new Point(...)`) —
+             *     sans ça, `compile_variable_get(name)` échoue avec
+             *     "variable non définie" puisque le nom global n'est
+             *     enregistré qu'après compilation du corps.
+             */
+            Statement::Function { name, .. }
+            | Statement::Class { name, .. }
+            | Statement::Interface { name, .. } => {
                 let existing = self.globals.borrow().get(name).cloned();
 
                 if let Some(global) = existing {

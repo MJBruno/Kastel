@@ -313,7 +313,12 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        if !self.in_function && self.scope_depth == 0 {
+        // Si `name` a déjà été pré-déclaré par predeclare_global_function
+        // (cas normal pour toute classe globale), ce n'est pas une vraie
+        // redéclaration : on ne rejette que les collisions avec un nom
+        // global qui existait déjà pour une AUTRE raison.
+        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name)
+        {
             if let Some(global) = self.globals.borrow().get(name) {
                 if !global.native {
                     return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
@@ -347,18 +352,30 @@ impl Compiler {
         self.emit_byte(methods.len() as u8);
 
         if !self.in_function && self.scope_depth == 0 {
-            let name_constant = self.identifier_constant(name)?;
+            // Réutilise la constante déjà enregistrée par la pré-déclaration
+            // plutôt que d'en créer (et d'insérer) une nouvelle entrée.
+            let name_constant = if self.predeclared_functions.contains(name) {
+                self.globals
+                    .borrow()
+                    .get(name)
+                    .map(|global| global.constant)
+                    .ok_or_else(|| CompileError::VariableAlreadyDeclared(name.to_string()))?
+            } else {
+                let constant = self.identifier_constant(name)?;
+
+                self.globals.borrow_mut().insert(
+                    name.to_string(),
+                    Global {
+                        constant,
+                        mutable: true,
+                        native: false,
+                    },
+                );
+
+                constant
+            };
 
             self.emit_bytes(OpCode::DefineGlobal, name_constant);
-
-            self.globals.borrow_mut().insert(
-                name.to_string(),
-                Global {
-                    constant: name_constant,
-                    mutable: true,
-                    native: false,
-                },
-            );
         } else {
             let slot =
                 self.context
@@ -391,7 +408,8 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        if !self.in_function && self.scope_depth == 0 {
+        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name)
+        {
             if let Some(global) = self.globals.borrow().get(name) {
                 if !global.native {
                     return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
@@ -422,18 +440,28 @@ impl Compiler {
         self.emit_byte(methods.len() as u8);
 
         if !self.in_function && self.scope_depth == 0 {
-            let name_constant = self.identifier_constant(name)?;
+            let name_constant = if self.predeclared_functions.contains(name) {
+                self.globals
+                    .borrow()
+                    .get(name)
+                    .map(|global| global.constant)
+                    .ok_or_else(|| CompileError::VariableAlreadyDeclared(name.to_string()))?
+            } else {
+                let constant = self.identifier_constant(name)?;
+
+                self.globals.borrow_mut().insert(
+                    name.to_string(),
+                    Global {
+                        constant,
+                        mutable: true,
+                        native: false,
+                    },
+                );
+
+                constant
+            };
 
             self.emit_bytes(OpCode::DefineGlobal, name_constant);
-
-            self.globals.borrow_mut().insert(
-                name.to_string(),
-                Global {
-                    constant: name_constant,
-                    mutable: true,
-                    native: false,
-                },
-            );
         } else {
             let slot =
                 self.context

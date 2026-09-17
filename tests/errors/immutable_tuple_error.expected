@@ -1,0 +1,8 @@
+error: impossible de modifier une valeur de type 'tuple' : elle est immuable
+
+  --> immutable_tuple_error.ks:2:1
+   |
+ 2 | t[0] = 99;
+   | ^
+
+help: les valeurs de type 'tuple' ne peuvent pas être modifiées en place ; créez-en une nouvelle à la place.

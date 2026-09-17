@@ -1,0 +1,10 @@
+println(5 & 3);
+println(5 | 2);
+println(5 ^ 1);
+println(~5);
+println(1 << 4);
+println(256 >> 4);
+println(true && false);
+println(true || false);
+println(!true);
+println(1 < 2 && 2 < 3);

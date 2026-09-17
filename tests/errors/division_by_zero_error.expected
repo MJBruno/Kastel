@@ -1,0 +1,8 @@
+error: division par zéro
+
+  --> division_by_zero_error.ks:1:8
+   |
+ 1 | println(10 / 0);
+   |        ^
+
+help: vérifiez que le diviseur n'est jamais nul avant l'opération (par exemple avec `if diviseur != 0 { ... }`).

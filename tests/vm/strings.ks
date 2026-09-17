@@ -1,0 +1,11 @@
+let s = "Hello, World!";
+println(s.length());
+println(s.upper());
+println(s.lower());
+println(s.contains("World"));
+println(s.starts_with("Hello"));
+println(s.ends_with("!"));
+println(s.index_of("World"));
+println(s.replace("World", "Kastel"));
+println(s.split(", "));
+println(format("{} is {}", "Kastel", "awesome"));

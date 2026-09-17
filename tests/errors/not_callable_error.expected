@@ -1,0 +1,10 @@
+error: cette valeur n'est pas appelable
+
+  --> not_callable_error.ks:2:2
+   |
+ 2 | x();
+   |  ^
+   |
+   = expected: function
+
+help: vérifiez que vous appelez bien une fonction, une closure ou une méthode.

@@ -288,40 +288,40 @@ impl VirtualMachine {
             .as_string_value()
             .ok_or(RuntimeError::TypeError)?;
 
+        /*
+         * compile_base_method_call pousse `this` (via Expression::This)
+         * puis les `arg_count` arguments réels avant d'émettre
+         * InvokeBaseMethod : la pile contient donc, du bas vers le
+         * haut, [this, arg0, ..., arg(n-1)] — exactement comme pour un
+         * appel de méthode normal (op_invoke_method) où le receveur est
+         * suivi de ses arguments.
+         *
+         * L'ancienne implémentation relisait `this` via
+         * frame.slot_start (en ignorant la valeur poussée par le
+         * compilateur) et ne retirait donc jamais ce `this` de la
+         * pile : chaque appel `base.methode(...)` laissait une valeur
+         * fantôme, décalant de un tous les emplacements de variables
+         * locales compilés après cet appel dans la même fonction.
+         */
+        let required = arg_count
+            .checked_add(1)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if self.stack.len() < required {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let this_index = self.stack.len() - required;
+        let this_value = self.stack[this_index].clone();
+        let args = self.stack[this_index..].to_vec();
+
+        self.stack.truncate(this_index);
+
         let frame = self
             .frames
             .last()
             .cloned()
             .ok_or(RuntimeError::InvalidFunction)?;
-
-        let this_index = frame
-            .slot_start
-            .checked_add(1)
-            .ok_or(RuntimeError::InvalidFunction)?;
-
-        if this_index >= self.stack.len() {
-            return Err(RuntimeError::StackUnderflow);
-        }
-
-        let this_value = self
-            .stack
-            .get(this_index)
-            .cloned()
-            .ok_or(RuntimeError::StackUnderflow)?;
-
-        if self.stack.len() < arg_count {
-            return Err(RuntimeError::StackUnderflow);
-        }
-
-        let args_start = self.stack.len() - arg_count;
-
-        let args = self
-            .stack
-            .get(args_start..)
-            .ok_or(RuntimeError::StackUnderflow)?
-            .to_vec();
-
-        self.stack.truncate(args_start);
 
         let owner_class = {
             let closure = frame_closure(&frame.closure);
@@ -339,7 +339,7 @@ impl VirtualMachine {
         self.push(method);
         self.push(this_value);
 
-        for argument in args {
+        for argument in args.into_iter().skip(1) {
             self.push(argument);
         }
 

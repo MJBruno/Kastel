@@ -1,21 +1,34 @@
-// GC - cyclic references
-// This test is intentionally isolated because cyclic assignment/property syntax
-// must match the final Kastel object model.
-
 class Node {
-    func init(name) {
-        this.name = name;
+    func init(value) {
+        this.value = value;
         this.next = None;
     }
 }
 
-let a = new Node("a");
-let b = new Node("b");
-a.next = b;
-b.next = a;
+func build_cycle(size) {
+    let head = new Node(0);
+    let current = head;
+    let i = 1;
+    while i < size {
+        let node = new Node(i);
+        current.next = node;
+        current = node;
+        i = i + 1;
+    }
+    current.next = head;
+    return head;
+}
 
-println(a.name);
-println(b.name);
+let head = build_cycle(1000);
 
-// After the last references to a/b are gone, a future GC cycle should be able
-// to reclaim the strongly connected component.
+let sum = 0;
+let node = head;
+let count = 0;
+while count < 1000 {
+    sum = sum + node.value;
+    node = node.next;
+    count = count + 1;
+}
+
+println(sum);
+println(count);
