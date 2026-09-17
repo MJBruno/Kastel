@@ -1,6 +1,7 @@
-from export_mod import *
+from std.collections import *;
+from std.math import *;
 
-let ex = new ExportMod().value;
-
-println(ex.now);
-
+for pair in enumerate(["a", "b", "c"]) {
+    println(pair);
+}
+println(clamp(15, 0, 10));

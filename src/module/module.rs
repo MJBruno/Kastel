@@ -8,6 +8,7 @@ use std::{
 
 
 use crate::frontend::{lexer::lexer::Lexer, parser::Parser};
+use crate::module::resolver::ModuleResolver;
 use crate::vm::machine::VirtualMachine;
 use crate::{compiler::compiler::Compiler, runtime::value::Value};
 use crate::{error::compile_error::CompileError, stdlib::execute_native};
@@ -46,6 +47,7 @@ impl ModuleInstance {
 #[derive(Clone)]
 pub struct ModuleLoader {
     state: Rc<RefCell<ModuleLoaderState>>,
+    resolver: Rc<ModuleResolver>,
 }
 
 struct ModuleLoaderState {
@@ -54,39 +56,30 @@ struct ModuleLoaderState {
 }
 #[allow(dead_code)]
 impl ModuleLoader {
-    pub fn new() -> Self {
+    /// `project_root` est le répertoire du fichier d'entrée du
+    /// programme (voir `ModuleResolver::new`) : c'est lui qui sert de
+    /// repli pour les imports « absolus » relatifs au projet, et qui
+    /// détermine où se trouve `std/` par défaut.
+    pub fn new(project_root: PathBuf) -> Self {
+        Self::with_resolver(ModuleResolver::new(project_root))
+    }
+
+    pub fn with_resolver(resolver: ModuleResolver) -> Self {
         Self {
             state: Rc::new(RefCell::new(ModuleLoaderState {
                 cache: HashMap::new(),
                 loading: Vec::new(),
             })),
+            resolver: Rc::new(resolver),
         }
     }
 
+    pub fn resolver(&self) -> &ModuleResolver {
+        &self.resolver
+    }
+
     pub fn resolve(&self, current_file: &Path, parts: &[String]) -> Result<PathBuf, CompileError> {
-        let parent = current_file
-            .parent()
-            .ok_or_else(|| CompileError::ModuleInvalidPath(current_file.display().to_string()))?;
-
-        let mut path = parent.to_path_buf();
-
-        for part in parts {
-            path.push(part);
-        }
-
-        // ⚠️ Adapte "ks" à l'extension réelle de tes fichiers source Kastel
-        // si ce n'est pas celle-ci (ex. "kastel", "kst"...).
-        path.set_extension("ks");
-
-        if !path.exists() {
-            return Err(CompileError::ModuleNotFound(path.display().to_string()));
-        }
-
-        path.canonicalize()
-            .map_err(|error| CompileError::ModuleReadError {
-                path: path.display().to_string(),
-                message: error.to_string(),
-            })
+        self.resolver.resolve(current_file, parts)
     }
 
     pub fn load(&mut self, path: PathBuf) -> Result<Rc<ModuleInstance>, CompileError> {
@@ -243,8 +236,4 @@ impl ModuleLoader {
     }
 }
 
-impl Default for ModuleLoader {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+ 
