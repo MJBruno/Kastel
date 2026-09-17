@@ -134,6 +134,79 @@ pub fn current_prefix(line: &str, byte_index: usize) -> &str {
     &line[start..end]
 }
 
+/// Remplace par des espaces tous les bytes à l'intérieur des chaînes
+/// et des commentaires (`//` et `/* */`), en préservant la longueur
+/// totale et les `\n` afin que les offsets restent valides.
+///
+/// Partagé par l'analyse sémantique (`semantic.rs`) et le formateur
+/// (`formatting.rs`) : toute logique qui doit compter des accolades,
+/// des identifiants ou de la ponctuation « réelle » sans se faire
+/// piéger par le contenu d'une chaîne ou d'un commentaire doit
+/// d'abord passer sa source par cette fonction.
+pub fn mask_strings_and_comments(source: &str) -> String {
+    let bytes = source.as_bytes();
+
+    let mut result = bytes.to_vec();
+
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' | b'\'' => {
+                let quote = bytes[i];
+                result[i] = b' ';
+                i += 1;
+                while i < bytes.len() && bytes[i] != quote {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        result[i] = b' ';
+                        result[i + 1] = b' ';
+                        i += 2;
+                    } else {
+                        if bytes[i] != b'\n' {
+                            result[i] = b' ';
+                        }
+                        i += 1;
+                    }
+                }
+                if i < bytes.len() {
+                    result[i] = b' ';
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                result[i] = b' ';
+                result[i + 1] = b' ';
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    result[i] = b' ';
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                result[i] = b' ';
+                result[i + 1] = b' ';
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    if bytes[i] != b'\n' {
+                        result[i] = b' ';
+                    }
+                    i += 1;
+                }
+                if i + 1 < bytes.len() {
+                    result[i] = b' ';
+                    result[i + 1] = b' ';
+                    i += 2;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    String::from_utf8(result).unwrap_or_else(|_| source.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

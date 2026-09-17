@@ -106,6 +106,12 @@ impl Server {
                 }
             }
 
+            "textDocument/formatting" => {
+                if let Some(message) = self.formatting(request.id, request.params) {
+                    messages.push(message);
+                }
+            }
+
             "shutdown" => {
                 messages.push(ServerMessage::Response(self.shutdown(request.id)));
             }
@@ -156,6 +162,7 @@ impl Server {
                     "renameProvider": true,
                     "documentSymbolProvider": true,
                     "documentHighlightProvider": true,
+                    "documentFormattingProvider": true,
                     "completionProvider": {
                         "triggerCharacters": [".", ":"]
                     }
@@ -527,6 +534,33 @@ impl Server {
         Some(ServerMessage::Response(RpcResponse::new(
             id,
             result.unwrap_or(Value::Null),
+        )))
+    }
+
+    fn formatting(&self, id: Option<Value>, params: Option<Value>) -> Option<ServerMessage> {
+        let id = id?;
+        let params = params?;
+
+        let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+
+        let options = params.get("options");
+
+        let tab_size = options
+            .and_then(|options| options.get("tabSize"))
+            .and_then(Value::as_u64)
+            .unwrap_or(4) as u32;
+
+        let insert_spaces = options
+            .and_then(|options| options.get("insertSpaces"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+
+        let result =
+            crate::formatting::build_formatting(&self.workspace, uri, tab_size, insert_spaces);
+
+        Some(ServerMessage::Response(RpcResponse::new(
+            id,
+            result.unwrap_or_else(|| Value::Array(Vec::new())),
         )))
     }
 

@@ -3,11 +3,13 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use serde_json::Value;
 
 mod analyzer;
+mod class_index;
 mod completion;
 mod definition;
 mod diagnostics;
 mod document_highlight;
 mod document_protocol;
+mod formatting;
 mod hover;
 mod language;
 mod lsp_position;

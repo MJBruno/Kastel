@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::analyzer::{analyze, Diagnostic};
+use crate::class_index::ClassIndex;
 use crate::symbols::SymbolIndex;
 
 #[derive(Debug)]
@@ -9,6 +10,7 @@ pub struct WorkspaceDocument {
     pub text: String,
     pub version: i64,
     pub symbols: SymbolIndex,
+    pub classes: ClassIndex,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -28,10 +30,15 @@ impl WorkspaceDocument {
             &analysis.statements,
         );
 
+        let mut classes = ClassIndex::new();
+
+        classes.rebuild(&analysis.statements);
+
         Self {
             text,
             version,
             symbols,
+            classes,
             diagnostics:
                 analysis.diagnostics,
         }
@@ -52,6 +59,8 @@ impl WorkspaceDocument {
             &self.text,
             &analysis.statements,
         );
+
+        self.classes.rebuild(&analysis.statements);
 
         self.diagnostics =
             analysis.diagnostics;

@@ -1,7 +1,8 @@
+ 
 use kastel::error::lex_error::LexerError;
 use kastel::error::parse_error::ParserError;
 use kastel::frontend::ast::Statement;
-use kastel::frontend::lexer::Lexer;
+use kastel::frontend::lexer::lexer::Lexer;
 use kastel::frontend::parser::Parser;
 
 use crate::symbols::SymbolIndex;

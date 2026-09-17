@@ -1,3 +1,6 @@
-from export_mod import {double as fois_deux,answer} 
+from export_mod import *
 
-println(fois_deux(answer));
+let ex = new ExportMod().value;
+
+println(ex.now);
+

@@ -297,7 +297,7 @@ fn is_identifier_char(c: char) -> bool {
 mod tests {
     use super::*;
 
-    use kastel::frontend::lexer::Lexer;
+    use kastel::frontend::lexer::lexer::Lexer;
     use kastel::frontend::parser::Parser;
 
     fn build_index(source: &str) -> SymbolIndex {

@@ -4,7 +4,8 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::language::KEYWORDS;
+use crate::class_index::ClassIndex;
+use crate::language::{ARRAY_METHODS, BUILTIN_FUNCTIONS, DICT_METHODS, KEYWORDS, STRING_METHODS, TUPLE_METHODS};
 use crate::module_resolver::ModuleResolver;
 use crate::symbols::{Symbol, SymbolIndex, SymbolKind};
 use crate::text_util::{current_prefix, utf16_character_to_byte_index};
@@ -13,6 +14,12 @@ use crate::workspace::Workspace;
 
 /// Kind LSP utilisé pour un module proposé en complétion.
 const KIND_MODULE: u32 = 9;
+/// Kind LSP "Method".
+const KIND_METHOD: u32 = 2;
+/// Kind LSP "Function".
+const KIND_FUNCTION: u32 = 3;
+/// Kind LSP "Field".
+const KIND_FIELD: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scope {
@@ -22,11 +29,11 @@ enum Scope {
 
 /// Contexte détecté quand le curseur est après un `.`.
 #[derive(Debug, PartialEq, Eq)]
-struct MemberContext {
+pub(crate) struct MemberContext {
     /// La chaîne avant le `.`, ex. `"math"`, `"math.xx"`, `"xx"`.
-    path: String,
+    pub(crate) path: String,
     /// Vrai si on est sur une ligne `import ...`.
-    is_import_line: bool,
+    pub(crate) is_import_line: bool,
 }
 
 pub fn build_completion(
@@ -48,7 +55,10 @@ pub fn build_completion(
      * (sous-modules ou symboles exportés), sans keywords.
      */
     if let Some(ctx) = detect_member_access(line_text, byte_index) {
-        let items = build_member_completions(workspace, uri, &ctx.path, ctx.is_import_line);
+        let offset = line_and_byte_to_offset(&document.text, line as usize, byte_index);
+
+        let items =
+            build_member_completions(workspace, uri, &ctx.path, ctx.is_import_line, offset);
 
         return Some(json!({
             "isIncomplete": false,
@@ -65,6 +75,8 @@ pub fn build_completion(
     let mut seen = HashSet::<String>::new();
 
     add_keyword_completions(prefix, &mut items, &mut seen);
+
+    add_builtin_completions(prefix, &mut items, &mut seen);
 
     add_document_completions(
         &document.symbols,
@@ -86,7 +98,7 @@ pub fn build_completion(
 ///
 /// Retourne le chemin `X` (autorisant les `.` internes pour gérer
 /// `math.xx.`) et si on est sur une ligne `import ...`.
-fn detect_member_access(line: &str, byte_index: usize) -> Option<MemberContext> {
+pub(crate) fn detect_member_access(line: &str, byte_index: usize) -> Option<MemberContext> {
     let before = line.get(..byte_index)?;
 
     let trimmed = before.trim_end();
@@ -124,12 +136,29 @@ fn detect_member_access(line: &str, byte_index: usize) -> Option<MemberContext> 
     })
 }
 
+/// Convertit une position (ligne 0-based, offset byte dans la ligne)
+/// en offset byte global dans `text`.
+pub(crate) fn line_and_byte_to_offset(text: &str, line: usize, byte_in_line: usize) -> usize {
+    let mut offset = 0usize;
+
+    for (index, raw_line) in text.split('\n').enumerate() {
+        if index == line {
+            return offset + byte_in_line.min(raw_line.len());
+        }
+
+        offset += raw_line.len() + 1;
+    }
+
+    text.len()
+}
+
 /// Construit les items pour un contexte `X.`.
 fn build_member_completions(
     workspace: &Workspace,
     uri: &str,
     path: &str,
     is_import_line: bool,
+    offset: usize,
 ) -> Vec<Value> {
     let Some(document) = workspace.get(uri) else {
         return Vec::new();
@@ -137,6 +166,44 @@ fn build_member_completions(
 
     let mut items = Vec::new();
     let mut seen = HashSet::<String>::new();
+
+    /*
+     * 0. `this.` / `base.` à l'intérieur d'une méthode de classe :
+     *    complète avec les champs/méthodes réellement disponibles,
+     *    déduits de l'AST (`ClassIndex`), pas d'une heuristique de
+     *    liste générique.
+     */
+    if !is_import_line && (path == "this" || path == "base") {
+        if let Some(class_name) = find_enclosing_class(&document.text, &document.classes, offset)
+        {
+            add_class_member_completions(
+                &document.classes,
+                &class_name,
+                path == "this",
+                &mut items,
+                &mut seen,
+            );
+        }
+    }
+
+    /*
+     * 0bis. `variable.` où `variable` a été assignée via
+     *    `variable = new ClassName(...)` plus haut dans le document :
+     *    complète avec les champs/méthodes de `ClassName`.
+     */
+    if !is_import_line && items.is_empty() && path != "this" && path != "base" {
+        if let Some(class_name) =
+            infer_class_of_variable(&document.text, path, &document.classes)
+        {
+            add_class_member_completions(
+                &document.classes,
+                &class_name,
+                true,
+                &mut items,
+                &mut seen,
+            );
+        }
+    }
 
     /*
      * 1. Ligne `import X.` : on scanne le système de fichiers
@@ -209,7 +276,211 @@ fn build_member_completions(
         );
     }
 
+    /*
+     * 3. Repli générique : si rien de plus précis n'a matché (pas un
+     *    import, pas `this`/`base`, pas une variable dont on a pu
+     *    déduire la classe), on propose l'union des méthodes des
+     *    types de collection (array/string/dict/tuple). C'est moins
+     *    précis qu'une vraie inférence de types, mais nettement plus
+     *    utile que de ne rien proposer du tout.
+     */
+    if !is_import_line && items.is_empty() {
+        add_generic_collection_completions(&mut items, &mut seen);
+    }
+
     items
+}
+
+/// Complète avec les champs (si `include_fields`) et les méthodes
+/// d'une classe (et de ses classes de base connues dans ce document),
+/// déduits de l'AST via `ClassIndex`.
+fn add_class_member_completions(
+    classes: &ClassIndex,
+    class_name: &str,
+    include_fields: bool,
+    items: &mut Vec<Value>,
+    seen: &mut HashSet<String>,
+) {
+    if include_fields {
+        for field in classes.all_fields(class_name) {
+            if !seen.insert(field.to_string()) {
+                continue;
+            }
+
+            items.push(json!({
+                "label": field,
+                "kind": KIND_FIELD,
+                "detail": format!("this.{}", field),
+                "insertText": field,
+                "sortText": format!("0_{}", field)
+            }));
+        }
+    }
+
+    let methods = if include_fields {
+        classes.all_methods(class_name)
+    } else {
+        // `base.` : uniquement les méthodes héritées, pas les
+        // siennes propres (qui se re-définiraient elles-mêmes).
+        classes.base_methods(class_name)
+    };
+
+    for method in methods {
+        if !seen.insert(method.name.clone()) {
+            continue;
+        }
+
+        items.push(json!({
+            "label": method.name,
+            "kind": KIND_METHOD,
+            "detail": format!("{}({})", method.name, method.params.join(", ")),
+            "insertText": format!("{}($0)", method.name),
+            "insertTextFormat": 2,
+            "sortText": format!("0_{}", method.name)
+        }));
+    }
+}
+
+/// Union dédupliquée des méthodes array/string/dict/tuple, utilisée
+/// en repli quand on ne peut rien inférer de plus précis sur `X.`.
+fn add_generic_collection_completions(items: &mut Vec<Value>, seen: &mut HashSet<String>) {
+    for (name, signature, doc) in ARRAY_METHODS
+        .iter()
+        .chain(STRING_METHODS)
+        .chain(DICT_METHODS)
+        .chain(TUPLE_METHODS)
+    {
+        if !seen.insert((*name).to_string()) {
+            continue;
+        }
+
+        items.push(method_completion_item(name, signature, doc, "5_"));
+    }
+}
+
+/// Trouve le nom de la classe/interface qui englobe directement
+/// `offset` dans `text`, en suivant la profondeur d'accolades (chaînes
+/// et commentaires masqués). `None` si le curseur n'est dans aucune
+/// classe, ou si aucune classe ne matche dans `classes`.
+pub(crate) fn find_enclosing_class(text: &str, classes: &ClassIndex, offset: usize) -> Option<String> {
+    let offset = offset.min(text.len());
+
+    let masked = crate::text_util::mask_strings_and_comments(&text[..offset]);
+
+    let mut stack: Vec<Option<String>> = Vec::new();
+    let mut pending: Option<String> = None;
+
+    let mut chars = masked.char_indices().peekable();
+
+    while let Some((_, c)) = chars.next() {
+        if c.is_ascii_alphabetic() || c == '_' {
+            let mut word = String::new();
+            word.push(c);
+
+            while let Some((_, next_c)) = chars.peek().copied() {
+                if next_c.is_ascii_alphanumeric() || next_c == '_' {
+                    word.push(next_c);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+
+            if word == "class" || word == "interface" {
+                while let Some((_, next_c)) = chars.peek().copied() {
+                    if next_c.is_whitespace() {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                let mut name = String::new();
+
+                while let Some((_, next_c)) = chars.peek().copied() {
+                    if next_c.is_ascii_alphanumeric() || next_c == '_' {
+                        name.push(next_c);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                if !name.is_empty() && classes.contains(&name) {
+                    pending = Some(name);
+                }
+            }
+
+            continue;
+        }
+
+        match c {
+            '{' => stack.push(pending.take()),
+            '}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    stack.into_iter().rev().find_map(|entry| entry)
+}
+
+/// Cherche, n'importe où dans `text`, une affectation
+/// `variable = new ClassName(` (avec ou sans `let`/`const` devant),
+/// et renvoie `ClassName` si elle est connue de `classes`. Heuristique
+/// textuelle volontairement simple (pas de véritable inférence de
+/// types) — première correspondance trouvée dans le document.
+pub(crate) fn infer_class_of_variable(text: &str, variable: &str, classes: &ClassIndex) -> Option<String> {
+    if variable.is_empty() {
+        return None;
+    }
+
+    let masked = crate::text_util::mask_strings_and_comments(text);
+
+    let mut search_from = 0usize;
+
+    while let Some(relative) = masked[search_from..].find(variable) {
+        let start = search_from + relative;
+        let end = start + variable.len();
+
+        let before_is_identifier = masked[..start]
+            .chars()
+            .next_back()
+            .is_some_and(crate::text_util::is_identifier_char);
+
+        let after_is_identifier = masked[end..]
+            .chars()
+            .next()
+            .is_some_and(crate::text_util::is_identifier_char);
+
+        if !before_is_identifier && !after_is_identifier {
+            let rest = masked[end..].trim_start();
+
+            if let Some(rest) = rest.strip_prefix('=') {
+                if !rest.starts_with('=') {
+                    let rest = rest.trim_start();
+
+                    if let Some(rest) = rest.strip_prefix("new") {
+                        let rest = rest.trim_start();
+
+                        let name: String = rest
+                            .chars()
+                            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                            .collect();
+
+                        if !name.is_empty() && classes.contains(&name) {
+                            return Some(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        search_from = end.max(start + 1);
+    }
+
+    None
 }
 
 /// Liste les sous-modules disponibles sous `dir/part1/part2/...`.
@@ -306,8 +577,67 @@ fn keyword_snippet(keyword: &str) -> Option<&'static str> {
         "import" => "import ${1:module.path}",
         "export" => "export ${0}",
         "try" => "try {\n\t${0}\n} catch ${1:err} {\n\t\n}",
+        "catch" => "catch ${1:err} {\n\t${0}\n}",
+        "finally" => "finally {\n\t${0}\n}",
+        "throw" => "throw ${0}",
+        "new" => "new ${1:ClassName}(${0})",
+        "match" => "match ${1:value} {\n\t${0}\n}",
         "return" => "return ${0}",
         _ => return None,
+    })
+}
+
+/// Complétion des fonctions/valeurs globales de la stdlib Kastel
+/// (`println`, `format`, `range`, `abs`, ...). Sans ça, aucune
+/// fonction native ne se propose jamais — seuls les symboles
+/// déclarés par l'utilisateur (via `SymbolIndex`) le sont.
+fn add_builtin_completions(prefix: &str, items: &mut Vec<Value>, seen: &mut HashSet<String>) {
+    for (name, signature, doc) in BUILTIN_FUNCTIONS {
+        if !name.starts_with(prefix) {
+            continue;
+        }
+
+        if !seen.insert((*name).to_string()) {
+            continue;
+        }
+
+        items.push(json!({
+            "label": *name,
+            "kind": KIND_FUNCTION,
+            "detail": *signature,
+            "documentation": {
+                "kind": "markdown",
+                "value": *doc
+            },
+            "insertText": format!("{}($0)", name),
+            "insertTextFormat": 2,
+            "sortText": format!("1_{}", name)
+        }));
+    }
+}
+
+/// Complétion d'une méthode/propriété de collection (`array`,
+/// `string`, `dict`, `tuple`) : `(nom, signature, doc)` -> item LSP.
+fn method_completion_item(name: &str, signature: &str, doc: &str, sort_prefix: &str) -> Value {
+    // `length` est une propriété sur array/tuple : pas de `()`
+    // insérée automatiquement pour ne pas induire en erreur.
+    let insert_text = if name == "length" {
+        name.to_string()
+    } else {
+        format!("{}($0)", name)
+    };
+
+    json!({
+        "label": name,
+        "kind": KIND_METHOD,
+        "detail": signature,
+        "documentation": {
+            "kind": "markdown",
+            "value": doc
+        },
+        "insertText": insert_text,
+        "insertTextFormat": 2,
+        "sortText": format!("{}{}", sort_prefix, name)
     })
 }
 
@@ -462,7 +792,7 @@ fn completion_detail(kind: SymbolKind) -> &'static str {
 mod tests {
     use super::*;
 
-    use kastel::frontend::lexer::Lexer;
+    use kastel::frontend::lexer::lexer::Lexer;
     use kastel::frontend::parser::Parser;
 
     fn build_index(source: &str) -> SymbolIndex {

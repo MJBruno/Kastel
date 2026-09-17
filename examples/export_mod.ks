@@ -1,5 +1,11 @@
-export const answer = 42;
-export func double(x) {
-    return x * 2;
-}
+export class ExportMod {
+    func init() {
+        this.value = this.get_value();
+    }
 
+
+    func get_value() {
+        return 55;
+    }
+
+}
