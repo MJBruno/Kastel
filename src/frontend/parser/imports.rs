@@ -2,7 +2,6 @@ use crate::error::parse_error::ParserError;
 use crate::frontend::ast::*;
 use crate::frontend::lexer::token::TokenKind;
 
-
 use super::Parser;
 
 #[allow(dead_code)]
@@ -12,6 +11,36 @@ impl Parser {
     // ============================================================
 
     pub(super) fn parse_import_statement(&mut self) -> Result<Statement, ParserError> {
+        // ------------------------------------------------------------
+        // import * from export_mod;
+        // ------------------------------------------------------------
+        if self.match_token(TokenKind::Star) {
+            self.consume(TokenKind::From, "'from' attendu après '*'")?;
+
+            let module = self.parse_module_path()?;
+
+            return Ok(Statement::FromImport {
+                module,
+                items: vec![ImportItem {
+                    name: "*".to_string(),
+                    alias: None,
+                }],
+            });
+        }
+
+        // ------------------------------------------------------------
+        // import { double, answer } from export_mod;
+        // ------------------------------------------------------------
+        if self.check(TokenKind::LeftBrace) {
+            let items = self.parse_import_item_list()?;
+
+            self.consume(TokenKind::From, "'from' attendu après la liste d'import")?;
+
+            let module = self.parse_module_path()?;
+
+            return Ok(Statement::FromImport { module, items });
+        }
+
         let module = self.parse_module_path()?;
 
         // ------------------------------------------------------------
@@ -25,7 +54,18 @@ impl Parser {
         // import dog { Dog, Animal, details };
         // ------------------------------------------------------------
 
-        self.consume(TokenKind::LeftBrace, "'{' attendu après le nom du module")?;
+        let items = self.parse_import_item_list()?;
+
+        Ok(Statement::FromImport { module, items })
+    }
+
+    /// Parse `{ nom (as alias)?, ... }`, partagé par les trois syntaxes
+    /// d'import qui acceptent une liste entre accolades :
+    ///   - `import module { a, b as c };`
+    ///   - `from module import { a, b as c };`
+    ///   - `import { a, b as c } from module;`
+    fn parse_import_item_list(&mut self) -> Result<Vec<ImportItem>, ParserError> {
+        self.consume(TokenKind::LeftBrace, "'{' attendu")?;
 
         let mut items = Vec::new();
 
@@ -72,7 +112,7 @@ impl Parser {
             "'}' attendu après la liste des imports",
         )?;
 
-        Ok(Statement::FromImport { module, items })
+        Ok(items)
     }
 
     pub(super) fn parse_from_import_statement(&mut self) -> Result<Statement, ParserError> {
@@ -92,6 +132,16 @@ impl Parser {
                     alias: None,
                 }],
             });
+        }
+
+        // ------------------------------------------------------------
+        // from dog import { Dog, Animal, details };
+        // ------------------------------------------------------------
+
+        if self.check(TokenKind::LeftBrace) {
+            let items = self.parse_import_item_list()?;
+
+            return Ok(Statement::FromImport { module, items });
         }
 
         // ------------------------------------------------------------
