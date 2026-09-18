@@ -1,15 +1,31 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use super::VirtualMachine;
 
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::value::{NumericOp, Value};
 
 impl VirtualMachine {
+    fn current_global_env(&self) -> Rc<RefCell<HashMap<String, Value>>> {
+        if let Some(frame) = self.frames.last() {
+            let closure = super::bytecode::frame_closure(&frame.closure);
+
+            if let Some(env) = closure.global_env.upgrade() {
+                return env;
+            }
+        }
+
+        Rc::clone(&self.globals)
+    }
+
     pub(crate) fn define_global(&mut self) -> Result<(), RuntimeError> {
         let constant = self.read_constant_byte()?;
         let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
         let value = self.pop()?;
-        self.globals.insert(name, value);
+        self.current_global_env().borrow_mut().insert(name, value);
 
         Ok(())
     }
@@ -18,8 +34,9 @@ impl VirtualMachine {
         let constant = self.read_constant_byte()?;
         let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
-        let value = self
-            .globals
+        let globals = self.current_global_env();
+        let value = globals
+            .borrow()
             .get(&name)
             .cloned()
             .ok_or(RuntimeError::TypeError)?;
@@ -33,12 +50,14 @@ impl VirtualMachine {
         let constant = self.read_constant_byte()?;
         let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
-        if !self.globals.contains_key(&name) {
+        let globals = self.current_global_env();
+
+        if !globals.borrow().contains_key(&name) {
             return Err(RuntimeError::TypeError);
         }
 
         let value = self.peek()?.clone();
-        self.globals.insert(name, value);
+        globals.borrow_mut().insert(name, value);
 
         Ok(())
     }

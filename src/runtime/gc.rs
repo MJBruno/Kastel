@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 use std::time::Instant;
 
+use crate::module::module::ModuleInstance;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
@@ -66,6 +67,7 @@ pub fn should_collect() -> bool {
 pub struct GcRoots<'a> {
     pub stack: &'a [Value],
     pub globals: &'a HashMap<String, Value>,
+    pub modules: &'a [Rc<ModuleInstance>],
     pub frames: &'a [CallFrame],
     pub open_upvalues: &'a [Rc<RefCell<ObjUpvalue>>],
 
@@ -95,6 +97,19 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
     // Globals
     for value in roots.globals.values() {
         mark_value(value, &mut state);
+    }
+
+    // Environnements globaux des modules chargés.
+    // Ils sont conservés par le cache du ModuleLoader, mais leurs valeurs
+    // doivent tout de même être considérées comme des racines du GC.
+    for module in roots.modules {
+        for value in module.globals.borrow().values() {
+            mark_value(value, &mut state);
+        }
+
+        for value in module.exports.values() {
+            mark_value(value, &mut state);
+        }
     }
 
     // Closures des frames actifs
@@ -260,6 +275,10 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
         }
 
         Object::Module(module) => {
+            for value in module.globals.borrow().values() {
+                mark_value(value, state);
+            }
+
             for value in module.exports.values() {
                 mark_value(value, state);
             }

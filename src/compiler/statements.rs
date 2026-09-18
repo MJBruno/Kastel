@@ -1189,38 +1189,40 @@ impl Compiler {
 
         // ------------------------------------------------------------
         // import module;
+        // import module.sub;
         // import module.Export;
         //
-        // Exemples :
-        //     import dog;
-        //     import dog.Dog;
-        //     import animals.dog.Dog;
-        // ------------------------------------------------------------
-
-        let (module_parts, export_name) = if path.len() >= 2 {
-            let split_at = path.len() - 1;
-
-            (&path[..split_at], Some(path[split_at].as_str()))
-        } else {
-            (&path[..], None)
-        };
-
-        if module_parts.is_empty() {
-            return Err(CompileError::InvalidImport);
-        }
-
-        let module_name = module_parts.join(".");
-
-        // ------------------------------------------------------------
-        // import dog.Dog;
-        // => variable globale "Dog"
+        // La distinction entre "sous-module" (import std.math -> la
+        // variable `math` est le MODULE std/math.ks, ce qui permet
+        // ensuite `math.sqrt(2.0)`) et "export tiré d'un module"
+        // (import shapes.Circle -> `Circle` est directement la
+        // CLASSE exportée par shapes.ks, ce qui permet `new Circle()`
+        // sans qualifier par le nom du module) n'est PAS tranchée ici,
+        // à la compilation : elle dépend de l'existence réelle d'un
+        // fichier std/math.ks sur le disque, information que seule la
+        // VM possède au moment de charger le module. C'est donc
+        // `import_module`, côté VM, qui essaie d'abord le chemin
+        // complet comme sous-module, puis se replie sur "tout sauf le
+        // dernier segment = module, dernier segment = export" si le
+        // chemin complet n'existe pas (voir
+        // `VirtualMachine::resolve_import_value` dans
+        // vm/machine/modules.rs). Le compilateur, lui, se contente
+        // toujours de lier le DERNIER segment du chemin — c'est cette
+        // même règle dans les deux cas (module ou export) qui rend
+        // possible de laisser la VM décider.
         //
-        // import dog;
-        // => variable globale "dog"
+        // Exemples :
+        //     import dog;             // dog     = module dog.ks
+        //     import std.math;        // math    = module std/math.ks
+        //     import shapes.Circle;   // Circle  = export Circle de shapes.ks
         // ------------------------------------------------------------
 
-        let binding_name =
-            export_name.unwrap_or_else(|| module_parts.last().map(String::as_str).unwrap_or(""));
+        let module_name = path.join(".");
+
+        let binding_name = path
+            .last()
+            .map(String::as_str)
+            .ok_or(CompileError::InvalidImport)?;
 
         if binding_name.is_empty() {
             return Err(CompileError::InvalidImport);
@@ -1235,34 +1237,13 @@ impl Compiler {
         }
 
         // ------------------------------------------------------------
-        // Charger le module
+        // Charger le module (ou l'export qu'il contient — voir plus
+        // haut) et lier le résultat au dernier segment du chemin.
         // ------------------------------------------------------------
 
         let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
 
         self.emit_bytes(OpCode::Import, module_constant);
-
-        // ------------------------------------------------------------
-        // Si un export est demandé :
-        //
-        // import dog.Dog;
-        //
-        // devient :
-        //
-        // IMPORT "dog"
-        // GET_PROPERTY "Dog"
-        // DEFINE_GLOBAL "Dog"
-        // ------------------------------------------------------------
-
-        if let Some(export_name) = export_name {
-            let property_constant = self.identifier_constant(export_name)?;
-
-            self.emit_bytes(OpCode::GetProperty, property_constant);
-        }
-
-        // ------------------------------------------------------------
-        // Déclarer la variable globale
-        // ------------------------------------------------------------
 
         let binding_constant = self.identifier_constant(binding_name)?;
 

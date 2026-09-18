@@ -21,6 +21,51 @@ export const E = 2.718281828459045;
 export const TAU = 6.283185307179586; // 2 * PI
 
 // ------------------------------------------------------------------
+// Ré-export des natives globales
+//
+// abs/sqrt/pow/sin/... sont des fonctions natives GLOBALES (voir
+// src/stdlib/math.rs) : elles sont déjà appelables partout sans
+// import, comme `sqrt(2.0)`. Ces lignes les ré-exportent aussi SOUS
+// LE MÊME NOM depuis ce module, pour permettre l'accès qualifié
+// `math.sqrt(2.0)` après `import std.math;` — les deux styles
+// cohabitent, au choix de l'appelant.
+//
+// Pourquoi `const x = x;` et pas `func sqrt(x) { return sqrt(x); }` :
+// une fonction top-level de ce module serait "pré-déclarée" (hissée)
+// avant la compilation de son propre corps — donc `sqrt` à
+// l'intérieur de `func sqrt(...)` référencerait la fonction
+// elle-même, pas la native (récursion infinie). Un `const`, lui,
+// n'est pas hissé : `sqrt` à droite du `=` désigne encore la native
+// au moment où cette ligne s'exécute.
+// ------------------------------------------------------------------
+
+export const abs = abs;
+export const floor = floor;
+export const ceil = ceil;
+export const round = round;
+export const sqrt = sqrt;
+export const pow = pow;
+export const min = min;
+export const max = max;
+export const sin = sin;
+export const cos = cos;
+export const tan = tan;
+export const asin = asin;
+export const acos = acos;
+export const atan = atan;
+export const atan2 = atan2;
+export const log = log;
+export const log10 = log10;
+export const exp = exp;
+export const rand = rand;
+
+//rand_int(x) renvoie un entier aléatoire dans [0, x), donc rand_int(5) peut renvoyer 0, 1, 2, 3 ou 4.
+export const rand_int = rand_int;
+
+//rand_range(low, high) renvoie un flottant aléatoire dans [low, high).
+export const rand_range = rand_range;
+
+// ------------------------------------------------------------------
 // Angles
 // ------------------------------------------------------------------
 
@@ -402,7 +447,7 @@ export func choice(items) {
         throw "choice: le tableau ne doit pas être vide";
     }
 
-    let index = rand_int(0, items.length - 1);
+    let index = rand_int(items.length);
 
     return items.get(index);
 }
@@ -414,7 +459,7 @@ export func shuffle(items) {
     let i = result.length - 1;
 
     while i > 0 {
-        let j = rand_int(0, i);
+        let j = rand_int(i);
 
         let temp = result.get(i);
         result.set(i, result.get(j));
@@ -425,3 +470,53 @@ export func shuffle(items) {
 
     return result;
 }
+
+// ------------------------------------------------------------------
+// Nombres complexes
+//
+// Démontre l'autre moitié de la convention d'import : une CLASSE
+// vit dans un module comme std.math au même titre qu'une fonction,
+// mais s'importe SANS qualifier par le nom du module :
+//
+//     import std.math.Complexe;
+//     let z = new Complexe(3, 4);   // pas new math.Complexe(3, 4)
+// ------------------------------------------------------------------
+
+export class Complexe {
+    func init(real, imaginaire) {
+        this.real = real;
+        this.imaginaire = imaginaire;
+    }
+
+    func add(other) {
+        return new Complexe(this.real + other.real, this.imaginaire + other.imaginaire);
+    }
+
+    func subtract(other) {
+        return new Complexe(this.real - other.real, this.imaginaire - other.imaginaire);
+    }
+
+    func multiply(other) {
+        let real = this.real * other.real - this.imaginaire * other.imaginaire;
+        let imaginaire = this.real * other.imaginaire + this.imaginaire * other.real;
+
+        return new Complexe(real, imaginaire);
+    }
+
+    func conjugate() {
+        return new Complexe(this.real, - this.imaginaire);
+    }
+
+    func magnitude() {
+        return hypot(this.real, this.imaginaire);
+    }
+
+    func to_string() {
+        if this.imaginaire < 0 {
+            return format("{}{}i", this.real, this.imaginaire);
+        }
+
+        return format("{} + {}i", this.real, this.imaginaire);
+    }
+}
+

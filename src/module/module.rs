@@ -13,11 +13,28 @@ use crate::vm::machine::VirtualMachine;
 use crate::{compiler::compiler::Compiler, runtime::value::Value};
 use crate::{error::compile_error::CompileError, stdlib::execute_native};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct ModuleInstance {
     pub name: String,
     pub path: PathBuf,
+
+    /// Environnement global propre au module.
+    ///
+    /// Les closures créées pendant l'exécution du module conservent une
+    /// `Weak` vers cette table afin de pouvoir résoudre leurs globals au
+    /// moment de l'appel, même après la fin de `execute_module()`.
+    pub globals: Rc<RefCell<HashMap<String, Value>>>,
+
     pub exports: HashMap<String, Value>,
+}
+
+impl PartialEq for ModuleInstance {
+    fn eq(&self, other: &Self) -> bool {
+        // Un module est identifié par son chemin résolu. Les globals/exports
+        // ne font volontairement pas partie de cette égalité : ils peuvent
+        // contenir des closures, classes ou modules se référant entre eux.
+        self.path == other.path
+    }
 }
 #[allow(dead_code)]
 impl ModuleInstance {
@@ -25,6 +42,7 @@ impl ModuleInstance {
         Self {
             name,
             path,
+            globals: Rc::new(RefCell::new(HashMap::new())),
             exports: HashMap::new(),
         }
     }
@@ -76,6 +94,10 @@ impl ModuleLoader {
 
     pub fn resolver(&self) -> &ModuleResolver {
         &self.resolver
+    }
+
+    pub fn loaded_modules(&self) -> Vec<Rc<ModuleInstance>> {
+        self.state.borrow().cache.values().cloned().collect()
     }
 
     pub fn resolve(&self, current_file: &Path, parts: &[String]) -> Result<PathBuf, CompileError> {
@@ -177,23 +199,9 @@ impl ModuleLoader {
         let function = Rc::new(function);
 
         // ------------------------------------------------------------
-        // 5. Exécuter le module dans une VM isolée
-        // ------------------------------------------------------------
-        let module_loader = self.clone();
-
-        let values = VirtualMachine::execute_module(
-            Rc::clone(&function),
-            &exports,
-            path.to_path_buf(),
-            module_loader,
-        )
-        .map_err(|error| CompileError::ModuleRuntimeError {
-            path: path.display().to_string(),
-            module_source: source.clone(),
-            source: error,
-        })?;
-        // ------------------------------------------------------------
-        // 6. Nom du module
+        // 5. Construire l'instance et son environnement global AVANT
+        //    l'exécution : les closures créées par le module doivent
+        //    conserver ce même environnement après le retour de la VM.
         // ------------------------------------------------------------
         let name = path
             .file_stem()
@@ -201,20 +209,35 @@ impl ModuleLoader {
             .unwrap_or("<module>")
             .to_string();
 
-        // ------------------------------------------------------------
-        // 7. Construire l'instance
-        // ------------------------------------------------------------
         let mut module = ModuleInstance::new(name, path.to_path_buf());
 
         // ------------------------------------------------------------
-        // 8. Ajouter uniquement les exports
+        // 6. Exécuter le module dans une VM isolée partageant l'env.
+        // ------------------------------------------------------------
+        let module_loader = self.clone();
+        let module_globals = Rc::clone(&module.globals);
+
+        let values = VirtualMachine::execute_module(
+            Rc::clone(&function),
+            &exports,
+            path.to_path_buf(),
+            module_loader,
+            module_globals,
+        )
+        .map_err(|error| CompileError::ModuleRuntimeError {
+            path: path.display().to_string(),
+            module_source: source.clone(),
+            source: error,
+        })?;
+        // ------------------------------------------------------------
+        // 7. Ajouter uniquement les exports
         // ------------------------------------------------------------
         for (name, value) in values {
             module.export(name, value)?;
         }
 
         // ------------------------------------------------------------
-        // 9. Mettre en cache
+        // 8. Mettre en cache
         // ------------------------------------------------------------
         let module = Rc::new(module);
 

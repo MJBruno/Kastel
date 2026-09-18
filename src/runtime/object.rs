@@ -60,10 +60,12 @@ impl Object {
     pub fn new_closure(
         function: Rc<Function>,
         upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
+        global_env: std::rc::Weak<RefCell<HashMap<String, Value>>>,
     ) -> Gc<Object> {
         let handle = Gc::new(Object::Closure(Closure {
             function,
             upvalues,
+            global_env,
             owner_class: None,
         }));
 
@@ -92,6 +94,7 @@ impl Object {
 
             Object::Closure(closure) => {
                 closure.upvalues.clear();
+                closure.global_env = std::rc::Weak::new();
                 closure.owner_class = None;
             }
 

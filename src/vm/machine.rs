@@ -117,7 +117,7 @@ pub(crate) struct PendingException {
 #[allow(dead_code)]
 pub struct VirtualMachine {
     pub stack: Vec<Value>,
-    pub globals: HashMap<String, Value>,
+    pub globals: Rc<RefCell<HashMap<String, Value>>>,
 
     pub(crate) frames: Vec<CallFrame>,
 
@@ -177,12 +177,13 @@ impl VirtualMachine {
     ) -> Self {
         let chunk = Rc::new(function.chunk.clone());
         let local_count = function.local_count as usize;
-        let closure = Object::new_closure(function, Vec::new());
+        let globals = Rc::new(RefCell::new(HashMap::new()));
+        let closure = Object::new_closure(function, Vec::new(), Rc::downgrade(&globals));
 
-        let mut vm = Self {
+        let vm = Self {
             stack: vec![Value::None],
 
-            globals: HashMap::new(),
+            globals: Rc::clone(&globals),
 
             frames: vec![CallFrame {
                 closure,
@@ -211,7 +212,51 @@ impl VirtualMachine {
             profile_read_bytes: 0,
         };
 
-        register_natives(&mut vm.globals);
+        register_natives(&mut vm.globals.borrow_mut());
+
+        vm
+    }
+
+    fn new_with_loader_and_globals(
+        function: Rc<Function>,
+        module_path: Option<PathBuf>,
+        module_loader: ModuleLoader,
+        globals: Rc<RefCell<HashMap<String, Value>>>,
+    ) -> Self {
+        let chunk = Rc::new(function.chunk.clone());
+        let local_count = function.local_count as usize;
+        let closure = Object::new_closure(
+            function,
+            Vec::new(),
+            Rc::downgrade(&globals),
+        );
+
+        let vm = Self {
+            stack: vec![Value::None],
+            globals,
+            frames: vec![CallFrame {
+                closure,
+                chunk,
+                ip: 0,
+                slot_start: 0,
+                local_count,
+                hot_loop_cache: None,
+            }],
+            exception_handlers: Vec::new(),
+            pending_exception: None,
+            open_upvalues: Vec::new(),
+            natives: HashMap::new(),
+            module_loader,
+            module_path,
+            current_line: 0,
+            current_column: 0,
+            #[cfg(feature = "profile")]
+            profile_counts: [0; 256],
+            #[cfg(feature = "profile")]
+            profile_read_bytes: 0,
+        };
+
+        register_natives(&mut vm.globals.borrow_mut());
 
         vm
     }
@@ -222,7 +267,11 @@ impl VirtualMachine {
 
         let chunk = Rc::new(function.chunk.clone());
         let local_count = function.local_count as usize;
-        let closure = Object::new_closure(function, Vec::new());
+        let closure = Object::new_closure(
+            function,
+            Vec::new(),
+            Rc::downgrade(&self.globals),
+        );
 
         self.stack.clear();
         self.stack.push(Value::None);
@@ -259,8 +308,14 @@ impl VirtualMachine {
         exports: &[String],
         module_path: PathBuf,
         module_loader: ModuleLoader,
+        globals: Rc<RefCell<HashMap<String, Value>>>,
     ) -> Result<HashMap<String, Value>, RuntimeError> {
-        let mut vm = Self::new_with_loader(function, Some(module_path), module_loader);
+        let mut vm = Self::new_with_loader_and_globals(
+            function,
+            Some(module_path),
+            module_loader,
+            globals,
+        );
 
         if let Err(error) = vm.run() {
             return Err(RuntimeError::WithLocation {
@@ -272,8 +327,10 @@ impl VirtualMachine {
 
         let mut values = HashMap::with_capacity(exports.len());
 
+        let globals = vm.globals.borrow();
+
         for name in exports {
-            let value = vm.globals.get(name).cloned().ok_or_else(|| {
+            let value = globals.get(name).cloned().ok_or_else(|| {
                 RuntimeError::ModuleError(format!("Export '{}' was not initialized", name))
             })?;
 

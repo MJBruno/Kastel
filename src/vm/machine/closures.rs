@@ -54,7 +54,16 @@ impl VirtualMachine {
             pending_upvalues.push(upvalue);
         }
 
-        let closure = Object::new_closure(Rc::clone(&function), pending_upvalues);
+        let global_env = {
+            let frame = self.current_frame()?;
+            frame_closure(&frame.closure).global_env.clone()
+        };
+
+        let closure = Object::new_closure(
+            Rc::clone(&function),
+            pending_upvalues,
+            global_env,
+        );
 
         self.push(Value::Object(closure));
 

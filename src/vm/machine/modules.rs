@@ -1,3 +1,5 @@
+use std::{path::Path, rc::Rc};
+
 use super::VirtualMachine;
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::object::Object;
@@ -22,14 +24,65 @@ impl VirtualMachine {
             return Err(RuntimeError::ModuleError("Invalid module name".to_string()));
         }
 
-        let module = self
-            .module_loader
-            .load_from(&current_file, &parts)
-            .map_err(|error| RuntimeError::ModuleError(error.to_string()))?;
+        let resolved = self.resolve_import_value(&current_file, &parts, &module_name)?;
 
-        self.push(Value::new_module(module));
+        self.push(resolved);
 
         Ok(())
+    }
+
+    /// Résout un `import a.b.c;` en essayant, dans l'ordre :
+    ///
+    ///   1. `a.b.c` comme chemin de sous-module complet (ex.
+    ///      `import std.math;` -> la valeur renvoyée est le MODULE
+    ///      `std/math.ks` lui-même, ce qui permet ensuite
+    ///      `math.sqrt(2.0)`) ;
+    ///   2. si (1) échoue ET qu'il y a au moins 2 segments, `a.b`
+    ///      comme module et `c` comme export à en extraire (ex.
+    ///      `import shapes.Circle;` -> la valeur renvoyée est
+    ///      directement la CLASSE `Circle`, ce qui permet
+    ///      `new Circle()` sans qualifier par le nom du module).
+    ///
+    /// Dans les deux cas, `compile_import` a déjà décidé de lier le
+    /// DERNIER segment du chemin (`math`, `Circle`) — c'est donc bien
+    /// ce choix, fait ici à l'exécution plutôt qu'à la compilation
+    /// (qui n'a pas accès au système de fichiers), qui détermine si
+    /// la valeur obtenue est un module ou l'un de ses exports.
+    fn resolve_import_value(
+        &mut self,
+        current_file: &Path,
+        parts: &[String],
+        module_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        match self.module_loader.load_from(current_file, parts) {
+            Ok(module) => Ok(Value::new_module(module)),
+
+            Err(whole_path_error) => {
+                if parts.len() < 2 {
+                    return Err(RuntimeError::ModuleError(whole_path_error.to_string()));
+                }
+
+                let (module_parts, export_name) = parts.split_at(parts.len() - 1);
+                let export_name = &export_name[0];
+
+                // Le module parent doit, lui, exister — sinon l'erreur
+                // la plus utile reste celle du chemin complet (ex.
+                // "std/math.ks introuvable" plutôt qu'une erreur sur
+                // "std.ks" qui n'a jamais été l'intention de
+                // l'utilisateur).
+                let module = self
+                    .module_loader
+                    .load_from(current_file, module_parts)
+                    .map_err(|_| RuntimeError::ModuleError(whole_path_error.to_string()))?;
+
+                module.get_export(export_name).cloned().ok_or_else(|| {
+                    RuntimeError::ModuleError(format!(
+                        "le module '{}' n'exporte pas '{}'",
+                        module_name, export_name
+                    ))
+                })
+            }
+        }
     }
 
     pub(crate) fn import_all(&mut self) -> Result<(), RuntimeError> {
@@ -80,8 +133,16 @@ impl VirtualMachine {
             }
         };
 
+        let globals = self
+            .frames
+            .last()
+            .and_then(|frame| super::bytecode::frame_closure(&frame.closure).global_env.upgrade())
+            .unwrap_or_else(|| Rc::clone(&self.globals));
+
+        let mut globals = globals.borrow_mut();
+
         for (name, value) in exports {
-            if self.globals.contains_key(&name) {
+            if globals.contains_key(&name) {
                 return Err(RuntimeError::ModuleError(format!(
                     "Cannot import '{}' from module '{}': \
                          a global with the same name already exists",
@@ -89,7 +150,7 @@ impl VirtualMachine {
                 )));
             }
 
-            self.globals.insert(name, value);
+            globals.insert(name, value);
         }
 
         Ok(())
