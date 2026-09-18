@@ -170,19 +170,22 @@ impl VirtualMachine {
             | RuntimeError::NotIndexable
             | RuntimeError::NotObject
             | RuntimeError::ModuleError(_)
+            | RuntimeError::FormatError(_)
             | RuntimeError::ObjectFieldNotFound { .. }
             | RuntimeError::NotIterable
             | RuntimeError::IteratorExhausted
             | RuntimeError::InvalidShiftAmount => Ok(Value::new_string(error.to_string())),
+
             RuntimeError::NumericTypeError { .. } => Ok(Value::new_string(error.to_string())),
+
             RuntimeError::Thrown(value) => Ok(value.clone()),
 
             RuntimeError::WithLocation { source, .. } => self.runtime_error_value(source),
 
             RuntimeError::StackUnderflow
             | RuntimeError::InvalidOpcode(_)
-            | RuntimeError::InvalidFunction => Err(error.clone()),
-            RuntimeError::ImmutableValue(_) => Err(error.clone()),
+            | RuntimeError::InvalidFunction
+            | RuntimeError::ImmutableValue(_) => Err(error.clone()),
         }
     }
 

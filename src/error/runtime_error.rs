@@ -36,6 +36,9 @@ pub enum RuntimeError {
 
     ModuleError(String),
 
+    /// Erreur dans un spécificateur de format de chaîne (`{:.2f}`, `{:#x}`, etc.).
+    FormatError(String),
+
     ObjectFieldNotFound {
         name: String,
         suggestion: Option<String>,
@@ -138,6 +141,10 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::ModuleError(message) => {
                 write!(f, "Module error: {message}")
+            }
+
+            RuntimeError::FormatError(message) => {
+                write!(f, "Format error: {message}")
             }
 
             RuntimeError::ObjectFieldNotFound { name, suggestion } => match suggestion {
