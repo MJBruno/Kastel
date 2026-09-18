@@ -10,9 +10,13 @@ pub type NativeFn = fn(&[Value]) -> Result<Value, RuntimeError>;
 pub mod array;
 pub mod debug;
 pub mod dict;
+pub mod file;
 pub mod io;
 pub mod iterator;
+pub mod json;
 pub mod math;
+pub mod os;
+pub mod path;
 pub mod string;
 pub mod system;
 pub mod tuple;
@@ -29,6 +33,10 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     iterator::register(globals);
     system::register(globals);
     debug::register(globals);
+    json::register(globals);
+    file::register(globals);
+    path::register(globals);
+    os::register(globals);
 }
 
 /// Enregistre les natives connues du compilateur.
@@ -43,6 +51,10 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     iterator::register_compiler(compiler);
     system::register_compiler(compiler);
     debug::register_compiler(compiler);
+    json::register_compiler(compiler);
+    file::register_compiler(compiler);
+    path::register_compiler(compiler);
+    os::register_compiler(compiler);
 }
 
 /// Compatibilité avec l'ancien appel.
