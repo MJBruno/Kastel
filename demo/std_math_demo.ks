@@ -3,7 +3,17 @@
 // Petit tour des fonctionnalités de std.math.
 // Lancer avec : kastel examples/std_math_demo.ks
 
-import * from std.math ;
+import {
+    PI, TAU, to_radians, 
+    to_degrees, sinh, cosh, 
+    tanh, cbrt, hypot, sign,
+    trunc, clamp, lerp, inverse_lerp, 
+    map_range, gcd, lcm, is_prime, 
+    factorial, fibonacci, permutations, 
+    combinations, sum, average, median, 
+    variance, std_dev, mode, min_of, max_of,
+    choice, shuffle
+} from std.math ;
 
 // -- Constantes et angles -------------------------------------------------
 println(PI);
@@ -61,6 +71,5 @@ println(min_of(data));             // 3
 println(max_of(data));             // 8
 
 // -- Aléatoire ------------------------------------------------------------------------
- println(random_range(1, 10));      // un nombre aléatoire entre 1 et 10
-// println(choice(data));             // un élément au hasard de `data`
-// println(shuffle(data));            // `data` mélangé (copie, `data` inchangé)
+println(choice(data));             // un élément au hasard de `data`
+println(shuffle(data));            // `data` mélangé (copie, `data` inchangé)

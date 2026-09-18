@@ -135,6 +135,38 @@ pub fn native_tan(args: &[Value]) -> Result<Value, RuntimeError> {
     unary_number(args, f64::tan)
 }
 
+pub fn native_asin(args: &[Value]) -> Result<Value, RuntimeError> {
+    unary_number(args, f64::asin)
+}
+
+pub fn native_acos(args: &[Value]) -> Result<Value, RuntimeError> {
+    unary_number(args, f64::acos)
+}
+
+pub fn native_atan(args: &[Value]) -> Result<Value, RuntimeError> {
+    unary_number(args, f64::atan)
+}
+
+/// atan2(y, x) : arc tangente à deux arguments (angle du vecteur
+/// (x, y), correctement défini sur les 4 quadrants, contrairement à
+/// atan(y / x) seul qui ne peut pas distinguer (1, 1) de (-1, -1)).
+/// Ne peut pas être exprimée en Kastel pur à partir de sin/cos/tan
+/// sans perdre la gestion des quadrants/division par zéro — d'où
+/// l'ajout de cette native, sur le même modèle que pow().
+pub fn native_atan2(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 2,
+            found: args.len(),
+        });
+    }
+
+    let y = expect_number(&args[0])?;
+    let x = expect_number(&args[1])?;
+
+    Ok(Value::Float(y.atan2(x)))
+}
+
 pub fn native_pow(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::WrongArgumentCount {
@@ -365,6 +397,10 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "sin", native_sin);
     register_one(globals, "cos", native_cos);
     register_one(globals, "tan", native_tan);
+    register_one(globals, "asin", native_asin);
+    register_one(globals, "acos", native_acos);
+    register_one(globals, "atan", native_atan);
+    register_one(globals, "atan2", native_atan2);
     register_one(globals, "log", native_log);
     register_one(globals, "log10", native_log10);
     register_one(globals, "exp", native_exp);
@@ -385,6 +421,10 @@ pub fn register_compiler(compiler: &mut Compiler) {
     define_one(compiler, "sin");
     define_one(compiler, "cos");
     define_one(compiler, "tan");
+    define_one(compiler, "asin");
+    define_one(compiler, "acos");
+    define_one(compiler, "atan");
+    define_one(compiler, "atan2");
     define_one(compiler, "log");
     define_one(compiler, "log10");
     define_one(compiler, "exp");
