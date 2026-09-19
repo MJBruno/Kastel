@@ -16,14 +16,18 @@ impl VirtualMachine {
         &mut self,
         base_count: usize,
         method_count: usize,
+        private_count: usize,
     ) -> Result<(), RuntimeError> {
         let method_values = method_count
             .checked_mul(2)
             .ok_or(RuntimeError::InvalidFunction)?;
 
+        // Disposition sur la pile :
+        //   [bases...] nom [nom_méthode closure]* [nom_membre_privé]*
         let total = base_count
             .checked_add(1)
             .and_then(|value| value.checked_add(method_values))
+            .and_then(|value| value.checked_add(private_count))
             .ok_or(RuntimeError::InvalidFunction)?;
 
         if self.stack.len() < total {
@@ -125,9 +129,28 @@ impl VirtualMachine {
             overloads.push(method);
         }
 
+        let private_start = methods_start + method_values;
+        let mut private_members = HashSet::<String>::with_capacity(private_count);
+
+        for index in 0..private_count {
+            let member = self
+                .stack
+                .get(private_start + index)
+                .and_then(Value::as_string_value)
+                .ok_or(RuntimeError::TypeError)?;
+
+            private_members.insert(member);
+        }
+
         self.stack.truncate(start);
 
-        let class_value = Value::new_class(class_name, superclass, interfaces, methods);
+        let class_value = Value::new_class(
+            class_name,
+            superclass,
+            interfaces,
+            methods,
+            private_members,
+        );
 
         let class_handle = match &class_value {
             Value::Object(handle) => handle.clone(),

@@ -252,9 +252,10 @@ impl Compiler {
             Statement::Class {
                 name,
                 bases,
+                fields,
                 methods,
             } => {
-                self.compile_class(name, bases, methods)?;
+                self.compile_class(name, bases, fields, methods)?;
             }
 
             Statement::Interface {
@@ -310,6 +311,7 @@ impl Compiler {
         &mut self,
         name: &str,
         bases: &[String],
+        fields: &[ClassField],
         methods: &[FunctionMethod],
     ) -> Result<(), CompileError> {
         if bases.len() > u8::MAX as usize {
@@ -317,6 +319,30 @@ impl Compiler {
         }
 
         if methods.len() > u8::MAX as usize {
+            return Err(CompileError::TooManyObjectFields);
+        }
+
+        // Membres privés (champs ET méthodes), sans doublon. La VM les
+        // enregistre dans la classe et refuse tout accès depuis l'extérieur
+        // du corps de cette classe.
+        let mut private_members: Vec<&str> = Vec::new();
+
+        let declared = fields
+            .iter()
+            .map(|field| (field.name.as_str(), field.visibility))
+            .chain(
+                methods
+                    .iter()
+                    .map(|method| (method.name.as_str(), method.visibility)),
+            );
+
+        for (member, visibility) in declared {
+            if visibility == Visibility::Private && !private_members.contains(&member) {
+                private_members.push(member);
+            }
+        }
+
+        if private_members.len() > u8::MAX as usize {
             return Err(CompileError::TooManyObjectFields);
         }
 
@@ -354,9 +380,17 @@ impl Compiler {
             self.emit_closure(function_constant, &function.upvalues);
         }
 
+        // Noms des membres privés, empilés après les méthodes.
+        for member in &private_members {
+            let member_constant = self.identifier_constant(member)?;
+
+            self.emit_bytes(OpCode::Constant, member_constant);
+        }
+
         self.emit_byte(OpCode::Class.into());
         self.emit_byte(bases.len() as u8);
         self.emit_byte(methods.len() as u8);
+        self.emit_byte(private_members.len() as u8);
 
         if !self.in_function && self.scope_depth == 0 {
             // Réutilise la constante déjà enregistrée par la pré-déclaration

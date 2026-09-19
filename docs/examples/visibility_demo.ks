@@ -1,5 +1,4 @@
-
- // examples/visibility_demo.ks
+// examples/visibility_demo.ks
 //
 // Visibilité des membres : `private` réserve un champ ou une méthode au
 // corps de la classe. Le typage reste dynamique : seule la visibilité
@@ -10,8 +9,6 @@
 from personne import Personne;
 
 let p: Personne = new Personne(26);
-
-
 
 p.setAge(44);
 

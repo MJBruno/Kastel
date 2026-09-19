@@ -114,12 +114,14 @@ impl Value {
         superclass: Option<Gc<Object>>,
         interfaces: Vec<Gc<Object>>,
         methods: HashMap<String, Vec<Value>>,
+        private_members: HashSet<String>,
     ) -> Self {
         Self::new_heap_object(Object::Class {
             name,
             superclass,
             interfaces,
             methods,
+            private_members,
         })
     }
     pub fn new_interface(

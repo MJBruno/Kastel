@@ -39,6 +39,10 @@ struct ClassInfo {
     /// Une classe peut surcharger une méthode par son arité.
     /// Deux signatures de même nom et de même arité restent interdites.
     methods: HashMap<String, Vec<FunctionType>>,
+    /// Champs déclarés par `let nom: type = ...;` dans le corps de la classe.
+    fields: HashMap<String, Type>,
+    /// Membres (champs et méthodes) déclarés `private` dans cette classe.
+    private_members: HashSet<String>,
 }
 
 /// Vérificateur statique graduel de Kastel.
@@ -173,9 +177,27 @@ impl TypeChecker {
                 Statement::Class {
                     name,
                     bases,
+                    fields,
                     methods,
                 } => {
                     let mut method_map: HashMap<String, Vec<FunctionType>> = HashMap::new();
+                    let mut field_map: HashMap<String, Type> = HashMap::new();
+                    let mut private_members: HashSet<String> = HashSet::new();
+
+                    for field in fields {
+                        field_map.insert(
+                            field.name.clone(),
+                            field
+                                .type_annotation
+                                .as_ref()
+                                .map(Type::from_type_expr)
+                                .unwrap_or(Type::Dynamic),
+                        );
+
+                        if field.visibility == Visibility::Private {
+                            private_members.insert(field.name.clone());
+                        }
+                    }
 
                     for method in methods {
                         let params = method
@@ -218,6 +240,10 @@ impl TypeChecker {
                         }
 
                         overloads.push(signature);
+
+                        if method.visibility == Visibility::Private {
+                            private_members.insert(method.name.clone());
+                        }
                     }
 
                     self.parents.insert(name.clone(), bases.clone());
@@ -226,6 +252,8 @@ impl TypeChecker {
                         ClassInfo {
                             bases: bases.clone(),
                             methods: method_map,
+                            fields: field_map,
+                            private_members,
                         },
                     );
                     self.declare_global_declaration(name, Type::Named(name.clone()))?;
@@ -287,6 +315,8 @@ impl TypeChecker {
                         ClassInfo {
                             bases: bases.clone(),
                             methods: method_map,
+                            fields: HashMap::new(),
+                            private_members: HashSet::new(),
                         },
                     );
                     self.declare_global_declaration(name, Type::Named(name.clone()))?;
@@ -903,8 +933,19 @@ impl TypeChecker {
                 }
             }
 
-            AssignmentTarget::Member { object, .. } => {
-                self.check_expression(object)?;
+            AssignmentTarget::Member { object, name } => {
+                let object_type = self.check_expression(object)?;
+
+                if let Type::Named(class_name) = &object_type {
+                    self.check_member_visibility(class_name, name)?;
+
+                    // `this.age = valeur` : la valeur doit respecter le type
+                    // déclaré du champ (`let age: int`).
+                    if let Some(expected) = self.find_field(class_name, name) {
+                        self.ensure_assignable(actual, &expected)?;
+                    }
+                }
+
                 Ok(())
             }
         }
@@ -1005,6 +1046,8 @@ impl TypeChecker {
                     let object_type = self.check_expression(object)?;
 
                     if let Type::Named(class_name) = object_type {
+                        self.check_member_visibility(&class_name, name)?;
+
                         let signatures = self.find_methods(&class_name, name);
 
                         if !signatures.is_empty() {
@@ -1305,6 +1348,8 @@ impl TypeChecker {
     fn member_type(&self, object_type: &Type, name: &str) -> Result<Type, CompileError> {
         match object_type {
             Type::Named(class_name) => {
+                self.check_member_visibility(class_name, name)?;
+
                 let signatures = self.find_methods(class_name, name);
 
                 if signatures.len() == 1 {
@@ -1316,6 +1361,11 @@ impl TypeChecker {
                     // sans contexte d'appel. Les appels directs sont traités
                     // plus haut et sélectionnent la bonne signature.
                     return Ok(Type::Dynamic);
+                }
+
+                // Champ déclaré (`let age: int = 0;`) : son type est connu.
+                if let Some(field_type) = self.find_field(class_name, name) {
+                    return Ok(field_type);
                 }
             }
 
@@ -1340,6 +1390,69 @@ impl TypeChecker {
         }
 
         Ok(Type::Dynamic)
+    }
+
+    /// Première classe de la hiérarchie de `class_name` qui déclare `member`
+    /// (champ ou méthode), avec sa visibilité (`true` = privé).
+    fn find_member_declaration(&self, class_name: &str, member: &str) -> Option<(String, bool)> {
+        let mut pending = vec![class_name.to_string()];
+        let mut visited = HashSet::new();
+
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+
+            if let Some(class) = self.classes.get(&name) {
+                if class.fields.contains_key(member) || class.methods.contains_key(member) {
+                    return Some((name, class.private_members.contains(member)));
+                }
+
+                pending.extend(class.bases.iter().cloned());
+            }
+        }
+
+        None
+    }
+
+    /// Refuse `objet.membre` si `membre` est privé et que le code courant
+    /// n'est pas dans le corps de la classe qui le déclare.
+    ///
+    /// Ne voit que les classes connues de ce fichier : pour une classe
+    /// importée (ou une valeur dynamique), c'est la VM qui contrôle.
+    fn check_member_visibility(&self, class_name: &str, member: &str) -> Result<(), CompileError> {
+        match self.find_member_declaration(class_name, member) {
+            Some((owner, true)) if self.current_class.as_deref() != Some(owner.as_str()) => {
+                Err(CompileError::PrivateMemberAccess {
+                    class_name: owner,
+                    member: member.to_string(),
+                })
+            }
+
+            _ => Ok(()),
+        }
+    }
+
+    /// Type déclaré d'un champ, en remontant la hiérarchie.
+    fn find_field(&self, class_name: &str, field: &str) -> Option<Type> {
+        let mut pending = vec![class_name.to_string()];
+        let mut visited = HashSet::new();
+
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+
+            if let Some(class) = self.classes.get(&name) {
+                if let Some(ty) = class.fields.get(field) {
+                    return Some(ty.clone());
+                }
+
+                pending.extend(class.bases.iter().cloned());
+            }
+        }
+
+        None
     }
 
     fn find_methods(&self, class_name: &str, method_name: &str) -> Vec<FunctionType> {
@@ -1706,6 +1819,122 @@ let r: int = first((1, 2));
 
         assert!(check("let bad: Tuple<int> = (1, 2);").is_err());
         assert!(check("let bad: Tuple<int, str> = (1.5, \"a\");").is_err());
+    }
+
+    fn parse_fails(source: &str) -> bool {
+        let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+        Parser::new(tokens).parse().is_err()
+    }
+
+    /// Les erreurs relevées pendant `check_statements` sont enveloppées dans
+    /// `WithLocation` : on remonte à l'erreur d'origine.
+    fn is_private_access(result: &Result<(), CompileError>) -> bool {
+        let mut error = match result {
+            Err(error) => error,
+            Ok(()) => return false,
+        };
+
+        while let CompileError::WithLocation { source, .. } = error {
+            error = &**source;
+        }
+
+        matches!(error, CompileError::PrivateMemberAccess { .. })
+    }
+
+    const PERSONNE: &str = r#"
+class Personne {
+    private let age: int = 0;
+
+    public func initialize(age: int) {
+        this.age = age;
+    }
+
+    public func setAge(age: int) {
+        this.age = age;
+    }
+
+    public func getAge() -> int {
+        return this.age;
+    }
+
+    public func number() -> int {
+        return 22;
+    }
+}
+
+let p: Personne = new Personne(26);
+p.setAge(44);
+let age: int = p.getAge();
+"#;
+
+    #[test]
+    fn public_api_of_a_class_with_private_field_type_checks() {
+        let result = check(PERSONNE);
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn private_field_is_forbidden_outside_the_class() {
+        let read = check(&format!("{PERSONNE}\nprintln(p.age);"));
+        assert!(is_private_access(&read), "{:?}", read);
+
+        let write = check(&format!("{PERSONNE}\np.age = 3;"));
+        assert!(is_private_access(&write), "{:?}", write);
+    }
+
+    #[test]
+    fn private_method_is_forbidden_outside_the_class() {
+        let result = check(
+            r#"
+class A {
+    private func secret() -> int { return 1; }
+    func open() -> int { return this.secret(); }
+}
+let a = new A();
+let x: int = a.open();
+a.secret();
+"#,
+        );
+        assert!(is_private_access(&result), "{:?}", result);
+    }
+
+    #[test]
+    fn private_members_are_usable_by_other_instances_and_callbacks() {
+        let result = check(
+            r#"
+class A {
+    private let n: int = 1;
+    func same(other: A) -> int { return other.n; }
+    func later() { let f = func() { return this.n; }; return f(); }
+}
+"#,
+        );
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn declared_field_types_are_enforced() {
+        assert!(check("class A { let n: int = 0; func f() { this.n = \"x\"; } }").is_err());
+        assert!(check("class A { let n: int = \"x\"; }").is_err());
+        assert!(check("class A { let n: float = 1; }").is_ok());
+    }
+
+    #[test]
+    fn initialize_is_an_alias_of_the_constructor() {
+        assert!(
+            check("class A { func initialize(x: int) { this.x = x; } } let a = new A(1);").is_ok()
+        );
+        assert!(
+            check("class A { func initialize(x: int) { this.x = x; } } let a = new A();").is_err()
+        );
+    }
+
+    #[test]
+    fn duplicate_fields_and_mixed_overload_visibility_are_parse_errors() {
+        assert!(parse_fails("class A { let n = 1; let n = 2; }"));
+        assert!(parse_fails(
+            "class A { func f() { return 1; } private func f(x) { return 2; } }"
+        ));
     }
 }
 

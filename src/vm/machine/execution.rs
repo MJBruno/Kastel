@@ -167,6 +167,7 @@ impl VirtualMachine {
             | RuntimeError::InterfaceMethodArityMismatch { .. }
             | RuntimeError::DuplicateMethod { .. }
             | RuntimeError::AmbiguousMethod { .. }
+            | RuntimeError::PrivateMemberAccess { .. }
             | RuntimeError::ArrayIndexNotInteger
             | RuntimeError::ArrayIndexOutOfBounds { .. }
             | RuntimeError::NotIndexable

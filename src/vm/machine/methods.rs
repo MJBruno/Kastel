@@ -136,6 +136,92 @@ impl VirtualMachine {
     }
 
     // ============================================================
+    //                  VISIBILITÉ DES MEMBRES
+    // ============================================================
+
+    /// Classe du code en cours d'exécution (`None` hors d'une méthode).
+    ///
+    /// Les closures créées DANS une méthode héritent de sa classe (voir
+    /// `op_closure`) : un rappel écrit dans une méthode peut donc accéder
+    /// aux membres privés de cette classe.
+    fn caller_owner_class(&self) -> Option<Gc<Object>> {
+        let frame = self.frames.last()?;
+        let owner = frame_closure(&frame.closure).owner_class.clone();
+
+        owner
+    }
+
+    /// Refuse l'accès à `receiver.name` si `name` est un membre `private`
+    /// déclaré par une classe de `receiver` et que le code appelant n'est
+    /// PAS une méthode de cette classe.
+    ///
+    /// Sans effet sur les valeurs qui ne sont pas des instances : le typage
+    /// reste dynamique, seule la visibilité déclarée est contrôlée.
+    pub(crate) fn ensure_member_access(
+        &self,
+        receiver: &Value,
+        name: &str,
+    ) -> Result<(), RuntimeError> {
+        let Value::Object(handle) = receiver else {
+            return Ok(());
+        };
+
+        let class = {
+            let object = handle.borrow();
+
+            match &*object {
+                Object::Instance {
+                    class: Some(class), ..
+                } => class.clone(),
+
+                _ => return Ok(()),
+            }
+        };
+
+        let mut current = Some(class);
+
+        while let Some(candidate) = current {
+            let (is_private, class_name, superclass) = {
+                let object = candidate.borrow();
+
+                match &*object {
+                    Object::Class {
+                        name: class_name,
+                        private_members,
+                        superclass,
+                        ..
+                    } => (
+                        private_members.contains(name),
+                        class_name.clone(),
+                        superclass.clone(),
+                    ),
+
+                    _ => return Ok(()),
+                }
+            };
+
+            if is_private {
+                let allowed = self
+                    .caller_owner_class()
+                    .is_some_and(|owner| Gc::ptr_eq(&owner, &candidate));
+
+                if allowed {
+                    return Ok(());
+                }
+
+                return Err(RuntimeError::PrivateMemberAccess {
+                    class_name,
+                    member: name.to_string(),
+                });
+            }
+
+            current = superclass;
+        }
+
+        Ok(())
+    }
+
+    // ============================================================
     //                     INVOKE METHOD
     // ============================================================
 
@@ -219,6 +305,10 @@ impl VirtualMachine {
                                 _ => return Err(RuntimeError::TypeError),
                             }
                         };
+
+                        // Méthode privée : appelable uniquement depuis la
+                        // classe qui la déclare.
+                        self.ensure_member_access(&receiver, &method_name)?;
 
                         let method = match Self::find_class_method_from(
                             class_handle.clone(),

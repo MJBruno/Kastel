@@ -172,7 +172,7 @@ impl Chunk {
             // =====================================================
             // CLASSES / INSTANCES / INTERFACES
             // =====================================================
-            OpCode::Class => self.constant_instruction("OP_CLASS", offset),
+            OpCode::Class => self.three_byte_instruction("OP_CLASS", offset),
 
             OpCode::NewInstance => self.byte_instruction("OP_NEW_INSTANCE", offset),
 
@@ -248,6 +248,23 @@ impl Chunk {
     // =============================================================
     // TWO BYTE OPERANDS
     // =============================================================
+
+    /// `OP_CLASS bases méthodes membres_privés`
+    fn three_byte_instruction(&self, name: &str, offset: usize) -> usize {
+        if offset + 3 >= self.code.len() {
+            println!("{name:<24} <missing operands>");
+            return self.code.len();
+        }
+
+        println!(
+            "{name:<24} {:4} {:4} {:4}",
+            self.code[offset + 1],
+            self.code[offset + 2],
+            self.code[offset + 3]
+        );
+
+        offset + 4
+    }
 
     fn two_byte_instruction(&self, name: &str, offset: usize) -> usize {
         if offset + 2 >= self.code.len() {

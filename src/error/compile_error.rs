@@ -159,6 +159,13 @@ pub enum CompileError {
         method_name: String,
         arity: usize,
     },
+
+    /// Accès statique à un membre `private` depuis l'extérieur de la
+    /// classe qui le déclare.
+    PrivateMemberAccess {
+        class_name: String,
+        member: String,
+    },
 }
 
 impl std::fmt::Display for CompileError {
@@ -347,6 +354,13 @@ impl std::fmt::Display for CompileError {
                     "La méthode '{class_name}.{method_name}' avec {arity} argument(s) est déjà déclarée"
                 )
             }
+
+            CompileError::PrivateMemberAccess { class_name, member } => {
+                write!(
+                    f,
+                    "Le membre '{class_name}.{member}' est privé : accès refusé en dehors de la classe"
+                )
+            }
         }
     }
 }
@@ -482,6 +496,16 @@ impl CompileError {
                 ),
                 0,
                 0,
+            ),
+
+            CompileError::PrivateMemberAccess { class_name, member } => Diagnostic::new(
+                format!("le membre '{class_name}.{member}' est privé"),
+                0,
+                0,
+            )
+            .with_len(member.len())
+            .with_help(
+                "utilisez une méthode publique de la classe (par exemple un accesseur) au lieu d'accéder directement au membre.",
             ),
 
             CompileError::InvalidMemberAccess { name } => {

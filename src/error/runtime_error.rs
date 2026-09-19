@@ -107,6 +107,12 @@ pub enum RuntimeError {
     AmbiguousMethod {
         name: String,
     },
+
+    /// Accès à un membre `private` depuis l'extérieur de sa classe.
+    PrivateMemberAccess {
+        class_name: String,
+        member: String,
+    },
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -256,6 +262,13 @@ impl std::fmt::Display for RuntimeError {
                 write!(
                     f,
                     "La méthode '{name}' est surchargée et ne peut pas être utilisée sans appel explicite."
+                )
+            }
+
+            RuntimeError::PrivateMemberAccess { class_name, member } => {
+                write!(
+                    f,
+                    "Le membre '{member}' de la classe '{class_name}' est privé : accès refusé en dehors de la classe."
                 )
             }
         }
@@ -446,6 +459,15 @@ impl RuntimeError {
             )
             .with_help(
                 "appelez directement la méthode avec ses arguments afin de sélectionner la surcharge correspondante.",
+            ),
+
+            RuntimeError::PrivateMemberAccess { class_name, member } => Diagnostic::new(
+                format!("le membre '{member}' de la classe '{class_name}' est privé"),
+                0,
+                0,
+            )
+            .with_help(
+                "utilisez une méthode publique de la classe (par exemple un accesseur) au lieu d'accéder directement au membre.",
             ),
 
             // Variantes sans donnée exploitable pour expected/found/help :

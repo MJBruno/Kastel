@@ -54,9 +54,11 @@ impl VirtualMachine {
             pending_upvalues.push(upvalue);
         }
 
-        let global_env = {
+        let (global_env, enclosing_owner) = {
             let frame = self.current_frame()?;
-            frame_closure(&frame.closure).global_env.clone()
+            let enclosing = frame_closure(&frame.closure);
+
+            (enclosing.global_env.clone(), enclosing.owner_class.clone())
         };
 
         let closure = Object::new_closure(
@@ -64,6 +66,16 @@ impl VirtualMachine {
             pending_upvalues,
             global_env,
         );
+
+        // Une fonction anonyme écrite DANS une méthode appartient à la même
+        // classe : elle peut accéder aux membres privés (et à `base`). Pour
+        // les méthodes elles-mêmes, `op_class` remplace ensuite cette valeur
+        // par la classe qui les déclare.
+        if let Some(owner) = enclosing_owner
+            && let Object::Closure(created) = &mut *closure.borrow_mut()
+        {
+            created.owner_class = Some(owner);
+        }
 
         self.push(Value::Object(closure));
 

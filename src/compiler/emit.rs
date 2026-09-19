@@ -1,5 +1,6 @@
 use crate::bytecode::chunk::OpCode;
 use crate::error::compile_error::CompileError;
+use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
@@ -9,7 +10,57 @@ impl Compiler {
     // CONSTANTES
     // ============================================================
 
+    /// Cherche dans le pool du fragment courant une constante identique
+    /// (entier, flottant, booléen ou chaîne). Sans cette réutilisation,
+    /// chaque occurrence de `println`, de `math`, d'un nom de méthode ou
+    /// d'un littéral ajoutait une entrée : un script de quelques dizaines
+    /// de lignes dépassait les 256 constantes (opérande sur un octet) et
+    /// échouait avec « Trop de constantes dans ce fragment de code ».
+    ///
+    /// Les fonctions et autres objets ne sont jamais fusionnés.
+    fn find_constant(&self, value: &Value) -> Option<u8> {
+        let constants = &self.chunk.constants;
+
+        let position = match value {
+            Value::Integer(wanted) => constants
+                .iter()
+                .position(|constant| matches!(constant, Value::Integer(found) if found == wanted)),
+
+            // Comparaison sur les bits : 0.0 et -0.0 restent distincts,
+            // et NaN est retrouvé (NaN != NaN sinon).
+            Value::Float(wanted) => constants.iter().position(|constant| {
+                matches!(constant, Value::Float(found) if found.to_bits() == wanted.to_bits())
+            }),
+
+            Value::Boolean(wanted) => constants
+                .iter()
+                .position(|constant| matches!(constant, Value::Boolean(found) if found == wanted)),
+
+            Value::Object(handle) => {
+                let wanted = match &*handle.borrow() {
+                    Object::String(text) => text.clone(),
+                    _ => return None,
+                };
+
+                constants.iter().position(|constant| match constant {
+                    Value::Object(other) => {
+                        matches!(&*other.borrow(), Object::String(text) if *text == wanted)
+                    }
+                    _ => false,
+                })
+            }
+
+            _ => None,
+        }?;
+
+        u8::try_from(position).ok()
+    }
+
     pub(crate) fn make_constant(&mut self, value: Value) -> Result<u8, CompileError> {
+        if let Some(index) = self.find_constant(&value) {
+            return Ok(index);
+        }
+
         let index = self.chunk.constants.len();
 
         if index > u8::MAX as usize {
@@ -125,3 +176,39 @@ impl Compiler {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::compiler::compiler::Compiler;
+    use crate::frontend::{lexer::lexer::Lexer, parser::Parser};
+    use crate::stdlib::execute_native;
+
+    fn compile(source: &str) -> Result<(), crate::error::compile_error::CompileError> {
+        let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+        let statements = Parser::new(tokens).parse().unwrap();
+
+        let mut compiler = Compiler::new();
+        execute_native(&mut compiler);
+        compiler.compile(&statements).map(|_| ())
+    }
+
+    #[test]
+    fn repeated_names_and_literals_share_one_constant() {
+        // 400 appels : sans dédoublonnage, `println` et `1` occuperaient
+        // 800 entrées et dépasseraient la limite de 256 constantes.
+        let source = "println(1);\n".repeat(400);
+        let result = compile(&source);
+
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn distinct_constants_beyond_the_limit_are_still_rejected() {
+        let source = (0..300)
+            .map(|index| format!("println(\"s{index}\");\n"))
+            .collect::<String>();
+
+        assert!(compile(&source).is_err());
+    }
+}
+

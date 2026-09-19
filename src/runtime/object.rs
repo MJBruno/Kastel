@@ -44,6 +44,10 @@ pub enum Object {
         /// Surcharges par arité : pour un nom donné, une closure par
         /// nombre d'arguments (hors `this`).
         methods: HashMap<String, Vec<Value>>,
+        /// Noms des membres (champs et méthodes) déclarés `private` dans
+        /// CETTE classe. L'accès n'est permis que depuis le corps de la
+        /// classe (voir `VirtualMachine::ensure_member_access`).
+        private_members: HashSet<String>,
     },
 
     Interface {

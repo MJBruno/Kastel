@@ -388,8 +388,9 @@ impl VirtualMachine {
             OpCode::Class => {
                 let base_count = self.read_byte()? as usize;
                 let method_count = self.read_byte()? as usize;
+                let private_count = self.read_byte()? as usize;
 
-                self.op_class(base_count, method_count)?;
+                self.op_class(base_count, method_count, private_count)?;
                 Ok(false)
             }
 

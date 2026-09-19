@@ -79,9 +79,37 @@ pub struct MatchArm {
     pub guard: Option<Expression>,
     pub body: Vec<Statement>,
 }
+/// Visibilité d'un membre de classe (champ ou méthode).
+///
+/// `Public` est la valeur par défaut : une classe sans modificateur se
+/// comporte exactement comme avant. `Private` restreint l'accès au corps de
+/// la classe qui déclare le membre (contrôlé statiquement quand le type est
+/// connu, et TOUJOURS à l'exécution).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+/// Champ déclaré dans le corps d'une classe :
+/// `private let age: int = 0;`
+#[derive(Debug, Clone)]
+pub struct ClassField {
+    pub name: String,
+    pub visibility: Visibility,
+    /// Annotation de type (`: int`), `None` = champ dynamique.
+    pub type_annotation: Option<TypeExpr>,
+    /// Valeur initiale. Le parser la transforme en méthode cachée
+    /// `__fields_<Classe>` appelée au début de chaque `init`.
+    pub initializer: Option<Expression>,
+    pub line: usize,
+    pub column: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct FunctionMethod {
     pub name: String,
+    pub visibility: Visibility,
     pub params: Vec<String>,
     /// Annotations de type des paramètres, un slot par entrée de
     /// `params` (même longueur, même ordre). `None` = paramètre non
@@ -209,6 +237,7 @@ pub enum Statement {
     Class {
         name: String,
         bases: Vec<String>,
+        fields: Vec<ClassField>,
         methods: Vec<FunctionMethod>,
     },
     Interface {

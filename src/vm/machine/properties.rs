@@ -10,6 +10,9 @@ impl VirtualMachine {
         let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
 
         let object = self.peek()?.clone();
+
+        self.ensure_member_access(&object, &name)?;
+
         let value = object.get_property(&name)?;
 
         self.pop()?;
@@ -31,6 +34,8 @@ impl VirtualMachine {
         let len = self.stack.len();
         let object = self.stack[len - 2].clone();
         let value = self.stack[len - 1].clone();
+
+        self.ensure_member_access(&object, &name)?;
 
         object.set_property(&name, value)?;
 
