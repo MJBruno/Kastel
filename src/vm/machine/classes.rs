@@ -4,6 +4,7 @@ use super::VirtualMachine;
 
 use crate::{
     error::runtime_error::RuntimeError,
+    frontend::ast::{CONSTRUCTOR_NAME, FIELD_INITIALIZER_PREFIX},
     runtime::{gc_handle::Gc, object::Object, value::Value},
 };
 
@@ -408,48 +409,86 @@ impl VirtualMachine {
 
         self.push(instance.clone());
 
-        let init = Self::find_class_method_from(class_handle.clone(), "init", arg_count);
+        // 1. Choix du constructeur, par arité (surcharge). Les constructeurs
+        //    de la classe de base sont hérités.
+        let constructor =
+            Self::find_class_method_from(class_handle.clone(), CONSTRUCTOR_NAME, arg_count);
 
-        match init {
-            Some(init) => {
-                let mut init_args = Vec::with_capacity(arg_count + 1);
+        if constructor.is_none() {
+            // Aucun `initialize` ne prend `arg_count` arguments. S'il en
+            // existe d'autres arités, c'est une erreur d'arité. Sinon la
+            // classe n'a pas de constructeur : le constructeur PAR DÉFAUT
+            // implicite (sans paramètre) s'applique et n'accepte aucun
+            // argument.
+            let declared = Self::class_method_arities(class_handle.clone(), CONSTRUCTOR_NAME);
 
-                init_args.push(instance.clone());
-                init_args.extend(args);
+            let expected = declared.first().copied().unwrap_or(0);
 
-                self.invoke_sync(init, &init_args)?;
-
-                self.pop()?;
-            }
-
-            None => {
-                // Aucun constructeur ne prend `arg_count` arguments. Si la
-                // classe (ou une classe parente) déclare des `init`, c'est
-                // une erreur d'arité — sans quoi `new C()` réussirait
-                // silencieusement pour une classe qui n'a que `init(a)`.
-                let declared = Self::class_method_arities(class_handle, "init");
-
-                if let Some(expected) = declared.first() {
-                    return Err(RuntimeError::WrongArgumentCount {
-                        expected: *expected,
-                        found: arg_count,
-                    });
-                }
-
-                if !args.is_empty() {
-                    return Err(RuntimeError::WrongArgumentCount {
-                        expected: 0,
-                        found: args.len(),
-                    });
-                }
-
-                self.pop()?;
+            if !declared.is_empty() || arg_count != 0 {
+                return Err(RuntimeError::WrongArgumentCount {
+                    expected,
+                    found: arg_count,
+                });
             }
         }
 
+        // 2. Valeurs initiales des champs, de la classe de base vers la
+        //    classe dérivée, AVANT le constructeur.
+        for class in Self::class_chain(class_handle.clone()) {
+            if let Some(initializer) = Self::find_field_initializer(&class) {
+                self.invoke_sync(initializer, std::slice::from_ref(&instance))?;
+            }
+        }
+
+        // 3. Constructeur explicite, s'il y en a un.
+        if let Some(constructor) = constructor {
+            let mut constructor_args = Vec::with_capacity(arg_count + 1);
+
+            constructor_args.push(instance.clone());
+            constructor_args.extend(args);
+
+            self.invoke_sync(constructor, &constructor_args)?;
+        }
+
+        self.pop()?;
         self.push(instance);
 
         Ok(())
+    }
+
+    /// Classes de la hiérarchie de `class`, de la plus ancienne (racine) à
+    /// la plus dérivée (`class` elle-même en dernier).
+    fn class_chain(class: Gc<Object>) -> Vec<Gc<Object>> {
+        let mut chain = Vec::new();
+        let mut current = Some(class);
+
+        while let Some(handle) = current {
+            let superclass = match &*handle.borrow() {
+                Object::Class { superclass, .. } => superclass.clone(),
+                _ => None,
+            };
+
+            chain.push(handle);
+            current = superclass;
+        }
+
+        chain.reverse();
+        chain
+    }
+
+    /// Méthode cachée `__fields_<Classe>` qui porte les valeurs initiales
+    /// des champs déclarés par CETTE classe (pas ceux de ses bases).
+    fn find_field_initializer(class: &Gc<Object>) -> Option<Value> {
+        let object = class.borrow();
+
+        match &*object {
+            Object::Class { name, methods, .. } => methods
+                .get(&format!("{FIELD_INITIALIZER_PREFIX}{name}"))
+                .and_then(|overloads| overloads.first())
+                .cloned(),
+
+            _ => None,
+        }
     }
 
     // ========================================================

@@ -11,7 +11,7 @@ from personne import Personne;
 
 let p: Personne = new Personne(26);
 
-
+println(p.age)
 
 p.setAge(44);
 

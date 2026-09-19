@@ -5,12 +5,6 @@ use crate::frontend::lexer::token::TokenKind;
 
 use super::Parser;
 
-/// Nom du constructeur reconnu par la VM.
-const CONSTRUCTOR_NAME: &str = "init";
-
-/// Alias accepté dans le code source : `func initialize(...)`.
-const CONSTRUCTOR_ALIAS: &str = "initialize";
-
 #[allow(dead_code)]
 impl Parser {
     // ============================================================
@@ -70,6 +64,22 @@ impl Parser {
 
             let method_name = self.consume(TokenKind::Identifier, "Nom de méthode attendu")?;
 
+            // L'ancien constructeur `init` n'est plus reconnu : plutôt que de
+            // le traiter silencieusement comme une méthode ordinaire (et de
+            // faire échouer `new` avec une erreur d'arité déroutante), on
+            // indique la migration à faire.
+            if method_name.lexeme == LEGACY_CONSTRUCTOR_NAME {
+                return Err(ParserError {
+                    message: format!(
+                        "Le constructeur s'appelle désormais '{CONSTRUCTOR_NAME}' : \
+                         renommez 'func {LEGACY_CONSTRUCTOR_NAME}(...)' en \
+                         'func {CONSTRUCTOR_NAME}(...)'"
+                    ),
+                    line: method_name.line,
+                    column: method_name.column,
+                });
+            }
+
             self.consume(TokenKind::LeftParen, "'(' attendu après le nom de méthode")?;
 
             let mut params = Vec::new();
@@ -107,16 +117,8 @@ impl Parser {
 
             let body = self.parse_block_statement()?;
 
-            // `initialize` est un alias du constructeur `init` : la VM et le
-            // vérificateur de types ne connaissent que `init`.
-            let normalized_name = if method_name.lexeme == CONSTRUCTOR_ALIAS {
-                CONSTRUCTOR_NAME.to_string()
-            } else {
-                method_name.lexeme
-            };
-
             methods.push(FunctionMethod {
-                name: normalized_name,
+                name: method_name.lexeme,
                 visibility,
                 params,
                 param_types,
@@ -214,19 +216,19 @@ impl Parser {
         })
     }
 
-    /// Transforme les valeurs initiales des champs en code ordinaire :
+    /// Transforme les valeurs initiales des champs en méthode cachée :
     ///
     /// ```text
     /// private let age: int = 0;
     ///
-    /// func __fields_Personne() { this.age = 0; }      // méthode cachée
-    /// func init(...) { this.__fields_Personne(); ... }  // ajout en tête
+    /// private func __fields_Personne() { this.age = 0; }
     /// ```
     ///
-    /// La VM n'a donc rien à savoir des initialiseurs. Le nom de la méthode
-    /// cachée contient celui de la classe pour qu'une classe dérivée ne
-    /// masque pas les initialiseurs de sa classe de base. Sans `init`
-    /// explicite, un `init()` sans paramètre est ajouté.
+    /// La VM l'exécute à chaque `new`, AVANT le constructeur et en commençant
+    /// par la classe de base : les champs sont donc initialisés que la classe
+    /// déclare un `initialize`, en hérite, ou utilise le constructeur par
+    /// défaut implicite. Le nom contient celui de la classe pour qu'une
+    /// classe dérivée ne masque pas les initialiseurs de sa base.
     fn desugar_field_initializers(
         class_name: &str,
         fields: &[ClassField],
@@ -255,44 +257,8 @@ impl Parser {
             return;
         }
 
-        let helper = format!("__fields_{class_name}");
-
-        let call_helper = |helper: &str| Statement::Expression {
-            expression: Expression::Call {
-                callee: Box::new(Expression::Member {
-                    object: Box::new(Expression::This),
-                    name: helper.to_string(),
-                    line: 0,
-                    column: 0,
-                }),
-                arguments: Vec::new(),
-                line: 0,
-                column: 0,
-            },
-        };
-
-        let mut has_constructor = false;
-
-        for method in methods.iter_mut() {
-            if method.name == CONSTRUCTOR_NAME {
-                has_constructor = true;
-                method.body.insert(0, call_helper(&helper));
-            }
-        }
-
-        if !has_constructor {
-            methods.push(FunctionMethod {
-                name: CONSTRUCTOR_NAME.to_string(),
-                visibility: Visibility::Public,
-                params: Vec::new(),
-                param_types: Vec::new(),
-                return_type: None,
-                body: vec![call_helper(&helper)],
-            });
-        }
-
         methods.push(FunctionMethod {
-            name: helper,
+            name: format!("{FIELD_INITIALIZER_PREFIX}{class_name}"),
             visibility: Visibility::Private,
             params: Vec::new(),
             param_types: Vec::new(),

@@ -5,9 +5,9 @@
 
 export class Personne {
 
-    private let age: int = 0;
+    public let age: int = 0;
 
-    func init(age: int) {
+    func initialize(age: int) {
         this.age = age;
     }
 

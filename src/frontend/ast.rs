@@ -79,6 +79,22 @@ pub struct MatchArm {
     pub guard: Option<Expression>,
     pub body: Vec<Statement>,
 }
+/// Nom de la méthode-constructeur : `func initialize(...)`.
+///
+/// Elle peut être surchargée par arité. Si une classe n'en déclare aucune,
+/// un constructeur par défaut implicite (sans paramètre) est utilisé, et une
+/// classe dérivée hérite des constructeurs de sa classe de base.
+pub const CONSTRUCTOR_NAME: &str = "initialize";
+
+/// Ancien nom du constructeur, désormais refusé avec un message de migration.
+pub const LEGACY_CONSTRUCTOR_NAME: &str = "init";
+
+/// Préfixe de la méthode cachée qui porte les valeurs initiales des champs
+/// d'une classe (`__fields_<Classe>`). La VM l'exécute à la création de
+/// chaque instance, AVANT le constructeur, en commençant par la classe de
+/// base.
+pub const FIELD_INITIALIZER_PREFIX: &str = "__fields_";
+
 /// Visibilité d'un membre de classe (champ ou méthode).
 ///
 /// `Public` est la valeur par défaut : une classe sans modificateur se
@@ -100,7 +116,8 @@ pub struct ClassField {
     /// Annotation de type (`: int`), `None` = champ dynamique.
     pub type_annotation: Option<TypeExpr>,
     /// Valeur initiale. Le parser la transforme en méthode cachée
-    /// `__fields_<Classe>` appelée au début de chaque `init`.
+    /// `__fields_<Classe>`, exécutée par la VM à chaque `new`, avant le
+    /// constructeur (voir `FIELD_INITIALIZER_PREFIX`).
     pub initializer: Option<Expression>,
     pub line: usize,
     pub column: usize,

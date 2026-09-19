@@ -12,17 +12,17 @@ interface Shape {
 
 class Point {
     // -- Constructeur surchargé -------------------------------------------
-    func init() {
+    func initialize() {
         this.x = 0;
         this.y = 0;
     }
 
-    func init(x: int) {
+    func initialize(x: int) {
         this.x = x;
         this.y = 0;
     }
 
-    func init(x: int, y: int) {
+    func initialize(x: int, y: int) {
         this.x = x;
         this.y = y;
     }
@@ -59,7 +59,7 @@ println(c.move(10, 20).to_tuple());     // (11, 22)
 
 // -- Déclaration d'interface surchargée ------------------------------------
 class Square: Shape {
-    func init(side: float) {
+    func initialize(side: float) {
         this.side = side;
     }
 

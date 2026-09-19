@@ -1162,19 +1162,30 @@ impl TypeChecker {
                 arguments,
                 ..
             } => {
-                let signatures = self.find_methods(class_name, "init");
+                let signatures = self.find_methods(class_name, CONSTRUCTOR_NAME);
 
                 if !signatures.is_empty() {
                     self.resolve_overload(
                         &signatures,
                         arguments,
-                        &format!("{class_name}.init"),
+                        &format!("{class_name}.{CONSTRUCTOR_NAME}"),
                     )?;
                 } else {
-                    // Classe sans constructeur connu : les arguments restent
-                    // dynamiques pour conserver le typage graduel.
+                    // Aucun constructeur déclaré : on évalue quand même les
+                    // arguments (typage graduel)...
                     for argument in arguments {
                         self.check_expression(argument)?;
+                    }
+
+                    // ...mais si toute la hiérarchie est connue, c'est le
+                    // constructeur par défaut implicite qui s'applique : il
+                    // n'accepte aucun argument. Pour une classe importée (ou
+                    // dont une base est inconnue), c'est la VM qui tranche.
+                    if !arguments.is_empty() && self.hierarchy_is_known(class_name) {
+                        return Err(CompileError::WrongArgumentCount {
+                            expected: 0,
+                            found: arguments.len(),
+                        });
                     }
                 }
 
@@ -1390,6 +1401,26 @@ impl TypeChecker {
         }
 
         Ok(Type::Dynamic)
+    }
+
+    /// `true` si `class_name` et toutes ses bases sont déclarées dans ce
+    /// fichier (donc si l'absence de constructeur est certaine).
+    fn hierarchy_is_known(&self, class_name: &str) -> bool {
+        let mut pending = vec![class_name.to_string()];
+        let mut visited = HashSet::new();
+
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+
+            match self.classes.get(&name) {
+                Some(class) => pending.extend(class.bases.iter().cloned()),
+                None => return false,
+            }
+        }
+
+        true
     }
 
     /// Première classe de la hiérarchie de `class_name` qui déclare `member`
@@ -1741,9 +1772,9 @@ let result = add(10, 20);
         let result = check(
             r#"
 class Point {
-    func init() { this.x = 0; this.y = 0; }
-    func init(x: int) { this.x = x; this.y = 0; }
-    func init(x: int, y: int) { this.x = x; this.y = y; }
+    func initialize() { this.x = 0; this.y = 0; }
+    func initialize(x: int) { this.x = x; this.y = 0; }
+    func initialize(x: int, y: int) { this.x = x; this.y = y; }
     func scale() -> int { return 1; }
     func scale(k: int) -> int { return k; }
 }
@@ -1769,7 +1800,7 @@ let m: int = c.scale(3);
             check("class A { func f(x) { return 1; } } let a = new A(); a.f(1, 2);").is_err()
         );
         assert!(
-            check("class B { func init(x) { this.x = x; } } let b = new B();").is_err()
+            check("class B { func initialize(x) { this.x = x; } } let b = new B();").is_err()
         );
     }
 
@@ -1920,13 +1951,52 @@ class A {
     }
 
     #[test]
-    fn initialize_is_an_alias_of_the_constructor() {
+    fn initialize_is_the_constructor_and_legacy_init_is_rejected() {
         assert!(
             check("class A { func initialize(x: int) { this.x = x; } } let a = new A(1);").is_ok()
         );
         assert!(
             check("class A { func initialize(x: int) { this.x = x; } } let a = new A();").is_err()
         );
+
+        // L'ancien nom est refusé avec un message de migration.
+        assert!(parse_fails("class A { func init(x) { this.x = x; } }"));
+    }
+
+    #[test]
+    fn constructors_are_overloaded_by_arity() {
+        let source = r#"
+class Point {
+    func initialize() { this.x = 0; }
+    func initialize(x: int) { this.x = x; }
+    func initialize(x: int, y: int) { this.x = x; this.y = y; }
+}
+"#;
+        assert!(check(&format!("{source}\nlet a = new Point(); let b = new Point(1); let c = new Point(1, 2);")).is_ok());
+        assert!(check(&format!("{source}\nlet d = new Point(1, 2, 3);")).is_err());
+        assert!(check(&format!("{source}\nlet e = new Point(\"x\");")).is_err());
+
+        let duplicate = check("class P { func initialize(a) {} func initialize(b) {} }");
+        assert!(matches!(duplicate, Err(CompileError::DuplicateMethod { .. })));
+    }
+
+    #[test]
+    fn class_without_constructor_uses_an_implicit_default_constructor() {
+        assert!(check("class A { func f() { return 1; } } let a = new A();").is_ok());
+        assert!(check("class A { func f() { return 1; } } let a = new A(1);").is_err());
+
+        // Des champs avec valeur initiale ne changent rien : toujours le
+        // constructeur par défaut.
+        assert!(check("class B { let n: int = 0; } let b = new B();").is_ok());
+        assert!(check("class B { let n: int = 0; } let b = new B(5);").is_err());
+    }
+
+    #[test]
+    fn derived_class_inherits_base_constructors() {
+        let base = "class A { func initialize(x: int) { this.x = x; } }\n";
+
+        assert!(check(&format!("{base}class B: A {{ }}\nlet b = new B(1);")).is_ok());
+        assert!(check(&format!("{base}class B: A {{ }}\nlet b = new B();")).is_err());
     }
 
     #[test]

@@ -492,7 +492,7 @@ export func shuffle(items) {
 // ------------------------------------------------------------------
 
 export class Complexe {
-    func init(real, imaginaire) {
+    func initialize(real, imaginaire) {
         this.real = real;
         this.imaginaire = imaginaire;
     }
