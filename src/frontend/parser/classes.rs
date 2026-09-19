@@ -147,16 +147,18 @@ impl Parser {
 
             self.consume(TokenKind::LeftParen, "'(' attendu après le nom de méthode")?;
 
-            let mut arity = 0;
+            let mut params = Vec::new();
+            let mut param_types = Vec::new();
 
             if !self.check(TokenKind::RightParen) {
                 loop {
-                    self.consume(
+                    let param = self.consume(
                         TokenKind::Identifier,
                         "Nom de paramètre attendu dans l'interface",
                     )?;
 
-                    arity += 1;
+                    params.push(param.lexeme);
+                    param_types.push(self.parse_optional_type_annotation()?);
 
                     if !self.match_token(TokenKind::Comma) {
                         break;
@@ -170,6 +172,12 @@ impl Parser {
 
             self.consume(TokenKind::RightParen, "')' attendu après les paramètres")?;
 
+            let return_type = if self.match_token(TokenKind::Arrow) {
+                Some(self.parse_type_expression()?)
+            } else {
+                None
+            };
+
             self.consume(
                 TokenKind::Semicolon,
                 "';' attendu après la signature de méthode",
@@ -177,7 +185,9 @@ impl Parser {
 
             methods.push(InterfaceMethod {
                 name: method_name.lexeme,
-                arity,
+                arity: params.len(),
+                param_types,
+                return_type,
             });
         }
 
@@ -191,5 +201,72 @@ impl Parser {
             bases,
             methods,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frontend::lexer::lexer::Lexer;
+
+    fn parse(source: &str) -> Vec<Statement> {
+        let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+        Parser::new(tokens).parse().unwrap()
+    }
+
+    #[test]
+    fn interface_method_accepts_return_type() {
+        let statements = parse(
+            r#"
+            export interface Idead {
+                func number() -> int;
+            }
+            "#,
+        );
+
+        let Statement::Export { statement } = &statements[0] else {
+            panic!("expected export");
+        };
+
+        let Statement::Interface { methods, .. } = &**statement else {
+            panic!("expected interface");
+        };
+
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0].name, "number");
+        assert_eq!(methods[0].arity, 0);
+        assert!(methods[0].param_types.is_empty());
+        assert_eq!(
+            methods[0].return_type,
+            Some(TypeExpr::Named("int".to_string()))
+        );
+    }
+
+    #[test]
+    fn interface_method_accepts_parameter_annotations_and_return_type() {
+        let statements = parse(
+            r#"
+            interface Example {
+                func convert(value: int, label: str) -> float;
+            }
+            "#,
+        );
+
+        let Statement::Interface { methods, .. } = &statements[0] else {
+            panic!("expected interface");
+        };
+
+        assert_eq!(methods[0].arity, 2);
+        assert_eq!(
+            methods[0].param_types,
+            vec![
+                Some(TypeExpr::Named("int".to_string())),
+                Some(TypeExpr::Named("str".to_string())),
+            ]
+        );
+        assert_eq!(
+            methods[0].return_type,
+            Some(TypeExpr::Named("float".to_string()))
+        );
     }
 }

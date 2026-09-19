@@ -1,5 +1,5 @@
 export interface Idead {
-    func number();
+    func number()->int;
 }
 
 export class Personne:Idead {
@@ -20,7 +20,7 @@ export class Personne:Idead {
         println("Age: {}",this.age)
     }
 
-    func number(){
+    func number()->float{
         return 22;
     }
 

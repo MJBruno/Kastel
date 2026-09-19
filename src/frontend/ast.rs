@@ -95,7 +95,15 @@ pub struct FunctionMethod {
 #[derive(Debug, Clone)]
 pub struct InterfaceMethod {
     pub name: String,
+    /// Nombre de paramètres de la signature. Conservé séparément pour le
+    /// bytecode/runtime des interfaces, qui ne stocke actuellement que
+    /// l'arity.
     pub arity: usize,
+    /// Annotations de type des paramètres, un slot par paramètre.
+    /// `None` signifie que le paramètre reste dynamique.
+    pub param_types: Vec<Option<TypeExpr>>,
+    /// Type de retour optionnel de la signature (`-> Type`).
+    pub return_type: Option<TypeExpr>,
 }
 
 #[derive(Debug, Clone)]
