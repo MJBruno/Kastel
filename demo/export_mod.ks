@@ -27,5 +27,9 @@ export class Personne:Idead {
 
     func number()->int{
         return 22;
+<<<<<<< HEAD
+=======
+ 
+>>>>>>> 612fd4675a3c80d24c1c910a09531c022981e183
     }
 }
