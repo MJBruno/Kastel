@@ -77,6 +77,11 @@ pub enum TokenKind {
     // (x, y) => x + y
     FatArrow,
 
+    // Type de retour d'une fonction :
+    //
+    // func add(a: int, b: int) -> int { ... }
+    Arrow,
+
     And,
     Or,
     Not,

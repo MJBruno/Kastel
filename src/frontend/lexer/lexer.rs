@@ -155,6 +155,8 @@ impl Lexer {
                 '-' => {
                     if self.match_char('=') {
                         tokens.push(self.make_token(TokenKind::MinusEqual, "-="));
+                    } else if self.match_char('>') {
+                        tokens.push(self.make_token(TokenKind::Arrow, "->"));
                     } else {
                         tokens.push(self.make_token(TokenKind::Minus, "-"));
                     }

@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    compiler::{compiler::Compiler, variables::Global},
+    compiler::{compiler::Compiler, module_types::ModuleTypeLoader, type_checker::TypeCheckContext, variables::Global},
     error::kastel_error::KastelError,
     error::runtime_error::RuntimeError,
     frontend::{lexer::lexer::Lexer, parser::Parser},
@@ -22,48 +22,77 @@ pub struct Application;
 
 impl Application {
     pub fn run() -> ExitCode {
-        let args: Vec<String> = env::args().collect();
+        let mut args = env::args();
+        let _program = args.next();
 
-        if args.len() > 1 {
-            let path = match PathBuf::from(&args[1]).canonicalize() {
-                Ok(path) => path,
-                Err(error) => {
-                    eprintln!("Erreur : impossible de résoudre '{}': {}", args[1], error);
-                    return ExitCode::FAILURE;
-                }
-            };
+        let Some(argument) = args.next() else {
+            repl();
+            return ExitCode::SUCCESS;
+        };
 
-            let src = match fs::read_to_string(&path) {
-                Ok(src) => src,
-                Err(error) => {
-                    eprintln!(
-                        "Erreur de lecture du fichier '{}': {}",
-                        path.display(),
-                        error
-                    );
-                    return ExitCode::FAILURE;
-                }
-            };
+        match argument.as_str() {
+            "--version" | "-v" => {
+                println!("Kastel {}", env!("CARGO_PKG_VERSION"));
+                ExitCode::SUCCESS
+            }
 
-            match execute(&src, Some(path.clone())) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(error) => {
-                    let file_name = path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or("<unknown>");
+            "--help" | "-h" => {
+                print_help();
+                ExitCode::SUCCESS
+            }
 
-                    eprintln!("{}", error.render(&src, file_name));
-                    ExitCode::FAILURE
+            _ if argument.starts_with('-') => {
+                eprintln!("Option inconnue : {argument}");
+                eprintln!("Utilisez 'kastel --help' pour afficher l'aide.");
+                ExitCode::FAILURE
+            }
+
+            path => {
+                let path = match PathBuf::from(path).canonicalize() {
+                    Ok(path) => path,
+                    Err(error) => {
+                        eprintln!("Erreur : impossible de résoudre '{}': {}", path, error);
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+                let src = match fs::read_to_string(&path) {
+                    Ok(src) => src,
+                    Err(error) => {
+                        eprintln!(
+                            "Erreur de lecture du fichier '{}': {}",
+                            path.display(),
+                            error
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+                match execute(&src, Some(path.clone())) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => {
+                        let file_name = path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("<unknown>");
+
+                        eprintln!("{}", error.render(&src, file_name));
+                        ExitCode::FAILURE
+                    }
                 }
             }
-        } else {
-            repl();
-            ExitCode::SUCCESS
         }
     }
 }
-
+fn print_help() {
+    println!("Kastel {}", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("Usage:");
+    println!("  kastel <file.ks>    Exécuter un programme Kastel");
+    println!("  kastel              Démarrer le REPL");
+    println!("  kastel --version    Afficher la version");
+    println!("  kastel --help       Afficher cette aide");
+}
 fn execute(source: &str, module_path: Option<PathBuf>) -> Result<(), KastelError> {
     let tokens = Lexer::new(source.to_string())
         .scan_token()
@@ -76,7 +105,18 @@ fn execute(source: &str, module_path: Option<PathBuf>) -> Result<(), KastelError
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
 
-    let function = Rc::new(compiler.compile(&statements).map_err(KastelError::from)?);
+    let function = if let Some(module_path) = &module_path {
+        let project_root = module_path
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let resolver = crate::module::resolver::ModuleResolver::new(project_root);
+        let loader = Rc::new(ModuleTypeLoader::new(resolver));
+        let context = TypeCheckContext::new(module_path.clone(), loader);
+        Rc::new(compiler.compile_with_context(&statements, context).map_err(KastelError::from)?)
+    } else {
+        Rc::new(compiler.compile(&statements).map_err(KastelError::from)?)
+    };
 
     let mut vm = VirtualMachine::new(function, module_path);
 

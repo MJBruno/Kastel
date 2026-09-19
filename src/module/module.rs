@@ -10,7 +10,7 @@ use std::{
 use crate::frontend::{lexer::lexer::Lexer, parser::Parser};
 use crate::module::resolver::ModuleResolver;
 use crate::vm::machine::VirtualMachine;
-use crate::{compiler::compiler::Compiler, runtime::value::Value};
+use crate::{compiler::{compiler::Compiler, module_types::ModuleTypeLoader, type_checker::TypeCheckContext}, runtime::value::Value};
 use crate::{error::compile_error::CompileError, stdlib::execute_native};
 
 #[derive(Debug)]
@@ -66,6 +66,7 @@ impl ModuleInstance {
 pub struct ModuleLoader {
     state: Rc<RefCell<ModuleLoaderState>>,
     resolver: Rc<ModuleResolver>,
+    type_loader: Rc<ModuleTypeLoader>,
 }
 
 struct ModuleLoaderState {
@@ -88,7 +89,8 @@ impl ModuleLoader {
                 cache: HashMap::new(),
                 loading: Vec::new(),
             })),
-            resolver: Rc::new(resolver),
+            resolver: Rc::new(resolver.clone()),
+            type_loader: Rc::new(ModuleTypeLoader::new(resolver)),
         }
     }
 
@@ -188,7 +190,14 @@ impl ModuleLoader {
 
         execute_native(&mut compiler);
 
-        let (function, exports) = compiler.compile_module(&statements).map_err(|error| {
+        let context = TypeCheckContext::new(
+            path.to_path_buf(),
+            Rc::clone(&self.type_loader),
+        );
+
+        let (function, exports) = compiler
+            .compile_module_with_context(&statements, context)
+            .map_err(|error| {
             CompileError::ModuleCompileError {
                 path: path.display().to_string(),
                 module_source: source.clone(),

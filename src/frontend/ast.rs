@@ -1,3 +1,15 @@
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeExpr {
+    /// Nom simple : `int`, `Personne`, `Dict`, ...
+    Named(String),
+
+    /// Type paramétré : `Dict<str, int>`, `Array<Personne>`, `Result<T, E>`.
+    Generic {
+        name: String,
+        arguments: Vec<TypeExpr>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub enum AssignmentTarget {
     Variable(String),
@@ -71,6 +83,12 @@ pub struct MatchArm {
 pub struct FunctionMethod {
     pub name: String,
     pub params: Vec<String>,
+    /// Annotations de type des paramètres, un slot par entrée de
+    /// `params` (même longueur, même ordre). `None` = paramètre non
+    /// annoté et donc dynamique.
+    pub param_types: Vec<Option<TypeExpr>>,
+    /// Type de retour annoté (`-> Type`), `None` si omis.
+    pub return_type: Option<TypeExpr>,
     pub body: Vec<Statement>,
 }
 
@@ -92,6 +110,10 @@ pub enum Statement {
         name: String,
         value: Expression,
         mutable: bool,
+        /// Annotation de type explicite (`let x: int = ...`), `None`
+        /// si omise : le type est inféré statiquement lorsque c'est
+        /// possible, sinon il devient dynamique.
+        type_annotation: Option<TypeExpr>,
     },
 
     Assignment {
@@ -158,6 +180,10 @@ pub enum Statement {
     Function {
         name: String,
         params: Vec<String>,
+        /// Voir `FunctionMethod::param_types`.
+        param_types: Vec<Option<TypeExpr>>,
+        /// Voir `FunctionMethod::return_type`.
+        return_type: Option<TypeExpr>,
         body: Vec<Statement>,
     },
 

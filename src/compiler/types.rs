@@ -1,172 +1,325 @@
-//! Typage graduel de Kastel — note de conception.
+//! Système de types de Kastel.
 //!
-//! ```text
-//!                   AST
-//!                   │
-//!           ┌───────┴────────┐
-//!           │                │
-//!     annotation        aucune annotation
-//!           │                │
-//!      Type explicite      inférence
-//!           │                │
-//!           └───────┬────────┘
-//!                   │
-//!               TypeChecker
-//!                   │
-//!         ┌─────────┴─────────┐
-//!         │                   │
-//!      type connu          Dynamic
-//!         │                   │
-//!         └─────────┬─────────┘
-//!                   │
-//!              bytecode / VM
-//! ```
-//!
-//! # Où on en est (Phase 1 — ce fichier + le parseur)
-//!
-//! La grammaire est acceptée et conservée dans l'AST :
-//!
-//! ```text
-//! let a = 10;
-//! let b: int = 20;
-//! let p: Personne = new Personne();
-//! func add(a: int, b: int) -> int { return a + b; }
-//! ```
-//!
-//! `Statement::Let.type_annotation`, `Statement::Function`/
-//! `FunctionMethod.param_types`/`.return_type` portent le nom brut de
-//! type (`Option<String>`), tel qu'écrit par l'utilisateur. **Rien ne
-//! le vérifie encore** : le compilateur les ignore purement et
-//! simplement (voir les commentaires "Phase 1" dans
-//! `compiler/statements.rs`). Une annotation fausse ou correcte
-//! compile et s'exécute exactement pareil aujourd'hui — c'est un
-//! choix délibéré : faire accepter la syntaxe est une étape séparée,
-//! sans risque, de la vérification elle-même.
-//!
-//! `Type` ci-dessous convertit ce `String` brut en une représentation
-//! structurée, prête à être consommée par le TypeChecker de la
-//! Phase 2 — mais n'est pour l'instant appelée nulle part dans le
-//! pipeline de compilation.
-//!
-//! # Phase 2 — le TypeChecker (à faire)
-//!
-//! Un passage entre le parsing et la compilation bytecode :
-//!
-//! - **Annoté** (`let b: int = ...`) : vérifie que le type de la
-//!   valeur (inféré depuis l'expression) est compatible avec
-//!   l'annotation. Incompatible -> diagnostic de compilation (pas une
-//!   `RuntimeError` — l'esprit du typage graduel est de détecter ça
-//!   AVANT l'exécution).
-//! - **Non annoté** (`let name = "Bruno";`) : inférence locale simple
-//!   (littéraux, propagation à travers les opérateurs binaires,
-//!   type de retour d'un appel de fonction connu). Si l'inférence
-//!   n'aboutit pas (ex. valeur qui dépend d'un paramètre non
-//!   annoté), le type reste `Type::Dynamic` — ce n'est PAS une
-//!   erreur, juste une absence d'information statique, exactement
-//!   comme `any` en TypeScript.
-//! - **`Type::Dynamic`** : aucune vérification statique ; le contrôle
-//!   redevient celui d'aujourd'hui — une `RuntimeError::TypeError` si
-//!   l'opération réelle ne correspond pas, au moment où elle a lieu.
-//!
-//! C'est la partie qui répond à "type connu / Dynamic" du schéma :
-//! les DEUX chemins existent toujours et convergent vers le MÊME
-//! bytecode — le typage n'ajoute pas un second runtime, il ajoute une
-//! passe de diagnostic *avant* l'existant.
-//!
-//! # Phase 3 — surcharge de fonctions (le point dur)
-//!
-//! ```text
-//! func add(a: int, b: int) -> int { return a + b; }
-//! func add(a: float, b: float) -> float { return a + b; }
-//! func add(a: int, b: float) -> float { return a + b; }
-//! ```
-//!
-//! Aujourd'hui, `predeclare_global_function`/`compile_function_statement`
-//! rejettent une deuxième déclaration de `add` avec
-//! `CompileError::VariableAlreadyDeclared` — un nom global = UNE
-//! valeur. Le support de la surcharge change ce modèle : plusieurs
-//! fonctions peuvent partager un nom, tant que leurs *signatures*
-//! diffèrent.
-//!
-//! Conception proposée (deux mécanismes, pas un seul) :
-//!
-//! 1. **Résolution statique par mangling**, quand TOUS les arguments
-//!    d'un appel ont un type connu au point d'appel (annoté, ou
-//!    inféré par la Phase 2) : le compilateur choisit la surcharge
-//!    exacte au moment de la compilation et compile un appel DIRECT
-//!    vers elle — aucun coût à l'exécution, exactement la branche
-//!    "type connu" du schéma. En interne, chaque surcharge obtient un
-//!    nom mangled unique (ex. `add$int$int`, `add$float$float`,
-//!    `add$int$float`) invisible depuis Kastel.
-//!
-//! 2. **Dispatch dynamique**, quand au moins un argument est
-//!    `Type::Dynamic` au point d'appel (ex. `dynamicAdd` existe
-//!    justement pour ce cas, ou un `add(x, y)` où `x`/`y` viennent
-//!    d'un paramètre non annoté) : le compilateur émet un appel vers
-//!    une petite fonction "dispatcher" synthétisée, qui inspecte
-//!    `type(a)`/`type(b)` À L'EXÉCUTION et branche vers la bonne
-//!    surcharge mangled — avec une `RuntimeError::TypeError` claire
-//!    si aucune surcharge ne correspond. C'est la branche "Dynamic"
-//!    du schéma, qui rejoint le même bytecode derrière.
-//!
-//! Ce que ça implique concrètement, pas encore fait :
-//!   - `self.globals` (aujourd'hui `HashMap<String, Global>`, UNE
-//!     entrée par nom) devient `HashMap<String, Vec<OverloadSignature>>`
-//!     pour les noms qui ont plusieurs surcharges ;
-//!   - chaque site d'appel (`Expression::Call`) doit essayer de
-//!     déduire le type de chaque argument (Phase 2) avant de choisir
-//!     entre mangling statique et dispatcher dynamique ;
-//!   - erreurs à définir : signatures ambiguës (`add(int, int)` et
-//!     `add(int, int)` deux fois), aucune surcharge ne correspondant
-//!     aux types statiquement connus, etc.
-//!
-//! C'est un changement bien plus invasif que la Phase 1/2 — je
-//! recommande de ne l'attaquer qu'une fois la Phase 2 solide et
-//! testée, plutôt que les faire toutes les trois d'un bloc sans
-//! pouvoir compiler entre chaque étape.
+//! Cette couche est indépendante de la VM : elle transforme les annotations
+//! syntaxiques (`TypeExpr`) en types sémantiques (`Type`) et fournit les
+//! opérations communes au TypeChecker : affichage, compatibilité,
+//! promotion numérique et fusion de types pour l'inférence.
 
-/// Représentation structurée d'une annotation de type, une fois
-/// résolue depuis le nom brut porté par l'AST (`Option<String>`).
-///
-/// Pas encore branché dans le pipeline de compilation (Phase 1) —
-/// prêt pour le TypeChecker de la Phase 2.
+use std::fmt;
+
+use crate::frontend::ast::TypeExpr;
+
+/// Type sémantique utilisé par le vérificateur statique.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Type {
     Int,
     Float,
     Str,
     Bool,
-    Array,
-    Dict,
-    Tuple,
-    /// Une classe ou interface utilisateur, par son nom (ex.
-    /// `Type::Named("Personne".to_string())`). Résolue par son nom
-    /// uniquement pour l'instant — pas de vérification que la classe
-    /// existe réellement (rôle du TypeChecker, Phase 2).
+    None,
+    Array(Box<Type>),
+    Dict(Box<Type>, Box<Type>),
+    Tuple(Vec<Type>),
+    /// `array`, `dict`, `tuple` non paramétrés.
+    ArrayDynamic,
+    DictDynamic,
+    TupleDynamic,
+    Range,
+    Function(FunctionType),
     Named(String),
-    /// Aucune information statique : soit non annoté et non
-    /// inférable, soit explicitement voulu dynamique. C'est la
-    /// branche "Dynamic" du schéma — jamais une erreur en soi.
+    Generic { name: String, arguments: Vec<Type> },
+    /// Référence statique vers un module chargé par le resolver.
+    Module(String),
+    /// Absence d'information statique. Ce n'est jamais une erreur en soi.
     Dynamic,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionType {
+    pub params: Vec<Type>,
+    pub return_type: Box<Type>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumericType {
+    Int,
+    Float,
+}
+
+impl NumericType {
+    pub fn to_type(self) -> Type {
+        match self {
+            NumericType::Int => Type::Int,
+            NumericType::Float => Type::Float,
+        }
+    }
+}
+
 impl Type {
-    /// Convertit le nom brut porté par l'AST (`Option<String>`,
-    /// tel qu'écrit après `:` ou `->`) en `Type`. `None` (annotation
-    /// absente) donne `Type::Dynamic`.
-    #[allow(dead_code)]
-    pub fn from_annotation(annotation: Option<&str>) -> Type {
+    pub fn from_annotation(annotation: Option<&TypeExpr>) -> Type {
         match annotation {
             None => Type::Dynamic,
-            Some("int") => Type::Int,
-            Some("float") => Type::Float,
-            Some("str") => Type::Str,
-            Some("bool") => Type::Bool,
-            Some("array") => Type::Array,
-            Some("dict") => Type::Dict,
-            Some("tuple") => Type::Tuple,
-            Some(name) => Type::Named(name.to_string()),
+            Some(expr) => Self::from_type_expr(expr),
+        }
+    }
+
+    /// Conversion sémantique d'un type syntaxique.
+    ///
+    /// Les noms de types inconnus sont volontairement conservés comme
+    /// `Named(...)`. Cela permet les classes définies dans d'autres modules
+    /// sans forcer le TypeChecker à connaître tout le graphe des imports.
+    pub fn from_type_expr(expr: &TypeExpr) -> Type {
+        match expr {
+            TypeExpr::Named(name) => Self::from_name(name),
+            TypeExpr::Generic { name, arguments } => Self::from_generic(name, arguments),
+        }
+    }
+
+    fn from_name(name: &str) -> Type {
+        match name.to_ascii_lowercase().as_str() {
+            "int" => Type::Int,
+            "float" => Type::Float,
+            "str" | "string" => Type::Str,
+            "bool" | "boolean" => Type::Bool,
+            "none" | "nil" | "null" => Type::None,
+            "array" => Type::ArrayDynamic,
+            "dict" => Type::DictDynamic,
+            "tuple" => Type::TupleDynamic,
+            "dynamic" | "any" => Type::Dynamic,
+            _ => Type::Named(name.to_string()),
+        }
+    }
+
+    fn from_generic(name: &str, arguments: &[TypeExpr]) -> Type {
+        let normalized = name.to_ascii_lowercase();
+
+        match normalized.as_str() {
+            "array" | "list" => {
+                if arguments.len() == 1 {
+                    Type::Array(Box::new(Self::from_type_expr(&arguments[0])))
+                } else {
+                    Type::Generic {
+                        name: name.to_string(),
+                        arguments: arguments.iter().map(Self::from_type_expr).collect(),
+                    }
+                }
+            }
+
+            "dict" | "map" => {
+                if arguments.len() == 2 {
+                    Type::Dict(
+                        Box::new(Self::from_type_expr(&arguments[0])),
+                        Box::new(Self::from_type_expr(&arguments[1])),
+                    )
+                } else {
+                    Type::Generic {
+                        name: name.to_string(),
+                        arguments: arguments.iter().map(Self::from_type_expr).collect(),
+                    }
+                }
+            }
+
+            "tuple" => Type::Tuple(arguments.iter().map(Self::from_type_expr).collect()),
+
+            _ => Type::Generic {
+                name: name.to_string(),
+                arguments: arguments.iter().map(Self::from_type_expr).collect(),
+            },
+        }
+    }
+
+    pub fn is_dynamic(&self) -> bool {
+        matches!(self, Type::Dynamic)
+    }
+
+    pub fn numeric_kind(&self) -> Option<NumericType> {
+        match self {
+            Type::Int => Some(NumericType::Int),
+            Type::Float => Some(NumericType::Float),
+            _ => None,
+        }
+    }
+
+    /// Retourne `true` si `actual` peut être affecté à `expected` sans
+    /// déclencher d'erreur statique.
+    pub fn is_assignable_to(&self, expected: &Type, parents: &impl Fn(&str) -> Vec<String>) -> bool {
+        if self.is_dynamic() || expected.is_dynamic() {
+            return true;
+        }
+
+        if self == expected {
+            return true;
+        }
+
+        // Promotion numérique sûre : int -> float.
+        if matches!((self, expected), (Type::Int, Type::Float)) {
+            return true;
+        }
+
+        match (self, expected) {
+            (Type::Named(actual), Type::Named(expected)) => {
+                Self::is_named_subtype(actual, expected, parents)
+            }
+
+            (Type::Array(actual), Type::Array(expected)) => {
+                actual.is_assignable_to(expected, parents)
+            }
+
+            (Type::Dict(actual_k, actual_v), Type::Dict(expected_k, expected_v)) => {
+                actual_k.is_assignable_to(expected_k, parents)
+                    && actual_v.is_assignable_to(expected_v, parents)
+            }
+
+            (Type::ArrayDynamic, Type::Array(_)) => true,
+            (Type::Array(_), Type::ArrayDynamic) => true,
+            (Type::DictDynamic, Type::Dict(_, _)) => true,
+            (Type::Dict(_, _), Type::DictDynamic) => true,
+            (Type::TupleDynamic, Type::Tuple(_)) => true,
+            (Type::Tuple(_), Type::TupleDynamic) => true,
+
+            (Type::Function(actual), Type::Function(expected)) => {
+                actual.params.len() == expected.params.len()
+                    && actual
+                        .params
+                        .iter()
+                        .zip(&expected.params)
+                        .all(|(actual, expected)| actual == expected || actual.is_dynamic() || expected.is_dynamic())
+                    && actual.return_type.is_assignable_to(&expected.return_type, parents)
+            }
+
+            (Type::Generic { name: actual_name, arguments: actual_args }, Type::Generic { name: expected_name, arguments: expected_args }) => {
+                actual_name == expected_name
+                    && actual_args.len() == expected_args.len()
+                    && actual_args.iter().zip(expected_args).all(|(actual, expected)| {
+                        actual.is_assignable_to(expected, parents)
+                    })
+            }
+
+            _ => false,
+        }
+    }
+
+    fn is_named_subtype(
+        actual: &str,
+        expected: &str,
+        parents: &impl Fn(&str) -> Vec<String>,
+    ) -> bool {
+        if actual == expected {
+            return true;
+        }
+
+        let mut pending = parents(actual);
+        let mut visited = std::collections::HashSet::new();
+
+        while let Some(current) = pending.pop() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+
+            if current == expected {
+                return true;
+            }
+
+            pending.extend(parents(&current));
+        }
+
+        false
+    }
+
+    /// Fusion pour l'inférence d'une expression qui peut avoir deux types.
+    /// Une différence non résolue produit `Dynamic` au lieu de rendre un
+    /// programme dynamique invalide.
+    pub fn merge(&self, other: &Type) -> Type {
+        if self == other {
+            return self.clone();
+        }
+
+        if self.is_dynamic() || other.is_dynamic() {
+            return Type::Dynamic;
+        }
+
+        match (self.numeric_kind(), other.numeric_kind()) {
+            (Some(NumericType::Int), Some(NumericType::Int)) => Type::Int,
+            (Some(_), Some(_)) => Type::Float,
+            _ => Type::Dynamic,
+        }
+    }
+
+    pub fn element_type(&self) -> Type {
+        match self {
+            Type::Array(element) => (**element).clone(),
+            Type::ArrayDynamic => Type::Dynamic,
+            Type::Tuple(elements) => {
+                elements
+                    .iter()
+                    .cloned()
+                    .reduce(|a, b| a.merge(&b))
+                    .unwrap_or(Type::Dynamic)
+            }
+            Type::TupleDynamic => Type::Dynamic,
+            Type::Range => Type::Float,
+            Type::Dict(_, value) => (**value).clone(),
+            Type::DictDynamic => Type::Dynamic,
+            _ => Type::Dynamic,
+        }
+    }
+
+    pub fn key_type(&self) -> Type {
+        match self {
+            Type::Dict(key, _) => (**key).clone(),
+            Type::DictDynamic => Type::Dynamic,
+            _ => Type::Dynamic,
+        }
+    }
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Type::Int => write!(f, "int"),
+            Type::Float => write!(f, "float"),
+            Type::Str => write!(f, "str"),
+            Type::Bool => write!(f, "bool"),
+            Type::None => write!(f, "None"),
+            Type::Array(element) => write!(f, "Array<{element}>"),
+            Type::Dict(key, value) => write!(f, "Dict<{key}, {value}>"),
+            Type::Tuple(elements) => {
+                write!(f, "Tuple<")?;
+                for (index, element) in elements.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{element}")?;
+                }
+                write!(f, ">")
+            }
+            Type::ArrayDynamic => write!(f, "Array"),
+            Type::DictDynamic => write!(f, "Dict"),
+            Type::TupleDynamic => write!(f, "Tuple"),
+            Type::Range => write!(f, "Range"),
+            Type::Function(function) => {
+                write!(f, "(")?;
+                for (index, parameter) in function.params.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{parameter}")?;
+                }
+                write!(f, ") -> {}", function.return_type)
+            }
+            Type::Named(name) => write!(f, "{name}"),
+            Type::Generic { name, arguments } => {
+                write!(f, "{name}<")?;
+                for (index, argument) in arguments.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{argument}")?;
+                }
+                write!(f, ">")
+            }
+            Type::Module(_) => write!(f, "module"),
+            Type::Dynamic => write!(f, "dynamic"),
         }
     }
 }
@@ -174,13 +327,18 @@ impl Type {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::ast::TypeExpr;
+
+    fn named(name: &str) -> TypeExpr {
+        TypeExpr::Named(name.to_string())
+    }
 
     #[test]
     fn maps_primitive_names() {
-        assert_eq!(Type::from_annotation(Some("int")), Type::Int);
-        assert_eq!(Type::from_annotation(Some("float")), Type::Float);
-        assert_eq!(Type::from_annotation(Some("str")), Type::Str);
-        assert_eq!(Type::from_annotation(Some("bool")), Type::Bool);
+        assert_eq!(Type::from_annotation(Some(&named("int"))), Type::Int);
+        assert_eq!(Type::from_annotation(Some(&named("float"))), Type::Float);
+        assert_eq!(Type::from_annotation(Some(&named("str"))), Type::Str);
+        assert_eq!(Type::from_annotation(Some(&named("bool"))), Type::Bool);
     }
 
     #[test]
@@ -189,10 +347,26 @@ mod tests {
     }
 
     #[test]
-    fn maps_unknown_name_to_named() {
+    fn maps_generic_dict() {
+        let expr = TypeExpr::Generic {
+            name: "Dict".to_string(),
+            arguments: vec![named("str"), named("int")],
+        };
+
         assert_eq!(
-            Type::from_annotation(Some("Personne")),
-            Type::Named("Personne".to_string())
+            Type::from_type_expr(&expr),
+            Type::Dict(Box::new(Type::Str), Box::new(Type::Int))
         );
+    }
+
+    #[test]
+    fn module_types_are_equal_by_path() {
+        let parents = |_name: &str| Vec::<String>::new();
+        let left = Type::Module("/tmp/math.ks".into());
+        let same = Type::Module("/tmp/math.ks".into());
+        let other = Type::Module("/tmp/other.ks".into());
+
+        assert!(left.is_assignable_to(&same, &parents));
+        assert!(!left.is_assignable_to(&other, &parents));
     }
 }

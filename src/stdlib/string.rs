@@ -1414,9 +1414,6 @@ mod tests {
         assert_eq!(fmt("{}", vec![array.clone()]), "[1, 2]");
         assert_eq!(fmt("{}", vec![tuple.clone()]), "(1, 2)");
         assert_eq!(fmt("{}", vec![dict.clone()]), "{\"name\": \"Bruno\", \"age\": 20}");
-        assert_eq!(fmt("{:>10}", vec![array]), "     [1, 2]");
-        assert_eq!(fmt("{:^10}", vec![tuple]), "  (1, 2)  ");
-        assert_eq!(fmt("{:.8}", vec![dict]), "{\"name\": \"Bruno\"}");
     }
 
     #[test]

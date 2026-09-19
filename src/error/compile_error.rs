@@ -30,6 +30,33 @@ pub enum CompileError {
 
     AssignmentToConstant(String),
 
+    TypeMismatch {
+        expected: String,
+        found: String,
+    },
+
+    InvalidUnaryOperation {
+        operator: String,
+        found: String,
+    },
+
+    InvalidBinaryOperation {
+        operator: String,
+        left: String,
+        right: String,
+    },
+
+    WrongArgumentType {
+        function: String,
+        index: usize,
+        expected: String,
+        found: String,
+    },
+
+    NotCallable {
+        found: String,
+    },
+
     TooManyConstants,
     TooManyArguments,
     TooManyArrayElements,
@@ -158,6 +185,26 @@ impl std::fmt::Display for CompileError {
 
             CompileError::AssignmentToConstant(e) => {
                 write!(f, "Affectation à la constante '{e}'")
+            }
+
+            CompileError::TypeMismatch { expected, found } => {
+                write!(f, "Type incompatible : '{found}' ne peut pas être utilisé comme '{expected}'")
+            }
+
+            CompileError::InvalidUnaryOperation { operator, found } => {
+                write!(f, "Opérateur '{operator}' invalide pour une valeur de type '{found}'")
+            }
+
+            CompileError::InvalidBinaryOperation { operator, left, right } => {
+                write!(f, "Opérateur '{operator}' invalide entre '{left}' et '{right}'")
+            }
+
+            CompileError::WrongArgumentType { function, index, expected, found } => {
+                write!(f, "Argument {index} de '{function}' : '{found}' fourni, '{expected}' attendu")
+            }
+
+            CompileError::NotCallable { found } => {
+                write!(f, "La valeur de type '{found}' n'est pas appelable")
             }
 
             CompileError::TooManyConstants => {
@@ -363,6 +410,44 @@ impl CompileError {
             .with_expected("une variable déclarée avec 'let'")
             .with_found("une variable déclarée avec 'const'")
             .with_help(format!("déclarez '{name}' avec `let` au lieu de `const` si elle doit changer.")),
+
+            CompileError::TypeMismatch { expected, found } => Diagnostic::new(
+                "type incompatible",
+                0,
+                0,
+            )
+            .with_expected(expected.as_str())
+            .with_found(found.as_str()),
+
+            CompileError::InvalidUnaryOperation { operator, found } => Diagnostic::new(
+                format!("opérateur '{operator}' invalide"),
+                0,
+                0,
+            )
+            .with_found(found.as_str()),
+
+            CompileError::InvalidBinaryOperation { operator, left, right } => Diagnostic::new(
+                format!("opérateur '{operator}' invalide"),
+                0,
+                0,
+            )
+            .with_expected(left.as_str())
+            .with_found(right.as_str()),
+
+            CompileError::WrongArgumentType { function, index, expected, found } => Diagnostic::new(
+                format!("type incorrect pour l'argument {index} de '{function}'"),
+                0,
+                0,
+            )
+            .with_expected(expected.as_str())
+            .with_found(found.as_str()),
+
+            CompileError::NotCallable { found } => Diagnostic::new(
+                "valeur non appelable",
+                0,
+                0,
+            )
+            .with_found(found.as_str()),
 
             CompileError::WrongArgumentCount { expected, found } => {
                 Diagnostic::new("nombre d'arguments incorrect", 0, 0)

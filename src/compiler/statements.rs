@@ -5,6 +5,7 @@ use crate::runtime::function::Function;
 use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
+use super::type_checker::TypeChecker;
 use super::variables::{Global, VariableLocation};
 
 #[allow(dead_code)]
@@ -45,6 +46,7 @@ impl Compiler {
                 name,
                 value,
                 mutable,
+                ..
             } => {
                 self.compile_var(name, Some(value), *mutable)?;
             }
@@ -263,7 +265,12 @@ impl Compiler {
                 self.compile_interface(name, bases, methods)?;
             }
 
-            Statement::Function { name, params, body } => {
+            Statement::Function {
+                name,
+                params,
+                body,
+                ..
+            } => {
                 self.compile_function_statement(name, params, body)?;
             }
 
@@ -1306,6 +1313,8 @@ impl Compiler {
         mut self,
         statements: &[Statement],
     ) -> Result<Function, CompileError> {
+        TypeChecker::check(statements)?;
+
         for (index, statement) in statements.iter().enumerate() {
             let is_last = index + 1 == statements.len();
 

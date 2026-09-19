@@ -1,11 +1,27 @@
-export class ExportMod {
+export interface Idead {
+    func number();
+}
+
+export class Personne:Idead {
+
     func init() {
-        this.value = this.get_value();
+        println("Constructeur")
     }
 
+    func setAge(age:int) {
+        this.age = age
+    }
 
-    func get_value() {
-        return 55;
+    func getAge()->int {
+        return this.age
+    }
+
+    func display() {
+        println("Age: {}",this.age)
+    }
+
+    func number(){
+        return 22;
     }
 
 }

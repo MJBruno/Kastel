@@ -11,6 +11,7 @@ use crate::runtime::function::Function;
 use super::context::{CompilerContext, CompilerContextRef};
 // use super::locals::LocalTable;
 use super::loops::LoopContext;
+use super::type_checker::{TypeCheckContext, TypeChecker};
 use super::variables::Global;
 
 #[allow(dead_code)]
@@ -109,6 +110,15 @@ impl Compiler {
 
     pub fn compile(self, statements: &[Statement]) -> Result<Function, CompileError> {
         let (function, _) = self.compile_module(statements)?;
+        Ok(function)
+    }
+
+    pub fn compile_with_context(
+        self,
+        statements: &[Statement],
+        context: TypeCheckContext,
+    ) -> Result<Function, CompileError> {
+        let (function, _) = self.compile_module_with_context(statements, context)?;
         Ok(function)
     }
 
@@ -259,9 +269,30 @@ impl Compiler {
     // ============================================================
 
     pub fn compile_module(
-        mut self,
+        self,
         statements: &[Statement],
     ) -> Result<(Function, Vec<String>), CompileError> {
+        self.compile_module_inner(statements, None)
+    }
+
+    pub fn compile_module_with_context(
+        self,
+        statements: &[Statement],
+        context: TypeCheckContext,
+    ) -> Result<(Function, Vec<String>), CompileError> {
+        self.compile_module_inner(statements, Some(context))
+    }
+
+    fn compile_module_inner(
+        mut self,
+        statements: &[Statement],
+        context: Option<TypeCheckContext>,
+    ) -> Result<(Function, Vec<String>), CompileError> {
+        match context {
+            Some(context) => TypeChecker::check_with_context(statements, context)?,
+            None => TypeChecker::check(statements)?,
+        }
+
         self.predeclare_global_functions(statements)?;
 
         for statement in statements {
