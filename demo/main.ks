@@ -2,6 +2,7 @@ import export_mod.Personne
 
 
 let p:Personne = new Personne();
+let p1:Personne = new Personne(26);
 
 p.setAge(44)
 

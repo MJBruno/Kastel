@@ -39,6 +39,12 @@ struct ClassInfo {
     methods: HashMap<String, FunctionType>,
 }
 
+#[derive(Debug, Clone)]
+struct InterfaceInfo {
+    bases: Vec<String>,
+    methods: HashMap<String, FunctionType>,
+}
+
 /// Vérificateur statique graduel de Kastel.
 ///
 /// Règle centrale : `Dynamic` ne bloque jamais un programme. Une erreur
@@ -47,6 +53,7 @@ pub struct TypeChecker {
     scopes: Vec<HashMap<String, Binding>>,
     functions: HashMap<String, FunctionType>,
     classes: HashMap<String, ClassInfo>,
+    interfaces: HashMap<String, InterfaceInfo>,
     parents: HashMap<String, Vec<String>>,
     current_return_type: Option<Type>,
     return_types: Vec<Type>,
@@ -109,6 +116,7 @@ impl TypeChecker {
             scopes: vec![globals],
             functions: HashMap::new(),
             classes: HashMap::new(),
+            interfaces: HashMap::new(),
             parents: HashMap::new(),
             current_return_type: None,
             return_types: Vec::new(),
@@ -217,8 +225,48 @@ impl TypeChecker {
                     self.declare_global_declaration(name, Type::Named(name.clone()))?;
                 }
 
-                Statement::Interface { name, bases, .. } => {
+                Statement::Interface {
+                    name,
+                    bases,
+                    methods,
+                } => {
+                    let mut method_map = HashMap::new();
+
+                    for method in methods {
+                        let params = method
+                            .param_types
+                            .iter()
+                            .map(|annotation| {
+                                annotation
+                                    .as_ref()
+                                    .map(Type::from_type_expr)
+                                    .unwrap_or(Type::Dynamic)
+                            })
+                            .collect::<Vec<_>>();
+
+                        let return_type = method
+                            .return_type
+                            .as_ref()
+                            .map(Type::from_type_expr)
+                            .unwrap_or(Type::Dynamic);
+
+                        method_map.insert(
+                            method.name.clone(),
+                            FunctionType {
+                                params,
+                                return_type: Box::new(return_type),
+                            },
+                        );
+                    }
+
                     self.parents.insert(name.clone(), bases.clone());
+                    self.interfaces.insert(
+                        name.clone(),
+                        InterfaceInfo {
+                            bases: bases.clone(),
+                            methods: method_map,
+                        },
+                    );
                     self.declare_global_declaration(name, Type::Named(name.clone()))?;
                 }
 
@@ -701,7 +749,127 @@ impl TypeChecker {
             self.check_method(class_name, method)?;
         }
 
+        // Une classe qui déclare une interface (directement ou par
+        // l'intermédiaire d'une classe parente) doit respecter toutes les
+        // signatures de cette interface. La vérification est faite après
+        // l'analyse des méthodes afin de disposer aussi des retours inférés.
+        self.check_implemented_interfaces(class_name)?;
+
         self.current_class = previous_class;
+        Ok(())
+    }
+
+    fn check_implemented_interfaces(&self, class_name: &str) -> Result<(), CompileError> {
+        let interfaces = self.collect_interfaces_for_class(class_name);
+
+        for interface_name in interfaces {
+            let Some(interface) = self.interfaces.get(&interface_name) else {
+                continue;
+            };
+
+            for (method_name, expected) in &interface.methods {
+                let actual = self.find_method(class_name, method_name).ok_or_else(|| {
+                    CompileError::InterfaceMethodMissing {
+                        class_name: class_name.to_string(),
+                        interface: interface_name.clone(),
+                        method: method_name.clone(),
+                    }
+                })?;
+
+                self.ensure_interface_method_compatible(
+                    class_name,
+                    &interface_name,
+                    method_name,
+                    &actual,
+                    expected,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn collect_interfaces_for_class(&self, class_name: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let mut pending = vec![class_name.to_string()];
+        let mut visited = HashSet::new();
+
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+
+            if let Some(interface) = self.interfaces.get(&name) {
+                if !result.contains(&name) {
+                    result.push(name.clone());
+                }
+                pending.extend(interface.bases.iter().cloned());
+                continue;
+            }
+
+            if let Some(class) = self.classes.get(&name) {
+                pending.extend(class.bases.iter().cloned());
+            }
+        }
+
+        result
+    }
+
+    fn ensure_interface_method_compatible(
+        &self,
+        class_name: &str,
+        interface_name: &str,
+        method_name: &str,
+        actual: &FunctionType,
+        expected: &FunctionType,
+    ) -> Result<(), CompileError> {
+        if actual.params.len() != expected.params.len() {
+            return Err(CompileError::InterfaceMethodArityMismatch {
+                class_name: class_name.to_string(),
+                interface: interface_name.to_string(),
+                method: method_name.to_string(),
+                expected: expected.params.len(),
+                found: actual.params.len(),
+            });
+        }
+
+        // Pour les paramètres, on conserve une compatibilité graduelle :
+        // Dynamic est compatible avec tout type. Pour les types connus,
+        // l'implémentation doit accepter au moins le type demandé par
+        // l'interface (contravariance).
+        for (index, (actual_param, expected_param)) in
+            actual.params.iter().zip(&expected.params).enumerate()
+        {
+            if !expected_param.is_assignable_to(actual_param, &|name: &str| {
+                self.parents.get(name).cloned().unwrap_or_default()
+            }) {
+                return Err(CompileError::InterfaceMethodParameterTypeMismatch {
+                    class_name: class_name.to_string(),
+                    interface: interface_name.to_string(),
+                    method: method_name.to_string(),
+                    index: index + 1,
+                    expected: expected_param.to_string(),
+                    found: actual_param.to_string(),
+                });
+            }
+        }
+
+        // Le type de retour est covariant : l'implémentation peut retourner
+        // un sous-type, mais pas un type plus large que celui promis par
+        // l'interface. Ex. float n'implémente pas -> int.
+        if !actual.return_type.is_assignable_to(
+            &expected.return_type,
+            &|name: &str| self.parents.get(name).cloned().unwrap_or_default(),
+        ) {
+            return Err(CompileError::InterfaceMethodReturnTypeMismatch {
+                class_name: class_name.to_string(),
+                interface: interface_name.to_string(),
+                method: method_name.to_string(),
+                expected: expected.return_type.to_string(),
+                found: actual.return_type.to_string(),
+            });
+        }
+
         Ok(())
     }
 
@@ -1415,5 +1583,98 @@ fn binary_symbol(operator: &BinaryOp) -> &'static str {
         BinaryOp::BitXor => "^",
         BinaryOp::ShiftLeft => "<<",
         BinaryOp::ShiftRight => ">>",
+    }
+}
+
+#[cfg(test)]
+mod interface_tests {
+    use super::TypeChecker;
+    use crate::frontend::{lexer::lexer::Lexer, parser::Parser};
+
+    fn parse(source: &str) -> Vec<crate::frontend::ast::Statement> {
+        let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+        Parser::new(tokens).parse().unwrap()
+    }
+
+    #[test]
+    fn interface_rejects_incompatible_return_type() {
+        let statements = parse(
+            r#"
+export interface Idead {
+    func number() -> int;
+}
+
+export class Personne: Idead {
+    func number() -> float {
+        return 22;
+    }
+}
+"#,
+        );
+
+        let error = TypeChecker::check(&statements).unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains("Personne.number"));
+        assert!(message.contains("'int' attendu"));
+        assert!(message.contains("'float' trouvé"));
+    }
+
+    #[test]
+    fn interface_accepts_exact_return_type() {
+        let statements = parse(
+            r#"
+export interface Idead {
+    func number() -> int;
+}
+
+export class Personne: Idead {
+    func number() -> int {
+        return 22;
+    }
+}
+"#,
+        );
+
+        assert!(TypeChecker::check(&statements).is_ok());
+    }
+
+    #[test]
+    fn interface_rejects_missing_method() {
+        let statements = parse(
+            r#"
+interface Idead {
+    func number() -> int;
+}
+
+class Personne: Idead {
+}
+"#,
+        );
+
+        let error = TypeChecker::check(&statements).unwrap_err();
+        assert!(error.to_string().contains("méthode 'number' manquante"));
+    }
+
+    #[test]
+    fn interface_rejects_incompatible_parameter_type() {
+        let statements = parse(
+            r#"
+interface Idead {
+    func number(value: int) -> int;
+}
+
+class Personne: Idead {
+    func number(value: str) -> int {
+        return 22;
+    }
+}
+"#,
+        );
+
+        let error = TypeChecker::check(&statements).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("ne respecte pas 'Idead' : paramètre 1"));
     }
 }

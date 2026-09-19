@@ -53,6 +53,37 @@ pub enum CompileError {
         found: String,
     },
 
+    InterfaceMethodMissing {
+        class_name: String,
+        interface: String,
+        method: String,
+    },
+
+    InterfaceMethodArityMismatch {
+        class_name: String,
+        interface: String,
+        method: String,
+        expected: usize,
+        found: usize,
+    },
+
+    InterfaceMethodParameterTypeMismatch {
+        class_name: String,
+        interface: String,
+        method: String,
+        index: usize,
+        expected: String,
+        found: String,
+    },
+
+    InterfaceMethodReturnTypeMismatch {
+        class_name: String,
+        interface: String,
+        method: String,
+        expected: String,
+        found: String,
+    },
+
     NotCallable {
         found: String,
     },
@@ -188,19 +219,91 @@ impl std::fmt::Display for CompileError {
             }
 
             CompileError::TypeMismatch { expected, found } => {
-                write!(f, "Type incompatible : '{found}' ne peut pas être utilisé comme '{expected}'")
+                write!(
+                    f,
+                    "Type incompatible : '{found}' ne peut pas être utilisé comme '{expected}'"
+                )
             }
 
             CompileError::InvalidUnaryOperation { operator, found } => {
-                write!(f, "Opérateur '{operator}' invalide pour une valeur de type '{found}'")
+                write!(
+                    f,
+                    "Opérateur '{operator}' invalide pour une valeur de type '{found}'"
+                )
             }
 
-            CompileError::InvalidBinaryOperation { operator, left, right } => {
-                write!(f, "Opérateur '{operator}' invalide entre '{left}' et '{right}'")
+            CompileError::InvalidBinaryOperation {
+                operator,
+                left,
+                right,
+            } => {
+                write!(
+                    f,
+                    "Opérateur '{operator}' invalide entre '{left}' et '{right}'"
+                )
             }
 
-            CompileError::WrongArgumentType { function, index, expected, found } => {
-                write!(f, "Argument {index} de '{function}' : '{found}' fourni, '{expected}' attendu")
+            CompileError::WrongArgumentType {
+                function,
+                index,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "Argument {index} de '{function}' : '{found}' fourni, '{expected}' attendu"
+                )
+            }
+
+            CompileError::InterfaceMethodMissing {
+                class_name,
+                interface,
+                method,
+            } => {
+                write!(
+                    f,
+                    "La classe '{class_name}' ne respecte pas l'interface '{interface}' : méthode '{method}' manquante"
+                )
+            }
+
+            CompileError::InterfaceMethodArityMismatch {
+                class_name,
+                interface,
+                method,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "La méthode '{class_name}.{method}' ne respecte pas '{interface}' : {expected} paramètre(s) attendu(s), {found} trouvé(s)"
+                )
+            }
+
+            CompileError::InterfaceMethodParameterTypeMismatch {
+                class_name,
+                interface,
+                method,
+                index,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "La méthode '{class_name}.{method}' ne respecte pas '{interface}' : paramètre {index}, '{expected}' attendu, '{found}' fourni"
+                )
+            }
+
+            CompileError::InterfaceMethodReturnTypeMismatch {
+                class_name,
+                interface,
+                method,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "La méthode '{class_name}.{method}' ne respecte pas '{interface}' : retour '{expected}' attendu, '{found}' trouvé"
+                )
             }
 
             CompileError::NotCallable { found } => {
@@ -307,16 +410,14 @@ impl std::fmt::Display for CompileError {
                     None => write!(f, "Erreur de syntaxe dans le module '{path}'"),
                 }
             }
-            CompileError::ModuleLexerErrors { path, errors, .. } => {
-                match errors.first() {
-                    Some(error) => write!(
-                        f,
-                        "Erreur lexicale dans le module '{path}' à {}:{} : {}",
-                        error.line, error.column, error.message
-                    ),
-                    None => write!(f, "Erreur lexicale dans le module '{path}'"),
-                }
-            }
+            CompileError::ModuleLexerErrors { path, errors, .. } => match errors.first() {
+                Some(error) => write!(
+                    f,
+                    "Erreur lexicale dans le module '{path}' à {}:{} : {}",
+                    error.line, error.column, error.message
+                ),
+                None => write!(f, "Erreur lexicale dans le module '{path}'"),
+            },
             CompileError::InvalidJump => {
                 write!(f, "Saut de bytecode invalide")
             }
@@ -436,6 +537,62 @@ impl CompileError {
 
             CompileError::WrongArgumentType { function, index, expected, found } => Diagnostic::new(
                 format!("type incorrect pour l'argument {index} de '{function}'"),
+                0,
+                0,
+            )
+            .with_expected(expected.as_str())
+            .with_found(found.as_str()),
+
+            CompileError::InterfaceMethodMissing { class_name, interface, method } => Diagnostic::new(
+                format!(
+                    "la classe '{class_name}' ne respecte pas l'interface '{interface}' : méthode '{method}' manquante"
+                ),
+                0,
+                0,
+            )
+            .with_len(method.len()),
+
+            CompileError::InterfaceMethodArityMismatch {
+                class_name,
+                interface: _,
+                method,
+                expected,
+                found,
+            } => Diagnostic::new(
+                format!("signature incompatible pour '{class_name}.{method}'"),
+                0,
+                0,
+            )
+            .with_expected(format!("{expected} paramètre(s)"))
+            .with_found(format!("{found} paramètre(s)")),
+
+            CompileError::InterfaceMethodParameterTypeMismatch {
+                class_name,
+                interface,
+                method,
+                index,
+                expected,
+                found,
+            } => Diagnostic::new(
+                format!(
+                    "le paramètre {index} de '{class_name}.{method}' ne respecte pas '{interface}'"
+                ),
+                0,
+                0,
+            )
+            .with_expected(expected.as_str())
+            .with_found(found.as_str()),
+
+            CompileError::InterfaceMethodReturnTypeMismatch {
+                class_name,
+                interface,
+                method,
+                expected,
+                found,
+            } => Diagnostic::new(
+                format!(
+                    "le retour de '{class_name}.{method}' ne respecte pas '{interface}'"
+                ),
                 0,
                 0,
             )

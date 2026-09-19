@@ -7,6 +7,10 @@ export class Personne:Idead {
     func init() {
         println("Constructeur")
     }
+ 
+    func init(age) {
+        this.age = age
+    }
 
     func setAge(age:int) {
         this.age = age
@@ -20,7 +24,7 @@ export class Personne:Idead {
         println("Age: {}",this.age)
     }
 
-    func number()->float{
+    func number()->int{
         return 22;
     }
 
