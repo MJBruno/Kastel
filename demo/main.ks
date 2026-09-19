@@ -1,3 +1,4 @@
+ 
 // examples/overloads_demo.ks
 //
 // Surcharge par ARITÉ (nombre d'arguments) : méthodes, constructeurs et
@@ -81,3 +82,4 @@ println(s.area(2.0));                   // 18.0
 //   new Point(1, 2, 3);                // aucun constructeur à 3 arguments
 //   c.move(1, 2, 3);                   // aucune surcharge à 3 arguments
 //   s.area(1.0, 2.0);                  // idem, via le type Shape
+ 

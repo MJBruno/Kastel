@@ -1,3 +1,4 @@
+ 
 export interface Idead {
     func number()->int;
 }
@@ -26,6 +27,7 @@ export class Personne:Idead {
 
     func number()->int{
         return 22;
+ 
     }
 
 }
