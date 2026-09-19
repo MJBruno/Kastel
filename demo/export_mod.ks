@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 export interface Idead {
     func number()->int;
 }
@@ -26,6 +27,16 @@ export class Personne:Idead {
 
     func number()->int{
         return 22;
+=======
+export class ExportMod {
+    func init() {
+        this.value = this.get_value();
+    }
+
+
+    func get_value() {
+        return 55;
+>>>>>>> d9a04583b24fbca1c3c82b2fbe5ab774a46c2e4b
     }
 
 }
