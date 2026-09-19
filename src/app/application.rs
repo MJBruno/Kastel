@@ -9,7 +9,12 @@ use std::{
 };
 
 use crate::{
-    compiler::{compiler::Compiler, module_types::ModuleTypeLoader, type_checker::TypeCheckContext, variables::Global},
+    compiler::{
+        compiler::Compiler,
+        module_types::ModuleTypeLoader,
+        type_checker::TypeCheckContext,
+        variables::Global,
+    },
     error::kastel_error::KastelError,
     error::runtime_error::RuntimeError,
     frontend::{lexer::lexer::Lexer, parser::Parser},
@@ -105,20 +110,38 @@ fn execute(source: &str, module_path: Option<PathBuf>) -> Result<(), KastelError
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
 
-    let function = if let Some(module_path) = &module_path {
-        let project_root = module_path
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
+    let (function, runtime_loader) = if let Some(module_path) = &module_path {
+        // Le resolver utilisé par le TypeChecker et celui utilisé par la VM
+        // doivent être identiques. Sinon un import peut être accepté pendant
+        // l'analyse statique puis résolu vers un autre chemin à l'exécution.
+        let project_root = env::current_dir().unwrap_or_else(|_| {
+            module_path
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."))
+        });
+
         let resolver = crate::module::resolver::ModuleResolver::new(project_root);
-        let loader = Rc::new(ModuleTypeLoader::new(resolver));
-        let context = TypeCheckContext::new(module_path.clone(), loader);
-        Rc::new(compiler.compile_with_context(&statements, context).map_err(KastelError::from)?)
+        let type_loader = Rc::new(ModuleTypeLoader::new(resolver.clone()));
+        let context = TypeCheckContext::new(module_path.clone(), type_loader);
+        let function = Rc::new(
+            compiler
+                .compile_with_context(&statements, context)
+                .map_err(KastelError::from)?,
+        );
+
+        let runtime_loader = crate::module::module::ModuleLoader::with_resolver(resolver);
+
+        (function, runtime_loader)
     } else {
-        Rc::new(compiler.compile(&statements).map_err(KastelError::from)?)
+        let function = Rc::new(compiler.compile(&statements).map_err(KastelError::from)?);
+        let runtime_loader = crate::module::module::ModuleLoader::new(
+            env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        );
+        (function, runtime_loader)
     };
 
-    let mut vm = VirtualMachine::new(function, module_path);
+    let mut vm = VirtualMachine::new_with_loader(function, module_path, runtime_loader);
 
     if let Err(error) = vm.run() {
         return Err(RuntimeError::WithLocation {

@@ -98,6 +98,15 @@ pub enum RuntimeError {
         expected: usize,
         found: usize,
     },
+
+    DuplicateMethod {
+        name: String,
+        arity: usize,
+    },
+
+    AmbiguousMethod {
+        name: String,
+    },
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -233,6 +242,20 @@ impl std::fmt::Display for RuntimeError {
                     f,
                     "Method '{}' from interface '{}' expects {} arguments but found {}.",
                     method, interface, expected, found
+                )
+            }
+
+            RuntimeError::DuplicateMethod { name, arity } => {
+                write!(
+                    f,
+                    "La méthode '{name}' avec {arity} argument(s) est déjà déclarée dans cette classe."
+                )
+            }
+
+            RuntimeError::AmbiguousMethod { name } => {
+                write!(
+                    f,
+                    "La méthode '{name}' est surchargée et ne peut pas être utilisée sans appel explicite."
                 )
             }
         }
@@ -407,6 +430,23 @@ impl RuntimeError {
             )
             .with_expected(format!("{expected} paramètre(s)"))
             .with_found(format!("{found} paramètre(s)")),
+
+            RuntimeError::DuplicateMethod { name, arity } => Diagnostic::new(
+                format!(
+                    "la méthode '{name}' avec {arity} argument(s) est déjà déclarée dans cette classe"
+                ),
+                0,
+                0,
+            ),
+
+            RuntimeError::AmbiguousMethod { name } => Diagnostic::new(
+                format!("la méthode '{name}' est surchargée"),
+                0,
+                0,
+            )
+            .with_help(
+                "appelez directement la méthode avec ses arguments afin de sélectionner la surcharge correspondante.",
+            ),
 
             // Variantes sans donnée exploitable pour expected/found/help :
             // on garde un titre honnête (dérivé de Display) plutôt que

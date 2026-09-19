@@ -153,19 +153,20 @@ pub struct VirtualMachine {
 
 impl VirtualMachine {
     pub fn new(function: Rc<Function>, module_path: Option<PathBuf>) -> Self {
-        // La racine du projet est le répertoire du fichier d'entrée
-        // (celui passé sur la ligne de commande) ; sans fichier
-        // d'entrée (REPL), on retombe sur le répertoire de travail
-        // courant. Elle sert de repli pour la résolution des imports
+        // La racine du projet est le répertoire de travail du
+        // lancement ; en cas d'impossibilité, on utilise le dossier
+        // du fichier d'entrée. Elle sert de repli pour la résolution des imports
         // "absolus" relatifs au projet, et est propagée telle quelle
         // à tous les modules chargés récursivement (le même
         // `ModuleLoader`, donc le même `ModuleResolver`, est cloné et
         // transmis à `execute_module` — voir `ModuleResolver`).
-        let project_root = module_path
-            .as_deref()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let project_root = std::env::current_dir().unwrap_or_else(|_| {
+            module_path
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."))
+        });
 
         Self::new_with_loader(function, module_path, ModuleLoader::new(project_root))
     }

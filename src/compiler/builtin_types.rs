@@ -63,7 +63,9 @@ pub fn all() -> HashMap<String, Type> {
     types.insert("atan2".into(), binary(Float, Float, Float));
     types.insert("rand".into(), function(&[], Float));
     types.insert("rand_int".into(), unary(Dynamic, Int));
-    types.insert("rand_range".into(), unary(Dynamic, Dynamic));
+    // `rand_range(low, high)` : deux bornes entières, résultat entier dans
+    // [low, high) (voir `native_rand_range`).
+    types.insert("rand_range".into(), binary(Dynamic, Dynamic, Int));
 
     // Structures / utilitaires
     types.insert(

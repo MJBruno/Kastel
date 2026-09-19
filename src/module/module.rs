@@ -8,7 +8,7 @@ use std::{
 
 
 use crate::frontend::{lexer::lexer::Lexer, parser::Parser};
-use crate::module::resolver::ModuleResolver;
+use crate::module::resolver::{ImportResolution, ModuleResolver};
 use crate::vm::machine::VirtualMachine;
 use crate::{compiler::{compiler::Compiler, module_types::ModuleTypeLoader, type_checker::TypeCheckContext}, runtime::value::Value};
 use crate::{error::compile_error::CompileError, stdlib::execute_native};
@@ -75,10 +75,9 @@ struct ModuleLoaderState {
 }
 #[allow(dead_code)]
 impl ModuleLoader {
-    /// `project_root` est le répertoire du fichier d'entrée du
-    /// programme (voir `ModuleResolver::new`) : c'est lui qui sert de
-    /// repli pour les imports « absolus » relatifs au projet, et qui
-    /// détermine où se trouve `std/` par défaut.
+    /// `project_root` est la racine de résolution des imports du
+    /// programme. Elle sert de repli pour les imports relatifs au
+    /// projet et reste identique sur tout le graphe d'imports.
     pub fn new(project_root: PathBuf) -> Self {
         Self::with_resolver(ModuleResolver::new(project_root))
     }
@@ -104,6 +103,14 @@ impl ModuleLoader {
 
     pub fn resolve(&self, current_file: &Path, parts: &[String]) -> Result<PathBuf, CompileError> {
         self.resolver.resolve(current_file, parts)
+    }
+
+    pub fn resolve_import(
+        &self,
+        current_file: &Path,
+        parts: &[String],
+    ) -> Result<ImportResolution, CompileError> {
+        self.resolver.resolve_import(current_file, parts)
     }
 
     pub fn load(&mut self, path: PathBuf) -> Result<Rc<ModuleInstance>, CompileError> {

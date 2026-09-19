@@ -170,6 +170,17 @@ impl Type {
                     && actual_v.is_assignable_to(expected_v, parents)
             }
 
+            // Un tuple est compatible élément par élément (covariance) et
+            // seulement à longueur égale : `(1, "a")` est un `Tuple<float, str>`
+            // mais pas un `Tuple<int>`.
+            (Type::Tuple(actual), Type::Tuple(expected)) => {
+                actual.len() == expected.len()
+                    && actual
+                        .iter()
+                        .zip(expected)
+                        .all(|(actual, expected)| actual.is_assignable_to(expected, parents))
+            }
+
             (Type::ArrayDynamic, Type::Array(_)) => true,
             (Type::Array(_), Type::ArrayDynamic) => true,
             (Type::DictDynamic, Type::Dict(_, _)) => true,
@@ -236,6 +247,18 @@ impl Type {
 
         if self.is_dynamic() || other.is_dynamic() {
             return Type::Dynamic;
+        }
+
+        // Deux tuples de même longueur se fusionnent élément par élément.
+        if let (Type::Tuple(left), Type::Tuple(right)) = (self, other)
+            && left.len() == right.len()
+        {
+            return Type::Tuple(
+                left.iter()
+                    .zip(right)
+                    .map(|(left, right)| left.merge(right))
+                    .collect(),
+            );
         }
 
         match (self.numeric_kind(), other.numeric_kind()) {
@@ -357,6 +380,27 @@ mod tests {
             Type::from_type_expr(&expr),
             Type::Dict(Box::new(Type::Str), Box::new(Type::Int))
         );
+    }
+
+    #[test]
+    fn tuples_are_covariant_and_length_checked() {
+        let parents = |_name: &str| Vec::<String>::new();
+        let int_str = Type::Tuple(vec![Type::Int, Type::Str]);
+        let float_str = Type::Tuple(vec![Type::Float, Type::Str]);
+        let single = Type::Tuple(vec![Type::Int]);
+
+        assert!(int_str.is_assignable_to(&float_str, &parents));
+        assert!(!float_str.is_assignable_to(&int_str, &parents));
+        assert!(!int_str.is_assignable_to(&single, &parents));
+        assert!(int_str.is_assignable_to(&Type::TupleDynamic, &parents));
+    }
+
+    #[test]
+    fn tuples_merge_element_by_element() {
+        let left = Type::Tuple(vec![Type::Int, Type::Int]);
+        let right = Type::Tuple(vec![Type::Float, Type::Int]);
+
+        assert_eq!(left.merge(&right), Type::Tuple(vec![Type::Float, Type::Int]));
     }
 
     #[test]

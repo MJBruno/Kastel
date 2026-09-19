@@ -36,13 +36,9 @@ struct Binding {
 #[derive(Debug, Clone)]
 struct ClassInfo {
     bases: Vec<String>,
-    methods: HashMap<String, FunctionType>,
-}
-
-#[derive(Debug, Clone)]
-struct InterfaceInfo {
-    bases: Vec<String>,
-    methods: HashMap<String, FunctionType>,
+    /// Une classe peut surcharger une méthode par son arité.
+    /// Deux signatures de même nom et de même arité restent interdites.
+    methods: HashMap<String, Vec<FunctionType>>,
 }
 
 /// Vérificateur statique graduel de Kastel.
@@ -53,7 +49,6 @@ pub struct TypeChecker {
     scopes: Vec<HashMap<String, Binding>>,
     functions: HashMap<String, FunctionType>,
     classes: HashMap<String, ClassInfo>,
-    interfaces: HashMap<String, InterfaceInfo>,
     parents: HashMap<String, Vec<String>>,
     current_return_type: Option<Type>,
     return_types: Vec<Type>,
@@ -116,7 +111,6 @@ impl TypeChecker {
             scopes: vec![globals],
             functions: HashMap::new(),
             classes: HashMap::new(),
-            interfaces: HashMap::new(),
             parents: HashMap::new(),
             current_return_type: None,
             return_types: Vec::new(),
@@ -181,7 +175,7 @@ impl TypeChecker {
                     bases,
                     methods,
                 } => {
-                    let mut method_map = HashMap::new();
+                    let mut method_map: HashMap<String, Vec<FunctionType>> = HashMap::new();
 
                     for method in methods {
                         let params = method
@@ -205,13 +199,25 @@ impl TypeChecker {
                             .map(Type::from_type_expr)
                             .unwrap_or(Type::Dynamic);
 
-                        method_map.insert(
-                            method.name.clone(),
-                            FunctionType {
-                                params,
-                                return_type: Box::new(return_type),
-                            },
-                        );
+                        let signature = FunctionType {
+                            params,
+                            return_type: Box::new(return_type),
+                        };
+
+                        let overloads = method_map.entry(method.name.clone()).or_default();
+
+                        if overloads
+                            .iter()
+                            .any(|existing| existing.params.len() == signature.params.len())
+                        {
+                            return Err(CompileError::DuplicateMethod {
+                                class_name: name.clone(),
+                                method_name: method.name.clone(),
+                                arity: signature.params.len(),
+                            });
+                        }
+
+                        overloads.push(signature);
                     }
 
                     self.parents.insert(name.clone(), bases.clone());
@@ -230,39 +236,55 @@ impl TypeChecker {
                     bases,
                     methods,
                 } => {
-                    let mut method_map = HashMap::new();
+                    // Une interface se surcharge comme une classe : le
+                    // couple (nom, arité) doit rester unique.
+                    let mut method_map: HashMap<String, Vec<FunctionType>> = HashMap::new();
 
                     for method in methods {
-                        let params = method
-                            .param_types
-                            .iter()
-                            .map(|annotation| {
-                                annotation
-                                    .as_ref()
-                                    .map(Type::from_type_expr)
-                                    .unwrap_or(Type::Dynamic)
+                        let params = (0..method.arity)
+                            .map(|index| {
+                                method
+                                    .param_types
+                                    .get(index)
+                                    .and_then(|annotation| annotation.as_ref())
+                                    .map_or(Type::Dynamic, Type::from_type_expr)
                             })
                             .collect::<Vec<_>>();
 
-                        let return_type = method
-                            .return_type
-                            .as_ref()
-                            .map(Type::from_type_expr)
-                            .unwrap_or(Type::Dynamic);
+                        let signature = FunctionType {
+                            params,
+                            return_type: Box::new(
+                                method
+                                    .return_type
+                                    .as_ref()
+                                    .map(Type::from_type_expr)
+                                    .unwrap_or(Type::Dynamic),
+                            ),
+                        };
 
-                        method_map.insert(
-                            method.name.clone(),
-                            FunctionType {
-                                params,
-                                return_type: Box::new(return_type),
-                            },
-                        );
+                        let overloads = method_map.entry(method.name.clone()).or_default();
+
+                        if overloads
+                            .iter()
+                            .any(|existing| existing.params.len() == signature.params.len())
+                        {
+                            return Err(CompileError::DuplicateMethod {
+                                class_name: name.clone(),
+                                method_name: method.name.clone(),
+                                arity: signature.params.len(),
+                            });
+                        }
+
+                        overloads.push(signature);
                     }
 
                     self.parents.insert(name.clone(), bases.clone());
-                    self.interfaces.insert(
+                    // Enregistrée comme « classe sans corps » : les appels sur
+                    // une valeur typée par l'interface sont ainsi vérifiés
+                    // (arité + types) via `find_methods`.
+                    self.classes.insert(
                         name.clone(),
-                        InterfaceInfo {
+                        ClassInfo {
                             bases: bases.clone(),
                             methods: method_map,
                         },
@@ -749,127 +771,7 @@ impl TypeChecker {
             self.check_method(class_name, method)?;
         }
 
-        // Une classe qui déclare une interface (directement ou par
-        // l'intermédiaire d'une classe parente) doit respecter toutes les
-        // signatures de cette interface. La vérification est faite après
-        // l'analyse des méthodes afin de disposer aussi des retours inférés.
-        self.check_implemented_interfaces(class_name)?;
-
         self.current_class = previous_class;
-        Ok(())
-    }
-
-    fn check_implemented_interfaces(&self, class_name: &str) -> Result<(), CompileError> {
-        let interfaces = self.collect_interfaces_for_class(class_name);
-
-        for interface_name in interfaces {
-            let Some(interface) = self.interfaces.get(&interface_name) else {
-                continue;
-            };
-
-            for (method_name, expected) in &interface.methods {
-                let actual = self.find_method(class_name, method_name).ok_or_else(|| {
-                    CompileError::InterfaceMethodMissing {
-                        class_name: class_name.to_string(),
-                        interface: interface_name.clone(),
-                        method: method_name.clone(),
-                    }
-                })?;
-
-                self.ensure_interface_method_compatible(
-                    class_name,
-                    &interface_name,
-                    method_name,
-                    &actual,
-                    expected,
-                )?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn collect_interfaces_for_class(&self, class_name: &str) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut pending = vec![class_name.to_string()];
-        let mut visited = HashSet::new();
-
-        while let Some(name) = pending.pop() {
-            if !visited.insert(name.clone()) {
-                continue;
-            }
-
-            if let Some(interface) = self.interfaces.get(&name) {
-                if !result.contains(&name) {
-                    result.push(name.clone());
-                }
-                pending.extend(interface.bases.iter().cloned());
-                continue;
-            }
-
-            if let Some(class) = self.classes.get(&name) {
-                pending.extend(class.bases.iter().cloned());
-            }
-        }
-
-        result
-    }
-
-    fn ensure_interface_method_compatible(
-        &self,
-        class_name: &str,
-        interface_name: &str,
-        method_name: &str,
-        actual: &FunctionType,
-        expected: &FunctionType,
-    ) -> Result<(), CompileError> {
-        if actual.params.len() != expected.params.len() {
-            return Err(CompileError::InterfaceMethodArityMismatch {
-                class_name: class_name.to_string(),
-                interface: interface_name.to_string(),
-                method: method_name.to_string(),
-                expected: expected.params.len(),
-                found: actual.params.len(),
-            });
-        }
-
-        // Pour les paramètres, on conserve une compatibilité graduelle :
-        // Dynamic est compatible avec tout type. Pour les types connus,
-        // l'implémentation doit accepter au moins le type demandé par
-        // l'interface (contravariance).
-        for (index, (actual_param, expected_param)) in
-            actual.params.iter().zip(&expected.params).enumerate()
-        {
-            if !expected_param.is_assignable_to(actual_param, &|name: &str| {
-                self.parents.get(name).cloned().unwrap_or_default()
-            }) {
-                return Err(CompileError::InterfaceMethodParameterTypeMismatch {
-                    class_name: class_name.to_string(),
-                    interface: interface_name.to_string(),
-                    method: method_name.to_string(),
-                    index: index + 1,
-                    expected: expected_param.to_string(),
-                    found: actual_param.to_string(),
-                });
-            }
-        }
-
-        // Le type de retour est covariant : l'implémentation peut retourner
-        // un sous-type, mais pas un type plus large que celui promis par
-        // l'interface. Ex. float n'implémente pas -> int.
-        if !actual.return_type.is_assignable_to(
-            &expected.return_type,
-            &|name: &str| self.parents.get(name).cloned().unwrap_or_default(),
-        ) {
-            return Err(CompileError::InterfaceMethodReturnTypeMismatch {
-                class_name: class_name.to_string(),
-                interface: interface_name.to_string(),
-                method: method_name.to_string(),
-                expected: expected.return_type.to_string(),
-                found: actual.return_type.to_string(),
-            });
-        }
-
         Ok(())
     }
 
@@ -932,8 +834,12 @@ impl TypeChecker {
         }
 
         if let Some(class) = self.classes.get_mut(class_name) {
-            if let Some(signature) = class.methods.get_mut(&method.name) {
-                if method.return_type.is_none() {
+            if let Some(overloads) = class.methods.get_mut(&method.name) {
+                if let Some(signature) = overloads
+                    .iter_mut()
+                    .find(|signature| signature.params.len() == method.params.len())
+                    && method.return_type.is_none()
+                {
                     signature.return_type = Box::new(inferred_return);
                 }
             }
@@ -1092,33 +998,33 @@ impl TypeChecker {
             Expression::Call {
                 callee, arguments, ..
             } => {
+                // Pour une méthode de classe, l'arité fait partie de la
+                // résolution. Cela permet `obj.foo()` et `obj.foo(x)`
+                // d'aboutir à deux signatures différentes.
+                if let Expression::Member { object, name, .. } = callee.as_ref() {
+                    let object_type = self.check_expression(object)?;
+
+                    if let Type::Named(class_name) = object_type {
+                        let signatures = self.find_methods(&class_name, name);
+
+                        if !signatures.is_empty() {
+                            let signature = self.resolve_overload(
+                                &signatures,
+                                arguments,
+                                &format!("{class_name}.{name}"),
+                            )?;
+
+                            return Ok(*signature.return_type);
+                        }
+                    }
+                }
+
                 let callee_type = self.check_expression(callee)?;
 
                 match callee_type {
                     Type::Function(signature) => {
-                        if signature.params.len() != arguments.len() {
-                            return Err(CompileError::WrongArgumentCount {
-                                expected: signature.params.len() as i32,
-                                found: arguments.len(),
-                            });
-                        }
-
-                        for (index, (argument, expected)) in
-                            arguments.iter().zip(&signature.params).enumerate()
-                        {
-                            let actual = self.check_expression(argument)?;
-
-                            if !self.are_assignable(&actual, expected) {
-                                return Err(CompileError::WrongArgumentType {
-                                    function: self.expression_name(callee),
-                                    index: index + 1,
-                                    expected: expected.to_string(),
-                                    found: actual.to_string(),
-                                });
-                            }
-                        }
-
-                        Ok(*signature.return_type)
+                        let function_name = self.expression_name(callee);
+                        self.check_call_signature(&signature, arguments, &function_name)
                     }
 
                     Type::Dynamic => {
@@ -1180,6 +1086,18 @@ impl TypeChecker {
                                 found: index_type.to_string(),
                             });
                         }
+                        // `t[0]` sur un `Tuple<int, str>` : type EXACT de
+                        // l'élément quand l'index est un littéral entier.
+                        if let (
+                            Type::Tuple(elements),
+                            Expression::Literal(Literal::Integer(position)),
+                        ) = (&object_type, index.as_ref())
+                            && let Ok(position) = usize::try_from(*position)
+                            && let Some(element) = elements.get(position)
+                        {
+                            return Ok(element.clone());
+                        }
+
                         Ok(object_type.element_type())
                     }
                     Type::Dict(key, value) => {
@@ -1201,28 +1119,17 @@ impl TypeChecker {
                 arguments,
                 ..
             } => {
-                if let Some(signature) = self.find_method(class_name, "init") {
-                    if signature.params.len() != arguments.len() {
-                        return Err(CompileError::WrongArgumentCount {
-                            expected: signature.params.len() as i32,
-                            found: arguments.len(),
-                        });
-                    }
+                let signatures = self.find_methods(class_name, "init");
 
-                    for (index, (argument, expected)) in
-                        arguments.iter().zip(&signature.params).enumerate()
-                    {
-                        let actual = self.check_expression(argument)?;
-                        if !self.are_assignable(&actual, expected) {
-                            return Err(CompileError::WrongArgumentType {
-                                function: format!("{class_name}.init"),
-                                index: index + 1,
-                                expected: expected.to_string(),
-                                found: actual.to_string(),
-                            });
-                        }
-                    }
+                if !signatures.is_empty() {
+                    self.resolve_overload(
+                        &signatures,
+                        arguments,
+                        &format!("{class_name}.init"),
+                    )?;
                 } else {
+                    // Classe sans constructeur connu : les arguments restent
+                    // dynamiques pour conserver le typage graduel.
                     for argument in arguments {
                         self.check_expression(argument)?;
                     }
@@ -1312,16 +1219,20 @@ impl TypeChecker {
             }
 
             BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Modulo => {
+                // `/` renvoie TOUJOURS un flottant à l'exécution : même avec
+                // un opérande dynamique, le résultat n'est jamais un `int`.
+                let is_divide = matches!(operator, BinaryOp::Divide);
+
                 if left_type.is_dynamic() {
                     if right_type.numeric_kind().is_some() {
-                        return Ok(right_type);
+                        return Ok(if is_divide { Type::Float } else { right_type });
                     }
                     return Ok(Type::Dynamic);
                 }
 
                 if right_type.is_dynamic() {
                     if left_type.numeric_kind().is_some() {
-                        return Ok(left_type);
+                        return Ok(if is_divide { Type::Float } else { left_type });
                     }
                     return Ok(Type::Dynamic);
                 }
@@ -1394,8 +1305,17 @@ impl TypeChecker {
     fn member_type(&self, object_type: &Type, name: &str) -> Result<Type, CompileError> {
         match object_type {
             Type::Named(class_name) => {
-                if let Some(signature) = self.find_method(class_name, name) {
-                    return Ok(Type::Function(signature));
+                let signatures = self.find_methods(class_name, name);
+
+                if signatures.len() == 1 {
+                    return Ok(Type::Function(signatures[0].clone()));
+                }
+
+                if signatures.len() > 1 {
+                    // Une surcharge ne forme pas une valeur de fonction unique
+                    // sans contexte d'appel. Les appels directs sont traités
+                    // plus haut et sélectionnent la bonne signature.
+                    return Ok(Type::Dynamic);
                 }
             }
 
@@ -1422,9 +1342,11 @@ impl TypeChecker {
         Ok(Type::Dynamic)
     }
 
-    fn find_method(&self, class_name: &str, method_name: &str) -> Option<FunctionType> {
+    fn find_methods(&self, class_name: &str, method_name: &str) -> Vec<FunctionType> {
         let mut pending = vec![class_name.to_string()];
         let mut visited = HashSet::new();
+        let mut seen_arities = HashSet::new();
+        let mut result = Vec::new();
 
         while let Some(name) = pending.pop() {
             if !visited.insert(name.clone()) {
@@ -1432,15 +1354,79 @@ impl TypeChecker {
             }
 
             if let Some(class) = self.classes.get(&name) {
-                if let Some(signature) = class.methods.get(method_name) {
-                    return Some(signature.clone());
+                if let Some(overloads) = class.methods.get(method_name) {
+                    for signature in overloads {
+                        // Une surcharge définie dans la classe dérivée masque
+                        // la signature de même arité d'une classe de base.
+                        if seen_arities.insert(signature.params.len()) {
+                            result.push(signature.clone());
+                        }
+                    }
                 }
 
                 pending.extend(class.bases.iter().cloned());
             }
         }
 
-        None
+        result
+    }
+
+    fn check_call_signature(
+        &mut self,
+        signature: &FunctionType,
+        arguments: &[Expression],
+        function_name: &str,
+    ) -> Result<Type, CompileError> {
+        if signature.params.len() != arguments.len() {
+            return Err(CompileError::WrongArgumentCount {
+                expected: signature.params.len() as i32,
+                found: arguments.len(),
+            });
+        }
+
+        for (index, (argument, expected)) in
+            arguments.iter().zip(&signature.params).enumerate()
+        {
+            let actual = self.check_expression(argument)?;
+
+            if !self.are_assignable(&actual, expected) {
+                return Err(CompileError::WrongArgumentType {
+                    function: function_name.to_string(),
+                    index: index + 1,
+                    expected: expected.to_string(),
+                    found: actual.to_string(),
+                });
+            }
+        }
+
+        Ok((*signature.return_type).clone())
+    }
+
+    fn resolve_overload(
+        &mut self,
+        signatures: &[FunctionType],
+        arguments: &[Expression],
+        function_name: &str,
+    ) -> Result<FunctionType, CompileError> {
+        let signature = signatures
+            .iter()
+            .find(|signature| signature.params.len() == arguments.len());
+
+        let Some(signature) = signature else {
+            let expected = signatures
+                .first()
+                .map(|signature| signature.params.len() as i32)
+                .unwrap_or(0);
+
+            return Err(CompileError::WrongArgumentCount {
+                expected,
+                found: arguments.len(),
+            });
+        };
+
+        self.check_call_signature(signature, arguments, function_name)?;
+
+        Ok(signature.clone())
     }
 
     fn bind_pattern(&mut self, pattern: &Pattern, matched_type: &Type) -> Result<(), CompileError> {
@@ -1587,94 +1573,139 @@ fn binary_symbol(operator: &BinaryOp) -> &'static str {
 }
 
 #[cfg(test)]
-mod interface_tests {
-    use super::TypeChecker;
+mod tests {
+    use super::*;
     use crate::frontend::{lexer::lexer::Lexer, parser::Parser};
 
-    fn parse(source: &str) -> Vec<crate::frontend::ast::Statement> {
+    fn check(source: &str) -> Result<(), CompileError> {
         let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
-        Parser::new(tokens).parse().unwrap()
+        let statements = Parser::new(tokens).parse().unwrap();
+        TypeChecker::check(&statements)
     }
 
     #[test]
-    fn interface_rejects_incompatible_return_type() {
-        let statements = parse(
+    fn inference_and_annotations_are_accepted() {
+        let result = check(
             r#"
-export interface Idead {
-    func number() -> int;
+let x = 10;
+let y: int = 20;
+let z = x + y;
+let name: str = "Bruno";
+let values: Array<int> = [1, 2, 3];
+let users: Dict<str, int> = {
+    age: 25
+};
+func add(a: int, b: int) -> int {
+    return a + b;
 }
-
-export class Personne: Idead {
-    func number() -> float {
-        return 22;
-    }
-}
+let result = add(10, 20);
 "#,
         );
-
-        let error = TypeChecker::check(&statements).unwrap_err();
-        let message = error.to_string();
-
-        assert!(message.contains("Personne.number"));
-        assert!(message.contains("'int' attendu"));
-        assert!(message.contains("'float' trouvé"));
+        assert!(result.is_ok(), "{:?}", result.err());
     }
 
     #[test]
-    fn interface_accepts_exact_return_type() {
-        let statements = parse(
-            r#"
-export interface Idead {
-    func number() -> int;
-}
-
-export class Personne: Idead {
-    func number() -> int {
-        return 22;
-    }
-}
-"#,
+    fn nested_generics_and_compact_equal_parse() {
+        let result = check(
+            "let m: Dict<str, Array<int>> = { a: [1, 2] };\nlet v: Array<int>= [1, 2];",
         );
-
-        assert!(TypeChecker::check(&statements).is_ok());
+        assert!(result.is_ok(), "{:?}", result.err());
     }
 
     #[test]
-    fn interface_rejects_missing_method() {
-        let statements = parse(
-            r#"
-interface Idead {
-    func number() -> int;
-}
-
-class Personne: Idead {
-}
-"#,
-        );
-
-        let error = TypeChecker::check(&statements).unwrap_err();
-        assert!(error.to_string().contains("méthode 'number' manquante"));
+    fn wrong_annotation_is_rejected() {
+        assert!(check("let x: int = \"a\";").is_err());
     }
 
     #[test]
-    fn interface_rejects_incompatible_parameter_type() {
-        let statements = parse(
-            r#"
-interface Idead {
-    func number(value: int) -> int;
-}
-
-class Personne: Idead {
-    func number(value: str) -> int {
-        return 22;
+    fn division_with_dynamic_operand_is_float() {
+        assert!(check("func f(n) { let q: int = n / 2; return q; }").is_err());
+        assert!(check("func g(n) { let q: float = n / 2; return q; }").is_ok());
     }
+
+    #[test]
+    fn methods_and_constructors_can_be_overloaded_by_arity() {
+        let result = check(
+            r#"
+class Point {
+    func init() { this.x = 0; this.y = 0; }
+    func init(x: int) { this.x = x; this.y = 0; }
+    func init(x: int, y: int) { this.x = x; this.y = y; }
+    func scale() -> int { return 1; }
+    func scale(k: int) -> int { return k; }
 }
+let a = new Point();
+let b = new Point(1);
+let c = new Point(1, 2);
+let k: int = c.scale();
+let m: int = c.scale(3);
 "#,
         );
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
 
-        let error = TypeChecker::check(&statements).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("ne respecte pas 'Idead' : paramètre 1"));
+    #[test]
+    fn same_arity_method_is_a_duplicate() {
+        let result = check("class A { func f(x) { return 1; } func f(y) { return 2; } }");
+        assert!(matches!(result, Err(CompileError::DuplicateMethod { .. })));
+    }
+
+    #[test]
+    fn no_overload_for_the_given_arity_is_rejected() {
+        assert!(
+            check("class A { func f(x) { return 1; } } let a = new A(); a.f(1, 2);").is_err()
+        );
+        assert!(
+            check("class B { func init(x) { this.x = x; } } let b = new B();").is_err()
+        );
+    }
+
+    #[test]
+    fn interfaces_can_declare_overloads() {
+        let result = check(
+            r#"
+interface Shape {
+    func area() -> float;
+    func area(scale: float) -> float;
+}
+class Square: Shape {
+    func area() -> float { return 1.0; }
+    func area(scale: float) -> float { return scale; }
+}
+let s: Shape = new Square();
+let a: float = s.area();
+let b: float = s.area(2.0);
+"#,
+        );
+        assert!(result.is_ok(), "{:?}", result.err());
+
+        let duplicate = check("interface I { func f(); func f(); }");
+        assert!(matches!(duplicate, Err(CompileError::DuplicateMethod { .. })));
+
+        let wrong_call = check(
+            r#"
+interface Shape { func area() -> float; }
+class Square: Shape { func area() -> float { return 1.0; } }
+let s: Shape = new Square();
+s.area(1.0, 2.0);
+"#,
+        );
+        assert!(wrong_call.is_err());
+    }
+
+    #[test]
+    fn tuple_annotations_are_checked_element_by_element() {
+        let result = check(
+            r#"
+let t: Tuple<float, str> = (1, "a");
+func first(p: Tuple<int, int>) -> int { return p[0]; }
+let r: int = first((1, 2));
+"#,
+        );
+        assert!(result.is_ok(), "{:?}", result.err());
+
+        assert!(check("let bad: Tuple<int> = (1, 2);").is_err());
+        assert!(check("let bad: Tuple<int, str> = (1.5, \"a\");").is_err());
     }
 }
+

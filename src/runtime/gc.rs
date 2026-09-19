@@ -298,8 +298,10 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
                 mark_object(interface, state);
             }
 
-            for value in methods.values() {
-                mark_value(value, state);
+            for overloads in methods.values() {
+                for value in overloads {
+                    mark_value(value, state);
+                }
             }
         }
 

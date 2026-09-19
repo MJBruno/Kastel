@@ -12,11 +12,19 @@ impl VirtualMachine {
     //                     METHOD RESOLUTION
     // ============================================================
 
-    pub(crate) fn find_class_method_from(class: Gc<Object>, name: &str) -> Option<Value> {
-        Self::find_method_in_hierarchy(Some(class), name)
+    pub(crate) fn find_class_method_from(
+        class: Gc<Object>,
+        name: &str,
+        arg_count: usize,
+    ) -> Option<Value> {
+        Self::find_method_in_hierarchy(Some(class), name, arg_count)
     }
 
-    pub(crate) fn find_base_method(class: Gc<Object>, name: &str) -> Option<Value> {
+    pub(crate) fn find_base_method(
+        class: Gc<Object>,
+        name: &str,
+        arg_count: usize,
+    ) -> Option<Value> {
         let parent = {
             let object = class.borrow();
 
@@ -26,10 +34,14 @@ impl VirtualMachine {
             }
         };
 
-        Self::find_method_in_hierarchy(parent, name)
+        Self::find_method_in_hierarchy(parent, name, arg_count)
     }
 
-    fn find_method_in_hierarchy(mut current: Option<Gc<Object>>, name: &str) -> Option<Value> {
+    fn find_method_in_hierarchy(
+        mut current: Option<Gc<Object>>,
+        name: &str,
+        arg_count: usize,
+    ) -> Option<Value> {
         while let Some(handle) = current {
             let object = handle.borrow();
 
@@ -39,8 +51,17 @@ impl VirtualMachine {
                     superclass,
                     ..
                 } => {
-                    if let Some(method) = methods.get(name) {
-                        return Some(method.clone());
+                    if let Some(overloads) = methods.get(name) {
+                        for method in overloads {
+                            if let Value::Object(handle) = method {
+                                let object = handle.borrow();
+                                if let Object::Closure(closure) = &*object
+                                    && closure.function.arity.checked_sub(1) == Some(arg_count)
+                                {
+                                    return Some(method.clone());
+                                }
+                            }
+                        }
                     }
 
                     current = superclass.clone();
@@ -51,6 +72,67 @@ impl VirtualMachine {
         }
 
         None
+    }
+
+    /// Arités (hors `this`) sous lesquelles `name` est déclarée dans la
+    /// hiérarchie de `class` : triées, sans doublon. Sert uniquement à
+    /// produire une erreur d'arité précise quand aucune surcharge ne
+    /// correspond au nombre d'arguments passés.
+    pub(crate) fn class_method_arities(class: Gc<Object>, name: &str) -> Vec<usize> {
+        Self::method_arities_in_hierarchy(Some(class), name)
+    }
+
+    /// Comme `class_method_arities`, mais à partir de la classe parente
+    /// (appel `base.methode(...)`).
+    pub(crate) fn base_method_arities(class: Gc<Object>, name: &str) -> Vec<usize> {
+        let parent = {
+            let object = class.borrow();
+
+            match &*object {
+                Object::Class { superclass, .. } => superclass.clone(),
+                _ => None,
+            }
+        };
+
+        Self::method_arities_in_hierarchy(parent, name)
+    }
+
+    fn method_arities_in_hierarchy(mut current: Option<Gc<Object>>, name: &str) -> Vec<usize> {
+        let mut arities = Vec::new();
+
+        while let Some(handle) = current {
+            let object = handle.borrow();
+
+            match &*object {
+                Object::Class {
+                    methods,
+                    superclass,
+                    ..
+                } => {
+                    if let Some(overloads) = methods.get(name) {
+                        for method in overloads {
+                            if let Value::Object(method_handle) = method {
+                                let method_object = method_handle.borrow();
+
+                                if let Object::Closure(closure) = &*method_object
+                                    && let Some(arity) = closure.function.arity.checked_sub(1)
+                                {
+                                    arities.push(arity);
+                                }
+                            }
+                        }
+                    }
+
+                    current = superclass.clone();
+                }
+
+                _ => break,
+            }
+        }
+
+        arities.sort_unstable();
+        arities.dedup();
+        arities
     }
 
     // ============================================================
@@ -138,11 +220,33 @@ impl VirtualMachine {
                             }
                         };
 
-                        let method = Self::find_class_method_from(class_handle, &method_name)
-                            .ok_or(RuntimeError::ObjectFieldNotFound {
-                                name: method_name,
-                                suggestion: None,
-                            })?;
+                        let method = match Self::find_class_method_from(
+                            class_handle.clone(),
+                            &method_name,
+                            arg_count,
+                        ) {
+                            Some(method) => method,
+
+                            None => {
+                                // La méthode existe-t-elle sous une autre
+                                // arité ? Alors c'est une erreur d'arité,
+                                // pas un champ introuvable.
+                                let declared =
+                                    Self::class_method_arities(class_handle, &method_name);
+
+                                if let Some(expected) = declared.first() {
+                                    return Err(RuntimeError::WrongArgumentCount {
+                                        expected: *expected,
+                                        found: arg_count,
+                                    });
+                                }
+
+                                return Err(RuntimeError::ObjectFieldNotFound {
+                                    name: method_name,
+                                    suggestion: None,
+                                });
+                            }
+                        };
 
                         let method_handle = match method {
                             Value::Object(method_handle)
@@ -329,12 +433,25 @@ impl VirtualMachine {
             closure.owner_class.clone().ok_or(RuntimeError::TypeError)?
         };
 
-        let method = Self::find_base_method(owner_class, &method_name).ok_or(
-            RuntimeError::ObjectFieldNotFound {
-                name: method_name,
-                suggestion: None,
-            },
-        )?;
+        let method = match Self::find_base_method(owner_class.clone(), &method_name, arg_count) {
+            Some(method) => method,
+
+            None => {
+                let declared = Self::base_method_arities(owner_class, &method_name);
+
+                if let Some(expected) = declared.first() {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: *expected,
+                        found: arg_count,
+                    });
+                }
+
+                return Err(RuntimeError::ObjectFieldNotFound {
+                    name: method_name,
+                    suggestion: None,
+                });
+            }
+        };
 
         self.push(method);
         self.push(this_value);

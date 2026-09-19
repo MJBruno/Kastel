@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::VirtualMachine;
 
@@ -71,7 +71,7 @@ impl VirtualMachine {
             .ok_or(RuntimeError::TypeError)?;
 
         let methods_start = start + base_count + 1;
-        let mut methods = HashMap::with_capacity(method_count);
+        let mut methods = HashMap::<String, Vec<Value>>::with_capacity(method_count);
 
         for index in 0..method_count {
             let base = methods_start + index * 2;
@@ -88,17 +88,41 @@ impl VirtualMachine {
                 .cloned()
                 .ok_or(RuntimeError::StackUnderflow)?;
 
-            if !matches!(
-                &method,
-                Value::Object(handle)
-                    if matches!(&*handle.borrow(), Object::Closure(_))
-            ) {
-                return Err(RuntimeError::NotCallable);
+            let arity = match &method {
+                Value::Object(handle) => {
+                    let object = handle.borrow();
+                    match &*object {
+                        Object::Closure(closure) => closure
+                            .function
+                            .arity
+                            .checked_sub(1)
+                            .ok_or(RuntimeError::TypeError)?,
+                        _ => return Err(RuntimeError::NotCallable),
+                    }
+                }
+                _ => return Err(RuntimeError::NotCallable),
+            };
+
+            let overloads = methods.entry(method_name.clone()).or_default();
+
+            if overloads.iter().any(|existing| match existing {
+                Value::Object(handle) => {
+                    let object = handle.borrow();
+                    matches!(
+                        &*object,
+                        Object::Closure(closure)
+                            if closure.function.arity.checked_sub(1) == Some(arity)
+                    )
+                }
+                _ => false,
+            }) {
+                return Err(RuntimeError::DuplicateMethod {
+                    name: method_name,
+                    arity,
+                });
             }
 
-            if methods.insert(method_name, method).is_some() {
-                return Err(RuntimeError::TypeError);
-            }
+            overloads.push(method);
         }
 
         self.stack.truncate(start);
@@ -117,12 +141,14 @@ impl VirtualMachine {
                 return Err(RuntimeError::InvalidFunction);
             };
 
-            for method in methods.values() {
-                if let Value::Object(handle) = method {
-                    let mut object = handle.borrow_mut();
+            for overloads in methods.values() {
+                for method in overloads {
+                    if let Value::Object(handle) = method {
+                        let mut object = handle.borrow_mut();
 
-                    if let Object::Closure(closure) = &mut *object {
-                        closure.owner_class = Some(class_handle.clone());
+                        if let Object::Closure(closure) = &mut *object {
+                            closure.owner_class = Some(class_handle.clone());
+                        }
                     }
                 }
             }
@@ -141,7 +167,7 @@ impl VirtualMachine {
 
     fn collect_interface_methods(
         interface: Gc<Object>,
-        methods: &mut HashMap<String, usize>,
+        methods: &mut HashSet<(String, usize)>,
     ) -> Result<(), RuntimeError> {
         let (bases, own_methods) = {
             let object = interface.borrow();
@@ -157,15 +183,10 @@ impl VirtualMachine {
             Self::collect_interface_methods(base, methods)?;
         }
 
-        for (name, arity) in own_methods {
-            if let Some(existing) = methods.get(&name)
-                && *existing != arity
-            {
-                return Err(RuntimeError::TypeError);
-            }
-
-            methods.insert(name, arity);
-        }
+        // Les signatures sont identifiées par `(nom, arité)` : deux
+        // interfaces (ou une interface et sa parente) peuvent exiger
+        // `area()` et `area(unit)` ensemble sans conflit.
+        methods.extend(own_methods);
 
         Ok(())
     }
@@ -190,46 +211,38 @@ impl VirtualMachine {
                 }
             };
 
-            let mut requirements = HashMap::<String, usize>::new();
+            let mut collected = HashSet::<(String, usize)>::new();
 
-            Self::collect_interface_methods(interface.clone(), &mut requirements)?;
+            Self::collect_interface_methods(interface.clone(), &mut collected)?;
+
+            // Ordre déterministe : l'erreur rapportée ne dépend pas de
+            // l'ordre d'itération du HashSet.
+            let mut requirements: Vec<(String, usize)> = collected.into_iter().collect();
+            requirements.sort();
 
             for (name, required_arity) in requirements {
-                let method = Self::find_class_method_from(class.clone(), &name);
+                // La surcharge exacte (même nom, même arité) existe : OK.
+                if Self::find_class_method_from(class.clone(), &name, required_arity).is_some() {
+                    continue;
+                }
 
-                let Some(method) = method else {
-                    return Err(RuntimeError::InterfaceMethodMissing {
-                        interface: interface_name.clone(),
-                        method: name,
-                    });
-                };
+                // Sinon : soit la méthode existe avec d'autres arités
+                // (erreur d'arité), soit elle n'existe pas du tout.
+                let declared = Self::class_method_arities(class.clone(), &name);
 
-                let actual_arity = match method {
-                    Value::Object(handle) => {
-                        let object = handle.borrow();
-
-                        match &*object {
-                            Object::Closure(closure) => closure
-                                .function
-                                .arity
-                                .checked_sub(1)
-                                .ok_or(RuntimeError::TypeError)?,
-
-                            _ => return Err(RuntimeError::TypeError),
-                        }
-                    }
-
-                    _ => return Err(RuntimeError::TypeError),
-                };
-
-                if actual_arity != required_arity {
-                    return Err(RuntimeError::InterfaceMethodArityMismatch {
+                return Err(match declared.first() {
+                    Some(found) => RuntimeError::InterfaceMethodArityMismatch {
                         interface: interface_name.clone(),
                         method: name,
                         expected: required_arity,
-                        found: actual_arity,
-                    });
-                }
+                        found: *found,
+                    },
+
+                    None => RuntimeError::InterfaceMethodMissing {
+                        interface: interface_name.clone(),
+                        method: name,
+                    },
+                });
             }
         }
 
@@ -290,7 +303,7 @@ impl VirtualMachine {
             .ok_or(RuntimeError::TypeError)?;
 
         let methods_start = name_index + 1;
-        let mut methods = HashMap::with_capacity(method_count);
+        let mut methods = HashSet::<(String, usize)>::with_capacity(method_count);
 
         for index in 0..method_count {
             let base = methods_start + index * 2;
@@ -314,8 +327,13 @@ impl VirtualMachine {
                 _ => return Err(RuntimeError::TypeError),
             };
 
-            if methods.insert(method_name, arity).is_some() {
-                return Err(RuntimeError::TypeError);
+            // Même nom avec des arités différentes = surcharge autorisée ;
+            // même nom ET même arité = vraie redéclaration.
+            if !methods.insert((method_name.clone(), arity)) {
+                return Err(RuntimeError::DuplicateMethod {
+                    name: method_name,
+                    arity,
+                });
             }
         }
 
@@ -367,7 +385,7 @@ impl VirtualMachine {
 
         self.push(instance.clone());
 
-        let init = Self::find_class_method_from(class_handle, "init");
+        let init = Self::find_class_method_from(class_handle.clone(), "init", arg_count);
 
         match init {
             Some(init) => {
@@ -382,6 +400,19 @@ impl VirtualMachine {
             }
 
             None => {
+                // Aucun constructeur ne prend `arg_count` arguments. Si la
+                // classe (ou une classe parente) déclare des `init`, c'est
+                // une erreur d'arité — sans quoi `new C()` réussirait
+                // silencieusement pour une classe qui n'a que `init(a)`.
+                let declared = Self::class_method_arities(class_handle, "init");
+
+                if let Some(expected) = declared.first() {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: *expected,
+                        found: arg_count,
+                    });
+                }
+
                 if !args.is_empty() {
                     return Err(RuntimeError::WrongArgumentCount {
                         expected: 0,

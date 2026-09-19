@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::error::runtime_error::RuntimeError;
@@ -113,7 +113,7 @@ impl Value {
         name: String,
         superclass: Option<Gc<Object>>,
         interfaces: Vec<Gc<Object>>,
-        methods: HashMap<String, Value>,
+        methods: HashMap<String, Vec<Value>>,
     ) -> Self {
         Self::new_heap_object(Object::Class {
             name,
@@ -125,7 +125,7 @@ impl Value {
     pub fn new_interface(
         name: String,
         bases: Vec<Gc<Object>>,
-        methods: HashMap<String, usize>,
+        methods: HashSet<(String, usize)>,
     ) -> Self {
         Self::new_heap_object(Object::Interface {
             name,
@@ -537,19 +537,22 @@ impl Value {
                                     superclass,
                                     ..
                                 } => {
-                                    if let Some(method) = methods.get(name) {
-                                        let method_handle = match method {
-                                            Value::Object(handle) => handle.clone(),
+                                    if let Some(overloads) = methods.get(name) {
+                                        if overloads.len() == 1 {
+                                            let method_handle = match &overloads[0] {
+                                                Value::Object(handle) => handle.clone(),
+                                                _ => return Err(RuntimeError::TypeError),
+                                            };
 
-                                            _ => {
-                                                return Err(RuntimeError::TypeError);
-                                            }
-                                        };
+                                            return Ok(Value::new_bound_method(
+                                                method_handle,
+                                                self.clone(),
+                                            ));
+                                        }
 
-                                        return Ok(Value::new_bound_method(
-                                            method_handle,
-                                            self.clone(),
-                                        ));
+                                        return Err(RuntimeError::AmbiguousMethod {
+                                            name: name.to_string(),
+                                        });
                                     }
 
                                     superclass.clone()

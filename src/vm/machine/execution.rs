@@ -165,6 +165,8 @@ impl VirtualMachine {
             | RuntimeError::IndexOutOfBounds
             | RuntimeError::InterfaceMethodMissing { .. }
             | RuntimeError::InterfaceMethodArityMismatch { .. }
+            | RuntimeError::DuplicateMethod { .. }
+            | RuntimeError::AmbiguousMethod { .. }
             | RuntimeError::ArrayIndexNotInteger
             | RuntimeError::ArrayIndexOutOfBounds { .. }
             | RuntimeError::NotIndexable

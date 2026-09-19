@@ -30,6 +30,18 @@ use std::path::{Path, PathBuf};
 
 use crate::error::compile_error::CompileError;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportResolution {
+    /// `import foo.bar` quand `foo/bar.ks` existe réellement.
+    Module(PathBuf),
+
+    /// `import foo.Bar` quand `foo.ks` existe et exporte `Bar`.
+    Export {
+        module: PathBuf,
+        name: String,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct ModuleResolver {
     project_root: PathBuf,
@@ -37,8 +49,7 @@ pub struct ModuleResolver {
 }
 
 impl ModuleResolver {
-    /// `project_root` est le répertoire du fichier d'entrée du
-    /// programme (celui passé sur la ligne de commande). `std_root`
+    /// `project_root` est la racine de résolution du projet. `std_root`
     /// est déterminé automatiquement — voir `default_std_root`.
     pub fn new(project_root: PathBuf) -> Self {
         Self {
@@ -65,6 +76,46 @@ impl ModuleResolver {
 
     /// Résout `parts` (le chemin pointé par un `import`/
     /// `from ... import`), écrit depuis le fichier `current_module`.
+    /// Résout la sémantique d'un import qualifié de Kastel de manière unique
+    /// pour le TypeChecker et la VM.
+    ///
+    /// Exemples :
+    /// - `import export_mod` -> module `export_mod.ks`
+    /// - `import std.math` -> module `std/math.ks`
+    /// - `import export_mod.Personne` -> export `Personne` de `export_mod.ks`
+    /// - `import std.math.sin` -> export `sin` de `std/math.ks` si
+    ///   `std/math/sin.ks` n'existe pas.
+    pub fn resolve_import(
+        &self,
+        current_module: &Path,
+        parts: &[String],
+    ) -> Result<ImportResolution, CompileError> {
+        if parts.is_empty() {
+            return Err(CompileError::ModuleInvalidPath(String::new()));
+        }
+
+        match self.resolve(current_module, parts) {
+            Ok(path) => return Ok(ImportResolution::Module(path)),
+            Err(whole_error) => {
+                if parts.len() < 2 {
+                    return Err(whole_error);
+                }
+            }
+        }
+
+        let split_at = parts.len() - 1;
+        let module_parts = &parts[..split_at];
+        let export_name = parts[split_at].clone();
+
+        match self.resolve(current_module, module_parts) {
+            Ok(module) => Ok(ImportResolution::Export {
+                module,
+                name: export_name,
+            }),
+            Err(module_error) => Err(module_error),
+        }
+    }
+
     pub fn resolve(
         &self,
         current_module: &Path,
@@ -271,6 +322,38 @@ mod tests {
                 .canonicalize()
                 .unwrap()
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolves_qualified_import_as_export_when_parent_module_exists() {
+        let dir = scratch_dir("kastel_resolver_qualified_export_test");
+
+        let project_root = dir.join("project");
+        let demo = project_root.join("demo");
+        let std_root = dir.join("std");
+
+        write(&demo.join("export_mod.ks"), "export class Personne {}");
+
+        let resolver =
+            ModuleResolver::new(project_root).with_std_root(std_root);
+
+        let current_module = demo.join("main.ks");
+        let resolution = resolver
+            .resolve_import(
+                &current_module,
+                &["export_mod".to_string(), "Personne".to_string()],
+            )
+            .expect("qualified import should resolve to parent module export");
+
+        match resolution {
+            ImportResolution::Export { module, name } => {
+                assert_eq!(module, demo.join("export_mod.ks").canonicalize().unwrap());
+                assert_eq!(name, "Personne");
+            }
+            other => panic!("expected export resolution, got {other:?}"),
+        }
 
         let _ = fs::remove_dir_all(&dir);
     }

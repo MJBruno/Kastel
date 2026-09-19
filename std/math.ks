@@ -10,7 +10,10 @@
 // hyperboliques, arrondi, interpolation, théorie des nombres,
 // combinatoire, statistiques et aléatoire de plus haut niveau.
 //
-// Usage : from std.math import PI, clamp, gcd, std_dev;
+// Usage :
+//     import std.math;                      // math.sqrt(2.0), math.gcd(48, 18)
+//     import std.math.Complexe;             // new Complexe(3, 4)
+//     from std.math import PI, clamp, gcd;  // PI, clamp(...), gcd(...)
 
 // ------------------------------------------------------------------
 // Constantes
@@ -59,10 +62,13 @@ export const log10 = log10;
 export const exp = exp;
 export const rand = rand;
 
-//rand_int(x) renvoie un entier aléatoire dans [0, x), donc rand_int(5) peut renvoyer 0, 1, 2, 3 ou 4.
+// rand_int(x) renvoie un entier aléatoire dans [0, x), donc rand_int(5) peut
+// renvoyer 0, 1, 2, 3 ou 4.
 export const rand_int = rand_int;
 
-//rand_range(low, high) renvoie un flottant aléatoire dans [low, high).
+// rand_range(low, high) renvoie un ENTIER aléatoire dans [low, high) ; les
+// deux bornes doivent être entières (pour un flottant, voir random_range()
+// plus bas).
 export const rand_range = rand_range;
 
 // ------------------------------------------------------------------
@@ -459,7 +465,10 @@ export func shuffle(items) {
     let i = result.length - 1;
 
     while i > 0 {
-        let j = rand_int(i);
+        // j dans [0, i] INCLUS : avec rand_int(i), l'élément i ne pourrait
+        // jamais rester en place (algorithme de Sattolo : uniquement des
+        // permutations cycliques, donc un mélange biaisé).
+        let j = rand_int(i + 1);
 
         let temp = result.get(i);
         result.set(i, result.get(j));
@@ -511,12 +520,14 @@ export class Complexe {
         return hypot(this.real, this.imaginaire);
     }
 
+    // "3+4i" ou "3-4i" : le signe de la partie imaginaire négative est
+    // déjà porté par le nombre lui-même.
     func to_string() {
         if this.imaginaire < 0 {
             return format("{}{}i", this.real, this.imaginaire);
         }
 
-        return format("{} + {}i", this.real, this.imaginaire);
+        return format("{}+{}i", this.real, this.imaginaire);
     }
 }
 

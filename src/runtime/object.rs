@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::module::module::ModuleInstance;
@@ -41,13 +41,17 @@ pub enum Object {
         name: String,
         superclass: Option<Gc<Object>>,
         interfaces: Vec<Gc<Object>>,
-        methods: HashMap<String, Value>,
+        /// Surcharges par arité : pour un nom donné, une closure par
+        /// nombre d'arguments (hors `this`).
+        methods: HashMap<String, Vec<Value>>,
     },
 
     Interface {
         name: String,
         bases: Vec<Gc<Object>>,
-        methods: HashMap<String, usize>,
+        /// Signatures exigées, identifiées par le couple `(nom, arité)` :
+        /// une interface peut donc déclarer `area()` ET `area(unit)`.
+        methods: HashSet<(String, usize)>,
     },
 
     Instance {

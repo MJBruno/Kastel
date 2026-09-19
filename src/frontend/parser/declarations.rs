@@ -88,6 +88,20 @@ impl Parser {
             return Ok(());
         }
 
+        // `let v: Array<int>= [1, 2];` : le lexer produit `>=` ; on le
+        // scinde en `>` (fermeture du type) suivi de `=` (initialisation).
+        if self.check(TokenKind::GreaterEqual) {
+            let token = self.advance().clone();
+            let equal = crate::frontend::lexer::token::Token::new(
+                TokenKind::Equal,
+                "=".to_string(),
+                token.line,
+                token.column + 1,
+            );
+            self.tokens.insert(self.current, equal);
+            return Ok(());
+        }
+
         Err(ParserError {
             message: "'>' attendu après les paramètres de type".to_string(),
             line: self.peek().line,

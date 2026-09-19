@@ -11,7 +11,7 @@ use std::{
 use crate::{
     error::compile_error::CompileError,
     frontend::{lexer::lexer::Lexer, parser::Parser},
-    module::resolver::ModuleResolver,
+    module::resolver::{ImportResolution, ModuleResolver},
 };
 
 use super::{type_checker::{TypeCheckContext, TypeChecker}, types::Type};
@@ -128,32 +128,24 @@ impl ModuleTypeLoader {
         current_file: &Path,
         parts: &[String],
     ) -> Result<ImportedType, CompileError> {
-        let whole_error = match self.resolver.resolve(current_file, parts) {
-            Ok(path) => return Ok(ImportedType::Module(canonicalize_path(&path)?)),
-            Err(error) => error,
-        };
-
-        if parts.len() < 2 {
-            return Err(whole_error);
-        }
-
-        let split_at = parts.len() - 1;
-        let module_parts = &parts[..split_at];
-        let export_name = &parts[split_at];
-        let module_path = self
-            .resolver
-            .resolve(current_file, module_parts)
-            .map_err(|_| whole_error)?;
-        let interface = self.interface(&module_path)?;
-
-        let ty = interface.exports.get(export_name).cloned().ok_or_else(|| {
-            CompileError::ExportNotFound {
-                module: parts[..split_at].join("."),
-                name: export_name.clone(),
+        match self.resolver.resolve_import(current_file, parts)? {
+            ImportResolution::Module(path) => {
+                Ok(ImportedType::Module(canonicalize_path(&path)?))
             }
-        })?;
 
-        Ok(ImportedType::Export(ty))
+            ImportResolution::Export { module, name } => {
+                let interface = self.interface(&module)?;
+
+                let ty = interface.exports.get(&name).cloned().ok_or_else(|| {
+                    CompileError::ExportNotFound {
+                        module: parts[..parts.len() - 1].join("."),
+                        name: name.clone(),
+                    }
+                })?;
+
+                Ok(ImportedType::Export(ty))
+            }
+        }
     }
 
     pub fn resolver(&self) -> &ModuleResolver {
@@ -197,6 +189,7 @@ mod tests {
         let project = root.join("project");
         let std = root.join("std");
         fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&std).unwrap();
         fs::write(
             std.join("math.ks"),
             r#"

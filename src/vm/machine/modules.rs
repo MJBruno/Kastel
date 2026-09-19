@@ -2,6 +2,7 @@ use std::{path::Path, rc::Rc};
 
 use super::VirtualMachine;
 use crate::error::runtime_error::RuntimeError;
+use crate::module::resolver::ImportResolution;
 use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 
@@ -54,31 +55,30 @@ impl VirtualMachine {
         parts: &[String],
         module_name: &str,
     ) -> Result<Value, RuntimeError> {
-        match self.module_loader.load_from(current_file, parts) {
-            Ok(module) => Ok(Value::new_module(module)),
-
-            Err(whole_path_error) => {
-                if parts.len() < 2 {
-                    return Err(RuntimeError::ModuleError(whole_path_error.to_string()));
-                }
-
-                let (module_parts, export_name) = parts.split_at(parts.len() - 1);
-                let export_name = &export_name[0];
-
-                // Le module parent doit, lui, exister — sinon l'erreur
-                // la plus utile reste celle du chemin complet (ex.
-                // "std/math.ks introuvable" plutôt qu'une erreur sur
-                // "std.ks" qui n'a jamais été l'intention de
-                // l'utilisateur).
+        match self
+            .module_loader
+            .resolve_import(current_file, parts)
+            .map_err(|error| RuntimeError::ModuleError(error.to_string()))?
+        {
+            ImportResolution::Module(path) => {
                 let module = self
                     .module_loader
-                    .load_from(current_file, module_parts)
-                    .map_err(|_| RuntimeError::ModuleError(whole_path_error.to_string()))?;
+                    .load(path)
+                    .map_err(|error| RuntimeError::ModuleError(error.to_string()))?;
 
-                module.get_export(export_name).cloned().ok_or_else(|| {
+                Ok(Value::new_module(module))
+            }
+
+            ImportResolution::Export { module, name } => {
+                let module = self
+                    .module_loader
+                    .load(module)
+                    .map_err(|error| RuntimeError::ModuleError(error.to_string()))?;
+
+                module.get_export(&name).cloned().ok_or_else(|| {
                     RuntimeError::ModuleError(format!(
                         "le module '{}' n'exporte pas '{}'",
-                        module_name, export_name
+                        module_name, name
                     ))
                 })
             }
