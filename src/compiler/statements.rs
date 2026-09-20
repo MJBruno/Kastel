@@ -150,11 +150,23 @@ impl Compiler {
 
                                             let constant = self.make_constant(constant_value)?;
 
-                                            self.emit_bytes(OpCode::AddLocalConst, slot as u8);
+                                            // Super-instruction : opérande constante sur un
+                                            // octet uniquement. Au-delà de 255, on retombe
+                                            // sur la compilation générale.
+                                            match u8::try_from(constant) {
+                                                Ok(narrow) => {
+                                                    self.emit_bytes(
+                                                        OpCode::AddLocalConst,
+                                                        slot as u8,
+                                                    );
 
-                                            self.emit_byte(constant);
+                                                    self.emit_byte(narrow);
 
-                                            true
+                                                    true
+                                                }
+
+                                                Err(_) => false,
+                                            }
                                         }
 
                                         _ => false,
@@ -199,7 +211,7 @@ impl Compiler {
 
                     let name_constant = self.identifier_constant(name)?;
 
-                    self.emit_bytes(OpCode::SetProperty, name_constant);
+                    self.emit_constant_op(OpCode::SetProperty, name_constant);
                 }
             },
 
@@ -365,12 +377,12 @@ impl Compiler {
 
         let class_name_constant = self.identifier_constant(name)?;
 
-        self.emit_bytes(OpCode::Constant, class_name_constant);
+        self.emit_constant_op(OpCode::Constant, class_name_constant);
 
         for method in methods {
             let method_name_constant = self.identifier_constant(&method.name)?;
 
-            self.emit_bytes(OpCode::Constant, method_name_constant);
+            self.emit_constant_op(OpCode::Constant, method_name_constant);
 
             let function = self.compile_method(&method.name, &method.params, &method.body)?;
 
@@ -384,7 +396,7 @@ impl Compiler {
         for member in &private_members {
             let member_constant = self.identifier_constant(member)?;
 
-            self.emit_bytes(OpCode::Constant, member_constant);
+            self.emit_constant_op(OpCode::Constant, member_constant);
         }
 
         self.emit_byte(OpCode::Class.into());
@@ -416,7 +428,7 @@ impl Compiler {
                 constant
             };
 
-            self.emit_bytes(OpCode::DefineGlobal, name_constant);
+            self.emit_constant_op(OpCode::DefineGlobal, name_constant);
         } else {
             let slot =
                 self.context
@@ -464,16 +476,16 @@ impl Compiler {
 
         let name_constant = self.identifier_constant(name)?;
 
-        self.emit_bytes(OpCode::Constant, name_constant);
+        self.emit_constant_op(OpCode::Constant, name_constant);
 
         for method in methods {
             let method_constant = self.identifier_constant(&method.name)?;
 
-            self.emit_bytes(OpCode::Constant, method_constant);
+            self.emit_constant_op(OpCode::Constant, method_constant);
 
             let arity_constant = self.make_constant(Value::Integer(method.arity as i64))?;
 
-            self.emit_bytes(OpCode::Constant, arity_constant);
+            self.emit_constant_op(OpCode::Constant, arity_constant);
         }
 
         self.emit_byte(OpCode::Interface.into());
@@ -502,7 +514,7 @@ impl Compiler {
                 constant
             };
 
-            self.emit_bytes(OpCode::DefineGlobal, name_constant);
+            self.emit_constant_op(OpCode::DefineGlobal, name_constant);
         } else {
             let slot =
                 self.context
@@ -844,19 +856,19 @@ impl Compiler {
             Literal::Integer(value) => {
                 let constant = self.make_constant(Value::Integer(*value))?;
 
-                self.emit_bytes(OpCode::Constant, constant);
+                self.emit_constant_op(OpCode::Constant, constant);
             }
 
             Literal::Float(value) => {
                 let constant = self.make_constant(Value::Float(*value))?;
 
-                self.emit_bytes(OpCode::Constant, constant);
+                self.emit_constant_op(OpCode::Constant, constant);
             }
 
             Literal::String(value) => {
                 let constant = self.make_constant(Value::new_string(value.clone()))?;
 
-                self.emit_bytes(OpCode::Constant, constant);
+                self.emit_constant_op(OpCode::Constant, constant);
             }
 
             Literal::Bool(true) => {
@@ -1011,7 +1023,7 @@ impl Compiler {
 
         let length_constant = self.make_constant(Value::Integer(patterns.len() as i64))?;
 
-        self.emit_bytes(OpCode::Constant, length_constant);
+        self.emit_constant_op(OpCode::Constant, length_constant);
 
         self.emit_opcode(OpCode::Equal);
 
@@ -1163,7 +1175,7 @@ impl Compiler {
 
             let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
 
-            self.emit_bytes(OpCode::ImportAll, module_constant);
+            self.emit_constant_op(OpCode::ImportAll, module_constant);
 
             self.imported_modules.insert(module_name);
             self.wildcard_imported = true;
@@ -1198,15 +1210,15 @@ impl Compiler {
 
             let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
 
-            self.emit_bytes(OpCode::Import, module_constant);
+            self.emit_constant_op(OpCode::Import, module_constant);
 
             let property_constant = self.identifier_constant(&item.name)?;
 
-            self.emit_bytes(OpCode::GetProperty, property_constant);
+            self.emit_constant_op(OpCode::GetProperty, property_constant);
 
             let binding_constant = self.identifier_constant(binding_name)?;
 
-            self.emit_bytes(OpCode::DefineGlobal, binding_constant);
+            self.emit_constant_op(OpCode::DefineGlobal, binding_constant);
 
             self.globals.borrow_mut().insert(
                 binding_name.to_string(),
@@ -1284,11 +1296,11 @@ impl Compiler {
 
         let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
 
-        self.emit_bytes(OpCode::Import, module_constant);
+        self.emit_constant_op(OpCode::Import, module_constant);
 
         let binding_constant = self.identifier_constant(binding_name)?;
 
-        self.emit_bytes(OpCode::DefineGlobal, binding_constant);
+        self.emit_constant_op(OpCode::DefineGlobal, binding_constant);
 
         self.globals.borrow_mut().insert(
             binding_name.to_string(),
@@ -1387,7 +1399,7 @@ impl Compiler {
         Ok(Function {
             name: "<repl>".to_string(),
             arity: 0,
-            chunk: self.chunk,
+            chunk: std::rc::Rc::new(self.chunk),
             local_count: local_count.into(),
             upvalue_count: 0,
             upvalues: Vec::new(),

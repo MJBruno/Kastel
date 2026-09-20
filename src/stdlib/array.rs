@@ -93,8 +93,7 @@ pub fn native_dict_compat_array_placeholder(_args: &[Value]) -> Result<Value, Ru
 // ============================================================
 //                      LIST METHODS
 // ============================================================
-#[allow(dead_code)]
-pub fn native_length(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_size(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -107,7 +106,22 @@ pub fn native_length(args: &[Value]) -> Result<Value, RuntimeError> {
     })?))
 }
 
-pub fn native_push(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_is_empty(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    Ok(Value::Boolean(with_array(&args[0], |array| {
+        Ok(array.is_empty())
+    })?))
+}
+
+/// `add(value)` : ajoute en fin de tableau. Renvoie toujours `true`
+/// (même signature que `Set.add`, qui renvoie `false` pour un doublon).
+pub fn native_add(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 2,
@@ -115,12 +129,12 @@ pub fn native_push(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    let length = with_array_mut(&args[0], |array| {
+    with_array_mut(&args[0], |array| {
         array.push(args[1].clone());
-        Ok(array.len())
+        Ok(())
     })?;
 
-    Ok(Value::Integer(length as i64))
+    Ok(Value::Boolean(true))
 }
 
 pub fn native_pop(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -160,7 +174,36 @@ pub fn native_insert(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::Integer(length as i64))
 }
 
+/// `remove(value)` : retire la PREMIÈRE occurrence de `value`. Renvoie
+/// `true` si elle était présente (jamais d'erreur pour une valeur absente),
+/// comme `Set.remove`. Pour retirer par POSITION : `remove_at(index)`.
 pub fn native_remove(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 2,
+            found: args.len(),
+        });
+    }
+
+    let position = with_array(&args[0], |array| {
+        Ok(array
+            .iter()
+            .position(|element| Value::equals(element.clone(), args[1].clone())))
+    })?;
+
+    match position {
+        Some(index) => with_array_mut(&args[0], |array| {
+            array.remove(index);
+            Ok(Value::Boolean(true))
+        }),
+
+        None => Ok(Value::Boolean(false)),
+    }
+}
+
+/// `remove_at(index)` : retire l'élément à la position `index` et le
+/// renvoie (ancien comportement de `remove(index)`).
+pub fn native_remove_at(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 2,
@@ -428,10 +471,20 @@ pub fn native_copy(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub fn dispatch_method(name: &str, args: &[Value]) -> Result<Option<Value>, RuntimeError> {
     let result = match name {
-        "push" => Some(native_push(args)?),
+        // API standard des collections.
+        "size" => Some(native_size(args)?),
+        "is_empty" => Some(native_is_empty(args)?),
+        "add" => Some(native_add(args)?),
+        "remove" => Some(native_remove(args)?),
+        "remove_at" => Some(native_remove_at(args)?),
+        "to_string" => Some(super::to_string_method(args)?),
+
+        // Noms supprimés.
+        "length" => return Err(super::renamed_method_error("length", "size()")),
+        "push" => return Err(super::renamed_method_error("push", "add(value)")),
+
         "pop" => Some(native_pop(args)?),
         "insert" => Some(native_insert(args)?),
-        "remove" => Some(native_remove(args)?),
         "get" => Some(native_get(args)?),
         "set" => Some(native_set(args)?),
         "contains" => Some(native_contains(args)?),

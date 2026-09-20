@@ -6,17 +6,17 @@
 // Usage : from std.strings import capitalize, is_palindrome;
 
 export func capitalize(text) {
-    if text.length == 0 {
+    if text.size() == 0 {
         return text;
     }
 
-    return text.substring(0, 1).upper() + text.substring(1, text.length - 1);
+    return text.substring(0, 1).upper() + text.substring(1, text.size() - 1);
 }
 
 export func pad_left(text, width, fill) {
     let result = text;
 
-    while result.length < width {
+    while result.size() < width {
         result = fill + result;
     }
 
@@ -26,7 +26,7 @@ export func pad_left(text, width, fill) {
 export func pad_right(text, width, fill) {
     let result = text;
 
-    while result.length < width {
+    while result.size() < width {
         result = result + fill;
     }
 
@@ -35,7 +35,7 @@ export func pad_right(text, width, fill) {
 
 export func is_palindrome(text) {
     let normalized = text.lower();
-    let length = normalized.length;
+    let length = normalized.size();
     let half = floor(length / 2);
     let i = 0;
 
@@ -52,18 +52,18 @@ export func is_palindrome(text) {
 
 // Nombre d'occurrences NON chevauchantes de `needle` dans `text`.
 export func count_occurrences(text, needle) {
-    if needle.length == 0 {
+    if needle.size() == 0 {
         return 0;
     }
 
     let count = 0;
     let i = 0;
-    let limit = text.length - needle.length;
+    let limit = text.size() - needle.size();
 
     while i <= limit {
-        if text.substring(i, needle.length) == needle {
+        if text.substring(i, needle.size()) == needle {
             count = count + 1;
-            i = i + needle.length;
+            i = i + needle.size();
         } else {
             i = i + 1;
         }

@@ -15,6 +15,14 @@ use super::type_checker::{TypeCheckContext, TypeChecker};
 use super::variables::Global;
 
 #[allow(dead_code)]
+/// Profondeur maximale d'une expression pour le compilateur et le
+/// vérificateur de types (tous deux récursifs). Une chaîne d'opérateurs
+/// `1 + 1 + 1 + ...` produit un arbre de la profondeur du nombre de termes :
+/// au-delà de cette limite, `CompileError::ExpressionTooDeep` plutôt qu'un
+/// débordement de la pile native.
+pub const MAX_EXPRESSION_DEPTH: usize = 5_000;
+
+#[allow(dead_code)]
 pub struct Compiler {
     pub(crate) globals: Rc<RefCell<HashMap<String, Global>>>,
     pub(crate) chunk: Chunk,
@@ -36,6 +44,9 @@ pub struct Compiler {
 
     pub(crate) current_line: usize,
     pub(crate) current_column: usize,
+
+    /// Profondeur d'expression courante (voir `MAX_EXPRESSION_DEPTH`).
+    pub(crate) expression_depth: usize,
 }
 
 #[allow(dead_code)]
@@ -56,6 +67,7 @@ impl Compiler {
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
+            expression_depth: 0,
             wildcard_imported: false,
         }
     }
@@ -76,6 +88,7 @@ impl Compiler {
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
+            expression_depth: 0,
             wildcard_imported: false,
         }
     }
@@ -100,6 +113,7 @@ impl Compiler {
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
+            expression_depth: 0,
             wildcard_imported: false,
         }
     }
@@ -309,7 +323,7 @@ impl Compiler {
         let function = Function {
             name: "<script>".to_string(),
             arity: 0,
-            chunk: self.chunk,
+            chunk: Rc::new(self.chunk),
             local_count: local_count.into(),
             upvalue_count: 0,
             upvalues: Vec::new(),

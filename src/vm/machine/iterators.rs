@@ -161,7 +161,9 @@ impl VirtualMachine {
                 let value = {
                     let object = array.borrow();
 
-                    let (Object::Array(elements) | Object::Tuple(elements)) = &*object else {
+                    let (Object::Array(elements) | Object::Tuple(elements) | Object::Set(elements)) =
+                        &*object
+                    else {
                         return Err(RuntimeError::TypeError);
                     };
 
@@ -461,7 +463,18 @@ impl VirtualMachine {
     //                      METHOD DISPATCH
     // ============================================================
 
+    /// Méthodes d'itérateur (`next`, `map`, `filter`, `to_list`, `any`...).
+    /// Le receveur et les arguments ne sont plus sur la pile : on les
+    /// enracine pendant l'appel (voir `with_temp_roots`).
     pub(crate) fn invoke_iterator_method(
+        &mut self,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value, RuntimeError> {
+        self.with_temp_roots(args, |vm| vm.invoke_iterator_method_inner(method, args))
+    }
+
+    fn invoke_iterator_method_inner(
         &mut self,
         method: &str,
         args: &[Value],
@@ -576,9 +589,9 @@ impl VirtualMachine {
                 self.iterator_all(&receiver, args[1].clone())
             }
             // ============================================================
-            //                         to_iterator()
+            //                            iter()
             // ============================================================
-            "to_iterator" => {
+            "iter" => {
                 Self::expect_method_args(args, 1)?;
 
                 Ok(receiver.to_iterator()?)
@@ -615,7 +628,11 @@ impl VirtualMachine {
 
         loop {
             match self.iterator_next_value(iterator) {
-                Ok(value) => values.push(value),
+                Ok(value) => {
+                    // Tenue seulement par `values` jusqu'au tableau final.
+                    self.protect(&value);
+                    values.push(value);
+                }
 
                 Err(RuntimeError::IteratorExhausted) => {
                     break;

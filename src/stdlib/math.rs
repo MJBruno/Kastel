@@ -33,8 +33,20 @@ fn unary_number(args: &[Value], operation: fn(f64) -> f64) -> Result<Value, Runt
 /// font math.floor/math.ceil/round() en Python (qui renvoient un int,
 /// pas un float).
 fn float_to_integer(value: f64) -> Result<Value, RuntimeError> {
-    if !value.is_finite() || value < i64::MIN as f64 || value > i64::MAX as f64 {
+    // NaN n'a pas de valeur entière ; ±infini et les valeurs hors de
+    // l'intervalle i64 sont un DÉPASSEMENT (jamais un écrêtage silencieux
+    // à i64::MAX). La borne haute est exclusive : `i64::MAX as f64` vaut
+    // déjà 2^63, qui n'est pas représentable.
+    const I64_MAX_EXCLUSIVE: f64 = 9_223_372_036_854_775_808.0;
+
+    if value.is_nan() {
         return Err(RuntimeError::TypeError);
+    }
+
+    if !value.is_finite() || value < i64::MIN as f64 || value >= I64_MAX_EXCLUSIVE {
+        return Err(RuntimeError::IntegerOverflow {
+            operation: "conversion en entier",
+        });
     }
 
     Ok(Value::Integer(value as i64))
@@ -87,7 +99,9 @@ pub fn native_abs(args: &[Value]) -> Result<Value, RuntimeError> {
         Value::Integer(value) => value
             .checked_abs()
             .map(Value::Integer)
-            .ok_or(RuntimeError::TypeError),
+            .ok_or(RuntimeError::IntegerOverflow {
+                operation: "valeur absolue",
+            }),
 
         Value::Float(value) => Ok(Value::Float(value.abs())),
 
@@ -180,12 +194,25 @@ pub fn native_pow(args: &[Value]) -> Result<Value, RuntimeError> {
     // ou un exposant négatif entre en jeu, le résultat est un Float.
     if let (Value::Integer(base), Value::Integer(exponent)) = (&args[0], &args[1]) {
         if *exponent >= 0 {
-            let exponent = u32::try_from(*exponent).map_err(|_| RuntimeError::TypeError)?;
+            let overflow = RuntimeError::IntegerOverflow {
+                operation: "puissance",
+            };
 
-            return base
-                .checked_pow(exponent)
-                .map(Value::Integer)
-                .ok_or(RuntimeError::TypeError);
+            return match u32::try_from(*exponent) {
+                Ok(exponent) => base
+                    .checked_pow(exponent)
+                    .map(Value::Integer)
+                    .ok_or(overflow),
+
+                // Exposant > u32::MAX : seuls 0, 1 et -1 restent
+                // représentables.
+                Err(_) => match *base {
+                    0 => Ok(Value::Integer(0)),
+                    1 => Ok(Value::Integer(1)),
+                    -1 => Ok(Value::Integer(if exponent % 2 == 0 { 1 } else { -1 })),
+                    _ => Err(overflow),
+                },
+            };
         }
     }
 
@@ -193,6 +220,91 @@ pub fn native_pow(args: &[Value]) -> Result<Value, RuntimeError> {
     let exponent = expect_number(&args[1])?;
 
     Ok(Value::Float(base.powf(exponent)))
+}
+
+// ============================================================
+//              ARITHMÉTIQUE CYCLIQUE EXPLICITE
+// ============================================================
+//
+// `+`, `-` et `*` lèvent `IntegerOverflow` quand le résultat sort de 64 bits.
+// Ces trois fonctions sont l'exception VOLONTAIRE : le résultat « boucle »
+// modulo 2^64 (fonctions de hachage, générateurs pseudo-aléatoires...).
+
+fn wrapping_operation(
+    args: &[Value],
+    operation: fn(i64, i64) -> i64,
+) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 2,
+            found: args.len(),
+        });
+    }
+
+    match (&args[0], &args[1]) {
+        (Value::Integer(a), Value::Integer(b)) => Ok(Value::Integer(operation(*a, *b))),
+        _ => Err(RuntimeError::TypeError),
+    }
+}
+
+pub fn native_wrapping_add(args: &[Value]) -> Result<Value, RuntimeError> {
+    wrapping_operation(args, i64::wrapping_add)
+}
+
+pub fn native_wrapping_sub(args: &[Value]) -> Result<Value, RuntimeError> {
+    wrapping_operation(args, i64::wrapping_sub)
+}
+
+pub fn native_wrapping_mul(args: &[Value]) -> Result<Value, RuntimeError> {
+    wrapping_operation(args, i64::wrapping_mul)
+}
+
+/// `idiv(a, b)` : division ENTIÈRE arrondie vers -infini (`idiv(7, 2)` = 3,
+/// `idiv(-7, 2)` = -4). Exacte sur 64 bits, contrairement à `floor(a / b)` :
+/// `/` passe par un flottant, donc perd de la précision au-delà de 2^53.
+pub fn native_idiv(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 2,
+            found: args.len(),
+        });
+    }
+
+    if let (Value::Integer(a), Value::Integer(b)) = (&args[0], &args[1]) {
+        let overflow = RuntimeError::IntegerOverflow {
+            operation: "division entière",
+        };
+
+        if *b == 0 {
+            return Err(RuntimeError::DivisionByZero);
+        }
+
+        // Seul `i64::MIN / -1` déborde.
+        let quotient = a.checked_div(*b).ok_or(overflow)?;
+
+        // `checked_div` a écarté MIN / -1 : le reste est sûr.
+        let remainder = *a % *b;
+
+        return if remainder != 0 && ((*a < 0) != (*b < 0)) {
+            quotient
+                .checked_sub(1)
+                .map(Value::Integer)
+                .ok_or(RuntimeError::IntegerOverflow {
+                    operation: "division entière",
+                })
+        } else {
+            Ok(Value::Integer(quotient))
+        };
+    }
+
+    let a = expect_number(&args[0])?;
+    let b = expect_number(&args[1])?;
+
+    if b == 0.0 {
+        return Err(RuntimeError::DivisionByZero);
+    }
+
+    float_to_integer((a / b).floor())
 }
 
 pub fn native_min(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -404,6 +516,10 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "log", native_log);
     register_one(globals, "log10", native_log10);
     register_one(globals, "exp", native_exp);
+    register_one(globals, "wrapping_add", native_wrapping_add);
+    register_one(globals, "wrapping_sub", native_wrapping_sub);
+    register_one(globals, "wrapping_mul", native_wrapping_mul);
+    register_one(globals, "idiv", native_idiv);
 }
 
 pub fn register_compiler(compiler: &mut Compiler) {
@@ -428,4 +544,8 @@ pub fn register_compiler(compiler: &mut Compiler) {
     define_one(compiler, "log");
     define_one(compiler, "log10");
     define_one(compiler, "exp");
+    define_one(compiler, "wrapping_add");
+    define_one(compiler, "wrapping_sub");
+    define_one(compiler, "wrapping_mul");
+    define_one(compiler, "idiv");
 }

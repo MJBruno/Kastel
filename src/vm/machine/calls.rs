@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::bytecode::frame_closure;
-use super::{CallFrame, VirtualMachine};
+use super::{CallFrame, MAX_CALL_DEPTH, MAX_NATIVE_DEPTH, VirtualMachine};
 
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::gc;
@@ -25,7 +25,7 @@ impl VirtualMachine {
             (
                 closure_ref.function.arity,
                 closure_ref.function.local_count as usize,
-                Rc::new(closure_ref.function.chunk.clone()),
+                Rc::clone(&closure_ref.function.chunk),
             )
         };
 
@@ -50,6 +50,12 @@ impl VirtualMachine {
 
         if callee_index < current_frame.slot_start {
             return Err(RuntimeError::InvalidFunction);
+        }
+
+        if self.frames.len() >= MAX_CALL_DEPTH {
+            return Err(RuntimeError::StackOverflow {
+                limit: MAX_CALL_DEPTH,
+            });
         }
 
         self.frames.push(CallFrame {
@@ -168,7 +174,29 @@ impl VirtualMachine {
     // SYNCHRONOUS INVOCATION
     // ============================================================
 
+    /// Appelle `callee` depuis du code natif et attend son résultat.
+    ///
+    /// Chaque niveau d'imbrication consomme de la pile Rust : au-delà de
+    /// `MAX_NATIVE_DEPTH`, `StackOverflow` plutôt qu'un débordement natif.
     pub(crate) fn invoke_sync(
+        &mut self,
+        callee: Value,
+        arguments: &[Value],
+    ) -> Result<Value, RuntimeError> {
+        if self.native_depth >= MAX_NATIVE_DEPTH {
+            return Err(RuntimeError::StackOverflow {
+                limit: MAX_NATIVE_DEPTH,
+            });
+        }
+
+        self.native_depth += 1;
+        let result = self.invoke_sync_inner(callee, arguments);
+        self.native_depth -= 1;
+
+        result
+    }
+
+    fn invoke_sync_inner(
         &mut self,
         callee: Value,
         arguments: &[Value],

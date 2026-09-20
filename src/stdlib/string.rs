@@ -930,7 +930,9 @@ pub fn native_split(args: &[Value]) -> Result<Value, RuntimeError> {
 //                       STRING METHODS
 // ============================================================
 
-pub fn native_length(args: &[Value]) -> Result<Value, RuntimeError> {
+/// `size()` : nombre de CARACTÈRES Unicode (pas d'octets UTF-8) :
+/// `"é".size()` et `"😀".size()` valent 1.
+pub fn native_size(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -1281,7 +1283,13 @@ pub fn native_reverse(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub fn dispatch_method(name: &str, args: &[Value]) -> Result<Option<Value>, RuntimeError> {
     let result = match name {
-        "length" => Some(native_length(args)?),
+        // API standard des collections.
+        "size" => Some(native_size(args)?),
+
+        "to_string" => Some(super::to_string_method(args)?),
+
+        // Nom supprimé.
+        "length" => return Err(super::renamed_method_error("length", "size()")),
 
         "get" => Some(native_get(args)?),
 

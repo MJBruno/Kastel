@@ -3,8 +3,8 @@ use super::VirtualMachine;
 use crate::error::runtime_error::RuntimeError;
 
 impl VirtualMachine {
-    pub(crate) fn get_property(&mut self) -> Result<(), RuntimeError> {
-        let constant = self.read_byte()?;
+    pub(crate) fn get_property(&mut self, wide: bool) -> Result<(), RuntimeError> {
+        let constant = self.read_constant_operand(wide)?;
         let property = self.read_constant(constant)?;
 
         let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;
@@ -21,8 +21,8 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn set_property(&mut self) -> Result<(), RuntimeError> {
-        let constant = self.read_byte()?;
+    pub(crate) fn set_property(&mut self, wide: bool) -> Result<(), RuntimeError> {
+        let constant = self.read_constant_operand(wide)?;
         let property = self.read_constant(constant)?;
 
         let name = property.as_string_value().ok_or(RuntimeError::TypeError)?;

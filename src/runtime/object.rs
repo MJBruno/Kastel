@@ -24,6 +24,15 @@ pub enum Object {
 
     Dict(Vec<(Value, Value)>),
 
+    /// Ensemble MUTABLE d'éléments UNIQUES (`Set(1, 2, 3)`, `{1, 2, 3}`).
+    ///
+    /// Même représentation qu'Array (`Vec<Value>` suivi par le GC), mais
+    /// l'unicité est garantie par les seuls points d'entrée
+    /// `Value::new_set` / `Value::set_add` (voir `runtime::value`). L'ordre
+    /// d'insertion est conservé en interne, mais il ne fait PAS partie du
+    /// contrat : un programme ne doit pas s'y fier.
+    Set(Vec<Value>),
+
     Function(Rc<Function>),
 
     Closure(Closure),
@@ -96,6 +105,10 @@ impl Object {
 
             Object::Dict(fields) => {
                 fields.clear();
+            }
+
+            Object::Set(elements) => {
+                elements.clear();
             }
 
             Object::Function(_) => {}

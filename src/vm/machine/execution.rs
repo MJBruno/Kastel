@@ -168,6 +168,9 @@ impl VirtualMachine {
             | RuntimeError::DuplicateMethod { .. }
             | RuntimeError::AmbiguousMethod { .. }
             | RuntimeError::PrivateMemberAccess { .. }
+            | RuntimeError::StackOverflow { .. }
+            | RuntimeError::IntegerOverflow { .. }
+            | RuntimeError::CyclicStructure
             | RuntimeError::ArrayIndexNotInteger
             | RuntimeError::ArrayIndexOutOfBounds { .. }
             | RuntimeError::NotIndexable

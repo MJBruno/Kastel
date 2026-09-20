@@ -49,7 +49,20 @@ fn with_tuple<R>(
 // Un tuple est immuable : contrairement à array.rs, il n'existe
 // volontairement aucun native_push/pop/insert/remove/set/sort/clear.
 
-pub fn native_length(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_is_empty(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    Ok(Value::Boolean(with_tuple(&args[0], |tuple| {
+        Ok(tuple.is_empty())
+    })?))
+}
+
+pub fn native_size(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -162,7 +175,15 @@ pub fn native_to_array(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub fn dispatch_method(name: &str, args: &[Value]) -> Result<Option<Value>, RuntimeError> {
     let result = match name {
-        "length" => Some(native_length(args)?),
+        // API standard des collections (un tuple est immuable : ni add,
+        // ni remove, ni clear, ni copy).
+        "size" => Some(native_size(args)?),
+        "is_empty" => Some(native_is_empty(args)?),
+        "to_string" => Some(super::to_string_method(args)?),
+
+        // Nom supprimé.
+        "length" => return Err(super::renamed_method_error("length", "size()")),
+
         "get" => Some(native_get(args)?),
         "contains" => Some(native_contains(args)?),
         "index_of" => Some(native_index_of(args)?),

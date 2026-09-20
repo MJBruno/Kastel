@@ -64,7 +64,45 @@ pub fn should_collect() -> bool {
     })
 }
 
+/// Racines « épinglées » par une VM qui en lance une AUTRE (un `import`
+/// exécute le module dans une VM imbriquée). Pendant que la VM imbriquée
+/// tourne, ses collectes doivent aussi considérer comme vivantes les valeurs
+/// de la VM appelante (pile, globales, frames...) : sans cela, le GC vidait
+/// les structures du programme principal.
+#[derive(Default)]
+pub struct ExternalRoots {
+    pub values: Vec<Value>,
+    pub upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
+}
+
+thread_local! {
+    static EXTERNAL_ROOTS: RefCell<Vec<ExternalRoots>> = RefCell::new(Vec::new());
+}
+
+/// Garde RAII : les racines épinglées le restent tant qu'elle existe.
+/// Les gardes s'imbriquent (pile LIFO) : un module qui en importe un autre
+/// conserve les racines de toute la chaîne d'appelants.
+pub struct PinnedRoots(());
+
+impl Drop for PinnedRoots {
+    fn drop(&mut self) {
+        EXTERNAL_ROOTS.with(|roots| {
+            roots.borrow_mut().pop();
+        });
+    }
+}
+
+pub fn pin_roots(roots: ExternalRoots) -> PinnedRoots {
+    EXTERNAL_ROOTS.with(|external| external.borrow_mut().push(roots));
+
+    PinnedRoots(())
+}
+
 pub struct GcRoots<'a> {
+    /// Valeurs tenues par du code natif pendant un rappel Kastel
+    /// (`VirtualMachine::temp_roots`).
+    pub temp: &'a [Value],
+
     pub stack: &'a [Value],
     pub globals: &'a HashMap<String, Value>,
     pub modules: &'a [Rc<ModuleInstance>],
@@ -78,6 +116,11 @@ pub struct GcRoots<'a> {
 struct MarkState {
     objects: HashSet<usize>,
     upvalues: HashSet<usize>,
+
+    /// File des objets marqués dont les enfants restent à parcourir. Le
+    /// marquage est ITÉRATIF : une structure imbriquée sur des dizaines de
+    /// milliers de niveaux ne fait plus déborder la pile native.
+    pending: Vec<Gc<Object>>,
 }
 
 pub fn collect(roots: GcRoots<'_>) -> usize {
@@ -88,6 +131,24 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
     }
 
     let mut state = MarkState::default();
+
+    // Valeurs tenues par du code natif (rappels en cours)
+    for value in roots.temp {
+        mark_value(value, &mut state);
+    }
+
+    // Racines des VM appelantes (import en cours)
+    EXTERNAL_ROOTS.with(|external| {
+        for external_roots in external.borrow().iter() {
+            for value in &external_roots.values {
+                mark_value(value, &mut state);
+            }
+
+            for upvalue in &external_roots.upvalues {
+                mark_upvalue(upvalue, &mut state);
+            }
+        }
+    });
 
     // VM stack
     for value in roots.stack {
@@ -126,6 +187,9 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
     if let Some(exception) = roots.pending_exception {
         mark_value(&exception.value, &mut state);
     }
+
+    // Parcours (itératif) de tout ce qui est atteignable depuis les racines.
+    drain_pending(&mut state);
 
     if trace_enabled() {
         eprintln!(
@@ -215,13 +279,25 @@ fn mark_value(value: &Value, state: &mut MarkState) {
     }
 }
 
+/// Marque `handle` et le met en file ; ses enfants sont parcourus par
+/// `drain_pending` (pas de récursion).
 fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
     let id = handle.as_id();
 
-    if !state.objects.insert(id) {
-        return;
+    if state.objects.insert(id) {
+        state.pending.push(handle.clone());
     }
+}
 
+fn drain_pending(state: &mut MarkState) {
+    while let Some(handle) = state.pending.pop() {
+        trace_object(&handle, state);
+    }
+}
+
+/// Marque les enfants directs de `handle` (ils sont mis en file, pas
+/// visités ici).
+fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
     match &*handle.borrow() {
         Object::String(_) => {}
 
@@ -240,6 +316,12 @@ fn mark_object(handle: &Gc<Object>, state: &mut MarkState) {
         Object::Dict(fields) => {
             for (key, value) in fields {
                 mark_value(key, state);
+                mark_value(value, state);
+            }
+        }
+
+        Object::Set(elements) => {
+            for value in elements {
                 mark_value(value, state);
             }
         }

@@ -34,6 +34,10 @@ pub fn all() -> HashMap<String, Type> {
     types.insert("println".into(), Dynamic);
     types.insert("input".into(), Dynamic);
 
+    // `Set(a, b, c)` : arité variable. Le TypeChecker déduit lui-même le type
+    // `Set<T>` du résultat à partir des arguments (voir `Expression::Call`).
+    types.insert("Set".into(), Dynamic);
+
     // Conversion / système
     types.insert("int".into(), unary(Dynamic, Int));
     types.insert("float".into(), unary(Dynamic, Float));
@@ -66,6 +70,15 @@ pub fn all() -> HashMap<String, Type> {
     // `rand_range(low, high)` : deux bornes entières, résultat entier dans
     // [low, high) (voir `native_rand_range`).
     types.insert("rand_range".into(), binary(Dynamic, Dynamic, Int));
+
+    // Arithmétique cyclique explicite (les opérateurs `+ - *` lèvent
+    // `IntegerOverflow` au-delà de 64 bits).
+    types.insert("wrapping_add".into(), binary(Int, Int, Int));
+    types.insert("wrapping_sub".into(), binary(Int, Int, Int));
+    types.insert("wrapping_mul".into(), binary(Int, Int, Int));
+
+    // Division entière exacte (arrondie vers -infini).
+    types.insert("idiv".into(), binary(Dynamic, Dynamic, Int));
 
     // Structures / utilitaires
     types.insert(

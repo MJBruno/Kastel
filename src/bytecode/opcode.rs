@@ -83,11 +83,25 @@ pub enum OpCode {
     /// de la pile — ajouté en dernier pour ne décaler aucun
     /// discriminant existant (voir COUNT ci-dessous).
     Tuple,
+
+    /// Préfixe « large » : `Wide <opcode> <haut> <bas> [autres opérandes]`.
+    ///
+    /// L'opérande CONSTANTE de l'instruction suivante est alors un indice
+    /// sur 16 bits (grand-boutiste) au lieu d'un octet, ce qui porte la
+    /// limite de 256 à 65 536 constantes par fragment. Seules les
+    /// instructions à opérande constante sont concernées : `Constant`,
+    /// `DefineGlobal`, `SetGlobal`, `GetGlobal`, `GetProperty`,
+    /// `SetProperty`, `InvokeMethod`, `InvokeBaseMethod`, `Closure`,
+    /// `Import` et `ImportAll`. Les autres opérandes (nombre d'arguments,
+    /// paires d'upvalues...) restent sur un octet.
+    ///
+    /// Ajouté en dernier pour ne décaler aucun discriminant existant.
+    Wide,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::Tuple as usize + 1;
+    pub const COUNT: usize = Self::Wide as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -162,7 +176,8 @@ mod tests {
         assert_eq!(OpCode::LoopLessAddLocalConst as u8, 61);
         assert_eq!(OpCode::AddLocalLocal as u8, 62);
         assert_eq!(OpCode::Tuple as u8, 63);
-        assert_eq!(OpCode::COUNT, 64);
+        assert_eq!(OpCode::Wide as u8, 64);
+        assert_eq!(OpCode::COUNT, 65);
     }
 
     #[test]

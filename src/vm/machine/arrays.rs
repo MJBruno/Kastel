@@ -54,9 +54,9 @@ impl VirtualMachine {
     pub(crate) fn op_array_length(&mut self) -> Result<(), RuntimeError> {
         let value = self.peek()?.clone();
 
-        // `.length` est compilé de façon générique (voir
-        // `compile_array_member`) pour n'importe quel receveur ; on
-        // essaie donc Array puis, à défaut, Tuple.
+        // Utilisé par les motifs de tableau (`[a, b]`), qui vérifient la
+        // taille avant de lier leurs éléments. Ce n'est PAS `x.size()`
+        // (voir `stdlib::array::native_size`). Array puis, à défaut, Tuple.
         let length = match value.array_len() {
             Ok(length) => length,
             Err(_) => value.tuple_len()?,

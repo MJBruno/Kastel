@@ -11,6 +11,11 @@ impl Parser {
     // ============================================================
 
     pub(super) fn statement(&mut self) -> Result<Vec<Statement>, ParserError> {
+        // Blocs, fonctions et classes imbriqués : récursion.
+        self.nested(|parser| parser.statement_inner())
+    }
+
+    fn statement_inner(&mut self) -> Result<Vec<Statement>, ParserError> {
         let line = self.peek().line;
         let column = self.peek().column;
 

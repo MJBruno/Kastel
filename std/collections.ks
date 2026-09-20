@@ -11,8 +11,8 @@ export func enumerate(items) {
     let result = [];
     let i = 0;
 
-    while i < items.length {
-        result.push([i, items.get(i)]);
+    while i < items.size() {
+        result.add([i, items.get(i)]);
         i = i + 1;
     }
 
@@ -21,16 +21,16 @@ export func enumerate(items) {
 
 export func zip(a, b) {
     let result = [];
-    let length = a.length;
+    let length = a.size();
 
-    if b.length < length {
-        length = b.length;
+    if b.size() < length {
+        length = b.size();
     }
 
     let i = 0;
 
     while i < length {
-        result.push([a.get(i), b.get(i)]);
+        result.add([a.get(i), b.get(i)]);
         i = i + 1;
     }
 
@@ -44,10 +44,10 @@ export func flatten(items) {
     for item in items {
         if type(item) == "array" {
             for inner in flatten(item) {
-                result.push(inner);
+                result.add(inner);
             }
         } else {
-            result.push(item);
+            result.add(item);
         }
     }
 
@@ -60,7 +60,7 @@ export func unique(items) {
 
     for item in items {
         if !result.contains(item) {
-            result.push(item);
+            result.add(item);
         }
     }
 
@@ -73,16 +73,16 @@ export func chunk(items, size) {
     let current = [];
 
     for item in items {
-        current.push(item);
+        current.add(item);
 
-        if current.length == size {
-            result.push(current);
+        if current.size() == size {
+            result.add(current);
             current = [];
         }
     }
 
-    if current.length > 0 {
-        result.push(current);
+    if current.size() > 0 {
+        result.add(current);
     }
 
     return result;
@@ -93,7 +93,7 @@ export func range_array(stop) {
     let result = [];
 
     for i in range(stop) {
-        result.push(i);
+        result.add(i);
     }
 
     return result;

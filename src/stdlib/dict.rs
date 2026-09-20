@@ -53,10 +53,10 @@ pub fn native_dict_set(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ============================================================
-//                         HAS
+//                       CONTAINS
 // ============================================================
 
-pub fn native_dict_has(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_dict_contains(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 2,
@@ -83,10 +83,21 @@ pub fn native_dict_remove(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ============================================================
-//                         LENGTH
+//                          SIZE
 // ============================================================
 
-pub fn native_dict_length(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_dict_is_empty(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    Ok(Value::Boolean(args[0].dict_len()? == 0))
+}
+
+pub fn native_dict_size(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -128,10 +139,10 @@ pub fn native_dict_values(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 // ============================================================
-//                          ITEMS
+//                         ENTRIES
 // ============================================================
 
-pub fn native_dict_items(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_dict_entries(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -244,14 +255,24 @@ pub fn native_dict_copy(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub fn dispatch_method(name: &str, args: &[Value]) -> Result<Option<Value>, RuntimeError> {
     match name {
-        "length" => Ok(Some(native_dict_length(args)?)),
+        // API standard des collections.
+        "size" => Ok(Some(native_dict_size(args)?)),
+        "is_empty" => Ok(Some(native_dict_is_empty(args)?)),
+        // Pour un dict, `contains` teste l'existence d'une CLÉ.
+        "contains" => Ok(Some(native_dict_contains(args)?)),
+        "entries" => Ok(Some(native_dict_entries(args)?)),
+        "to_string" => Ok(Some(super::to_string_method(args)?)),
+
+        // Noms supprimés.
+        "length" => Err(super::renamed_method_error("length", "size()")),
+        "has" => Err(super::renamed_method_error("has", "contains(key)")),
+        "items" => Err(super::renamed_method_error("items", "entries()")),
+
         "get" => Ok(Some(native_dict_get(args)?)),
         "set" => Ok(Some(native_dict_set(args)?)),
-        "has" => Ok(Some(native_dict_has(args)?)),
         "remove" => Ok(Some(native_dict_remove(args)?)),
         "keys" => Ok(Some(native_dict_keys(args)?)),
         "values" => Ok(Some(native_dict_values(args)?)),
-        "items" => Ok(Some(native_dict_items(args)?)),
         "clear" => Ok(Some(native_dict_clear(args)?)),
         "get_or" => Ok(Some(native_dict_get_or(args)?)),
         "update" => Ok(Some(native_dict_update(args)?)),

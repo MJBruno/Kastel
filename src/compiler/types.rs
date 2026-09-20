@@ -20,10 +20,13 @@ pub enum Type {
     Array(Box<Type>),
     Dict(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
-    /// `array`, `dict`, `tuple` non paramétrés.
+    /// `Set<T>` : ensemble d'éléments uniques de type `T`.
+    Set(Box<Type>),
+    /// `array`, `dict`, `tuple`, `set` non paramétrés.
     ArrayDynamic,
     DictDynamic,
     TupleDynamic,
+    SetDynamic,
     Range,
     Function(FunctionType),
     Named(String),
@@ -85,6 +88,7 @@ impl Type {
             "array" => Type::ArrayDynamic,
             "dict" => Type::DictDynamic,
             "tuple" => Type::TupleDynamic,
+            "set" => Type::SetDynamic,
             "dynamic" | "any" => Type::Dynamic,
             _ => Type::Named(name.to_string()),
         }
@@ -120,6 +124,17 @@ impl Type {
             }
 
             "tuple" => Type::Tuple(arguments.iter().map(Self::from_type_expr).collect()),
+
+            "set" => {
+                if arguments.len() == 1 {
+                    Type::Set(Box::new(Self::from_type_expr(&arguments[0])))
+                } else {
+                    Type::Generic {
+                        name: name.to_string(),
+                        arguments: arguments.iter().map(Self::from_type_expr).collect(),
+                    }
+                }
+            }
 
             _ => Type::Generic {
                 name: name.to_string(),
@@ -180,6 +195,10 @@ impl Type {
                         .zip(expected)
                         .all(|(actual, expected)| actual.is_assignable_to(expected, parents))
             }
+
+            (Type::Set(actual), Type::Set(expected)) => actual.is_assignable_to(expected, parents),
+            (Type::SetDynamic, Type::Set(_)) => true,
+            (Type::Set(_), Type::SetDynamic) => true,
 
             (Type::ArrayDynamic, Type::Array(_)) => true,
             (Type::Array(_), Type::ArrayDynamic) => true,
@@ -280,10 +299,194 @@ impl Type {
                     .unwrap_or(Type::Dynamic)
             }
             Type::TupleDynamic => Type::Dynamic,
+            Type::Set(element) => (**element).clone(),
+            Type::SetDynamic => Type::Dynamic,
             Type::Range => Type::Float,
             Type::Dict(_, value) => (**value).clone(),
             Type::DictDynamic => Type::Dynamic,
             _ => Type::Dynamic,
+        }
+    }
+
+    /// Nom de remplacement si `name` est une méthode SUPPRIMÉE de l'API
+    /// standard des collections, pour un récepteur de ce type.
+    pub fn renamed_member(&self, name: &str) -> Option<&'static str> {
+        match (self, name) {
+            (_, "to_iterator") if self.is_standard_collection() => Some("iter()"),
+
+            // `length` pourrait être une clé de dict : on ne le signale
+            // donc PAS sur les dicts (l'appel `d.length()` échoue à
+            // l'exécution avec le même indice).
+            (
+                Type::Array(_)
+                | Type::ArrayDynamic
+                | Type::Tuple(_)
+                | Type::TupleDynamic
+                | Type::Set(_)
+                | Type::SetDynamic
+                | Type::Str,
+                "length",
+            ) => Some("size()"),
+
+            (Type::Array(_) | Type::ArrayDynamic, "push") => Some("add(value)"),
+
+            (Type::Dict(_, _) | Type::DictDynamic, "has") => Some("contains(key)"),
+            (Type::Dict(_, _) | Type::DictDynamic, "items") => Some("entries()"),
+
+            _ => None,
+        }
+    }
+
+    fn is_standard_collection(&self) -> bool {
+        matches!(
+            self,
+            Type::Array(_)
+                | Type::ArrayDynamic
+                | Type::Dict(_, _)
+                | Type::DictDynamic
+                | Type::Tuple(_)
+                | Type::TupleDynamic
+                | Type::Set(_)
+                | Type::SetDynamic
+                | Type::Str
+                | Type::Range
+        )
+    }
+
+    /// Signature des méthodes STANDARD d'Array, Dict, Tuple, String et Range
+    /// (`size`, `is_empty`, `contains`, `copy`, `clear`, `add`, `remove`,
+    /// `get`, `set`, `keys`...), ou `None` pour toute autre méthode (qui
+    /// reste alors dynamique).
+    ///
+    /// À n'utiliser que pour un APPEL : `d.size` sans parenthèses peut être
+    /// une clé de dict. Doit rester alignée sur `stdlib::{array,dict,tuple,
+    /// string}::dispatch_method` et sur `VirtualMachine::range_method`.
+    pub fn collection_member_type(&self, name: &str) -> Option<Type> {
+        if !self.is_standard_collection() {
+            return None;
+        }
+
+        let method = |params: Vec<Type>, result: Type| {
+            Some(Type::Function(FunctionType {
+                params,
+                return_type: Box::new(result),
+            }))
+        };
+
+        // Commun à toutes les collections.
+        match name {
+            "size" => return method(vec![], Type::Int),
+            "is_empty" => return method(vec![], Type::Bool),
+            "to_string" => return method(vec![], Type::Str),
+            "iter" => return method(vec![], Type::Dynamic),
+            _ => {}
+        }
+
+        match self {
+            Type::Array(_) | Type::ArrayDynamic => {
+                let element = self.element_type();
+
+                match name {
+                    "contains" => method(vec![Type::Dynamic], Type::Bool),
+                    "copy" => method(vec![], self.clone()),
+                    "clear" => method(vec![], Type::None),
+                    "add" | "remove" => method(vec![Type::Dynamic], Type::Bool),
+                    "remove_at" | "get" => method(vec![Type::Dynamic], element),
+                    "first" | "last" | "pop" => method(vec![], element),
+                    "index_of" => method(vec![Type::Dynamic], Type::Int),
+                    _ => None,
+                }
+            }
+
+            Type::Dict(_, _) | Type::DictDynamic => {
+                let key = self.key_type();
+                let value = self.element_type();
+
+                match name {
+                    // Pour un dict, `contains` teste l'existence d'une CLÉ.
+                    "contains" => method(vec![Type::Dynamic], Type::Bool),
+                    "copy" => method(vec![], self.clone()),
+                    "clear" => method(vec![], Type::None),
+                    "get" | "remove" => method(vec![Type::Dynamic], value),
+                    "set" => method(vec![Type::Dynamic, Type::Dynamic], Type::None),
+                    "keys" => method(vec![], Type::Array(Box::new(key))),
+                    "values" => method(vec![], Type::Array(Box::new(value))),
+                    "entries" => method(
+                        vec![],
+                        Type::Array(Box::new(Type::Array(Box::new(Type::Dynamic)))),
+                    ),
+                    _ => None,
+                }
+            }
+
+            // Un tuple est immuable : ni add, ni remove, ni clear, ni copy.
+            Type::Tuple(_) | Type::TupleDynamic => {
+                let element = self.element_type();
+
+                match name {
+                    "contains" => method(vec![Type::Dynamic], Type::Bool),
+                    "get" => method(vec![Type::Dynamic], element),
+                    "first" | "last" => method(vec![], element),
+                    "index_of" => method(vec![Type::Dynamic], Type::Int),
+                    "to_array" => method(vec![], Type::Array(Box::new(element))),
+                    _ => None,
+                }
+            }
+
+            Type::Str => match name {
+                "contains" => method(vec![Type::Dynamic], Type::Bool),
+                _ => None,
+            },
+
+            Type::Range => match name {
+                "start" | "stop" | "step" => method(vec![], Type::Int),
+                _ => None,
+            },
+
+            _ => None,
+        }
+    }
+
+    /// Type d'une méthode d'ensemble (`s.add`, `s.union`...), ou `None` si
+    /// `self` n'est pas un ensemble ou si la méthode n'existe pas.
+    ///
+    /// Cette table doit rester alignée sur `stdlib::set::dispatch_method`.
+    pub fn set_member_type(&self, name: &str) -> Option<Type> {
+        let element = match self {
+            Type::Set(element) => (**element).clone(),
+            Type::SetDynamic => Type::Dynamic,
+            _ => return None,
+        };
+
+        let method = |params: Vec<Type>, result: Type| {
+            Some(Type::Function(FunctionType {
+                params,
+                return_type: Box::new(result),
+            }))
+        };
+
+        match name {
+            // `add` protège le type d'élément ; `contains`/`remove` acceptent
+            // n'importe quelle valeur (tester l'appartenance est toujours
+            // légitime).
+            "add" => method(vec![element], Type::Bool),
+            "remove" | "contains" => method(vec![Type::Dynamic], Type::Bool),
+
+            "size" => method(vec![], Type::Int),
+            "is_empty" => method(vec![], Type::Bool),
+            "clear" => method(vec![], Type::None),
+            "copy" => method(vec![], self.clone()),
+            "to_array" => method(vec![], Type::Array(Box::new(element))),
+            "to_string" => method(vec![], Type::Str),
+            "iter" => method(vec![], Type::Dynamic),
+
+            "union" | "intersection" | "difference" | "symmetric_difference" => {
+                method(vec![Type::Dynamic], self.clone())
+            }
+
+            "is_subset" | "is_superset" | "equals" => method(vec![Type::Dynamic], Type::Bool),
+
+            _ => None,
         }
     }
 
@@ -316,6 +519,8 @@ impl fmt::Display for Type {
                 }
                 write!(f, ">")
             }
+            Type::Set(element) => write!(f, "Set<{element}>"),
+            Type::SetDynamic => write!(f, "Set"),
             Type::ArrayDynamic => write!(f, "Array"),
             Type::DictDynamic => write!(f, "Dict"),
             Type::TupleDynamic => write!(f, "Tuple"),

@@ -12,7 +12,7 @@ impl Parser {
     // ============================================================
 
     pub(super) fn parse_expression(&mut self) -> Result<Expression, ParserError> {
-        self.arrow_function()
+        self.nested(|parser| parser.arrow_function())
     }
 
     fn arrow_function(&mut self) -> Result<Expression, ParserError> {
@@ -370,6 +370,23 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expression, ParserError> {
+        // `- - - - x` ou `!!!!x` sur des milliers de niveaux : récursion.
+        self.nested(|parser| parser.unary_inner())
+    }
+
+    fn unary_inner(&mut self) -> Result<Expression, ParserError> {
+        // `-9223372036854775808` : la valeur absolue de i64::MIN ne tient pas
+        // dans un i64, on reconnaît donc le littéral négatif entier.
+        if self.check(TokenKind::Minus)
+            && self.check_next(TokenKind::Number)
+            && self.tokens[self.current + 1].lexeme == "9223372036854775808"
+        {
+            self.advance();
+            self.advance();
+
+            return Ok(Expression::Literal(Literal::Integer(i64::MIN)));
+        }
+
         if self.match_token(TokenKind::Minus) {
             let (line, column) = (self.peek().line, self.peek().column);
             let operand = self.unary()?;
@@ -583,6 +600,40 @@ impl Parser {
             }
 
             TokenKind::LeftBrace => {
+                // `{1, 2, 3}` est un littéral d'ENSEMBLE ; `{nom: valeur}` un
+                // dict ; `{}` reste le dict vide (l'ensemble vide s'écrit
+                // `Set()`). Ce n'est un dict que si le premier élément est
+                // une clé (identifiant ou chaîne) suivie de `:`.
+                let starts_like_dict = self.check(TokenKind::RightBrace)
+                    || (matches!(self.peek().kind, TokenKind::String | TokenKind::Identifier)
+                        && self.check_next(TokenKind::Colon));
+
+                if !starts_like_dict {
+                    let mut elements = Vec::new();
+
+                    loop {
+                        elements.push(self.parse_expression()?);
+
+                        if !self.match_token(TokenKind::Comma) {
+                            break;
+                        }
+
+                        if self.check(TokenKind::RightBrace) {
+                            break;
+                        }
+                    }
+
+                    self.consume(TokenKind::RightBrace, "'}' attendu après l'ensemble")?;
+
+                    // Désucrage : `{1, 2}` == `Set(1, 2)`.
+                    return Ok(Expression::Call {
+                        callee: Box::new(Expression::Variable("Set".to_string())),
+                        arguments: elements,
+                        line: token.line,
+                        column: token.column,
+                    });
+                }
+
                 let mut fields: Vec<(String, Expression)> = Vec::new();
 
                 if !self.check(TokenKind::RightBrace) {

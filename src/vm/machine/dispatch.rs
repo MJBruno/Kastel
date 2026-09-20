@@ -20,9 +20,17 @@ impl VirtualMachine {
             // CONSTANTS
             // ========================================================
             OpCode::Constant => {
-                let constant = self.read_constant_byte()?;
+                let constant = self.read_constant_byte(false)?;
                 self.push(constant);
                 Ok(false)
+            }
+
+            // Préfixe « large » : l'opérande constante de l'instruction
+            // suivante est sur 2 octets (voir `dispatch_wide`).
+            OpCode::Wide => {
+                let inner = self.read_byte()?;
+
+                self.dispatch_wide(inner)
             }
 
             OpCode::None => {
@@ -146,17 +154,17 @@ impl VirtualMachine {
             // GLOBALS / LOCALS
             // ========================================================
             OpCode::DefineGlobal => {
-                self.define_global()?;
+                self.define_global(false)?;
                 Ok(false)
             }
 
             OpCode::SetGlobal => {
-                self.set_global()?;
+                self.set_global(false)?;
                 Ok(false)
             }
 
             OpCode::GetGlobal => {
-                self.get_global()?;
+                self.get_global(false)?;
                 Ok(false)
             }
 
@@ -174,12 +182,12 @@ impl VirtualMachine {
             // MODULES
             // ========================================================
             OpCode::Import => {
-                self.import_module()?;
+                self.import_module(false)?;
                 Ok(false)
             }
 
             OpCode::ImportAll => {
-                self.import_all()?;
+                self.import_all(false)?;
                 Ok(false)
             }
 
@@ -217,7 +225,7 @@ impl VirtualMachine {
             }
 
             OpCode::Closure => {
-                self.op_closure()?;
+                self.op_closure(false)?;
                 Ok(false)
             }
 
@@ -354,12 +362,12 @@ impl VirtualMachine {
             // PROPERTIES
             // ========================================================
             OpCode::GetProperty => {
-                self.get_property()?;
+                self.get_property(false)?;
                 Ok(false)
             }
 
             OpCode::SetProperty => {
-                self.set_property()?;
+                self.set_property(false)?;
                 Ok(false)
             }
 
@@ -367,7 +375,7 @@ impl VirtualMachine {
             // METHOD CALLS
             // ========================================================
             OpCode::InvokeMethod => {
-                let method_constant = self.read_byte()? as usize;
+                let method_constant = self.read_constant_operand(false)? as usize;
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_invoke_method(method_constant, arg_count)?;
@@ -375,7 +383,7 @@ impl VirtualMachine {
             }
 
             OpCode::InvokeBaseMethod => {
-                let method_constant = self.read_byte()? as usize;
+                let method_constant = self.read_constant_operand(false)? as usize;
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_invoke_base_method(method_constant, arg_count)?;
@@ -475,5 +483,53 @@ impl VirtualMachine {
                 Ok(false)
             }
         }
+    }
+
+    /// Exécute l'instruction `instruction` PRÉCÉDÉE de `Wide` : son opérande
+    /// constante est lue sur 16 bits. Hors de la boucle chaude (les indices
+    /// > 255 sont rares) ; seules les instructions à opérande constante sont
+    /// admises, toute autre est un bytecode invalide (ce qui rejette aussi
+    /// `Wide Wide`).
+    #[inline(never)]
+    fn dispatch_wide(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
+        let opcode =
+            OpCode::from_byte(instruction).map_err(|_| RuntimeError::InvalidOpcode(instruction))?;
+
+        match opcode {
+            OpCode::Constant => {
+                let constant = self.read_constant_byte(true)?;
+                self.push(constant);
+            }
+
+            OpCode::DefineGlobal => self.define_global(true)?,
+            OpCode::SetGlobal => self.set_global(true)?,
+            OpCode::GetGlobal => self.get_global(true)?,
+
+            OpCode::GetProperty => self.get_property(true)?,
+            OpCode::SetProperty => self.set_property(true)?,
+
+            OpCode::Import => self.import_module(true)?,
+            OpCode::ImportAll => self.import_all(true)?,
+
+            OpCode::Closure => self.op_closure(true)?,
+
+            OpCode::InvokeMethod => {
+                let method_constant = self.read_constant_operand(true)? as usize;
+                let arg_count = self.read_byte()? as usize;
+
+                self.op_invoke_method(method_constant, arg_count)?;
+            }
+
+            OpCode::InvokeBaseMethod => {
+                let method_constant = self.read_constant_operand(true)? as usize;
+                let arg_count = self.read_byte()? as usize;
+
+                self.op_invoke_base_method(method_constant, arg_count)?;
+            }
+
+            _ => return Err(RuntimeError::InvalidOpcode(instruction)),
+        }
+
+        Ok(false)
     }
 }

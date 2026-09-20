@@ -78,7 +78,7 @@ impl VirtualMachine {
     }
 
     #[inline]
-    pub(crate) fn read_constant(&self, index: u8) -> Result<Value, RuntimeError> {
+    pub(crate) fn read_constant(&self, index: u16) -> Result<Value, RuntimeError> {
         self.current_frame()?
             .chunk
             .constants
@@ -87,9 +87,20 @@ impl VirtualMachine {
             .ok_or(RuntimeError::InvalidFunction)
     }
 
+    /// Lit l'indice de constante d'une instruction : 1 octet, ou 2 octets
+    /// (grand-boutiste) quand l'instruction était précédée de `Wide`.
     #[inline(always)]
-    pub(crate) fn read_constant_byte(&mut self) -> Result<Value, RuntimeError> {
-        let index = self.read_byte()?;
+    pub(crate) fn read_constant_operand(&mut self, wide: bool) -> Result<u16, RuntimeError> {
+        if wide {
+            self.read_short()
+        } else {
+            Ok(u16::from(self.read_byte()?))
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn read_constant_byte(&mut self, wide: bool) -> Result<Value, RuntimeError> {
+        let index = self.read_constant_operand(wide)?;
 
         self.read_constant(index)
     }

@@ -25,7 +25,9 @@ use std::fmt::Write as _;
 
 use crate::{
     compiler::compiler::Compiler, error::runtime_error::RuntimeError,
-    runtime::gc_handle::Gc, runtime::object::Object, runtime::value::Value,
+    runtime::gc_handle::Gc,
+    runtime::object::Object,
+    runtime::value::{ContainerGuard, MAX_JSON_DEPTH, Value},
 };
 
 // ====================================================================
@@ -84,6 +86,22 @@ fn encode_value(value: &Value, out: &mut String) -> Result<(), RuntimeError> {
 }
 
 fn encode_object(handle: &Gc<Object>, out: &mut String) -> Result<(), RuntimeError> {
+    // Structure cyclique ou trop profonde : erreur claire plutôt qu'un
+    // débordement de pile natif.
+    let is_container = matches!(
+        &*handle.borrow(),
+        Object::Array(_) | Object::Tuple(_) | Object::Set(_) | Object::Dict(_)
+    );
+
+    let _guard = if is_container {
+        Some(
+            ContainerGuard::enter(handle, MAX_JSON_DEPTH)
+                .ok_or(RuntimeError::CyclicStructure)?,
+        )
+    } else {
+        None
+    };
+
     match &*handle.borrow() {
         Object::String(text) => {
             encode_string(text, out);
@@ -106,7 +124,7 @@ fn encode_object(handle: &Gc<Object>, out: &mut String) -> Result<(), RuntimeErr
             Ok(())
         }
 
-        Object::Tuple(items) => {
+        Object::Tuple(items) | Object::Set(items) => {
             out.push('[');
 
             for (index, item) in items.iter().enumerate() {
@@ -196,6 +214,7 @@ pub fn native_json_decode(args: &[Value]) -> Result<Value, RuntimeError> {
     let mut parser = JsonParser {
         chars: text.chars().collect(),
         pos: 0,
+        depth: 0,
     };
 
     let value = parser.parse_value()?;
@@ -212,6 +231,9 @@ pub fn native_json_decode(args: &[Value]) -> Result<Value, RuntimeError> {
 struct JsonParser {
     chars: Vec<char>,
     pos: usize,
+
+    /// Profondeur d'imbrication courante (limitée par `MAX_JSON_DEPTH`).
+    depth: usize,
 }
 
 impl JsonParser {
@@ -251,8 +273,23 @@ impl JsonParser {
         self.skip_whitespace();
 
         match self.peek() {
-            Some('{') => self.parse_object(),
-            Some('[') => self.parse_array(),
+            Some(opening @ ('{' | '[')) => {
+                if self.depth >= MAX_JSON_DEPTH {
+                    return Err(self.error("imbrication trop profonde"));
+                }
+
+                self.depth += 1;
+
+                let result = if opening == '{' {
+                    self.parse_object()
+                } else {
+                    self.parse_array()
+                };
+
+                self.depth -= 1;
+
+                result
+            }
             Some('"') => Ok(Value::new_string(self.parse_string()?)),
             Some('t') | Some('f') => self.parse_bool(),
             Some('n') => self.parse_null(),

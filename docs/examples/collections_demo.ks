@@ -17,11 +17,11 @@ println(t.size());                      // 3
 println(s.size());                      // 3
 println(texte.size());                  // 5
 println("é".size());                    // 1  (caractères Unicode, pas octets)
-println(range(0, 10, 2).iter().collect().size());        // 5
+println(range(0, 10, 2).size());        // 5
 
 println(a.is_empty());                  // false
 println([].is_empty());                 // true
-// println(range(0).is_empty());           // true
+println(range(0).is_empty());           // true
 
 // -- contains() ----------------------------------------------------------------------
 println(a.contains(2));                 // true
@@ -62,19 +62,19 @@ println(t.get(1));                      // 2
 println(t.index_of(3));                 // 2
 println(t.to_array());                  // [1, 2, 3]
 
-// // -- Range ---------------------------------------------------------------------------------
-// let r = range(2, 10, 2);
+// -- Range ---------------------------------------------------------------------------------
+let r = range(2, 10, 2);
 
-// println(r.start());                     // 2
-// println(r.stop());                      // 10
-// println(r.step());                      // 2
+println(r.start());                     // 2
+println(r.stop());                      // 10
+println(r.step());                      // 2
 
-// // -- clear() : collections mutables seulement -----------------------------------
-// a.clear();
-// d.clear();
-// s.clear();
+// -- clear() : collections mutables seulement -----------------------------------
+a.clear();
+d.clear();
+s.clear();
 
-// println(a.size() + d.size() + s.size());   // 0
+println(a.size() + d.size() + s.size());   // 0
 
 // -- to_string() ---------------------------------------------------------------------------
 println(t.to_string());                 // (1, 2, 3)

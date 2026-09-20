@@ -12,6 +12,9 @@ use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
 use crate::stdlib::register_natives;
 
+#[cfg(test)]
+mod robustness_tests;
+
 pub mod arithmetic;
 pub mod arrays;
 pub mod bytecode;
@@ -111,6 +114,20 @@ pub(crate) struct PendingException {
 }
 
 // ============================================================
+// LIMITES
+// ============================================================
+
+/// Profondeur maximale de la pile d'appels Kastel (frames). Au-delà :
+/// `RuntimeError::StackOverflow` (catchable par `try/catch`) au lieu d'une
+/// consommation mémoire sans fin sur une récursion infinie.
+pub(crate) const MAX_CALL_DEPTH: usize = 100_000;
+
+/// Profondeur maximale de rappels NATIFS imbriqués (`map`, `filter`,
+/// constructeurs, itérateurs... qui rappellent du code Kastel). Chaque niveau
+/// consomme de la pile Rust : cette limite protège contre son débordement.
+pub(crate) const MAX_NATIVE_DEPTH: usize = 500;
+
+// ============================================================
 // VIRTUAL MACHINE
 // ============================================================
 
@@ -134,6 +151,20 @@ pub struct VirtualMachine {
     pub(crate) pending_exception: Option<PendingException>,
 
     pub(crate) open_upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
+
+    /*
+     * Racines TEMPORAIRES du GC : valeurs tenues uniquement par des
+     * variables Rust pendant qu'un rappel Kastel s'exécute (résultats
+     * intermédiaires de `map`, arguments d'un constructeur...). Sans elles,
+     * le GC les croirait inaccessibles et VIDERAIT leur contenu.
+     */
+    pub(crate) temp_roots: Vec<Value>,
+
+    /*
+     * Profondeur courante de rappels natifs imbriqués (voir
+     * `MAX_NATIVE_DEPTH`).
+     */
+    pub(crate) native_depth: usize,
 
     pub(crate) natives: HashMap<String, Value>,
 
@@ -176,7 +207,7 @@ impl VirtualMachine {
         module_path: Option<PathBuf>,
         module_loader: ModuleLoader,
     ) -> Self {
-        let chunk = Rc::new(function.chunk.clone());
+        let chunk = Rc::clone(&function.chunk);
         let local_count = function.local_count as usize;
         let globals = Rc::new(RefCell::new(HashMap::new()));
         let closure = Object::new_closure(function, Vec::new(), Rc::downgrade(&globals));
@@ -198,6 +229,8 @@ impl VirtualMachine {
             exception_handlers: Vec::new(),
             pending_exception: None,
             open_upvalues: Vec::new(),
+            temp_roots: Vec::new(),
+            native_depth: 0,
             natives: HashMap::new(),
 
             module_loader,
@@ -224,7 +257,7 @@ impl VirtualMachine {
         module_loader: ModuleLoader,
         globals: Rc<RefCell<HashMap<String, Value>>>,
     ) -> Self {
-        let chunk = Rc::new(function.chunk.clone());
+        let chunk = Rc::clone(&function.chunk);
         let local_count = function.local_count as usize;
         let closure = Object::new_closure(
             function,
@@ -246,6 +279,8 @@ impl VirtualMachine {
             exception_handlers: Vec::new(),
             pending_exception: None,
             open_upvalues: Vec::new(),
+            temp_roots: Vec::new(),
+            native_depth: 0,
             natives: HashMap::new(),
             module_loader,
             module_path,
@@ -266,7 +301,7 @@ impl VirtualMachine {
         // Fermer les upvalues de l'ancien environnement avant de supprimer la stack.
         self.close_upvalues(0)?;
 
-        let chunk = Rc::new(function.chunk.clone());
+        let chunk = Rc::clone(&function.chunk);
         let local_count = function.local_count as usize;
         let closure = Object::new_closure(
             function,
@@ -289,6 +324,8 @@ impl VirtualMachine {
 
         self.exception_handlers.clear();
         self.pending_exception = None;
+        self.temp_roots.clear();
+        self.native_depth = 0;
 
         // Les upvalues ont maintenant été fermées correctement.
         self.open_upvalues.clear();

@@ -136,6 +136,58 @@ impl VirtualMachine {
     }
 
     // ============================================================
+    //                            RANGE
+    // ============================================================
+
+    /// Méthodes d'un `range(...)` : `size()`, `is_empty()`, `start()`,
+    /// `stop()`, `step()`, `to_string()`. `None` si `name` n'en fait pas
+    /// partie (la VM bascule alors sur les méthodes d'itérateur).
+    fn range_method(
+        name: &str,
+        start: f64,
+        stop: f64,
+        step: f64,
+        receiver: &Value,
+        arg_count: usize,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if !matches!(
+            name,
+            "size" | "is_empty" | "start" | "stop" | "step" | "to_string"
+        ) {
+            return Ok(None);
+        }
+
+        if arg_count != 0 {
+            return Err(RuntimeError::WrongArgumentCount {
+                expected: 0,
+                found: arg_count,
+            });
+        }
+
+        // `range()` n'accepte que des entiers et un pas non nul.
+        let (start, stop, step) = (start as i128, stop as i128, step as i128);
+
+        let size = if step > 0 && start < stop {
+            (stop - start + step - 1) / step
+        } else if step < 0 && start > stop {
+            (start - stop + (-step) - 1) / (-step)
+        } else {
+            0
+        };
+
+        let value = match name {
+            "size" => Value::Integer(size as i64),
+            "is_empty" => Value::Boolean(size == 0),
+            "start" => Value::Integer(start as i64),
+            "stop" => Value::Integer(stop as i64),
+            "step" => Value::Integer(step as i64),
+            _ => Value::new_string(receiver.to_string()),
+        };
+
+        Ok(Some(value))
+    }
+
+    // ============================================================
     //                  VISIBILITÉ DES MEMBRES
     // ============================================================
 
@@ -254,7 +306,10 @@ impl VirtualMachine {
 
         self.stack.truncate(receiver_index);
 
-        if method_name == "to_iterator" {
+        // `iter()` : convention unique pour obtenir un itérateur (la syntaxe
+        // principale reste `for x in collection`).
+        if method_name == "iter" && !matches!(&receiver, Value::Object(handle) if matches!(&*handle.borrow(), Object::Instance { .. }))
+        {
             if arg_count != 0 {
                 return Err(RuntimeError::WrongArgumentCount {
                     expected: 0,
@@ -266,14 +321,28 @@ impl VirtualMachine {
             return Ok(());
         }
 
+        // Ancien nom, supprimé au profit de `iter()`.
+        if method_name == "to_iterator" {
+            return Err(crate::stdlib::renamed_method_error("to_iterator", "iter()"));
+        }
+
         let result = match &receiver {
-            Value::Range { .. } => {
-                let iterator = receiver.to_iterator()?;
+            Value::Range { start, stop, step } => {
+                // API standard : size(), is_empty(), start(), stop(), step(),
+                // to_string(). Le reste (map, filter, take...) passe par
+                // l'itérateur.
+                match Self::range_method(&method_name, *start, *stop, *step, &receiver, arg_count)? {
+                    Some(result) => result,
 
-                let mut iterator_args = args.clone();
-                iterator_args[0] = iterator;
+                    None => {
+                        let iterator = receiver.to_iterator()?;
 
-                self.invoke_iterator_method(&method_name, &iterator_args)?
+                        let mut iterator_args = args.clone();
+                        iterator_args[0] = iterator;
+
+                        self.invoke_iterator_method(&method_name, &iterator_args)?
+                    }
+                }
             }
 
             Value::Object(handle) => {
@@ -288,6 +357,7 @@ impl VirtualMachine {
                         Object::Dict(_) => 4,
                         Object::Tuple(_) => 6,
                         Object::Module(_) => 7,
+                        Object::Set(_) => 8,
                         _ => 5,
                     }
                 };
@@ -412,6 +482,17 @@ impl VirtualMachine {
                         }
                     },
 
+                    8 => match crate::stdlib::set::dispatch_method(&method_name, &args)? {
+                        Some(result) => result,
+
+                        None => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    },
+
                     7 => {
                         /*
                          * module.function(a, b)
@@ -474,7 +555,7 @@ impl VirtualMachine {
         arg_count: usize,
     ) -> Result<(), RuntimeError> {
         let method_constant =
-            u8::try_from(method_constant).map_err(|_| RuntimeError::InvalidFunction)?;
+            u16::try_from(method_constant).map_err(|_| RuntimeError::InvalidFunction)?;
 
         let method_value = self.read_constant(method_constant)?;
 
@@ -559,7 +640,21 @@ impl VirtualMachine {
     //                  ARRAY FUNCTIONAL METHODS
     // ============================================================
 
+    /// `map`, `filter`, `reduce`, `any`, `all` : rappellent du code Kastel.
+    ///
+    /// Le receveur et les arguments (`args`) ont été retirés de la pile : ils
+    /// ne sont plus tenus que par des variables Rust. On les enracine donc
+    /// pendant tout l'appel, sinon un GC déclenché dans le rappel les
+    /// viderait (`break_cycle`).
     fn invoke_array_functional(
+        &mut self,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value, RuntimeError> {
+        self.with_temp_roots(args, |vm| vm.invoke_array_functional_inner(method, args))
+    }
+
+    fn invoke_array_functional_inner(
         &mut self,
         method: &str,
         args: &[Value],
@@ -574,12 +669,21 @@ impl VirtualMachine {
                 }
 
                 let elements = Self::array_snapshot(&args[0])?;
+
+                // Le rappel peut modifier le tableau d'origine : on garde
+                // les éléments du cliché vivants.
+                self.temp_roots.extend(elements.iter().cloned());
                 let callback = args[1].clone();
 
                 let mut result = Vec::with_capacity(elements.len());
 
                 for element in elements {
-                    result.push(self.invoke_sync(callback.clone(), &[element])?);
+                    let value = self.invoke_sync(callback.clone(), &[element])?;
+
+                    // Résultat intermédiaire : seulement tenu par `result`
+                    // jusqu'à la construction du tableau final.
+                    self.protect(&value);
+                    result.push(value);
                 }
 
                 Ok(Value::new_array(result))
@@ -594,6 +698,10 @@ impl VirtualMachine {
                 }
 
                 let elements = Self::array_snapshot(&args[0])?;
+
+                // Le rappel peut modifier le tableau d'origine : on garde
+                // les éléments du cliché vivants.
+                self.temp_roots.extend(elements.iter().cloned());
                 let callback = args[1].clone();
 
                 let mut result = Vec::new();
@@ -619,6 +727,10 @@ impl VirtualMachine {
                 }
 
                 let elements = Self::array_snapshot(&args[0])?;
+
+                // Le rappel peut modifier le tableau d'origine : on garde
+                // les éléments du cliché vivants.
+                self.temp_roots.extend(elements.iter().cloned());
                 let callback = args[1].clone();
                 let mut accumulator = args[2].clone();
 
@@ -638,6 +750,10 @@ impl VirtualMachine {
                 }
 
                 let elements = Self::array_snapshot(&args[0])?;
+
+                // Le rappel peut modifier le tableau d'origine : on garde
+                // les éléments du cliché vivants.
+                self.temp_roots.extend(elements.iter().cloned());
                 let callback = args[1].clone();
 
                 for element in elements {
@@ -660,6 +776,10 @@ impl VirtualMachine {
                 }
 
                 let elements = Self::array_snapshot(&args[0])?;
+
+                // Le rappel peut modifier le tableau d'origine : on garde
+                // les éléments du cliché vivants.
+                self.temp_roots.extend(elements.iter().cloned());
                 let callback = args[1].clone();
 
                 for element in elements {

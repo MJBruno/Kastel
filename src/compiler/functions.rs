@@ -16,8 +16,8 @@ impl Compiler {
     // CLOSURE
     // ============================================================
 
-    pub(crate) fn emit_closure(&mut self, function_constant: u8, upvalues: &[Upvalue]) {
-        self.emit_bytes(OpCode::Closure, function_constant);
+    pub(crate) fn emit_closure(&mut self, function_constant: u16, upvalues: &[Upvalue]) {
+        self.emit_constant_op(OpCode::Closure, function_constant);
 
         for upvalue in upvalues {
             self.emit_byte(if upvalue.is_local { 1 } else { 0 });
@@ -74,7 +74,7 @@ impl Compiler {
 
             self.emit_closure(function_constant, &function.upvalues);
 
-            self.emit_bytes(OpCode::DefineGlobal, name_constant);
+            self.emit_constant_op(OpCode::DefineGlobal, name_constant);
 
             return Ok(());
         }
@@ -146,7 +146,7 @@ impl Compiler {
         Ok(Function {
             name: name.to_string(),
             arity: compiler.function_arity as usize,
-            chunk: compiler.chunk,
+            chunk: Rc::new(compiler.chunk),
             local_count,
             upvalue_count,
             upvalues,

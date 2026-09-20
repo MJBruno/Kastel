@@ -136,13 +136,24 @@ impl Compiler {
                                             let increment_constant =
                                                 self.make_constant(increment)?;
 
-                                            self.emit_opcode(OpCode::LoopLessAddLocalConst);
+                                            // Super-instruction : opérandes constantes sur un
+                                            // octet uniquement (sinon : boucle générale).
+                                            match (
+                                                u8::try_from(limit_constant),
+                                                u8::try_from(increment_constant),
+                                            ) {
+                                                (Ok(limit_byte), Ok(increment_byte)) => {
+                                                    self.emit_opcode(OpCode::LoopLessAddLocalConst);
 
-                                            self.emit_byte(slot as u8);
-                                            self.emit_byte(limit_constant);
-                                            self.emit_byte(increment_constant);
+                                                    self.emit_byte(slot as u8);
+                                                    self.emit_byte(limit_byte);
+                                                    self.emit_byte(increment_byte);
 
-                                            true
+                                                    true
+                                                }
+
+                                                _ => false,
+                                            }
                                         }
 
                                         _ => false,
@@ -210,14 +221,22 @@ impl Compiler {
                             VariableLocation::Local(slot) => {
                                 let constant = self.make_constant(value)?;
 
-                                self.emit_opcode(OpCode::LessLocalConstJump);
-                                self.emit_byte(slot as u8);
-                                self.emit_byte(constant);
+                                match u8::try_from(constant) {
+                                    Ok(narrow) => {
+                                        self.emit_opcode(OpCode::LessLocalConstJump);
+                                        self.emit_byte(slot as u8);
+                                        self.emit_byte(narrow);
 
-                                // Réserve les deux octets du saut.
-                                self.emit_u16(u16::MAX);
+                                        // Réserve les deux octets du saut.
+                                        self.emit_u16(u16::MAX);
 
-                                self.chunk.code.len() - 2
+                                        self.chunk.code.len() - 2
+                                    }
+
+                                    // Super-instruction limitée à un indice sur un
+                                    // octet : condition générale au-delà.
+                                    Err(_) => self.compile_condition_and_jump(condition)?,
+                                }
                             }
 
                             _ => self.compile_condition_and_jump(condition)?,

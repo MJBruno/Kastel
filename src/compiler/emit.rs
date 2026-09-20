@@ -18,7 +18,7 @@ impl Compiler {
     /// échouait avec « Trop de constantes dans ce fragment de code ».
     ///
     /// Les fonctions et autres objets ne sont jamais fusionnés.
-    fn find_constant(&self, value: &Value) -> Option<u8> {
+    fn find_constant(&self, value: &Value) -> Option<u16> {
         let constants = &self.chunk.constants;
 
         let position = match value {
@@ -53,26 +53,31 @@ impl Compiler {
             _ => None,
         }?;
 
-        u8::try_from(position).ok()
+        u16::try_from(position).ok()
     }
 
-    pub(crate) fn make_constant(&mut self, value: Value) -> Result<u8, CompileError> {
+    /// Ajoute (ou retrouve) une constante et renvoie son indice.
+    ///
+    /// L'indice tient sur 16 bits : jusqu'à 65 536 constantes par fragment.
+    /// Les indices > 255 s'écrivent avec le préfixe `Wide` (voir
+    /// `emit_constant_op`).
+    pub(crate) fn make_constant(&mut self, value: Value) -> Result<u16, CompileError> {
         if let Some(index) = self.find_constant(&value) {
             return Ok(index);
         }
 
         let index = self.chunk.constants.len();
 
-        if index > u8::MAX as usize {
+        if index > u16::MAX as usize {
             return Err(CompileError::TooManyConstants);
         }
 
         self.chunk.constants.push(value);
 
-        Ok(index as u8)
+        Ok(index as u16)
     }
 
-    pub(crate) fn identifier_constant(&mut self, name: &str) -> Result<u8, CompileError> {
+    pub(crate) fn identifier_constant(&mut self, name: &str) -> Result<u16, CompileError> {
         self.make_constant(Value::new_string(name.to_string()))
     }
 
@@ -92,6 +97,26 @@ impl Compiler {
     pub(crate) fn emit_bytes(&mut self, opcode: OpCode, operand: u8) {
         self.emit_opcode(opcode);
         self.emit_byte(operand);
+    }
+
+    /// Émet `opcode` suivi d'un INDICE DE CONSTANTE.
+    ///
+    /// - indice <= 255 : `opcode indice` (forme courte, inchangée) ;
+    /// - sinon : `Wide opcode haut bas` — le préfixe `Wide` indique à la VM
+    ///   que l'opérande constante de l'instruction suivante est sur 2 octets
+    ///   (grand-boutiste). Les éventuels autres opérandes (nombre d'arguments
+    ///   d'un `InvokeMethod`, paires d'upvalues d'un `Closure`) restent sur
+    ///   un octet et sont émis par l'appelant juste après.
+    pub(crate) fn emit_constant_op(&mut self, opcode: OpCode, constant: u16) {
+        match u8::try_from(constant) {
+            Ok(narrow) => self.emit_bytes(opcode, narrow),
+
+            Err(_) => {
+                self.emit_opcode(OpCode::Wide);
+                self.emit_opcode(opcode);
+                self.emit_u16(constant);
+            }
+        }
     }
 
     pub(crate) fn emit_u16(&mut self, value: u16) {
@@ -181,6 +206,7 @@ impl Compiler {
 mod tests {
     use crate::compiler::compiler::Compiler;
     use crate::frontend::{lexer::lexer::Lexer, parser::Parser};
+    use crate::runtime::value::Value;
     use crate::stdlib::execute_native;
 
     fn compile(source: &str) -> Result<(), crate::error::compile_error::CompileError> {
@@ -203,12 +229,58 @@ mod tests {
     }
 
     #[test]
-    fn distinct_constants_beyond_the_limit_are_still_rejected() {
+    fn more_than_256_distinct_constants_are_supported() {
         let source = (0..300)
             .map(|index| format!("println(\"s{index}\");\n"))
             .collect::<String>();
 
-        assert!(compile(&source).is_err());
+        assert!(compile(&source).is_ok());
+    }
+
+    /// Exécute vraiment un programme de plus de 256 constantes : lectures et
+    /// écritures de globales, propriétés, appels de méthode et fonction
+    /// déclarée APRÈS le dépassement (opérandes `Wide`).
+    #[test]
+    fn programs_with_more_than_256_constants_run_correctly() {
+        let mut source = String::from("let total = 0;\n");
+
+        for index in 0..300 {
+            source.push_str(&format!("total = total + {};\n", 1000 + index));
+        }
+
+        source.push_str(
+            r#"
+let a = [1];
+a.add(2);
+let n = a.size();
+let o = {k: 5};
+o.k = o.k + 1;
+let k = o.k;
+func plus_one(x) {
+    return x + 1;
+}
+let r = plus_one(total);
+"#,
+        );
+
+        let tokens = Lexer::new(source).scan_token().unwrap();
+        let statements = Parser::new(tokens).parse().unwrap();
+
+        let mut compiler = Compiler::new();
+        execute_native(&mut compiler);
+
+        let function = std::rc::Rc::new(compiler.compile(&statements).unwrap());
+        assert!(function.chunk.constants.len() > 256);
+
+        let mut vm = crate::vm::machine::VirtualMachine::new(function, None);
+        vm.run().unwrap();
+
+        let globals = vm.globals.borrow();
+
+        // 300 * 1000 + (0 + 1 + ... + 299)
+        assert!(matches!(globals.get("total"), Some(Value::Integer(344_850))));
+        assert!(matches!(globals.get("n"), Some(Value::Integer(2))));
+        assert!(matches!(globals.get("k"), Some(Value::Integer(6))));
+        assert!(matches!(globals.get("r"), Some(Value::Integer(344_851))));
     }
 }
-

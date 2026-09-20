@@ -12,11 +12,19 @@ use crate::frontend::ast::*;
 use crate::frontend::lexer::token::{Token, TokenKind};
 
 
-#[derive(Debug, Clone)]
+/// Imbrication maximale (parenthèses, blocs, opérateurs unaires, fonctions
+/// anonymes...). Le parser est récursif : sans limite, un source pathologique
+/// (`((((...` sur des milliers de niveaux) ferait déborder la pile native.
+pub const MAX_NESTING_DEPTH: usize = 500;
+
+#[derive(Debug, Clone)] 
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     errors: Vec<ParserError>,
+
+    /// Profondeur d'imbrication courante (voir `MAX_NESTING_DEPTH`).
+    depth: usize,
 }
 
 #[allow(dead_code)]
@@ -26,7 +34,34 @@ impl Parser {
             tokens,
             current: 0,
             errors: Vec::new(),
+            depth: 0,
         }
+    }
+
+    /// Exécute `f` un niveau plus profond ; refuse au-delà de
+    /// `MAX_NESTING_DEPTH`. Le compteur est toujours rétabli, même en cas
+    /// d'erreur.
+    fn nested<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, ParserError>,
+    ) -> Result<T, ParserError> {
+        if self.depth >= MAX_NESTING_DEPTH {
+            let token = self.peek();
+
+            return Err(ParserError {
+                message: format!(
+                    "Imbrication trop profonde (limite : {MAX_NESTING_DEPTH} niveaux)"
+                ),
+                line: token.line,
+                column: token.column,
+            });
+        }
+
+        self.depth += 1;
+        let result = f(self);
+        self.depth -= 1;
+
+        result
     }
 
     pub fn parse(&mut self) -> Result<Vec<Statement>, Vec<ParserError>> {
@@ -120,6 +155,30 @@ impl Parser {
         })
     }
 
+    /// Erreur pour un littéral entier qui ne se lit pas comme `i64` :
+    /// trop grand (chiffres seuls) ou mal formé.
+    fn integer_literal_error(token: &Token) -> ParserError {
+        let only_digits = !token.lexeme.is_empty() && token.lexeme.bytes().all(|b| b.is_ascii_digit());
+
+        let message = if only_digits {
+            format!(
+                "Entier trop grand : {} dépasse la limite des entiers 64 bits (maximum {}). \
+                 Écrivez-le en flottant (ex. {}.0) si la précision n'est pas essentielle.",
+                token.lexeme,
+                i64::MAX,
+                token.lexeme
+            )
+        } else {
+            format!("Nombre entier invalide '{}'", token.lexeme)
+        };
+
+        ParserError {
+            message,
+            line: token.line,
+            column: token.column,
+        }
+    }
+
     fn parse_number(&self, token: Token) -> Result<Expression, ParserError> {
         let is_float = token.lexeme.contains('.') || token.lexeme.contains(['e', 'E']);
 
@@ -132,11 +191,10 @@ impl Parser {
 
             Ok(Expression::Literal(Literal::Float(value)))
         } else {
-            let value = token.lexeme.parse::<i64>().map_err(|_| ParserError {
-                message: format!("Nombre entier invalide '{}'", token.lexeme),
-                line: token.line,
-                column: token.column,
-            })?;
+            let value = token
+                .lexeme
+                .parse::<i64>()
+                .map_err(|_| Self::integer_literal_error(&token))?;
 
             Ok(Expression::Literal(Literal::Integer(value)))
         }

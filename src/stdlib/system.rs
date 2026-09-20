@@ -44,8 +44,14 @@ pub fn native_int(args: &[Value]) -> Result<Value, RuntimeError> {
     // exclusive de 2^63.
     const I64_MAX_EXCLUSIVE: f64 = 9_223_372_036_854_775_808.0;
 
-    if !value.is_finite() || value < i64::MIN as f64 || value >= I64_MAX_EXCLUSIVE {
+    if value.is_nan() {
         return Err(RuntimeError::TypeError);
+    }
+
+    if !value.is_finite() || value < i64::MIN as f64 || value >= I64_MAX_EXCLUSIVE {
+        return Err(RuntimeError::IntegerOverflow {
+            operation: "conversion en entier",
+        });
     }
 
     Ok(Value::Integer(value.trunc() as i64))
@@ -109,6 +115,7 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
             Object::String(_) => "string".to_string(),
             Object::Array(_) => "array".to_string(),
             Object::Tuple(_) => "tuple".to_string(),
+            Object::Set(_) => "set".to_string(),
             Object::Dict(_) => "object".to_string(),
             Object::Function(_) | Object::Closure(_) => "function".to_string(),
             Object::Iterator(_) => "iterator".to_string(),

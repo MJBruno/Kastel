@@ -5,6 +5,7 @@ use crate::frontend::ast::*;
 
 use super::{
     builtin_types,
+    compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeLoader},
     types::{FunctionType, Type},
 };
@@ -58,6 +59,9 @@ pub struct TypeChecker {
     return_types: Vec<Type>,
     current_class: Option<String>,
     context: Option<TypeCheckContext>,
+
+    /// Profondeur d'expression courante (voir `MAX_EXPRESSION_DEPTH`).
+    expression_depth: usize,
 }
 
 impl TypeChecker {
@@ -119,6 +123,7 @@ impl TypeChecker {
             current_return_type: None,
             return_types: Vec::new(),
             current_class: None,
+            expression_depth: 0,
             context: None,
         }
     }
@@ -952,6 +957,20 @@ impl TypeChecker {
     }
 
     fn check_expression(&mut self, expression: &Expression) -> Result<Type, CompileError> {
+        if self.expression_depth >= MAX_EXPRESSION_DEPTH {
+            return Err(CompileError::ExpressionTooDeep {
+                limit: MAX_EXPRESSION_DEPTH,
+            });
+        }
+
+        self.expression_depth += 1;
+        let result = self.check_expression_inner(expression);
+        self.expression_depth -= 1;
+
+        result
+    }
+
+    fn check_expression_inner(&mut self, expression: &Expression) -> Result<Type, CompileError> {
         match expression {
             Expression::Literal(literal) => Ok(match literal {
                 Literal::Integer(_) => Type::Int,
@@ -1039,16 +1058,36 @@ impl TypeChecker {
             Expression::Call {
                 callee, arguments, ..
             } => {
+                // `Set(a, b, c)` (native, non redéfinie) : le type d'élément
+                // est déduit des arguments -> `Set<int>` pour `Set(1, 2, 3)`.
+                if let Expression::Variable(name) = callee.as_ref()
+                    && name == "Set"
+                    && self.lookup(name).is_some_and(|binding| binding.native)
+                {
+                    let mut element: Option<Type> = None;
+
+                    for argument in arguments {
+                        let argument_type = self.check_expression(argument)?;
+
+                        element = Some(match element {
+                            Some(current) => current.merge(&argument_type),
+                            None => argument_type,
+                        });
+                    }
+
+                    return Ok(Type::Set(Box::new(element.unwrap_or(Type::Dynamic))));
+                }
+
                 // Pour une méthode de classe, l'arité fait partie de la
                 // résolution. Cela permet `obj.foo()` et `obj.foo(x)`
                 // d'aboutir à deux signatures différentes.
                 if let Expression::Member { object, name, .. } = callee.as_ref() {
                     let object_type = self.check_expression(object)?;
 
-                    if let Type::Named(class_name) = object_type {
-                        self.check_member_visibility(&class_name, name)?;
+                    if let Type::Named(class_name) = &object_type {
+                        self.check_member_visibility(class_name, name)?;
 
-                        let signatures = self.find_methods(&class_name, name);
+                        let signatures = self.find_methods(class_name, name);
 
                         if !signatures.is_empty() {
                             let signature = self.resolve_overload(
@@ -1059,6 +1098,24 @@ impl TypeChecker {
 
                             return Ok(*signature.return_type);
                         }
+                    }
+
+                    // Array, Dict, Tuple, String, Range : méthodes STANDARD
+                    // typées pour un APPEL (`a.size()`, `d.get(k)`...), et
+                    // erreur guidée pour les noms supprimés (`a.length`,
+                    // `a.push(x)`, `d.has(k)`...).
+                    if let Some(replacement) = object_type.renamed_member(name) {
+                        return Err(CompileError::RenamedMember {
+                            name: name.to_string(),
+                            replacement: replacement.to_string(),
+                        });
+                    }
+
+                    if !matches!(object_type, Type::Set(_) | Type::SetDynamic)
+                        && let Some(Type::Function(signature)) =
+                            object_type.collection_member_type(name)
+                    {
+                        return self.check_call_signature(&signature, arguments, name);
                     }
                 }
 
@@ -1395,6 +1452,42 @@ impl TypeChecker {
                         name: name.to_string(),
                     }
                 });
+            }
+
+            Type::Set(_) | Type::SetDynamic => {
+                if let Some(replacement) = object_type.renamed_member(name) {
+                    return Err(CompileError::RenamedMember {
+                        name: name.to_string(),
+                        replacement: replacement.to_string(),
+                    });
+                }
+
+                // Type connu : un membre inexistant est une erreur certaine.
+                return object_type.set_member_type(name).ok_or_else(|| {
+                    CompileError::InvalidMemberAccess {
+                        name: name.to_string(),
+                    }
+                });
+            }
+
+            // Accès SANS appel (`a.length`) : seuls les noms supprimés sont
+            // signalés. Les méthodes standard typées sont traitées à
+            // l'appel (voir `Expression::Call`), car `d.size` peut être une
+            // clé de dict.
+            Type::Array(_)
+            | Type::ArrayDynamic
+            | Type::Dict(_, _)
+            | Type::DictDynamic
+            | Type::Tuple(_)
+            | Type::TupleDynamic
+            | Type::Str
+            | Type::Range => {
+                if let Some(replacement) = object_type.renamed_member(name) {
+                    return Err(CompileError::RenamedMember {
+                        name: name.to_string(),
+                        replacement: replacement.to_string(),
+                    });
+                }
             }
 
             _ => {}
@@ -2005,6 +2098,155 @@ class Point {
         assert!(parse_fails(
             "class A { func f() { return 1; } private func f(x) { return 2; } }"
         ));
+    }
+
+    #[test]
+    fn sets_are_typed_by_their_elements() {
+        let ok = check(
+            r#"
+let s = Set(1, 2, 3);
+s.add(4);
+let n: int = s.size();
+let has: bool = s.contains(2);
+let empty: bool = s.is_empty();
+s.remove(2);
+s.clear();
+
+let typed: Set<int> = Set(1, 2, 2);
+let a = Set(1, 2, 3);
+let b = Set(3, 4, 5);
+let u: Set<int> = a.union(b);
+let i: Set<int> = a.intersection(b);
+let sub: bool = a.is_subset(b);
+let c = a.copy();
+c.add(9);
+let list: Array<int> = a.to_array();
+let from_literal: Set<int> = {1, 2, 3};
+
+for x in a {
+    let doubled: int = x * 2;
+}
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        // Le type d'élément est protégé à l'ajout.
+        assert!(check("let s: Set<int> = Set(); s.add(\"a\");").is_err());
+        assert!(check("let s = Set(1, 2); let n: str = s.size();").is_err());
+        assert!(check("let s: Set<str> = Set(1, 2);").is_err());
+
+        // Membre inexistant ou mauvaise arité.
+        assert!(check("let s = Set(1); s.nope();").is_err());
+        assert!(check("let s = Set(1); s.size(1);").is_err());
+    }
+
+    #[test]
+    fn brace_literal_is_a_set_unless_it_starts_with_a_key() {
+        let ok = check(
+            r#"
+let d: Dict<str, int> = { age: 25 };
+let quoted = { "k": 2 };
+let empty = {};
+let s: Set<str> = { "x", "y" };
+let one: Set<int> = { 1 };
+let trailing: Set<int> = { 1, 2, };
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        // `{1, 2}` n'est PAS un dict.
+        assert!(check("let d: Dict<str, int> = { 1, 2 };").is_err());
+    }
+
+    #[test]
+    fn standard_collection_api_is_typed() {
+        let ok = check(
+            r#"
+let a = [1, 2, 3];
+let n: int = a.size();
+let e: bool = a.is_empty();
+let c: bool = a.contains(2);
+a.add(4);
+a.remove(2);
+let b = a.copy();
+let shown: str = a.to_string();
+a.clear();
+
+let d = {"a": 10, "b": 20};
+let m: int = d.size();
+let has: bool = d.contains("a");
+let v: int = d.get("a");
+d.set("a", 11);
+let ks: Array<str> = d.keys();
+let entries = d.entries();
+
+let t = (1, 2, 3);
+let f: int = t.first();
+let l: int = t.size();
+let converted: Array<int> = t.to_array();
+
+let s = "Hello";
+let sz: int = s.size();
+let empty: bool = s.is_empty();
+let inside: bool = s.contains("ll");
+
+for x in Set(1, 2) {
+    let doubled: int = x * 2;
+}
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        // Mauvaise arité ou mauvais type de retour.
+        assert!(check("let a = [1]; a.size(1);").is_err());
+        assert!(check("let a = [1]; let n: str = a.size();").is_err());
+        assert!(check("let d = {\"a\": 1}; let k: int = d.keys();").is_err());
+    }
+
+    #[test]
+    fn removed_collection_names_are_reported_with_their_replacement() {
+        let renamed = |source: &str| -> bool {
+            let mut error = match check(source) {
+                Err(error) => error,
+                Ok(()) => return false,
+            };
+
+            while let CompileError::WithLocation { source, .. } = error {
+                error = *source;
+            }
+
+            matches!(error, CompileError::RenamedMember { .. })
+        };
+
+        assert!(renamed("let a = [1]; let n = a.length;"));
+        assert!(renamed("let a = [1]; a.push(2);"));
+        assert!(renamed("let t = (1, 2); let n = t.length;"));
+        assert!(renamed("let s = \"x\"; let n = s.length;"));
+        assert!(renamed("let s = Set(1); let n = s.length;"));
+        assert!(renamed("let d = {\"a\": 1}; d.has(\"a\");"));
+        assert!(renamed("let d = {\"a\": 1}; let e = d.items();"));
+        assert!(renamed("let a = [1]; let i = a.to_iterator();"));
+    }
+
+    #[test]
+    fn dict_keys_named_like_methods_and_user_classes_are_not_affected() {
+        // `size` et `length` sont ici de simples clés de dict.
+        let ok = check(
+            r#"
+let d = { size: 3, length: 4 };
+let a: int = d.size;
+let b: int = d.length;
+
+class Pile {
+    func size() -> int { return 1; }
+    func add(x) { return x; }
+}
+let p = new Pile();
+let n: int = p.size();
+p.add(2);
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
     }
 }
 

@@ -20,8 +20,8 @@ impl VirtualMachine {
         Rc::clone(&self.globals)
     }
 
-    pub(crate) fn define_global(&mut self) -> Result<(), RuntimeError> {
-        let constant = self.read_constant_byte()?;
+    pub(crate) fn define_global(&mut self, wide: bool) -> Result<(), RuntimeError> {
+        let constant = self.read_constant_byte(wide)?;
         let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
         let value = self.pop()?;
@@ -30,8 +30,8 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn get_global(&mut self) -> Result<(), RuntimeError> {
-        let constant = self.read_constant_byte()?;
+    pub(crate) fn get_global(&mut self, wide: bool) -> Result<(), RuntimeError> {
+        let constant = self.read_constant_byte(wide)?;
         let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
         let globals = self.current_global_env();
@@ -46,8 +46,8 @@ impl VirtualMachine {
         Ok(())
     }
 
-    pub(crate) fn set_global(&mut self) -> Result<(), RuntimeError> {
-        let constant = self.read_constant_byte()?;
+    pub(crate) fn set_global(&mut self, wide: bool) -> Result<(), RuntimeError> {
+        let constant = self.read_constant_byte(wide)?;
         let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
         let globals = self.current_global_env();
@@ -162,7 +162,11 @@ impl VirtualMachine {
         if let (Some(Value::Integer(local)), Value::Integer(constant)) =
             (self.stack.get(local_index), constant)
         {
-            let result = local.wrapping_add(*constant);
+            let result = local
+                .checked_add(*constant)
+                .ok_or(RuntimeError::IntegerOverflow {
+                    operation: "addition",
+                })?;
 
             let target = self
                 .stack

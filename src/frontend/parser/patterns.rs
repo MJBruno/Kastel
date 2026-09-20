@@ -112,11 +112,10 @@ impl Parser {
 
                     Pattern::Literal(Literal::Float(value))
                 } else {
-                    let value = token.lexeme.parse::<i64>().map_err(|_| ParserError {
-                        message: format!("Nombre entier invalide '{}'", token.lexeme),
-                        line: token.line,
-                        column: token.column,
-                    })?;
+                    let value = token
+                        .lexeme
+                        .parse::<i64>()
+                        .map_err(|_| Self::integer_literal_error(&token))?;
 
                     Pattern::Literal(Literal::Integer(value))
                 }
@@ -211,13 +210,14 @@ impl Parser {
 
                     Pattern::Literal(Literal::Float(-value))
                 } else {
-                    let value = token.lexeme.parse::<i64>().map_err(|_| ParserError {
-                        message: format!("Nombre entier invalide '-{}'", token.lexeme),
-                        line: token.line,
-                        column: token.column,
-                    })?;
+                    // On lit le littéral AVEC son signe : `-9223372036854775808`
+                    // (i64::MIN) est valide alors que sa valeur absolue ne
+                    // tient pas dans un i64.
+                    let value = format!("-{}", token.lexeme)
+                        .parse::<i64>()
+                        .map_err(|_| Self::integer_literal_error(&token))?;
 
-                    Pattern::Literal(Literal::Integer(-value))
+                    Pattern::Literal(Literal::Integer(value))
                 }
             }
 

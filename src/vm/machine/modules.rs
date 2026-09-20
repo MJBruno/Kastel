@@ -7,8 +7,8 @@ use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 
 impl VirtualMachine {
-    pub(crate) fn import_module(&mut self) -> Result<(), RuntimeError> {
-        let constant = self.read_byte()?;
+    pub(crate) fn import_module(&mut self, wide: bool) -> Result<(), RuntimeError> {
+        let constant = self.read_constant_operand(wide)?;
         let value = self.read_constant(constant)?;
         let module_name = value.as_string_value().ok_or(RuntimeError::TypeError)?;
 
@@ -55,6 +55,10 @@ impl VirtualMachine {
         parts: &[String],
         module_name: &str,
     ) -> Result<Value, RuntimeError> {
+        // Le module s'exécute dans une VM imbriquée : ses collectes doivent
+        // voir aussi les valeurs de CETTE VM (sinon elles seraient vidées).
+        let _pinned = self.pin_roots();
+
         match self
             .module_loader
             .resolve_import(current_file, parts)
@@ -85,8 +89,8 @@ impl VirtualMachine {
         }
     }
 
-    pub(crate) fn import_all(&mut self) -> Result<(), RuntimeError> {
-        let constant = self.read_byte()?;
+    pub(crate) fn import_all(&mut self, wide: bool) -> Result<(), RuntimeError> {
+        let constant = self.read_constant_operand(wide)?;
         let value = self.read_constant(constant)?;
 
         let module_name = value.as_string_value().ok_or(RuntimeError::TypeError)?;
@@ -104,10 +108,15 @@ impl VirtualMachine {
             return Err(RuntimeError::ModuleError("Invalid module name".to_string()));
         }
 
-        let module = self
-            .module_loader
-            .load_from(&current_file, &parts)
-            .map_err(|error| RuntimeError::ModuleError(error.to_string()))?;
+        let module = {
+            // Voir `resolve_import_value` : racines épinglées pendant que la
+            // VM du module s'exécute.
+            let _pinned = self.pin_roots();
+
+            self.module_loader
+                .load_from(&current_file, &parts)
+                .map_err(|error| RuntimeError::ModuleError(error.to_string()))?
+        };
 
         let module_object = Value::new_module(module);
 

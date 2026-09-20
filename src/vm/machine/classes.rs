@@ -372,6 +372,17 @@ impl VirtualMachine {
     // ========================================================
 
     pub(crate) fn op_new_instance(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
+        // Les racines ajoutées par `op_new_instance_inner` (classe et
+        // arguments, retirés de la pile) sont libérées quoi qu'il arrive.
+        let mark = self.temp_roots.len();
+        let result = self.op_new_instance_inner(arg_count);
+
+        self.temp_roots.truncate(mark);
+
+        result
+    }
+
+    fn op_new_instance_inner(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
         let required = arg_count
             .checked_add(1)
             .ok_or(RuntimeError::InvalidFunction)?;
@@ -408,6 +419,12 @@ impl VirtualMachine {
         self.stack.truncate(class_index);
 
         self.push(instance.clone());
+
+        // La classe et les arguments viennent de quitter la pile : on les
+        // enracine pendant les initialiseurs de champs et le constructeur,
+        // qui peuvent déclencher un GC.
+        self.temp_roots.push(class_value.clone());
+        self.temp_roots.extend(args.iter().cloned());
 
         // 1. Choix du constructeur, par arité (surcharge). Les constructeurs
         //    de la classe de base sont hérités.

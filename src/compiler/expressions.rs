@@ -3,7 +3,7 @@ use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
 use crate::runtime::value::Value;
 
-use super::compiler::Compiler;
+use super::compiler::{Compiler, MAX_EXPRESSION_DEPTH};
 
 impl Compiler {
     // ============================================================
@@ -11,6 +11,20 @@ impl Compiler {
     // ============================================================
 
     pub(crate) fn compile_expression(&mut self, expr: &Expression) -> Result<(), CompileError> {
+        if self.expression_depth >= MAX_EXPRESSION_DEPTH {
+            return Err(CompileError::ExpressionTooDeep {
+                limit: MAX_EXPRESSION_DEPTH,
+            });
+        }
+
+        self.expression_depth += 1;
+        let result = self.compile_expression_inner(expr);
+        self.expression_depth -= 1;
+
+        result
+    }
+
+    fn compile_expression_inner(&mut self, expr: &Expression) -> Result<(), CompileError> {
         match expr {
             Expression::Literal(value) => {
                 let value = match value {
@@ -22,7 +36,7 @@ impl Compiler {
                 };
 
                 let constant = self.make_constant(value)?;
-                self.emit_bytes(OpCode::Constant, constant);
+                self.emit_constant_op(OpCode::Constant, constant);
             }
 
             Expression::Variable(name) => {
@@ -149,7 +163,7 @@ impl Compiler {
                 for (key, value) in fields {
                     let key_constant = self.make_constant(Value::new_string(key.clone()))?;
 
-                    self.emit_bytes(OpCode::Constant, key_constant);
+                    self.emit_constant_op(OpCode::Constant, key_constant);
 
                     self.compile_expression(value)?;
                 }
@@ -178,18 +192,16 @@ impl Compiler {
                 line,
                 column,
             } => {
-                if name == "length" {
-                    self.compile_array_member(object, name, *line, *column)?;
-                } else {
-                    self.compile_expression(object)?;
+                // `x.length` n'est plus un cas particulier : la taille d'une
+                // collection s'obtient par `x.size()` (méthode standard).
+                self.compile_expression(object)?;
 
-                    let name_constant = self.identifier_constant(name)?;
+                let name_constant = self.identifier_constant(name)?;
 
-                    self.current_line = *line;
-                    self.current_column = *column;
+                self.current_line = *line;
+                self.current_column = *column;
 
-                    self.emit_bytes(OpCode::GetProperty, name_constant);
-                }
+                self.emit_constant_op(OpCode::GetProperty, name_constant);
             }
 
             Expression::Ternary {
@@ -272,8 +284,7 @@ impl Compiler {
         self.current_line = line;
         self.current_column = column;
 
-        self.emit_byte(OpCode::InvokeBaseMethod.into());
-        self.emit_byte(method_constant);
+        self.emit_constant_op(OpCode::InvokeBaseMethod, method_constant);
         self.emit_byte(arguments.len() as u8);
 
         Ok(())
@@ -305,40 +316,10 @@ impl Compiler {
         self.current_line = line;
         self.current_column = column;
 
-        self.emit_byte(OpCode::InvokeMethod.into());
-        self.emit_byte(method_constant);
+        self.emit_constant_op(OpCode::InvokeMethod, method_constant);
         self.emit_byte(arguments.len() as u8);
 
         Ok(())
-    }
-
-    // ============================================================
-    //                         ARRAY
-    // ============================================================
-
-    pub(crate) fn compile_array_member(
-        &mut self,
-        object: &Expression,
-        name: &str,
-        line: usize,
-        column: usize,
-    ) -> Result<(), CompileError> {
-        match name {
-            "length" => {
-                self.compile_expression(object)?;
-
-                self.current_line = line;
-                self.current_column = column;
-
-                self.emit_opcode(OpCode::ArrayLength);
-
-                Ok(())
-            }
-
-            _ => Err(CompileError::InvalidMemberAccess {
-                name: name.to_string(),
-            }),
-        }
     }
 
     // ============================================================

@@ -166,6 +166,19 @@ pub enum CompileError {
         class_name: String,
         member: String,
     },
+
+    /// Méthode de collection supprimée par la standardisation de l'API
+    /// (`length` -> `size()`, `push` -> `add(value)`...).
+    RenamedMember {
+        name: String,
+        replacement: String,
+    },
+
+    /// Expression imbriquée trop profondément (protège la pile native du
+    /// vérificateur de types et du compilateur, qui sont récursifs).
+    ExpressionTooDeep {
+        limit: usize,
+    },
 }
 
 impl std::fmt::Display for CompileError {
@@ -361,6 +374,20 @@ impl std::fmt::Display for CompileError {
                     "Le membre '{class_name}.{member}' est privé : accès refusé en dehors de la classe"
                 )
             }
+
+            CompileError::RenamedMember { name, replacement } => {
+                write!(
+                    f,
+                    "'{name}' n'existe plus : utilisez '{replacement}'"
+                )
+            }
+
+            CompileError::ExpressionTooDeep { limit } => {
+                write!(
+                    f,
+                    "Expression trop profondément imbriquée (limite : {limit}) : scindez-la en plusieurs instructions"
+                )
+            }
         }
     }
 }
@@ -507,6 +534,23 @@ impl CompileError {
             .with_help(
                 "utilisez une méthode publique de la classe (par exemple un accesseur) au lieu d'accéder directement au membre.",
             ),
+
+            CompileError::ExpressionTooDeep { limit } => Diagnostic::new(
+                format!("expression trop profondément imbriquée (limite : {limit})"),
+                0,
+                0,
+            )
+            .with_help("scindez l'expression en plusieurs instructions intermédiaires."),
+
+            CompileError::RenamedMember { name, replacement } => Diagnostic::new(
+                format!("'{name}' a été remplacé par '{replacement}'"),
+                0,
+                0,
+            )
+            .with_len(name.len())
+            .with_help(format!(
+                "l'API des collections est standardisée : utilisez '{replacement}'."
+            )),
 
             CompileError::InvalidMemberAccess { name } => {
                 Diagnostic::new(format!("accès de membre invalide : '{name}'"), 0, 0)

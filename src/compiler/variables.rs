@@ -8,7 +8,7 @@ use super::compiler::Compiler;
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Global {
-    pub constant: u8,
+    pub constant: u16,
     pub mutable: bool,
     pub native: bool,
 }
@@ -100,7 +100,7 @@ impl Compiler {
             VariableLocation::Global => {
                 let name_constant = self.identifier_constant(name)?;
 
-                self.emit_bytes(OpCode::GetGlobal, name_constant);
+                self.emit_constant_op(OpCode::GetGlobal, name_constant);
             }
 
             VariableLocation::Upvalue(slot) => {
@@ -143,7 +143,7 @@ impl Compiler {
 
                 let name_constant = self.identifier_constant(name)?;
 
-                self.emit_bytes(OpCode::SetGlobal, name_constant);
+                self.emit_constant_op(OpCode::SetGlobal, name_constant);
             }
 
             // ========================================================

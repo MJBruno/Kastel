@@ -81,7 +81,7 @@ impl Compiler {
             }
         }
 
-        self.emit_bytes(OpCode::DefineGlobal, name_constant);
+        self.emit_constant_op(OpCode::DefineGlobal, name_constant);
 
         self.globals.borrow_mut().insert(
             name.to_string(),

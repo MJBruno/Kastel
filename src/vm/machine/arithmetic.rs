@@ -277,7 +277,11 @@ impl VirtualMachine {
                     match target {
                         Value::Integer(local) => {
                             if *local < limit {
-                                *local = local.wrapping_add(increment);
+                                *local = local.checked_add(increment).ok_or(
+                                    RuntimeError::IntegerOverflow {
+                                        operation: "addition",
+                                    },
+                                )?;
 
                                 self.frames
                                     .last_mut()
@@ -444,7 +448,11 @@ impl VirtualMachine {
                 increment: *increment,
             });
 
-            *target = Value::Integer(local.wrapping_add(*increment));
+            *target = Value::Integer(local.checked_add(*increment).ok_or(
+                RuntimeError::IntegerOverflow {
+                    operation: "addition",
+                },
+            )?);
 
             self.frames
                 .last_mut()
@@ -564,7 +572,11 @@ impl VirtualMachine {
         if let (Some(Value::Integer(left)), Some(Value::Integer(right))) =
             (self.stack.get(left_index), self.stack.get(right_index))
         {
-            let result = left.wrapping_add(*right);
+            let result = left
+                .checked_add(*right)
+                .ok_or(RuntimeError::IntegerOverflow {
+                    operation: "addition",
+                })?;
 
             let target = self
                 .stack

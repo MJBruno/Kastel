@@ -7,8 +7,8 @@ use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 
 impl VirtualMachine {
-    pub(crate) fn op_closure(&mut self) -> Result<(), RuntimeError> {
-        let constant_index = self.read_byte()? as usize;
+    pub(crate) fn op_closure(&mut self, wide: bool) -> Result<(), RuntimeError> {
+        let constant_index = self.read_constant_operand(wide)? as usize;
 
         let function = {
             let frame = self.current_frame()?;

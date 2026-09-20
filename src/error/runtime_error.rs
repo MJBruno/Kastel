@@ -113,6 +113,23 @@ pub enum RuntimeError {
         class_name: String,
         member: String,
     },
+
+    /// Profondeur d'appels dépassée (récursion sans fin, ou rappels
+    /// natifs imbriqués trop profondément). `limit` est la limite atteinte.
+    StackOverflow {
+        limit: usize,
+    },
+
+    /// Structure qui se contient elle-même (ou trop profonde) : impossible
+    /// à parcourir entièrement, par exemple pour `json_encode`.
+    CyclicStructure,
+
+    /// Résultat hors de l'intervalle des entiers 64 bits signés
+    /// (`-9223372036854775808` à `9223372036854775807`). `operation` est
+    /// l'opération fautive : « addition », « multiplication », « puissance »…
+    IntegerOverflow {
+        operation: &'static str,
+    },
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -269,6 +286,29 @@ impl std::fmt::Display for RuntimeError {
                 write!(
                     f,
                     "Le membre '{member}' de la classe '{class_name}' est privé : accès refusé en dehors de la classe."
+                )
+            }
+
+            RuntimeError::StackOverflow { limit } => {
+                write!(
+                    f,
+                    "Dépassement de la pile d'appels (profondeur maximale : {limit}). Une récursion sans condition d'arrêt ?"
+                )
+            }
+
+            RuntimeError::IntegerOverflow { operation } => {
+                write!(
+                    f,
+                    "Dépassement d'entier lors de la {operation} : les entiers Kastel sont sur 64 bits (de {} à {}).",
+                    i64::MIN,
+                    i64::MAX
+                )
+            }
+
+            RuntimeError::CyclicStructure => {
+                write!(
+                    f,
+                    "Structure cyclique ou trop profonde : impossible de la parcourir entièrement."
                 )
             }
         }
@@ -460,6 +500,22 @@ impl RuntimeError {
             .with_help(
                 "appelez directement la méthode avec ses arguments afin de sélectionner la surcharge correspondante.",
             ),
+
+            RuntimeError::IntegerOverflow { operation } => Diagnostic::new(
+                format!("dépassement d'entier lors de la {operation}"),
+                0,
+                0,
+            )
+            .with_help(
+                "le résultat ne tient pas sur 64 bits : utilisez des flottants (ex. `x * 1.0`) ou, pour un calcul volontairement cyclique, `wrapping_add` / `wrapping_sub` / `wrapping_mul`.",
+            ),
+
+            RuntimeError::StackOverflow { limit } => Diagnostic::new(
+                format!("dépassement de la pile d'appels (limite : {limit})"),
+                0,
+                0,
+            )
+            .with_help("vérifiez la condition d'arrêt de la fonction récursive."),
 
             RuntimeError::PrivateMemberAccess { class_name, member } => Diagnostic::new(
                 format!("le membre '{member}' de la classe '{class_name}' est privé"),

@@ -5,7 +5,8 @@
 // Déjà disponibles PARTOUT sans import (fonctions natives globales,
 // voir src/stdlib/math.rs) : abs, floor, ceil, round, sqrt, pow, min,
 // max, sin, cos, tan, asin, acos, atan, atan2, log, log10, exp, rand,
-// rand_int, rand_range. Ce module ne les redéfinit pas — il ajoute
+// rand_int, rand_range, idiv, wrapping_add, wrapping_sub, wrapping_mul.
+// Ce module ne les redéfinit pas — il ajoute
 // tout ce que ces primitives ne couvrent pas : constantes, angles,
 // hyperboliques, arrondi, interpolation, théorie des nombres,
 // combinatoire, statistiques et aléatoire de plus haut niveau.
@@ -61,6 +62,19 @@ export const log = log;
 export const log10 = log10;
 export const exp = exp;
 export const rand = rand;
+
+// Entiers : 64 bits signés. `+`, `-` et `*` LÈVENT une erreur quand le
+// résultat n'y tient pas (jamais de « bouclage » silencieux).
+//
+// idiv(a, b) : division entière exacte, arrondie vers -infini
+// (idiv(7, 2) = 3, idiv(-7, 2) = -4). `a / b` passe, lui, par un flottant.
+export const idiv = idiv;
+
+// wrapping_add / wrapping_sub / wrapping_mul (a, b) : arithmétique
+// VOLONTAIREMENT cyclique modulo 2^64 (hachage, générateurs pseudo-aléatoires).
+export const wrapping_add = wrapping_add;
+export const wrapping_sub = wrapping_sub;
+export const wrapping_mul = wrapping_mul;
 
 // rand_int(x) renvoie un entier aléatoire dans [0, x), donc rand_int(5) peut
 // renvoyer 0, 1, 2, 3 ou 4.
@@ -202,10 +216,10 @@ export func lcm(a, b) {
         return 0;
     }
 
-    // `/` renvoie toujours un flottant en Kastel : floor() ramène le
-    // résultat vers l'entier attendu pour un "plus petit multiple
-    // commun".
-    return floor(abs(a * b) / gcd(a, b));
+    // Division entière EXACTE (`/` passerait par un flottant), effectuée
+    // AVANT la multiplication : abs(a) / pgcd * abs(b) ne déborde que si le
+    // résultat lui-même dépasse 64 bits (contrairement à abs(a * b) / pgcd).
+    return idiv(abs(a), gcd(a, b)) * abs(b);
 }
 
 export func is_prime(n) {
@@ -251,15 +265,22 @@ export func factorial(n) {
 }
 
 // n-ième terme de Fibonacci, 0-indexé (fibonacci(0) = 0,
-// fibonacci(1) = 1).
+// fibonacci(1) = 1). Exact jusqu'à fibonacci(92) ; fibonacci(93) dépasse
+// 64 bits et lève une erreur de dépassement d'entier.
 export func fibonacci(n) {
     if n < 0 {
         throw "fibonacci: n doit être positif ou nul";
     }
 
+    if n == 0 {
+        return 0;
+    }
+
+    // a = F(i - 1), b = F(i) : on ne calcule JAMAIS F(n + 1), qui pourrait
+    // déborder alors que F(n) tient encore.
     let a = 0;
     let b = 1;
-    let i = 0;
+    let i = 1;
 
     while i < n {
         let next = a + b;
@@ -268,16 +289,17 @@ export func fibonacci(n) {
         i = i + 1;
     }
 
-    return a;
+    return b;
 }
 
 // ------------------------------------------------------------------
 // Combinatoire
 //
-// Note : entiers 64 bits, pas de grands nombres arbitraires — au-delà
-// d'environ n=20, factorial()/permutations() peuvent déborder,
-// exactement comme dans la plupart des langages sans bibliothèque de
-// bignum dédiée.
+// Note : entiers 64 bits, pas de grands nombres arbitraires. Au-delà de
+// n = 20, factorial() ne tient plus sur 64 bits (`factorial(21)` lève une
+// erreur de dépassement d'entier, il ne renvoie plus un nombre faux) ;
+// même limite pour permutations() et combinations() dont le résultat
+// dépasse 64 bits. Pour des ordres de grandeur, passez par des flottants.
 // ------------------------------------------------------------------
 
 // Arrangements de r éléments parmi n, ordre compté : n! / (n - r)!
@@ -312,8 +334,10 @@ export func combinations(n, r) {
     let i = 0;
 
     while i < r {
-        result = result * (n - i);
-        result = floor(result / (i + 1));
+        // Division entière exacte : le résultat intermédiaire est toujours un
+        // multiple de (i + 1), et `/` (flottant) perdrait de la précision
+        // au-delà de 2^53.
+        result = idiv(result * (n - i), i + 1);
         i = i + 1;
     }
 
@@ -335,22 +359,22 @@ export func sum(items) {
 }
 
 export func average(items) {
-    if items.length == 0 {
+    if items.size() == 0 {
         return 0;
     }
 
-    return sum(items) / items.length;
+    return sum(items) / items.size();
 }
 
 export func median(items) {
-    if items.length == 0 {
+    if items.size() == 0 {
         throw "median: le tableau ne doit pas être vide";
     }
 
     let sorted = items.copy();
     sorted.sort();
 
-    let length = sorted.length;
+    let length = sorted.size();
     let middle = floor(length / 2);
 
     if length % 2 == 0 {
@@ -362,7 +386,7 @@ export func median(items) {
 
 // Variance de population (divise par n, pas n - 1).
 export func variance(items) {
-    let n = items.length;
+    let n = items.size();
 
     if n == 0 {
         return 0;
@@ -385,7 +409,7 @@ export func std_dev(items) {
 
 // Valeur la plus fréquente (la première rencontrée en cas d'égalité).
 export func mode(items) {
-    if items.length == 0 {
+    if items.size() == 0 {
         throw "mode: le tableau ne doit pas être vide";
     }
 
@@ -396,8 +420,8 @@ export func mode(items) {
         let index = values.index_of(item);
 
         if index < 0 {
-            values.push(item);
-            counts.push(1);
+            values.add(item);
+            counts.add(1);
         } else {
             counts.set(index, counts.get(index) + 1);
         }
@@ -406,7 +430,7 @@ export func mode(items) {
     let best_index = 0;
     let i = 1;
 
-    while i < counts.length {
+    while i < counts.size() {
         if counts.get(i) > counts.get(best_index) {
             best_index = i;
         }
@@ -449,11 +473,11 @@ export func random_range(low, high) {
 }
 
 export func choice(items) {
-    if items.length == 0 {
+    if items.size() == 0 {
         throw "choice: le tableau ne doit pas être vide";
     }
 
-    let index = rand_int(items.length);
+    let index = rand_int(items.size());
 
     return items.get(index);
 }
@@ -462,7 +486,7 @@ export func choice(items) {
 // mélangée.
 export func shuffle(items) {
     let result = items.copy();
-    let i = result.length - 1;
+    let i = result.size() - 1;
 
     while i > 0 {
         // j dans [0, i] INCLUS : avec rand_int(i), l'élément i ne pourrait

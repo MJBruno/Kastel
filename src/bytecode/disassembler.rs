@@ -133,6 +133,8 @@ impl Chunk {
 
             OpCode::Tuple => self.byte_instruction("OP_TUPLE", offset),
 
+            OpCode::Wide => self.wide_instruction(offset),
+
             OpCode::Object => self.byte_instruction("OP_OBJECT", offset),
 
             OpCode::GetIndex => self.simple_instruction("OP_GET_INDEX", offset),
@@ -283,6 +285,50 @@ impl Chunk {
     // =============================================================
     // CONSTANT OPERAND
     // =============================================================
+
+    /// `Wide <opcode> <haut> <bas> [autres opérandes]` : instruction à
+    /// opérande constante sur 16 bits.
+    fn wide_instruction(&self, offset: usize) -> usize {
+        if offset + 3 >= self.code.len() {
+            println!("{:<24} <missing operands>", "OP_WIDE");
+            return self.code.len();
+        }
+
+        let inner = self.code[offset + 1];
+        let index = ((self.code[offset + 2] as usize) << 8) | self.code[offset + 3] as usize;
+
+        let inner_opcode = OpCode::from_byte(inner);
+
+        let name = match inner_opcode {
+            Ok(opcode) => format!("OP_WIDE {opcode:?}"),
+            Err(()) => format!("OP_WIDE <opcode {inner}>"),
+        };
+
+        match self.constants.get(index) {
+            Some(constant) => println!("{name:<24} {index:5} '{constant}'"),
+            None => println!("{name:<24} {index:5} <invalid constant>"),
+        }
+
+        let mut next = offset + 4;
+
+        match inner_opcode {
+            // Nombre d'arguments, resté sur un octet.
+            Ok(OpCode::InvokeMethod | OpCode::InvokeBaseMethod) => next += 1,
+
+            // Paires (est_local, indice) des upvalues de la fonction.
+            Ok(OpCode::Closure) => {
+                if let Some(Value::Object(handle)) = self.constants.get(index)
+                    && let Object::Function(function) = &*handle.borrow()
+                {
+                    next += 2 * function.upvalue_count;
+                }
+            }
+
+            _ => {}
+        }
+
+        next
+    }
 
     fn constant_instruction(&self, name: &str, offset: usize) -> usize {
         if offset + 1 >= self.code.len() {

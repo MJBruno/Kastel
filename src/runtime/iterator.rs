@@ -237,7 +237,7 @@ impl Value {
                     // représentation `Vec<Value>` en lecture) : on
                     // réutilise donc le même IteratorKind::Array.
                     // -----------------------------------------------
-                    Object::Array(_) | Object::Tuple(_) => {
+                    Object::Array(_) | Object::Tuple(_) | Object::Set(_) => {
                         Ok(Value::new_array_iterator(handle.clone()))
                     }
 
@@ -327,7 +327,8 @@ impl Value {
             IteratorKind::Array { array, index } => {
                 let array = array.borrow();
 
-                let (Object::Array(elements) | Object::Tuple(elements)) = &*array else {
+                let (Object::Array(elements) | Object::Tuple(elements) | Object::Set(elements)) = &*array
+                else {
                     return Err(RuntimeError::TypeError);
                 };
 
@@ -402,7 +403,8 @@ impl Value {
             IteratorKind::Array { array, index } => {
                 let array = array.borrow();
 
-                let (Object::Array(elements) | Object::Tuple(elements)) = &*array else {
+                let (Object::Array(elements) | Object::Tuple(elements) | Object::Set(elements)) = &*array
+                else {
                     return Err(RuntimeError::TypeError);
                 };
 

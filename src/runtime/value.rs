@@ -8,6 +8,57 @@ use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
 use crate::stdlib::NativeFn;
 
+// ============================================================
+// GARDE DE PARCOURS DES CONTENEURS (cycles et profondeur)
+// ============================================================
+//
+// `a.add(a)` crée un tableau qui se contient lui-même. Afficher ou encoder
+// une telle structure récursivement ne finirait jamais et ferait déborder la
+// pile native (arrêt brutal, non rattrapable). Les parcours récursifs
+// (`Display`, `json_encode`) prennent donc une garde par conteneur : un objet
+// déjà en cours de parcours, ou une profondeur excessive, sont refusés.
+
+thread_local! {
+    static CONTAINER_STACK: std::cell::RefCell<Vec<usize>> = std::cell::RefCell::new(Vec::new());
+}
+
+/// Profondeur maximale d'affichage (`println`, `str`, `inspect`) ; au-delà
+/// le contenu est remplacé par `...`.
+pub(crate) const MAX_DISPLAY_DEPTH: usize = 100;
+
+/// Profondeur maximale d'imbrication pour `json_encode`.
+pub(crate) const MAX_JSON_DEPTH: usize = 512;
+
+pub(crate) struct ContainerGuard(());
+
+impl ContainerGuard {
+    /// `None` si `handle` est DÉJÀ en cours de parcours (cycle) ou si la
+    /// profondeur dépasse `max_depth`.
+    pub(crate) fn enter(handle: &Gc<Object>, max_depth: usize) -> Option<ContainerGuard> {
+        let id = handle.as_id();
+
+        CONTAINER_STACK.with(|stack| {
+            let mut stack = stack.borrow_mut();
+
+            if stack.len() >= max_depth || stack.contains(&id) {
+                return None;
+            }
+
+            stack.push(id);
+
+            Some(ContainerGuard(()))
+        })
+    }
+}
+
+impl Drop for ContainerGuard {
+    fn drop(&mut self) {
+        CONTAINER_STACK.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum NumericOp {
     Add,
@@ -284,6 +335,149 @@ impl Value {
 
             _ => Err(RuntimeError::NotIndexable),
         }
+    }
+
+    // ============================================================
+    //                          SET
+    // ============================================================
+    //
+    // Set = ensemble Kastel : éléments UNIQUES, mutable, sans ordre
+    // garanti. Comme Array et Dict, c'est un objet PARTAGÉ : `let b = a;`
+    // désigne le même ensemble, `a.copy()` en fabrique un nouveau.
+    //
+    // Représentation : `Object::Set(Vec<Value>)`. L'unicité repose sur
+    // `Value::set_equals` (voir ci-dessous) et n'est garantie que si TOUS
+    // les ajouts passent par `new_set` / `set_add`.
+    // ============================================================
+
+    /// Égalité utilisée pour l'unicité des éléments d'un ensemble :
+    /// `Value::equals` (nombres, booléens, `None`, chaînes par valeur, autres
+    /// objets par identité), avec en plus la comparaison STRUCTURELLE des
+    /// tuples — immuables, donc sûrs à comparer par contenu :
+    /// `Set((1, 2), (1, 2))` ne contient qu'un élément.
+    pub fn set_equals(a: &Value, b: &Value) -> bool {
+        if let (Value::Object(left), Value::Object(right)) = (a, b)
+            && let (Object::Tuple(left), Object::Tuple(right)) =
+                (&*left.borrow(), &*right.borrow())
+        {
+            return left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| Self::set_equals(left, right));
+        }
+
+        Value::equals(a.clone(), b.clone())
+    }
+
+    /// Construit un ensemble en éliminant les doublons (le premier
+    /// exemplaire est conservé).
+    pub fn new_set(elements: Vec<Value>) -> Self {
+        let mut unique: Vec<Value> = Vec::with_capacity(elements.len());
+
+        for element in elements {
+            if !unique
+                .iter()
+                .any(|existing| Self::set_equals(existing, &element))
+            {
+                unique.push(element);
+            }
+        }
+
+        Self::new_heap_object(Object::Set(unique))
+    }
+
+    /// Construit un ensemble à partir d'éléments DÉJÀ uniques (sous-ensemble
+    /// ou copie d'un ensemble existant) : évite de refaire le dédoublonnage.
+    /// L'appelant garantit l'unicité.
+    pub(crate) fn new_set_unchecked(elements: Vec<Value>) -> Self {
+        Self::new_heap_object(Object::Set(elements))
+    }
+
+    fn with_set<R>(
+        &self,
+        f: impl FnOnce(&Vec<Value>) -> Result<R, RuntimeError>,
+    ) -> Result<R, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Set(set) => f(set),
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    fn with_set_mut<R>(
+        &self,
+        f: impl FnOnce(&mut Vec<Value>) -> Result<R, RuntimeError>,
+    ) -> Result<R, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &mut *handle.borrow_mut() {
+                Object::Set(set) => f(set),
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    pub fn set_contains(&self, value: &Value) -> Result<bool, RuntimeError> {
+        self.with_set(|set| {
+            Ok(set
+                .iter()
+                .any(|element| Self::set_equals(element, value)))
+        })
+    }
+
+    /// Ajoute `value`. `true` si l'élément est nouveau, `false` s'il était
+    /// déjà présent (l'ensemble n'est alors pas modifié).
+    pub fn set_add(&self, value: Value) -> Result<bool, RuntimeError> {
+        // Deux emprunts SUCCESSIFS (lecture puis écriture) : comparer sous
+        // un emprunt mutable ferait paniquer `s.add(s)`, où `value` et
+        // l'ensemble sont le même objet.
+        if self.set_contains(&value)? {
+            return Ok(false);
+        }
+
+        self.with_set_mut(|set| {
+            set.push(value);
+            Ok(true)
+        })
+    }
+
+    /// Retire `value`. `true` s'il était présent, `false` sinon (pas d'erreur).
+    pub fn set_remove(&self, value: &Value) -> Result<bool, RuntimeError> {
+        let position = self.with_set(|set| {
+            Ok(set
+                .iter()
+                .position(|element| Self::set_equals(element, value)))
+        })?;
+
+        match position {
+            Some(index) => self.with_set_mut(|set| {
+                set.remove(index);
+                Ok(true)
+            }),
+
+            None => Ok(false),
+        }
+    }
+
+    pub fn set_len(&self) -> Result<usize, RuntimeError> {
+        self.with_set(|set| Ok(set.len()))
+    }
+
+    pub fn set_clear(&self) -> Result<(), RuntimeError> {
+        self.with_set_mut(|set| {
+            set.clear();
+            Ok(())
+        })
+    }
+
+    /// Copie des éléments (instantané, dans l'ordre interne).
+    pub fn set_elements(&self) -> Result<Vec<Value>, RuntimeError> {
+        self.with_set(|set| Ok(set.clone()))
     }
 
     // ============================================================
@@ -591,6 +785,16 @@ impl Value {
                         suggestion: None,
                     }),
 
+                // `x.length` (propriété) a été remplacé par `x.size()`.
+                Object::Array(_) | Object::Tuple(_) | Object::Set(_) | Object::String(_)
+                    if name == "length" =>
+                {
+                    Err(RuntimeError::ObjectFieldNotFound {
+                        name: name.to_string(),
+                        suggestion: Some("size()".to_string()),
+                    })
+                }
+
                 _ => Err(RuntimeError::NotObject),
             },
 
@@ -751,7 +955,24 @@ impl std::fmt::Display for Value {
                 }
             }
 
-            Value::Object(handle) => match &*handle.borrow() {
+            Value::Object(handle) => {
+                // Cycle (`a.add(a)`) ou imbrication excessive : on n'entre
+                // pas, on écrit `...` (voir `ContainerGuard`).
+                let is_container = matches!(
+                    &*handle.borrow(),
+                    Object::Array(_) | Object::Tuple(_) | Object::Set(_) | Object::Dict(_)
+                );
+
+                let _guard = if is_container {
+                    match ContainerGuard::enter(handle, MAX_DISPLAY_DEPTH) {
+                        Some(guard) => Some(guard),
+                        None => return write!(f, "..."),
+                    }
+                } else {
+                    None
+                };
+
+                match &*handle.borrow() {
                 Object::String(value) => write!(f, "{value}"),
 
                 Object::Array(array) => Self::fmt_sequence(f, "[", "]", array),
@@ -766,6 +987,12 @@ impl std::fmt::Display for Value {
                 }
 
                 Object::Tuple(elements) => Self::fmt_sequence(f, "(", ")", elements),
+
+                // `{1, 2, 3}` ; l'ensemble vide s'écrit `Set()` car `{}` est
+                // le dict vide.
+                Object::Set(elements) if elements.is_empty() => write!(f, "Set()"),
+
+                Object::Set(elements) => Self::fmt_sequence(f, "{", "}", elements),
 
                 Object::Dict(fields) => {
                     write!(f, "{{")?;
@@ -821,7 +1048,8 @@ impl std::fmt::Display for Value {
                 Object::BoundMethod { .. } => {
                     write!(f, "<bound method>")
                 }
-            },
+                }
+            }
         }
     }
 }
@@ -872,6 +1100,7 @@ impl Value {
                 Object::String(_) => "string",
                 Object::Array(_) => "array",
                 Object::Tuple(_) => "tuple",
+                Object::Set(_) => "set",
                 Object::Dict(_) => "object",
                 Object::Function(_) | Object::Closure(_) => "function",
                 Object::Iterator(_) => "iterator",
@@ -897,9 +1126,30 @@ impl Value {
             // façon Python 3 : 7 / 2 == 3.5, pas 3 — Kastel n'a pas
             // d'opérateur de division entière séparé).
             (Value::Integer(a), Value::Integer(b)) => match op {
-                NumericOp::Add => Ok(Value::Integer(a.wrapping_add(b))),
-                NumericOp::Subtract => Ok(Value::Integer(a.wrapping_sub(b))),
-                NumericOp::Multiply => Ok(Value::Integer(a.wrapping_mul(b))),
+                // Les entiers sont sur 64 bits SIGNÉS et ne « bouclent » jamais :
+                // un résultat hors intervalle est une erreur, pas un nombre
+                // faux (`factorial(21)` renvoyait un négatif). Pour un calcul
+                // volontairement cyclique : `wrapping_add/sub/mul`.
+                NumericOp::Add => a
+                    .checked_add(b)
+                    .map(Value::Integer)
+                    .ok_or(RuntimeError::IntegerOverflow {
+                        operation: "addition",
+                    }),
+
+                NumericOp::Subtract => a
+                    .checked_sub(b)
+                    .map(Value::Integer)
+                    .ok_or(RuntimeError::IntegerOverflow {
+                        operation: "soustraction",
+                    }),
+
+                NumericOp::Multiply => a
+                    .checked_mul(b)
+                    .map(Value::Integer)
+                    .ok_or(RuntimeError::IntegerOverflow {
+                        operation: "multiplication",
+                    }),
 
                 NumericOp::Divide => {
                     if b == 0 {
@@ -957,7 +1207,12 @@ impl Value {
 
     pub fn negate_values(a: Value) -> Result<Value, RuntimeError> {
         match a {
-            Value::Integer(a) => Ok(Value::Integer(a.wrapping_neg())),
+            Value::Integer(a) => a
+                .checked_neg()
+                .map(Value::Integer)
+                .ok_or(RuntimeError::IntegerOverflow {
+                    operation: "négation",
+                }),
 
             Value::Float(a) => Ok(Value::Float(-a)),
 
