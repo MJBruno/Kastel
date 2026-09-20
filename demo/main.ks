@@ -1,95 +1,83 @@
-// examples/collections_demo.ks
+// examples/overloads_demo.ks
 //
-// API STANDARD des collections : une seule convention, prévisible.
-// Voir docs/collections-api.md.
-// Lancer avec : kastel examples/collections_demo.ks
+// Surcharge par ARITÉ (nombre d'arguments) : méthodes, constructeurs et
+// déclarations d'interface. Deux signatures de même nom ET de même arité
+// restent interdites (erreur de compilation « déjà déclarée »).
+// Lancer avec : kastel examples/overloads_demo.ks
 
-let a = [1, 2, 3];
-let d = {"a": 10, "b": 20};
-let t = (1, 2, 3);
-let s = Set(1, 2, 3);
-let texte = "Hello";
-
-// -- size() et is_empty() : partout -------------------------------------------
-println(a.size());                      // 3
-println(d.size());                      // 2
-println(t.size());                      // 3
-println(s.size());                      // 3
-println(texte.size());                  // 5
-println("é".size());                    // 1  (caractères Unicode, pas octets)
-println(range(0, 10, 2).iter().collect().size());        // 5
-
-println(a.is_empty());                  // false
-println([].is_empty());                 // true
-// println(range(0).is_empty());           // true
-
-// -- contains() ----------------------------------------------------------------------
-println(a.contains(2));                 // true
-println(t.contains(9));                 // false
-println(s.contains(3));                 // true
-println(texte.contains("ll"));          // true
-println(d.contains("a"));               // true  (pour un dict : la CLÉ)
-
-// -- Array : add() / remove() ------------------------------------------------------
-a.add(4);                               // [1, 2, 3, 4]
-a.remove(2);                            // retire la VALEUR 2 -> [1, 3, 4]
-
-println(a);                             // [1, 3, 4]
-println(a.remove_at(0));                // 1  (retrait par POSITION)
-println(a);                             // [3, 4]
-
-// -- copy() : collections mutables seulement ------------------------------------
-let b = a.copy();
-
-b.add(99);
-
-println(a.contains(99));                // false
-println(b.contains(99));                // true
-
-// -- Dict ---------------------------------------------------------------------------------
-d.set("c", 30);
-
-println(d.get("c"));                    // 30
-println(d["c"]);                        // 30  (l'indexation reste la forme naturelle)
-println(d.keys());                      // ["a", "b", "c"]
-println(d.values());                    // [10, 20, 30]
-println(d.entries());                   // [["a", 10], ["b", 20], ["c", 30]]
-
-// -- Tuple : volontairement minimal -----------------------------------------------
-println(t.first());                     // 1
-println(t.last());                      // 3
-println(t.get(1));                      // 2
-println(t.index_of(3));                 // 2
-println(t.to_array());                  // [1, 2, 3]
-
-// // -- Range ---------------------------------------------------------------------------------
-// let r = range(2, 10, 2);
-
-// println(r.start());                     // 2
-// println(r.stop());                      // 10
-// println(r.step());                      // 2
-
-// // -- clear() : collections mutables seulement -----------------------------------
-// a.clear();
-// d.clear();
-// s.clear();
-
-// println(a.size() + d.size() + s.size());   // 0
-
-// -- to_string() ---------------------------------------------------------------------------
-println(t.to_string());                 // (1, 2, 3)
-println(b.to_string());                 // [3, 4, 99]
-
-// -- iter() : la syntaxe principale reste `for x in ...` ----------------------
-let it = b.iter();
-
-println(it.next());                     // 3
-
-for x in b {
-    println(x);                         // 3, 4, 99
+interface Shape {
+    func area() -> float;
+    func area(scale: float) -> float;
 }
 
-// Supprimés (erreur avec « Vouliez-vous dire ... ») :
-//   length()  -> size()      push(x)  -> add(x)
-//   d.has(k)  -> d.contains(k)         d.items()  -> d.entries()
-//   x.to_iterator() -> x.iter()
+class Point {
+    // -- Constructeur surchargé -------------------------------------------
+    func initialize() {
+        this.x = 0;
+        this.y = 0;
+    }
+
+    func initialize(x: int) {
+        this.x = x;
+        this.y = 0;
+    }
+
+    func initialize(x: int, y: int) {
+        this.x = x;
+        this.y = y;
+    }
+
+    // -- Méthode surchargée -----------------------------------------------
+    func move() -> Point {
+        return new Point(this.x + 1, this.y + 1);
+    }
+
+    func move(dx: int) -> Point {
+        return new Point(this.x + dx, this.y);
+    }
+
+    func move(dx: int, dy: int) -> Point {
+        return new Point(this.x + dx, this.y + dy);
+    }
+
+    func to_tuple() -> Tuple<int, int> {
+        return (this.x, this.y);
+    }
+}
+
+let a = new Point();
+let b = new Point(5);
+let c = new Point(1, 2);
+
+println(a.to_tuple());                  // (0, 0)
+println(b.to_tuple());                  // (5, 0)
+println(c.to_tuple());                  // (1, 2)
+
+println(c.move().to_tuple());           // (2, 3)
+println(c.move(10).to_tuple());         // (11, 2)
+println(c.move(10, 20).to_tuple());     // (11, 22)
+
+// -- Déclaration d'interface surchargée ------------------------------------
+class Square: Shape {
+    func initialize(side: float) {
+        this.side = side;
+    }
+
+    func area() -> float {
+        return this.side * this.side;
+    }
+
+    func area(scale: float) -> float {
+        return this.side * this.side * scale;
+    }
+}
+
+let s: Shape = new Square(3.0);
+
+println(s.area());                      // 9.0
+println(s.area(2.0));                   // 18.0
+
+// Refusés (à décommenter pour voir l'erreur) :
+//   new Point(1, 2, 3);                // aucun constructeur à 3 arguments
+//   c.move(1, 2, 3);                   // aucune surcharge à 3 arguments
+//   s.area(1.0, 2.0);                  // idem, via le type Shape
