@@ -22,7 +22,6 @@ use super::variables::Global;
 /// débordement de la pile native.
 pub const MAX_EXPRESSION_DEPTH: usize = 5_000;
 
-#[allow(dead_code)]
 pub struct Compiler {
     pub(crate) globals: Rc<RefCell<HashMap<String, Global>>>,
     pub(crate) chunk: Chunk,

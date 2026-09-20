@@ -9,7 +9,7 @@ let z = x + y;                      // inféré: int
 
 let name: str = "Bruno";
 
-let values: List<int> = [1, 2, 3];
+let values: Array<int> = [1, 2, 3];
 let users: Dict<str, int> = {
     age: 25
 };

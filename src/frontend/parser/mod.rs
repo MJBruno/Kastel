@@ -12,12 +12,12 @@ use crate::frontend::ast::*;
 use crate::frontend::lexer::token::{Token, TokenKind};
 
 
+#[derive(Debug, Clone)]
 /// Imbrication maximale (parenthèses, blocs, opérateurs unaires, fonctions
 /// anonymes...). Le parser est récursif : sans limite, un source pathologique
 /// (`((((...` sur des milliers de niveaux) ferait déborder la pile native.
 pub const MAX_NESTING_DEPTH: usize = 500;
 
-#[derive(Debug, Clone)] 
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
