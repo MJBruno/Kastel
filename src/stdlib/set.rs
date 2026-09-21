@@ -110,7 +110,7 @@ pub fn native_copy(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::new_set_unchecked(args[0].set_elements()?))
 }
 
-pub fn native_to_array(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_to_list(args: &[Value]) -> Result<Value, RuntimeError> {
     expect_args(args, 1)?;
 
     Ok(Value::new_array(args[0].set_elements()?))
@@ -250,7 +250,8 @@ pub fn dispatch_method(name: &str, args: &[Value]) -> Result<Option<Value>, Runt
         "is_empty" => native_is_empty(args)?,
         "clear" => native_clear(args)?,
         "copy" => native_copy(args)?,
-        "to_array" => native_to_array(args)?,
+        "to_list" => native_to_list(args)?,
+        "to_array" => return Err(super::renamed_method_error("to_array", "to_list()")),
         "union" => native_union(args)?,
         "intersection" => native_intersection(args)?,
         "difference" => native_difference(args)?,

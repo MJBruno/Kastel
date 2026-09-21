@@ -529,6 +529,23 @@ impl Value {
     // L'ordre d'insertion est conservé.
     // ============================================================
 
+    /// Construit un record (`{ name: "Bruno", age: 25 }`).
+    pub fn new_record(fields: Vec<(String, Value)>) -> Self {
+        Self::new_heap_object(Object::Record(fields))
+    }
+
+    /// Copie des champs d'un record (nom, valeur), dans l'ordre.
+    pub fn record_fields(&self) -> Result<Vec<(String, Value)>, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Record(fields) => Ok(fields.clone()),
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
     pub fn new_dict(entries: Vec<(Value, Value)>) -> Self {
         Self::new_heap_object(Object::Dict(entries))
     }
@@ -769,16 +786,16 @@ impl Value {
                     })
                 }
 
-                Object::Dict(entries) => entries
-                    .iter()
-                    .find(|(key, _)| match key {
-                        Value::Object(key_handle) => match &*key_handle.borrow() {
-                            Object::String(value) => value == name,
-                            _ => false,
-                        },
+                // Un dict se lit par clé (`d["name"]`, `d.get("name")`),
+                // PAS par `d.name` : les champs nommés sont ceux d'un record.
+                Object::Dict(_) => Err(RuntimeError::ObjectFieldNotFound {
+                    name: name.to_string(),
+                    suggestion: Some(format!("[\"{name}\"]")),
+                }),
 
-                        _ => false,
-                    })
+                Object::Record(fields) => fields
+                    .iter()
+                    .find(|(field, _)| field.as_str() == name)
                     .map(|(_, value)| value.clone())
                     .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
                         name: name.to_string(),
@@ -808,21 +825,27 @@ impl Value {
                 let mut object = handle.borrow_mut();
 
                 match &mut *object {
-                    Object::Dict(entries) => {
-                        if let Some((_, existing)) = entries.iter_mut().find(|(key, _)| match key {
-                            Value::Object(key_handle) => match &*key_handle.borrow() {
-                                Object::String(key) => key == name,
-                                _ => false,
-                            },
+                    // `d.name = v` sur un dict : utiliser `d["name"] = v` ou
+                    // `d.set("name", v)`.
+                    Object::Dict(_) => Err(RuntimeError::ObjectFieldNotFound {
+                        name: name.to_string(),
+                        suggestion: Some(format!("[\"{name}\"]")),
+                    }),
 
-                            _ => false,
-                        }) {
-                            *existing = value;
-                        } else {
-                            entries.push((Value::new_string(name.to_string()), value));
+                    // Record : forme fixe — on modifie un champ EXISTANT, on
+                    // n'en ajoute pas.
+                    Object::Record(fields) => {
+                        match fields.iter_mut().find(|(field, _)| field.as_str() == name) {
+                            Some((_, existing)) => {
+                                *existing = value;
+                                Ok(())
+                            }
+
+                            None => Err(RuntimeError::ObjectFieldNotFound {
+                                name: name.to_string(),
+                                suggestion: None,
+                            }),
                         }
-
-                        Ok(())
                     }
                     Object::Instance { fields, .. } => {
                         fields.insert(name.to_string(), value);
@@ -960,7 +983,11 @@ impl std::fmt::Display for Value {
                 // pas, on écrit `...` (voir `ContainerGuard`).
                 let is_container = matches!(
                     &*handle.borrow(),
-                    Object::Array(_) | Object::Tuple(_) | Object::Set(_) | Object::Dict(_)
+                    Object::Array(_)
+                        | Object::Tuple(_)
+                        | Object::Set(_)
+                        | Object::Dict(_)
+                        | Object::Record(_)
                 );
 
                 let _guard = if is_container {
@@ -1004,6 +1031,23 @@ impl std::fmt::Display for Value {
 
                         key.fmt_repr(f)?;
                         write!(f, ": ")?;
+                        value.fmt_repr(f)?;
+                    }
+
+                    write!(f, "}}")
+                }
+
+                // `{name: "Bruno", age: 25}` : noms de champs SANS guillemets
+                // (contrairement aux clés de dict).
+                Object::Record(fields) => {
+                    write!(f, "{{")?;
+
+                    for (index, (name, value)) in fields.iter().enumerate() {
+                        if index > 0 {
+                            write!(f, ", ")?;
+                        }
+
+                        write!(f, "{name}: ")?;
                         value.fmt_repr(f)?;
                     }
 
@@ -1098,10 +1142,11 @@ impl Value {
 
             Value::Object(handle) => match &*handle.borrow() {
                 Object::String(_) => "string",
-                Object::Array(_) => "array",
+                Object::Array(_) => "list",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
-                Object::Dict(_) => "object",
+                Object::Dict(_) => "dict",
+                Object::Record(_) => "record",
                 Object::Function(_) | Object::Closure(_) => "function",
                 Object::Iterator(_) => "iterator",
                 Object::Module(_) => "module",

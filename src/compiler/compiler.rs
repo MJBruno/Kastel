@@ -14,14 +14,14 @@ use super::loops::LoopContext;
 use super::type_checker::{TypeCheckContext, TypeChecker};
 use super::variables::Global;
 
-#[allow(dead_code)]
+
 /// Profondeur maximale d'une expression pour le compilateur et le
 /// vérificateur de types (tous deux récursifs). Une chaîne d'opérateurs
 /// `1 + 1 + 1 + ...` produit un arbre de la profondeur du nombre de termes :
 /// au-delà de cette limite, `CompileError::ExpressionTooDeep` plutôt qu'un
 /// débordement de la pile native.
 pub const MAX_EXPRESSION_DEPTH: usize = 5_000;
-
+#[allow(dead_code)]
 pub struct Compiler {
     pub(crate) globals: Rc<RefCell<HashMap<String, Global>>>,
     pub(crate) chunk: Chunk,

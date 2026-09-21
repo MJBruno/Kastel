@@ -90,7 +90,11 @@ fn encode_object(handle: &Gc<Object>, out: &mut String) -> Result<(), RuntimeErr
     // débordement de pile natif.
     let is_container = matches!(
         &*handle.borrow(),
-        Object::Array(_) | Object::Tuple(_) | Object::Set(_) | Object::Dict(_)
+        Object::Array(_)
+            | Object::Tuple(_)
+            | Object::Set(_)
+            | Object::Dict(_)
+            | Object::Record(_)
     );
 
     let _guard = if is_container {
@@ -136,6 +140,26 @@ fn encode_object(handle: &Gc<Object>, out: &mut String) -> Result<(), RuntimeErr
             }
 
             out.push(']');
+
+            Ok(())
+        }
+
+        // Un record devient un objet JSON (noms de champs -> clés).
+        Object::Record(fields) => {
+            out.push('{');
+
+            for (index, (name, value)) in fields.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+
+                encode_string(name, out);
+                out.push(':');
+
+                encode_value(value, out)?;
+            }
+
+            out.push('}');
 
             Ok(())
         }

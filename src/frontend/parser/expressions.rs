@@ -634,18 +634,55 @@ impl Parser {
                     });
                 }
 
+                // Deux formes, qui NE SE MÉLANGENT PAS :
+                //   { name: "Bruno", age: 25 }      Record (clés identifiants)
+                //   { "name": "Bruno", "age": 25 }  Dict   (clés chaînes)
+                // `{}` reste le dict vide.
+                let is_record = self.check(TokenKind::Identifier);
+
                 let mut fields: Vec<(String, Expression)> = Vec::new();
 
                 if !self.check(TokenKind::RightBrace) {
                     loop {
-                        let key = if self.check(TokenKind::String) {
+                        let key_token = self.peek().clone();
+
+                        let key = if is_record {
+                            if !self.check(TokenKind::Identifier) {
+                                return Err(ParserError {
+                                    message: "Un record n'accepte que des clés identifiants \
+                                              (`{ name: ... }`) ; pour des clés chaînes, \
+                                              écrivez un dict (`{ \"name\": ... }`) sans mélanger"
+                                        .to_string(),
+                                    line: key_token.line,
+                                    column: key_token.column,
+                                });
+                            }
+
                             self.advance().lexeme.clone()
                         } else {
-                            self.consume(TokenKind::Identifier, "nom de champ attendu")?
-                                .lexeme
+                            if !self.check(TokenKind::String) {
+                                return Err(ParserError {
+                                    message: "Un dict n'accepte que des clés chaînes \
+                                              (`{ \"name\": ... }`) ; pour des champs nommés, \
+                                              écrivez un record (`{ name: ... }`) sans mélanger"
+                                        .to_string(),
+                                    line: key_token.line,
+                                    column: key_token.column,
+                                });
+                            }
+
+                            self.advance().lexeme.clone()
                         };
 
-                        self.consume(TokenKind::Colon, "':' attendu après le nom du champ")?;
+                        if fields.iter().any(|(existing, _)| *existing == key) {
+                            return Err(ParserError {
+                                message: format!("La clé '{key}' est déjà présente dans ce littéral"),
+                                line: key_token.line,
+                                column: key_token.column,
+                            });
+                        }
+
+                        self.consume(TokenKind::Colon, "':' attendu après la clé")?;
 
                         let value = self.parse_expression()?;
 
@@ -663,7 +700,11 @@ impl Parser {
 
                 self.consume(TokenKind::RightBrace, "'}' attendu après l'objet")?;
 
-                Ok(Expression::Object(fields))
+                if is_record {
+                    Ok(Expression::Record(fields))
+                } else {
+                    Ok(Expression::Dict(fields))
+                }
             }
 
             _ => Err(ParserError {

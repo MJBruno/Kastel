@@ -326,6 +326,12 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
             }
         }
 
+        Object::Record(fields) => {
+            for (_, value) in fields {
+                mark_value(value, state);
+            }
+        }
+
         Object::Function(function) => {
             mark_function(function, state);
         }

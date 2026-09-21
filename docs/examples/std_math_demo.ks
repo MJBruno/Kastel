@@ -70,7 +70,7 @@ println(math.permutations(5, 2));       // 20
 println(math.combinations(5, 2));       // 10
 
 // -- Statistiques -----------------------------------------------------------------
-let data: Array<int> = [4, 8, 6, 5, 3, 7, 8];
+let data: List<int> = [4, 8, 6, 5, 3, 7, 8];
 
 println(math.sum(data));                // 41
 println(math.average(data));            // ~5.857...

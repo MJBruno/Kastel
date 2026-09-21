@@ -20,9 +20,15 @@ pub enum Type {
     Array(Box<Type>),
     Dict(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
+    /// Type objet : `{ name: str, age: int }` (champs nommés, forme fixe).
+    /// Typage STRUCTUREL : tout record qui possède au moins ces champs, avec
+    /// des types compatibles, convient.
+    Record(Vec<(String, Type)>),
+    /// Union : `int | float`.
+    Union(Vec<Type>),
     /// `Set<T>` : ensemble d'éléments uniques de type `T`.
     Set(Box<Type>),
-    /// `array`, `dict`, `tuple`, `set` non paramétrés.
+    /// `list`, `dict`, `tuple`, `set` non paramétrés.
     ArrayDynamic,
     DictDynamic,
     TupleDynamic,
@@ -75,6 +81,57 @@ impl Type {
         match expr {
             TypeExpr::Named(name) => Self::from_name(name),
             TypeExpr::Generic { name, arguments } => Self::from_generic(name, arguments),
+
+            TypeExpr::Union(members) => {
+                Self::union_of(members.iter().map(Self::from_type_expr).collect())
+            }
+
+            TypeExpr::Record(fields) => Type::Record(
+                fields
+                    .iter()
+                    .map(|(name, field)| (name.clone(), Self::from_type_expr(field)))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// Union normalisée : aplatie, sans doublon ; un seul membre = ce type ;
+    /// un membre `Dynamic` rend toute l'union dynamique.
+    pub fn union_of(types: Vec<Type>) -> Type {
+        let mut members: Vec<Type> = Vec::new();
+
+        for ty in types {
+            match ty {
+                Type::Dynamic => return Type::Dynamic,
+
+                Type::Union(inner) => {
+                    for member in inner {
+                        if !members.contains(&member) {
+                            members.push(member);
+                        }
+                    }
+                }
+
+                other => {
+                    if !members.contains(&other) {
+                        members.push(other);
+                    }
+                }
+            }
+        }
+
+        match members.len() {
+            0 => Type::Dynamic,
+            1 => members.remove(0),
+            _ => Type::Union(members),
+        }
+    }
+
+    /// Membres d'une union ; un type non union est son propre unique membre.
+    pub fn members(&self) -> Vec<Type> {
+        match self {
+            Type::Union(members) => members.clone(),
+            other => vec![other.clone()],
         }
     }
 
@@ -85,7 +142,7 @@ impl Type {
             "str" | "string" => Type::Str,
             "bool" | "boolean" => Type::Bool,
             "none" | "nil" | "null" => Type::None,
-            "array" => Type::ArrayDynamic,
+            "list" => Type::ArrayDynamic,
             "dict" => Type::DictDynamic,
             "tuple" => Type::TupleDynamic,
             "set" => Type::SetDynamic,
@@ -95,50 +152,36 @@ impl Type {
     }
 
     fn from_generic(name: &str, arguments: &[TypeExpr]) -> Type {
+        Self::build_generic(name, arguments.iter().map(Self::from_type_expr).collect())
+    }
+
+    /// Construit un type paramétré à partir d'arguments DÉJÀ convertis (le
+    /// vérificateur résout d'abord les alias : `List<Person>`).
+    pub(crate) fn build_generic(name: &str, arguments: Vec<Type>) -> Type {
         let normalized = name.to_ascii_lowercase();
 
         match normalized.as_str() {
-            "array" | "list" => {
-                if arguments.len() == 1 {
-                    Type::Array(Box::new(Self::from_type_expr(&arguments[0])))
-                } else {
-                    Type::Generic {
-                        name: name.to_string(),
-                        arguments: arguments.iter().map(Self::from_type_expr).collect(),
-                    }
-                }
+            "list" if arguments.len() == 1 => Type::Array(Box::new(
+                arguments.into_iter().next().expect("un argument de type"),
+            )),
+
+            "dict" | "map" if arguments.len() == 2 => {
+                let mut arguments = arguments.into_iter();
+                let key = arguments.next().expect("type de clé");
+                let value = arguments.next().expect("type de valeur");
+
+                Type::Dict(Box::new(key), Box::new(value))
             }
 
-            "dict" | "map" => {
-                if arguments.len() == 2 {
-                    Type::Dict(
-                        Box::new(Self::from_type_expr(&arguments[0])),
-                        Box::new(Self::from_type_expr(&arguments[1])),
-                    )
-                } else {
-                    Type::Generic {
-                        name: name.to_string(),
-                        arguments: arguments.iter().map(Self::from_type_expr).collect(),
-                    }
-                }
-            }
+            "tuple" => Type::Tuple(arguments),
 
-            "tuple" => Type::Tuple(arguments.iter().map(Self::from_type_expr).collect()),
-
-            "set" => {
-                if arguments.len() == 1 {
-                    Type::Set(Box::new(Self::from_type_expr(&arguments[0])))
-                } else {
-                    Type::Generic {
-                        name: name.to_string(),
-                        arguments: arguments.iter().map(Self::from_type_expr).collect(),
-                    }
-                }
-            }
+            "set" if arguments.len() == 1 => Type::Set(Box::new(
+                arguments.into_iter().next().expect("un argument de type"),
+            )),
 
             _ => Type::Generic {
                 name: name.to_string(),
-                arguments: arguments.iter().map(Self::from_type_expr).collect(),
+                arguments,
             },
         }
     }
@@ -171,7 +214,40 @@ impl Type {
             return true;
         }
 
+        // Union attendue : la valeur doit convenir à AU MOINS un membre ;
+        // une union fournie doit voir CHACUN de ses membres convenir.
+        if let Type::Union(members) = expected {
+            return match self {
+                Type::Union(sources) => sources
+                    .iter()
+                    .all(|source| source.is_assignable_to(expected, parents)),
+
+                _ => members
+                    .iter()
+                    .any(|member| self.is_assignable_to(member, parents)),
+            };
+        }
+
+        if let Type::Union(sources) = self {
+            return sources
+                .iter()
+                .all(|source| source.is_assignable_to(expected, parents));
+        }
+
         match (self, expected) {
+            // Typage structurel : le record fourni doit avoir TOUS les champs
+            // attendus, avec des types compatibles (champs en plus permis).
+            (Type::Record(actual), Type::Record(expected)) => {
+                expected.iter().all(|(name, expected_type)| {
+                    actual
+                        .iter()
+                        .find(|(actual_name, _)| actual_name == name)
+                        .is_some_and(|(_, actual_type)| {
+                            actual_type.is_assignable_to(expected_type, parents)
+                        })
+                })
+            }
+
             (Type::Named(actual), Type::Named(expected)) => {
                 Self::is_named_subtype(actual, expected, parents)
             }
@@ -330,6 +406,12 @@ impl Type {
 
             (Type::Array(_) | Type::ArrayDynamic, "push") => Some("add(value)"),
 
+            // `Array` s'appelle désormais `List`.
+            (
+                Type::Tuple(_) | Type::TupleDynamic | Type::Set(_) | Type::SetDynamic,
+                "to_array",
+            ) => Some("to_list()"),
+
             (Type::Dict(_, _) | Type::DictDynamic, "has") => Some("contains(key)"),
             (Type::Dict(_, _) | Type::DictDynamic, "items") => Some("entries()"),
 
@@ -428,7 +510,7 @@ impl Type {
                     "get" => method(vec![Type::Dynamic], element),
                     "first" | "last" => method(vec![], element),
                     "index_of" => method(vec![Type::Dynamic], Type::Int),
-                    "to_array" => method(vec![], Type::Array(Box::new(element))),
+                    "to_list" => method(vec![], Type::Array(Box::new(element))),
                     _ => None,
                 }
             }
@@ -442,6 +524,42 @@ impl Type {
                 "start" | "stop" | "step" => method(vec![], Type::Int),
                 _ => None,
             },
+
+            _ => None,
+        }
+    }
+
+    /// Type des méthodes d'introspection d'un record (`p.keys()`, `p.copy()`),
+    /// ou `None`. Un CHAMP de même nom l'emporte (voir `member_type`).
+    pub fn record_method_type(&self, name: &str) -> Option<Type> {
+        let Type::Record(fields) = self else {
+            return None;
+        };
+
+        let method = |params: Vec<Type>, result: Type| {
+            Some(Type::Function(FunctionType {
+                params,
+                return_type: Box::new(result),
+            }))
+        };
+
+        match name {
+            "keys" => method(vec![], Type::Array(Box::new(Type::Str))),
+
+            "values" => method(
+                vec![],
+                Type::Array(Box::new(Type::union_of(
+                    fields.iter().map(|(_, field)| field.clone()).collect(),
+                ))),
+            ),
+
+            "entries" => method(
+                vec![],
+                Type::Array(Box::new(Type::Array(Box::new(Type::Dynamic)))),
+            ),
+
+            "copy" => method(vec![], self.clone()),
+            "to_string" => method(vec![], Type::Str),
 
             _ => None,
         }
@@ -476,7 +594,7 @@ impl Type {
             "is_empty" => method(vec![], Type::Bool),
             "clear" => method(vec![], Type::None),
             "copy" => method(vec![], self.clone()),
-            "to_array" => method(vec![], Type::Array(Box::new(element))),
+            "to_list" => method(vec![], Type::Array(Box::new(element))),
             "to_string" => method(vec![], Type::Str),
             "iter" => method(vec![], Type::Dynamic),
 
@@ -507,7 +625,26 @@ impl fmt::Display for Type {
             Type::Str => write!(f, "str"),
             Type::Bool => write!(f, "bool"),
             Type::None => write!(f, "None"),
-            Type::Array(element) => write!(f, "Array<{element}>"),
+            Type::Array(element) => write!(f, "List<{element}>"),
+            Type::Record(fields) => {
+                write!(f, "{{ ")?;
+                for (index, (name, field)) in fields.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}: {field}")?;
+                }
+                write!(f, " }}")
+            }
+            Type::Union(members) => {
+                for (index, member) in members.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "{member}")?;
+                }
+                Ok(())
+            }
             Type::Dict(key, value) => write!(f, "Dict<{key}, {value}>"),
             Type::Tuple(elements) => {
                 write!(f, "Tuple<")?;
@@ -521,7 +658,7 @@ impl fmt::Display for Type {
             }
             Type::Set(element) => write!(f, "Set<{element}>"),
             Type::SetDynamic => write!(f, "Set"),
-            Type::ArrayDynamic => write!(f, "Array"),
+            Type::ArrayDynamic => write!(f, "List"),
             Type::DictDynamic => write!(f, "Dict"),
             Type::TupleDynamic => write!(f, "Tuple"),
             Type::Range => write!(f, "Range"),
@@ -585,6 +722,56 @@ mod tests {
             Type::from_type_expr(&expr),
             Type::Dict(Box::new(Type::Str), Box::new(Type::Int))
         );
+    }
+
+    #[test]
+    fn unions_are_normalised_and_assignability_follows_membership() {
+        let parents = |_name: &str| Vec::<String>::new();
+        let number = Type::union_of(vec![Type::Int, Type::Float]);
+
+        // Aplatie, sans doublon ; un seul membre = ce membre.
+        assert_eq!(
+            Type::union_of(vec![number.clone(), Type::Float, Type::Str]),
+            Type::Union(vec![Type::Int, Type::Float, Type::Str])
+        );
+        assert_eq!(Type::union_of(vec![Type::Int, Type::Int]), Type::Int);
+        assert_eq!(
+            Type::union_of(vec![Type::Int, Type::Dynamic]),
+            Type::Dynamic
+        );
+
+        assert!(Type::Int.is_assignable_to(&number, &parents));
+        assert!(Type::Float.is_assignable_to(&number, &parents));
+        assert!(!Type::Str.is_assignable_to(&number, &parents));
+
+        // Une union fournie doit voir chaque membre convenir.
+        assert!(number.is_assignable_to(&Type::Float, &parents));
+        assert!(!number.is_assignable_to(&Type::Int, &parents));
+        assert!(number.is_assignable_to(&number, &parents));
+
+        assert_eq!(number.to_string(), "int | float");
+    }
+
+    #[test]
+    fn records_are_structural_and_width_subtyping_applies() {
+        let parents = |_name: &str| Vec::<String>::new();
+
+        let person = Type::Record(vec![
+            ("name".to_string(), Type::Str),
+            ("age".to_string(), Type::Int),
+        ]);
+        let wider = Type::Record(vec![
+            ("age".to_string(), Type::Int),
+            ("name".to_string(), Type::Str),
+            ("city".to_string(), Type::Str),
+        ]);
+        let missing = Type::Record(vec![("name".to_string(), Type::Str)]);
+
+        // Ordre des champs indifférent ; champs en plus permis.
+        assert!(wider.is_assignable_to(&person, &parents));
+        assert!(!missing.is_assignable_to(&person, &parents));
+
+        assert_eq!(person.to_string(), "{ name: str, age: int }");
     }
 
     #[test]

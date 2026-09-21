@@ -62,12 +62,16 @@ pub struct TypeChecker {
 
     /// Profondeur d'expression courante (voir `MAX_EXPRESSION_DEPTH`).
     expression_depth: usize,
+
+    /// Alias de type du fichier (`type Person = { ... };`), développés par
+    /// `resolve_type`. Locaux au fichier : ils ne s'exportent pas.
+    aliases: HashMap<String, TypeExpr>,
 }
 
 impl TypeChecker {
     pub fn check(statements: &[Statement]) -> Result<(), CompileError> {
         let mut checker = Self::new();
-        checker.collect_declarations(statements)?;
+        checker.collect_top_level(statements)?;
         checker.check_statements(statements)
     }
 
@@ -76,7 +80,7 @@ impl TypeChecker {
         context: TypeCheckContext,
     ) -> Result<(), CompileError> {
         let mut checker = Self::new_with_context(context);
-        checker.collect_declarations(statements)?;
+        checker.collect_top_level(statements)?;
         checker.check_statements(statements)
     }
 
@@ -85,7 +89,7 @@ impl TypeChecker {
         context: TypeCheckContext,
     ) -> Result<HashMap<String, Type>, CompileError> {
         let mut checker = Self::new_with_context(context);
-        checker.collect_declarations(statements)?;
+        checker.collect_top_level(statements)?;
         checker.check_statements(statements)?;
 
         let mut exports = HashMap::new();
@@ -124,6 +128,7 @@ impl TypeChecker {
             return_types: Vec::new(),
             current_class: None,
             expression_depth: 0,
+            aliases: HashMap::new(),
             context: None,
         }
     }
@@ -132,6 +137,71 @@ impl TypeChecker {
         let mut checker = Self::new();
         checker.context = Some(context);
         checker
+    }
+
+    /// Point d'entrée de la collecte : enregistre D'ABORD tous les alias de
+    /// type (un alias peut être utilisé avant sa déclaration, dans la
+    /// signature d'une fonction par exemple), puis les autres déclarations.
+    fn collect_top_level(&mut self, statements: &[Statement]) -> Result<(), CompileError> {
+        self.register_aliases(statements)?;
+        self.collect_declarations(statements)
+    }
+
+    fn register_aliases(&mut self, statements: &[Statement]) -> Result<(), CompileError> {
+        for statement in statements {
+            if let Statement::TypeAlias { name, type_expr } = Self::strip_position(statement) {
+                if self.aliases.contains_key(name) {
+                    return Err(CompileError::VariableAlreadyDeclared(name.clone()));
+                }
+
+                self.aliases.insert(name.clone(), type_expr.clone());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convertit une annotation en type sémantique en développant les ALIAS
+    /// (`Person` -> `{ name: str, age: int }`), y compris dans les arguments
+    /// génériques, les unions et les champs de records.
+    fn resolve_type(&self, expr: &TypeExpr) -> Type {
+        self.resolve_type_at(expr, 0)
+    }
+
+    fn resolve_type_at(&self, expr: &TypeExpr, depth: usize) -> Type {
+        // Alias cyclique (`type A = A;`) : on s'arrête plutôt que de boucler.
+        if depth > 32 {
+            return Type::Dynamic;
+        }
+
+        match expr {
+            TypeExpr::Named(name) => match self.aliases.get(name) {
+                Some(target) => self.resolve_type_at(target, depth + 1),
+                None => Type::from_type_expr(expr),
+            },
+
+            TypeExpr::Generic { name, arguments } => Type::build_generic(
+                name,
+                arguments
+                    .iter()
+                    .map(|argument| self.resolve_type_at(argument, depth + 1))
+                    .collect(),
+            ),
+
+            TypeExpr::Union(members) => Type::union_of(
+                members
+                    .iter()
+                    .map(|member| self.resolve_type_at(member, depth + 1))
+                    .collect(),
+            ),
+
+            TypeExpr::Record(fields) => Type::Record(
+                fields
+                    .iter()
+                    .map(|(name, field)| (name.clone(), self.resolve_type_at(field, depth + 1)))
+                    .collect(),
+            ),
+        }
     }
 
     fn collect_declarations(&mut self, statements: &[Statement]) -> Result<(), CompileError> {
@@ -160,7 +230,7 @@ impl TypeChecker {
                                 .get(index)
                                 .and_then(|annotation| annotation.as_ref())
                                 .map_or(Type::Dynamic, |annotation| {
-                                    Type::from_type_expr(annotation)
+                                    self.resolve_type(annotation)
                                 })
                         })
                         .collect::<Vec<_>>();
@@ -170,7 +240,7 @@ impl TypeChecker {
                         return_type: Box::new(
                             return_type
                                 .as_ref()
-                                .map(Type::from_type_expr)
+                                .map(|annotation| self.resolve_type(annotation))
                                 .unwrap_or(Type::Dynamic),
                         ),
                     };
@@ -195,7 +265,7 @@ impl TypeChecker {
                             field
                                 .type_annotation
                                 .as_ref()
-                                .map(Type::from_type_expr)
+                                .map(|annotation| self.resolve_type(annotation))
                                 .unwrap_or(Type::Dynamic),
                         );
 
@@ -215,7 +285,7 @@ impl TypeChecker {
                                     .get(index)
                                     .and_then(|annotation| annotation.as_ref())
                                     .map_or(Type::Dynamic, |annotation| {
-                                        Type::from_type_expr(annotation)
+                                        self.resolve_type(annotation)
                                     })
                             })
                             .collect::<Vec<_>>();
@@ -223,7 +293,7 @@ impl TypeChecker {
                         let return_type = method
                             .return_type
                             .as_ref()
-                            .map(Type::from_type_expr)
+                            .map(|annotation| self.resolve_type(annotation))
                             .unwrap_or(Type::Dynamic);
 
                         let signature = FunctionType {
@@ -280,7 +350,7 @@ impl TypeChecker {
                                     .param_types
                                     .get(index)
                                     .and_then(|annotation| annotation.as_ref())
-                                    .map_or(Type::Dynamic, Type::from_type_expr)
+                                    .map_or(Type::Dynamic, |annotation| self.resolve_type(annotation))
                             })
                             .collect::<Vec<_>>();
 
@@ -290,7 +360,7 @@ impl TypeChecker {
                                 method
                                     .return_type
                                     .as_ref()
-                                    .map(Type::from_type_expr)
+                                    .map(|annotation| self.resolve_type(annotation))
                                     .unwrap_or(Type::Dynamic),
                             ),
                         };
@@ -392,7 +462,7 @@ impl TypeChecker {
                 let actual = self.check_expression(value)?;
                 let declared = type_annotation
                     .as_ref()
-                    .map(Type::from_type_expr)
+                    .map(|annotation| self.resolve_type(annotation))
                     .unwrap_or_else(|| actual.clone());
 
                 self.ensure_assignable(&actual, &declared)?;
@@ -564,6 +634,16 @@ impl TypeChecker {
 
             Statement::Interface { .. } => Ok(()),
 
+            // Enregistré par `register_aliases` pour les alias de premier
+            // niveau ; un alias déclaré dans un bloc s'enregistre ici.
+            Statement::TypeAlias { name, type_expr } => {
+                self.aliases
+                    .entry(name.clone())
+                    .or_insert_with(|| type_expr.clone());
+
+                Ok(())
+            }
+
             Statement::Break | Statement::Continue => Ok(()),
         }
     }
@@ -710,12 +790,12 @@ impl TypeChecker {
                     param_types
                         .get(index)
                         .and_then(|annotation| annotation.as_ref())
-                        .map_or(Type::Dynamic, |annotation| Type::from_type_expr(annotation))
+                        .map_or(Type::Dynamic, |annotation| self.resolve_type(annotation))
                 })
                 .collect(),
             return_type: Box::new(
                 return_type
-                    .map(Type::from_type_expr)
+                    .map(|annotation| self.resolve_type(annotation))
                     .unwrap_or(Type::Dynamic),
             ),
         };
@@ -739,7 +819,7 @@ impl TypeChecker {
             let ty = param_types
                 .get(index)
                 .and_then(|annotation| annotation.as_ref())
-                .map_or(Type::Dynamic, |annotation| Type::from_type_expr(annotation));
+                .map_or(Type::Dynamic, |annotation| self.resolve_type(annotation));
 
             self.declare(
                 parameter,
@@ -751,7 +831,7 @@ impl TypeChecker {
             )?;
         }
 
-        self.current_return_type = return_type.map(Type::from_type_expr);
+        self.current_return_type = return_type.map(|annotation| self.resolve_type(annotation));
         self.check_statements(body)?;
 
         let inferred_return = self.infer_return_type();
@@ -834,7 +914,7 @@ impl TypeChecker {
                 .param_types
                 .get(index)
                 .and_then(|annotation| annotation.as_ref())
-                .map_or(Type::Dynamic, |annotation| Type::from_type_expr(annotation));
+                .map_or(Type::Dynamic, |annotation| self.resolve_type(annotation));
 
             self.declare(
                 parameter,
@@ -846,7 +926,7 @@ impl TypeChecker {
             )?;
         }
 
-        self.current_return_type = method.return_type.as_ref().map(Type::from_type_expr);
+        self.current_return_type = method.return_type.as_ref().map(|annotation| self.resolve_type(annotation));
         self.check_statements(&method.body)?;
 
         let inferred_return = self.infer_return_type();
@@ -951,6 +1031,20 @@ impl TypeChecker {
                     }
                 }
 
+                // Record : on ne modifie qu'un champ EXISTANT, avec un type
+                // compatible.
+                if let Type::Record(fields) = &object_type {
+                    match fields.iter().find(|(field, _)| field == name) {
+                        Some((_, expected)) => self.ensure_assignable(actual, expected)?,
+
+                        None => {
+                            return Err(CompileError::InvalidMemberAccess {
+                                name: name.to_string(),
+                            });
+                        }
+                    }
+                }
+
                 Ok(())
             }
         }
@@ -994,7 +1088,13 @@ impl TypeChecker {
                 match operator {
                     UnaryOp::Not => Ok(Type::Bool),
                     UnaryOp::Negate => {
-                        if right_type.is_dynamic() {
+                        // `-x` avec `x: int | float` : chaque membre doit être
+                        // numérique.
+                        if let Type::Union(members) = &right_type
+                            && members.iter().all(|member| member.numeric_kind().is_some())
+                        {
+                            Ok(right_type.clone())
+                        } else if right_type.is_dynamic() {
                             Ok(Type::Dynamic)
                         } else if right_type.numeric_kind().is_some() {
                             Ok(right_type)
@@ -1161,7 +1261,19 @@ impl TypeChecker {
                 Ok(Type::Tuple(types))
             }
 
-            Expression::Object(fields) => {
+            // Record `{ name: "Bruno", age: 25 }` : type structurel, un champ
+            // par clé.
+            Expression::Record(fields) => {
+                let mut typed_fields = Vec::with_capacity(fields.len());
+
+                for (name, value) in fields {
+                    typed_fields.push((name.clone(), self.check_expression(value)?));
+                }
+
+                Ok(Type::Record(typed_fields))
+            }
+
+            Expression::Dict(fields) => {
                 if fields.is_empty() {
                     return Ok(Type::Dict(Box::new(Type::Str), Box::new(Type::Dynamic)));
                 }
@@ -1278,6 +1390,30 @@ impl TypeChecker {
     ) -> Result<Type, CompileError> {
         let left_type = self.check_expression(left)?;
         let right_type = self.check_expression(right)?;
+
+        self.binary_type(operator, left_type, right_type)
+    }
+
+    /// Type du résultat de `left operator right`. Un opérande UNION
+    /// (`int | float`) est typé pour chaque combinaison de ses membres ; les
+    /// résultats sont fusionnés (`Number + int` -> `int | float`).
+    fn binary_type(
+        &self,
+        operator: &BinaryOp,
+        left_type: Type,
+        right_type: Type,
+    ) -> Result<Type, CompileError> {
+        if matches!(left_type, Type::Union(_)) || matches!(right_type, Type::Union(_)) {
+            let mut results = Vec::new();
+
+            for left_member in left_type.members() {
+                for right_member in right_type.members() {
+                    results.push(self.binary_type(operator, left_member.clone(), right_member)?);
+                }
+            }
+
+            return Ok(Type::union_of(results));
+        }
 
         match operator {
             BinaryOp::And | BinaryOp::Or => Ok(left_type.merge(&right_type)),
@@ -1448,6 +1584,20 @@ impl TypeChecker {
                     .module_loader
                     .interface(std::path::Path::new(path))?;
                 return interface.exports.get(name).cloned().ok_or_else(|| {
+                    CompileError::InvalidMemberAccess {
+                        name: name.to_string(),
+                    }
+                });
+            }
+
+            // Record : forme fixe, donc un champ inexistant est une erreur
+            // certaine. Un champ l'emporte sur les méthodes d'introspection.
+            Type::Record(fields) => {
+                if let Some((_, field_type)) = fields.iter().find(|(field, _)| field == name) {
+                    return Ok(field_type.clone());
+                }
+
+                return object_type.record_method_type(name).ok_or_else(|| {
                     CompileError::InvalidMemberAccess {
                         name: name.to_string(),
                     }
@@ -1828,10 +1978,11 @@ let x = 10;
 let y: int = 20;
 let z = x + y;
 let name: str = "Bruno";
-let values: Array<int> = [1, 2, 3];
+let values: List<int> = [1, 2, 3];
 let users: Dict<str, int> = {
-    age: 25
+    "age": 25
 };
+let p: { name: str, age: int } = { name: "Bruno", age: 25 };
 func add(a: int, b: int) -> int {
     return a + b;
 }
@@ -1844,7 +1995,7 @@ let result = add(10, 20);
     #[test]
     fn nested_generics_and_compact_equal_parse() {
         let result = check(
-            "let m: Dict<str, Array<int>> = { a: [1, 2] };\nlet v: Array<int>= [1, 2];",
+            "let m: Dict<str, List<int>> = { \"a\": [1, 2] };\nlet v: List<int>= [1, 2];",
         );
         assert!(result.is_ok(), "{:?}", result.err());
     }
@@ -2120,7 +2271,7 @@ let i: Set<int> = a.intersection(b);
 let sub: bool = a.is_subset(b);
 let c = a.copy();
 c.add(9);
-let list: Array<int> = a.to_array();
+let list: List<int> = a.to_list();
 let from_literal: Set<int> = {1, 2, 3};
 
 for x in a {
@@ -2144,7 +2295,7 @@ for x in a {
     fn brace_literal_is_a_set_unless_it_starts_with_a_key() {
         let ok = check(
             r#"
-let d: Dict<str, int> = { age: 25 };
+let d: Dict<str, int> = { "age": 25 };
 let quoted = { "k": 2 };
 let empty = {};
 let s: Set<str> = { "x", "y" };
@@ -2177,13 +2328,13 @@ let m: int = d.size();
 let has: bool = d.contains("a");
 let v: int = d.get("a");
 d.set("a", 11);
-let ks: Array<str> = d.keys();
+let ks: List<str> = d.keys();
 let entries = d.entries();
 
 let t = (1, 2, 3);
 let f: int = t.first();
 let l: int = t.size();
-let converted: Array<int> = t.to_array();
+let converted: List<int> = t.to_list();
 
 let s = "Hello";
 let sz: int = s.size();
@@ -2229,8 +2380,8 @@ for x in Set(1, 2) {
     }
 
     #[test]
-    fn dict_keys_named_like_methods_and_user_classes_are_not_affected() {
-        // `size` et `length` sont ici de simples clés de dict.
+    fn record_fields_named_like_methods_and_user_classes_are_not_affected() {
+        // `size` et `length` sont ici de simples champs de record.
         let ok = check(
             r#"
 let d = { size: 3, length: 4 };
@@ -2247,6 +2398,140 @@ p.add(2);
 "#,
         );
         assert!(ok.is_ok(), "{:?}", ok.err());
+    }
+
+    #[test]
+    fn records_have_named_fixed_fields_and_structural_types() {
+        let ok = check(
+            r#"
+type Person = { name: str, age: int };
+
+let p: Person = { name: "Bruno", age: 25 };
+let n: str = p.name;
+let a: int = p.age;
+p.age = 26;
+
+func greet(who: Person) -> str {
+    return who.name;
+}
+let g: str = greet(p);
+
+let q = p.copy();
+let keys: List<str> = p.keys();
+let shown: str = p.to_string();
+
+// Typage structurel : des champs EN PLUS sont permis.
+let wider = { name: "Alice", age: 30, city: "Paris" };
+let w: Person = wider;
+
+let people: List<Person> = [{ name: "A", age: 1 }, { name: "B", age: 2 }];
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        let prelude = "type Person = { name: str, age: int };\n";
+
+        // Champ manquant, mauvais type, champ inexistant.
+        assert!(check(&format!("{prelude}let p: Person = {{ name: \"Bruno\" }};")).is_err());
+        assert!(
+            check(&format!("{prelude}let p: Person = {{ name: 1, age: 25 }};")).is_err()
+        );
+        assert!(
+            check(&format!(
+                "{prelude}let p: Person = {{ name: \"B\", age: 1 }}; p.age = \"x\";"
+            ))
+            .is_err()
+        );
+        assert!(
+            check(&format!(
+                "{prelude}let p: Person = {{ name: \"B\", age: 1 }}; let e = p.email;"
+            ))
+            .is_err()
+        );
+        assert!(
+            check(&format!(
+                "{prelude}let p: Person = {{ name: \"B\", age: 1 }}; p.email = \"x\";"
+            ))
+            .is_err()
+        );
+
+        // Un record n'est pas un dict, et inversement.
+        assert!(check("let d: Dict<str, int> = { name: 1 };").is_err());
+        assert!(check("let r: { name: int } = { \"name\": 1 };").is_err());
+    }
+
+    #[test]
+    fn record_and_dict_literals_do_not_mix() {
+        assert!(parse_fails("let x = { name: 1, \"age\": 2 };"));
+        assert!(parse_fails("let x = { \"name\": 1, age: 2 };"));
+        assert!(parse_fails("let x = { name: 1, name: 2 };"));
+        assert!(parse_fails("let x = { \"a\": 1, \"a\": 2 };"));
+
+        assert!(check("let x = { name: 1, age: 2 };").is_ok());
+        assert!(check("let x = { \"name\": 1, \"age\": 2 };").is_ok());
+    }
+
+    #[test]
+    fn type_aliases_can_be_used_before_their_declaration() {
+        let ok = check(
+            r#"
+func double(x: Number) -> Number {
+    return x * 2;
+}
+
+type Number = int | float;
+type Names = List<str>;
+
+let n: Number = double(2);
+let names: Names = ["a", "b"];
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        // Alias cyclique : pas de boucle infinie.
+        assert!(check("type A = A; let x: A = 1;").is_ok());
+
+        // Deux alias de même nom.
+        assert!(check("type A = int; type A = str;").is_err());
+
+        // `type` reste une fonction ordinaire.
+        assert!(check("let t = type(1);").is_ok());
+    }
+
+    #[test]
+    fn union_types_accept_any_member_and_support_arithmetic() {
+        let ok = check(
+            r#"
+type Number = int | float;
+
+let a: Number = 1;
+let b: Number = 2.5;
+let c: Number = a + b;
+let d: Number = a * 2;
+let e: bool = a < b;
+let neg: Number = -a;
+let f: float = a;
+
+let t: str | int = "a";
+let u: str | int = 5;
+
+func half(x: int | float) -> float {
+    return x / 2;
+}
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        // Valeur hors de l'union, ou union plus large que la cible.
+        assert!(check("type Number = int | float; let s: Number = \"x\";").is_err());
+        assert!(check("type Number = int | float; let a: Number = 1; let i: int = a;").is_err());
+        assert!(check("let t: str | int = 2.5;").is_err());
+    }
+
+    #[test]
+    fn array_was_renamed_list() {
+        assert!(check("let a: List<int> = [1, 2];").is_ok());
+        assert!(parse_fails("let a: Array<int> = [1, 2];"));
     }
 }
 

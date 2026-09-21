@@ -3,11 +3,17 @@ pub enum TypeExpr {
     /// Nom simple : `int`, `Personne`, `Dict`, ...
     Named(String),
 
-    /// Type paramétré : `Dict<str, int>`, `Array<Personne>`, `Result<T, E>`.
+    /// Type paramétré : `Dict<str, int>`, `List<Personne>`, `Result<T, E>`.
     Generic {
         name: String,
         arguments: Vec<TypeExpr>,
     },
+
+    /// Union : `int | float`.
+    Union(Vec<TypeExpr>),
+
+    /// Type objet (enregistrement) : `{ name: str, age: int }`.
+    Record(Vec<(String, TypeExpr)>),
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +257,13 @@ pub enum Statement {
     Export {
         statement: Box<Statement>,
     },
+    /// `type Person = { name: str, age: int };` : alias de type (compile
+    /// uniquement, sans effet à l'exécution).
+    TypeAlias {
+        name: String,
+        type_expr: TypeExpr,
+    },
+
     Class {
         name: String,
         bases: Vec<String>,
@@ -354,7 +367,13 @@ pub enum Expression {
     /// virgule : voir `Parser::primary` pour la règle de désambiguïsation.
     Tuple(Vec<Expression>),
 
-    Object(Vec<(String, Expression)>),
+    /// Dict : `{"name": "Bruno", "age": 25}` — clés CHAÎNES, ajout et
+    /// retrait dynamiques, accès par `d["name"]` / `d.get("name")`.
+    Dict(Vec<(String, Expression)>),
+
+    /// Record : `{ name: "Bruno", age: 25 }` — clés IDENTIFIANTS, forme
+    /// fixe, accès par `p.name`.
+    Record(Vec<(String, Expression)>),
 
     Ternary {
         condition: Box<Expression>,

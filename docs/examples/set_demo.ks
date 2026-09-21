@@ -2,7 +2,7 @@
 //
 // Set : ensemble MUTABLE d'éléments UNIQUES, sans ordre garanti.
 //
-//   Array  : mutable, ordonné, doublons permis      -> référence + copy()
+//   List   : mutable, ordonné, doublons permis      -> référence + copy()
 //   Tuple  : immuable, ordonné, structure fixe       -> valeur immuable
 //   Dict   : mutable, clé/valeur, clés uniques       -> référence + copy()
 //   Set    : mutable, éléments uniques, non ordonné  -> référence + copy()
@@ -41,13 +41,13 @@ let points = Set((1, 2), (1, 2), (2, 1));
 println(points.size());                 // 2
 
 // -- Littéral {...} -----------------------------------------------------------------
-// `{1, 2, 3}` est un ensemble ; `{clé: valeur}` reste un dict ; `{}` est le
-// dict vide (l'ensemble vide s'écrit Set()).
+// `{1, 2, 3}` est un ensemble ; `{"clé": valeur}` un dict ; `{clé: valeur}`
+// un record ; `{}` est le dict vide (l'ensemble vide s'écrit Set()).
 let lettres: Set<str> = {"a", "b", "c"};
-let age = { age: 25 };
+let ages = { "age": 25 };
 
 println(lettres.size());                // 3
-println(age);                           // {"age": 25}
+println(ages);                          // {"age": 25}
 
 // -- Opérations ensemblistes (elles renvoient un NOUVEL ensemble) ------------
 let a = Set(1, 2, 3);

@@ -9,9 +9,9 @@ let z = x + y;                      // inféré: int
 
 let name: str = "Bruno";
 
-let values: Array<int> = [1, 2, 3];
+let values: List<int> = [1, 2, 3];
 let users: Dict<str, int> = {
-    age: 25
+    "age": 25
 };
 
 func add(a: int, b: int) -> int {

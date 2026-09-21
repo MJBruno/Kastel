@@ -30,6 +30,35 @@ impl VirtualMachine {
         Ok(())
     }
 
+    /// `{ name: v, ... }` : chaque couple est (nom en chaîne, valeur).
+    pub(crate) fn op_record(&mut self, pair_count: usize) -> Result<(), RuntimeError> {
+        let total = pair_count
+            .checked_mul(2)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if self.stack.len() < total {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let start = self.stack.len() - total;
+        let mut fields = Vec::with_capacity(pair_count);
+
+        for index in 0..pair_count {
+            let base = start + index * 2;
+
+            let name = self.stack[base]
+                .as_string_value()
+                .ok_or(RuntimeError::TypeError)?;
+
+            fields.push((name, self.stack[base + 1].clone()));
+        }
+
+        self.stack.truncate(start);
+        self.push(Value::new_record(fields));
+
+        Ok(())
+    }
+
     pub(crate) fn op_get_dict_index(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);

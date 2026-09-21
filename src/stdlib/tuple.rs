@@ -158,7 +158,7 @@ pub fn native_last(args: &[Value]) -> Result<Value, RuntimeError> {
 
 /// Convertit le tuple en un array (mutable) — la façon idiomatique
 /// d'obtenir une copie modifiable d'un tuple.
-pub fn native_to_array(args: &[Value]) -> Result<Value, RuntimeError> {
+pub fn native_to_list(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
         return Err(RuntimeError::WrongArgumentCount {
             expected: 1,
@@ -189,7 +189,10 @@ pub fn dispatch_method(name: &str, args: &[Value]) -> Result<Option<Value>, Runt
         "index_of" => Some(native_index_of(args)?),
         "first" => Some(native_first(args)?),
         "last" => Some(native_last(args)?),
-        "to_array" => Some(native_to_array(args)?),
+        "to_list" => Some(native_to_list(args)?),
+
+        // Nom supprimé : `Array` s'appelle désormais `List`.
+        "to_array" => return Err(super::renamed_method_error("to_array", "to_list()")),
 
         _ => return Ok(None),
     };

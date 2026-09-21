@@ -30,7 +30,7 @@ println(s.contains(3));                 // true
 println(texte.contains("ll"));          // true
 println(d.contains("a"));               // true  (pour un dict : la CLÉ)
 
-// -- Array : add() / remove() ------------------------------------------------------
+// -- List : add() / remove() ------------------------------------------------------
 a.add(4);                               // [1, 2, 3, 4]
 a.remove(2);                            // retire la VALEUR 2 -> [1, 3, 4]
 
@@ -60,7 +60,7 @@ println(t.first());                     // 1
 println(t.last());                      // 3
 println(t.get(1));                      // 2
 println(t.index_of(3));                 // 2
-println(t.to_array());                  // [1, 2, 3]
+println(t.to_list());                   // [1, 2, 3]
 
 // -- Range ---------------------------------------------------------------------------------
 let r = range(2, 10, 2);

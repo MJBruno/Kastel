@@ -278,6 +278,10 @@ impl Compiler {
                 self.compile_interface(name, bases, methods)?;
             }
 
+            // Un alias de type n'existe qu'à la compilation (vérificateur) :
+            // aucun code à générer.
+            Statement::TypeAlias { .. } => {}
+
             Statement::Function {
                 name,
                 params,

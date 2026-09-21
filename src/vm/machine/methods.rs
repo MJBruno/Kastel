@@ -358,6 +358,7 @@ impl VirtualMachine {
                         Object::Tuple(_) => 6,
                         Object::Module(_) => 7,
                         Object::Set(_) => 8,
+                        Object::Record(_) => 9,
                         _ => 5,
                     }
                 };
@@ -492,6 +493,47 @@ impl VirtualMachine {
                             });
                         }
                     },
+
+                    9 => {
+                        // Champ contenant une fonction : `p.greet(...)` l'appelle
+                        // (sans `this`, comme un export de module). Le CHAMP
+                        // l'emporte sur les méthodes d'introspection.
+                        let field = {
+                            let object = handle.borrow();
+
+                            match &*object {
+                                Object::Record(fields) => fields
+                                    .iter()
+                                    .find(|(name, _)| name.as_str() == method_name.as_str())
+                                    .map(|(_, value)| value.clone()),
+
+                                _ => None,
+                            }
+                        };
+
+                        if let Some(callable) = field {
+                            self.push(callable);
+
+                            for argument in args.iter().skip(1) {
+                                self.push(argument.clone());
+                            }
+
+                            self.execute_call(arg_count)?;
+
+                            return Ok(());
+                        }
+
+                        match crate::stdlib::record::dispatch_method(&method_name, &args)? {
+                            Some(result) => result,
+
+                            None => {
+                                return Err(RuntimeError::ObjectFieldNotFound {
+                                    name: method_name,
+                                    suggestion: None,
+                                });
+                            }
+                        }
+                    }
 
                     7 => {
                         /*

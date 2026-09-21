@@ -11,13 +11,12 @@ use crate::error::parse_error::ParserError;
 use crate::frontend::ast::*;
 use crate::frontend::lexer::token::{Token, TokenKind};
 
-
-#[derive(Debug, Clone)]
 /// Imbrication maximale (parenthèses, blocs, opérateurs unaires, fonctions
 /// anonymes...). Le parser est récursif : sans limite, un source pathologique
 /// (`((((...` sur des milliers de niveaux) ferait déborder la pile native.
 pub const MAX_NESTING_DEPTH: usize = 500;
 
+#[derive(Debug, Clone)]
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
@@ -158,7 +157,8 @@ impl Parser {
     /// Erreur pour un littéral entier qui ne se lit pas comme `i64` :
     /// trop grand (chiffres seuls) ou mal formé.
     fn integer_literal_error(token: &Token) -> ParserError {
-        let only_digits = !token.lexeme.is_empty() && token.lexeme.bytes().all(|b| b.is_ascii_digit());
+        let only_digits =
+            !token.lexeme.is_empty() && token.lexeme.bytes().all(|b| b.is_ascii_digit());
 
         let message = if only_digits {
             format!(

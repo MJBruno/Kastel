@@ -19,7 +19,20 @@ impl Parser {
         let line = self.peek().line;
         let column = self.peek().column;
 
-        let statements = if self.match_token(TokenKind::Import) {
+        // `type Person = ...;` : `type` reste un identifiant ordinaire (la
+        // fonction `type(x)` existe) ; c'est un alias seulement suivi d'un
+        // nom puis de `=`.
+        let is_type_alias = self.check(TokenKind::Identifier)
+            && self.peek().lexeme == "type"
+            && self.check_next(TokenKind::Identifier)
+            && self
+                .tokens
+                .get(self.current + 2)
+                .is_some_and(|token| token.kind == TokenKind::Equal);
+
+        let statements = if is_type_alias {
+            vec![self.parse_type_alias_statement()?]
+        } else if self.match_token(TokenKind::Import) {
             vec![self.parse_import_statement()?]
         } else if self.match_token(TokenKind::From) {
             vec![self.parse_from_import_statement()?]
@@ -71,6 +84,22 @@ impl Parser {
             .collect();
 
         Ok(positioned)
+    }
+
+    /// `type Person = { name: str, age: int };`
+    fn parse_type_alias_statement(&mut self) -> Result<Statement, ParserError> {
+        self.advance(); // `type`
+
+        let name = self.consume(TokenKind::Identifier, "Nom d'alias de type attendu")?;
+
+        self.consume(TokenKind::Equal, "'=' attendu après le nom de l'alias")?;
+
+        let type_expr = self.parse_type_expression()?;
+
+        Ok(Statement::TypeAlias {
+            name: name.lexeme,
+            type_expr,
+        })
     }
 
     // ============================================================

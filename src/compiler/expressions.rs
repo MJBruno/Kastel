@@ -155,7 +155,9 @@ impl Compiler {
                 self.emit_bytes(OpCode::Tuple, elements.len() as u8);
             }
 
-            Expression::Object(fields) => {
+            // Dict `{"name": v}` et Record `{ name: v }` : même schéma (couples
+            // nom / valeur sur la pile), deux opcodes.
+            Expression::Dict(fields) | Expression::Record(fields) => {
                 if fields.len() > u8::MAX as usize {
                     return Err(CompileError::TooManyObjectFields);
                 }
@@ -168,7 +170,13 @@ impl Compiler {
                     self.compile_expression(value)?;
                 }
 
-                self.emit_bytes(OpCode::Object, fields.len() as u8);
+                let opcode = if matches!(expr, Expression::Record(_)) {
+                    OpCode::Record
+                } else {
+                    OpCode::Object
+                };
+
+                self.emit_bytes(opcode, fields.len() as u8);
             }
 
             Expression::Index {

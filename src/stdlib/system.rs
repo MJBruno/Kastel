@@ -113,10 +113,11 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
 
         Value::Object(handle) => match &*handle.borrow() {
             Object::String(_) => "string".to_string(),
-            Object::Array(_) => "array".to_string(),
+            Object::Array(_) => "list".to_string(),
             Object::Tuple(_) => "tuple".to_string(),
             Object::Set(_) => "set".to_string(),
-            Object::Dict(_) => "object".to_string(),
+            Object::Dict(_) => "dict".to_string(),
+            Object::Record(_) => "record".to_string(),
             Object::Function(_) | Object::Closure(_) => "function".to_string(),
             Object::Iterator(_) => "iterator".to_string(),
             Object::Module(_) => "module".to_string(),

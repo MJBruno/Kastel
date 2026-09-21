@@ -536,3 +536,167 @@ fn a_literal_that_does_not_fit_in_64_bits_is_explained() {
     );
 }
 
+// ============================================================
+//                 RECORDS, DICTS ET UNIONS
+// ============================================================
+
+fn text_of(source: &str, name: &'static str) -> String {
+    let source = source.to_string();
+
+    on_big_stack(move || {
+        let (vm, result) = run_script(&source);
+
+        result.unwrap();
+
+        global(&vm, name).to_string()
+    })
+}
+
+#[test]
+fn record_fields_are_read_and_written_by_name() {
+    let source = r#"
+let p = { name: "Bruno", age: 25 };
+p.age = p.age + 1;
+let a = p.age;
+let n = p.name;
+"#;
+
+    assert_eq!(value_of(source, "a"), 26);
+    assert_eq!(text_of(source, "n"), "Bruno");
+}
+
+#[test]
+fn record_is_shared_by_reference_and_copy_is_independent() {
+    let source = r#"
+let a = { x: 1 };
+let b = a;
+b.x = 5;
+let shared = a.x;
+
+let c = a.copy();
+c.x = 9;
+let original = a.x;
+"#;
+
+    assert_eq!(value_of(source, "shared"), 5);
+    assert_eq!(value_of(source, "original"), 5);
+}
+
+#[test]
+fn record_can_hold_functions_and_offers_introspection() {
+    let greeting = text_of(
+        r#"
+let p = { name: "B", greet: func() { return "salut"; } };
+let g = p.greet();
+"#,
+        "g",
+    );
+
+    assert_eq!(greeting, "salut");
+
+    assert_eq!(
+        value_of(
+            r#"let p = { a: 1, b: 2, c: 3 }; let n = p.keys().size();"#,
+            "n"
+        ),
+        3
+    );
+}
+
+#[test]
+fn record_shape_is_fixed_at_runtime() {
+    // `r` est dynamique : le vérificateur ne peut pas refuser l'ajout, la
+    // VM le fait.
+    let refused = on_big_stack(|| {
+        let (_vm, result) = run_script(
+            r#"
+func add_field(r) { r.extra = 2; }
+let p = { a: 1 };
+add_field(p);
+"#,
+        );
+
+        matches!(result, Err(RuntimeError::ObjectFieldNotFound { .. }))
+    });
+
+    assert!(refused);
+}
+
+#[test]
+fn dict_is_read_by_key_not_by_dot_and_the_error_says_so() {
+    let source = r#"
+let d = {"name": "Bruno"};
+let by_key = d["name"];
+let by_get = d.get("name");
+"#;
+
+    assert_eq!(text_of(source, "by_key"), "Bruno");
+    assert_eq!(text_of(source, "by_get"), "Bruno");
+
+    let suggestion = on_big_stack(|| {
+        let (_vm, result) = run_script(
+            r#"
+let d = {"name": "Bruno"};
+let x = d.name;
+"#,
+        );
+
+        match result {
+            Err(RuntimeError::ObjectFieldNotFound { suggestion, .. }) => suggestion,
+            other => panic!("erreur guidée attendue, reçu {other:?}"),
+        }
+    });
+
+    assert_eq!(suggestion.as_deref(), Some("[\"name\"]"));
+}
+
+#[test]
+fn records_and_dicts_have_distinct_displays_and_type_names() {
+    assert_eq!(
+        text_of(r#"let s = str({ name: "Bruno", age: 25 });"#, "s"),
+        "{name: \"Bruno\", age: 25}"
+    );
+    assert_eq!(
+        text_of(r#"let s = str({"name": "Bruno"});"#, "s"),
+        "{\"name\": \"Bruno\"}"
+    );
+
+    assert_eq!(text_of("let t = type({ a: 1 });", "t"), "record");
+    assert_eq!(text_of(r#"let t = type({"a": 1});"#, "t"), "dict");
+    assert_eq!(text_of("let t = type([1]);", "t"), "list");
+}
+
+#[test]
+fn a_record_encodes_to_a_json_object() {
+    assert_eq!(
+        text_of(
+            r#"let j = json_encode({ name: "B", age: 1 });"#,
+            "j"
+        ),
+        "{\"name\":\"B\",\"age\":1}"
+    );
+}
+
+#[test]
+fn union_typed_values_work_at_runtime() {
+    let is_float = on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+type Number = int | float;
+
+func half(x: Number) -> float {
+    return x / 2;
+}
+
+let h = half(3);
+"#,
+        );
+
+        result.unwrap();
+
+        matches!(global(&vm, "h"), Value::Float(value) if value == 1.5)
+    });
+
+    assert!(is_float);
+}
+

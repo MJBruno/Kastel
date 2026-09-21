@@ -24,6 +24,13 @@ pub enum Object {
 
     Dict(Vec<(Value, Value)>),
 
+    /// Record : `{ name: "Bruno", age: 25 }`. Champs NOMMÉS (identifiants), en
+    /// nombre FIXE, dans l'ordre de déclaration. Accès par `p.name` ; on peut
+    /// modifier la valeur d'un champ existant mais pas en ajouter ni en
+    /// retirer (pour cela : `Dict`). Comme Array et Dict, c'est un objet
+    /// PARTAGÉ (`let b = a;` désigne le même record ; `a.copy()` le copie).
+    Record(Vec<(String, Value)>),
+
     /// Ensemble MUTABLE d'éléments UNIQUES (`Set(1, 2, 3)`, `{1, 2, 3}`).
     ///
     /// Même représentation qu'Array (`Vec<Value>` suivi par le GC), mais
@@ -109,6 +116,10 @@ impl Object {
 
             Object::Set(elements) => {
                 elements.clear();
+            }
+
+            Object::Record(fields) => {
+                fields.clear();
             }
 
             Object::Function(_) => {}

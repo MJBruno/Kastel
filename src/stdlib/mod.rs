@@ -17,7 +17,7 @@ pub type NativeFn = fn(&[Value]) -> Result<Value, RuntimeError>;
 //   RECHERCHE    contains(x)  index_of(x)
 //   MUTATION     add(x)  remove(x)  clear()        (collections mutables)
 //   COPIE        copy()                             (collections mutables)
-//   CONVERSION   to_array()  to_string()
+//   CONVERSION   to_list()  to_string()
 //   PARCOURS     iter()   (`for x in c` reste la syntaxe principale)
 //
 // `length()`, `push()`, `has()`, `items()` et `to_iterator()` n'existent
@@ -54,6 +54,7 @@ pub mod json;
 pub mod math;
 pub mod os;
 pub mod path;
+pub mod record;
 pub mod set;
 pub mod string;
 pub mod system;

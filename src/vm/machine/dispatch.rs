@@ -340,6 +340,13 @@ impl VirtualMachine {
                 Ok(false)
             }
 
+            OpCode::Record => {
+                let pair_count = self.read_byte()? as usize;
+
+                self.op_record(pair_count)?;
+                Ok(false)
+            }
+
             // ========================================================
             // ITERATORS
             // ========================================================

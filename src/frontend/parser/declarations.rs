@@ -20,7 +20,68 @@ impl Parser {
         }
     }
 
+    /// Type complet : un type simple, paramétré ou objet, éventuellement en
+    /// UNION (`int | float`).
     pub(super) fn parse_type_expression(&mut self) -> Result<TypeExpr, ParserError> {
+        let first = self.parse_type_primary()?;
+
+        if !self.check(TokenKind::Pipe) {
+            return Ok(first);
+        }
+
+        let mut members = vec![first];
+
+        while self.match_token(TokenKind::Pipe) {
+            members.push(self.parse_type_primary()?);
+        }
+
+        Ok(TypeExpr::Union(members))
+    }
+
+    /// `{ name: str, age: int }`
+    fn parse_record_type(&mut self) -> Result<TypeExpr, ParserError> {
+        self.consume(TokenKind::LeftBrace, "'{' attendu")?;
+
+        let mut fields: Vec<(String, TypeExpr)> = Vec::new();
+
+        if !self.check(TokenKind::RightBrace) {
+            loop {
+                let name = self.consume(TokenKind::Identifier, "Nom de champ attendu")?;
+
+                self.consume(TokenKind::Colon, "':' attendu après le nom du champ")?;
+
+                let field_type = self.parse_type_expression()?;
+
+                if fields.iter().any(|(existing, _)| *existing == name.lexeme) {
+                    return Err(ParserError {
+                        message: format!("Le champ '{}' est déjà déclaré dans ce type", name.lexeme),
+                        line: name.line,
+                        column: name.column,
+                    });
+                }
+
+                fields.push((name.lexeme, field_type));
+
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+
+                if self.check(TokenKind::RightBrace) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(TokenKind::RightBrace, "'}' attendu après le type objet")?;
+
+        Ok(TypeExpr::Record(fields))
+    }
+
+    fn parse_type_primary(&mut self) -> Result<TypeExpr, ParserError> {
+        if self.check(TokenKind::LeftBrace) {
+            return self.parse_record_type();
+        }
+
         let token = if self.check(TokenKind::Identifier) || self.check(TokenKind::None) {
             self.advance().clone()
         } else {
@@ -32,6 +93,15 @@ impl Parser {
         };
 
         let name = token.lexeme;
+
+        // `Array` a été renommé `List`.
+        if name.eq_ignore_ascii_case("array") {
+            return Err(ParserError {
+                message: "Le type 'Array' a été renommé 'List' : écrivez List<T>".to_string(),
+                line: token.line,
+                column: token.column,
+            });
+        }
 
         if !self.match_token(TokenKind::Less) {
             return Ok(TypeExpr::Named(name));

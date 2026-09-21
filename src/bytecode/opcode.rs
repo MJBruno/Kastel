@@ -97,11 +97,16 @@ pub enum OpCode {
     ///
     /// Ajouté en dernier pour ne décaler aucun discriminant existant.
     Wide,
+
+    /// Construit un record `{ name: v, ... }` : `Record <n>` retire les N
+    /// couples (nom, valeur) de la pile. Ajouté en dernier (aucun
+    /// discriminant existant ne bouge).
+    Record,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::Wide as usize + 1;
+    pub const COUNT: usize = Self::Record as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -177,7 +182,8 @@ mod tests {
         assert_eq!(OpCode::AddLocalLocal as u8, 62);
         assert_eq!(OpCode::Tuple as u8, 63);
         assert_eq!(OpCode::Wide as u8, 64);
-        assert_eq!(OpCode::COUNT, 65);
+        assert_eq!(OpCode::Record as u8, 65);
+        assert_eq!(OpCode::COUNT, 66);
     }
 
     #[test]
