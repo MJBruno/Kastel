@@ -137,6 +137,8 @@ impl Chunk {
 
             OpCode::Record => self.byte_instruction("OP_RECORD", offset),
 
+            OpCode::Overload => self.constant_instruction("OP_OVERLOAD", offset),
+
             OpCode::Object => self.byte_instruction("OP_OBJECT", offset),
 
             OpCode::GetIndex => self.simple_instruction("OP_GET_INDEX", offset),

@@ -14,18 +14,32 @@ use crate::{
     module::resolver::{ImportResolution, ModuleResolver},
 };
 
-use super::{type_checker::{TypeCheckContext, TypeChecker}, types::Type};
+use super::{
+    type_checker::{ClassInfo, TypeCheckContext, TypeChecker},
+    types::Type,
+};
 
 #[derive(Debug, Clone)]
 pub struct ModuleTypeInterface {
     pub path: PathBuf,
     pub exports: HashMap<String, Type>,
+
+    /// Détail des classes et interfaces du module (constructeurs, méthodes
+    /// surchargées, champs typés, membres privés), par nom.
+    pub(crate) classes: HashMap<String, ClassInfo>,
 }
 
 #[derive(Debug, Clone)]
 pub enum ImportedType {
     Module(PathBuf),
-    Export(Type),
+
+    /// Un export du module `interface`, sous le nom `name` (que le binding
+    /// local peut renommer : `from m import Personne as P`).
+    Export {
+        ty: Type,
+        name: String,
+        interface: Rc<ModuleTypeInterface>,
+    },
 }
 
 struct ModuleTypeLoaderState {
@@ -101,10 +115,11 @@ impl ModuleTypeLoader {
 
         let context = TypeCheckContext::new(path.to_path_buf(), Rc::new(self.clone()));
         TypeChecker::analyze_module(&statements, context)
-            .map(|exports| {
+            .map(|(exports, classes)| {
                 Rc::new(ModuleTypeInterface {
                     path: path.to_path_buf(),
                     exports,
+                    classes,
                 })
             })
             .map_err(|error| match error {
@@ -143,7 +158,11 @@ impl ModuleTypeLoader {
                     }
                 })?;
 
-                Ok(ImportedType::Export(ty))
+                Ok(ImportedType::Export {
+                    ty,
+                    name,
+                    interface,
+                })
             }
         }
     }

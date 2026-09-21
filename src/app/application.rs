@@ -15,6 +15,7 @@ use crate::{
         type_checker::TypeCheckContext,
         variables::Global,
     },
+    module::{module::ModuleLoader, resolver::ModuleResolver},
     error::kastel_error::KastelError,
     error::runtime_error::RuntimeError,
     frontend::{lexer::lexer::Lexer, parser::Parser},
@@ -159,6 +160,15 @@ struct ReplSession {
     compiler_globals: Rc<RefCell<HashMap<String, Global>>>,
     vm: VirtualMachine,
     history: Vec<String>,
+
+    /// Fichier fictif du REPL, dans le répertoire courant : les imports
+    /// (`import utils;`, `from lib.mod import X;`) se résolvent à partir de
+    /// ce répertoire, comme pour un fichier source placé là.
+    repl_path: PathBuf,
+
+    /// Chargeur de types partagé par toutes les lignes (cache des modules
+    /// déjà analysés).
+    type_loader: Rc<ModuleTypeLoader>,
 }
 
 impl ReplSession {
@@ -170,12 +180,24 @@ impl ReplSession {
 
         let function = Rc::new(compiler.compile(&[]).map_err(KastelError::from)?);
 
-        let vm = VirtualMachine::new(function, None);
+        let project_root = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let repl_path = project_root.join("<repl>");
+
+        let resolver = ModuleResolver::new(project_root);
+        let type_loader = Rc::new(ModuleTypeLoader::new(resolver.clone()));
+
+        let vm = VirtualMachine::new_with_loader(
+            function,
+            Some(repl_path.clone()),
+            ModuleLoader::with_resolver(resolver),
+        );
 
         Ok(Self {
             compiler_globals,
             vm,
             history: Vec::new(),
+            repl_path,
+            type_loader,
         })
     }
 
@@ -194,9 +216,11 @@ impl ReplSession {
 
         let compiler = Compiler::new_with_globals(Rc::clone(&self.compiler_globals));
 
+        let context = TypeCheckContext::new(self.repl_path.clone(), Rc::clone(&self.type_loader));
+
         let function = Rc::new(
             compiler
-                .compile_repl(&statements)
+                .compile_repl_with_context(&statements, context)
                 .map_err(KastelError::from)?,
         );
 
@@ -365,3 +389,37 @@ fn input_complete(source: &str) -> bool {
 
     delimiter.is_none() && braces == 0 && brackets == 0 && parentheses == 0
 }
+
+#[cfg(test)]
+mod repl_tests {
+    use super::*;
+
+    fn run(session: &mut ReplSession, source: &str) -> Option<Value> {
+        session
+            .execute(source)
+            .map_err(|error| error.to_string())
+            .unwrap_or_else(|message| panic!("`{source}` a échoué : {message}"))
+    }
+
+    #[test]
+    fn imports_work_in_the_repl() {
+        let mut session = ReplSession::new().expect("session REPL");
+
+        // Import qualifié d'un module de la bibliothèque standard.
+        run(&mut session, "import std.math;");
+
+        assert!(matches!(
+            run(&mut session, "math.gcd(48, 18)"),
+            Some(Value::Integer(6))
+        ));
+
+        // Import direct d'une classe, puis usage sur une ligne suivante.
+        run(&mut session, "import std.math.Complexe;");
+
+        assert!(matches!(
+            run(&mut session, "new Complexe(3, 4).magnitude()"),
+            Some(Value::Float(value)) if value == 5.0
+        ));
+    }
+}
+

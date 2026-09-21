@@ -102,11 +102,16 @@ pub enum OpCode {
     /// couples (nom, valeur) de la pile. Ajouté en dernier (aucun
     /// discriminant existant ne bouge).
     Record,
+
+    /// `Overload <constante nom>` : ajoute la fonction au sommet de la pile à
+    /// l'ensemble de surcharges de la globale `nom` (voir
+    /// `Object::Overloads`). Opérande constante : préfixable par `Wide`.
+    Overload,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::Record as usize + 1;
+    pub const COUNT: usize = Self::Overload as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -183,7 +188,8 @@ mod tests {
         assert_eq!(OpCode::Tuple as u8, 63);
         assert_eq!(OpCode::Wide as u8, 64);
         assert_eq!(OpCode::Record as u8, 65);
-        assert_eq!(OpCode::COUNT, 66);
+        assert_eq!(OpCode::Overload as u8, 66);
+        assert_eq!(OpCode::COUNT, 67);
     }
 
     #[test]

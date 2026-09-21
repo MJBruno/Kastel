@@ -179,6 +179,13 @@ pub enum CompileError {
     ExpressionTooDeep {
         limit: usize,
     },
+
+    /// Deux fonctions globales de même nom ET de même nombre de paramètres
+    /// (la surcharge se fait par arité).
+    DuplicateFunction {
+        name: String,
+        arity: usize,
+    },
 }
 
 impl std::fmt::Display for CompileError {
@@ -382,6 +389,13 @@ impl std::fmt::Display for CompileError {
                 )
             }
 
+            CompileError::DuplicateFunction { name, arity } => {
+                write!(
+                    f,
+                    "La fonction '{name}' avec {arity} argument(s) est déjà déclarée"
+                )
+            }
+
             CompileError::ExpressionTooDeep { limit } => {
                 write!(
                     f,
@@ -533,6 +547,16 @@ impl CompileError {
             .with_len(member.len())
             .with_help(
                 "utilisez une méthode publique de la classe (par exemple un accesseur) au lieu d'accéder directement au membre.",
+            ),
+
+            CompileError::DuplicateFunction { name, arity } => Diagnostic::new(
+                format!("la fonction '{name}' avec {arity} argument(s) est déjà déclarée"),
+                0,
+                0,
+            )
+            .with_len(name.len())
+            .with_help(
+                "une fonction peut être surchargée, mais seulement avec un NOMBRE de paramètres différent.",
             ),
 
             CompileError::ExpressionTooDeep { limit } => Diagnostic::new(

@@ -5,6 +5,7 @@ use std::rc::Rc;
 use super::VirtualMachine;
 
 use crate::error::runtime_error::RuntimeError;
+use crate::runtime::object::Object;
 use crate::runtime::value::{NumericOp, Value};
 
 impl VirtualMachine {
@@ -28,6 +29,82 @@ impl VirtualMachine {
         self.current_global_env().borrow_mut().insert(name, value);
 
         Ok(())
+    }
+
+    /// `Overload <nom>` : la fonction au sommet de la pile rejoint
+    /// l'ensemble de surcharges de la globale `nom`, qui doit déjà contenir
+    /// une fonction de même nom (première déclaration).
+    ///
+    /// * globale = fonction seule -> elle devient un ensemble
+    ///   `[ancienne, nouvelle]` ;
+    /// * globale = ensemble -> la nouvelle y est ajoutée EN PLACE, donc une
+    ///   valeur `let g = f;` déjà prise voit aussi la nouvelle surcharge.
+    ///
+    /// Deux surcharges de même arité restent refusées (le compilateur les
+    /// détecte déjà ; ceci protège le cas d'un bytecode incohérent).
+    pub(crate) fn op_overload(&mut self, wide: bool) -> Result<(), RuntimeError> {
+        let constant = self.read_constant_byte(wide)?;
+        let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
+
+        let function = self.pop()?;
+
+        let new_arity = Self::function_arity(&function).ok_or(RuntimeError::TypeError)?;
+
+        let globals = self.current_global_env();
+        let existing = globals
+            .borrow()
+            .get(&name)
+            .cloned()
+            .ok_or(RuntimeError::TypeError)?;
+
+        // Ensemble déjà constitué : ajout en place.
+        if let Value::Object(handle) = &existing {
+            let mut object = handle.borrow_mut();
+
+            if let Object::Overloads { functions, .. } = &mut *object {
+                if functions
+                    .iter()
+                    .any(|other| Self::function_arity(other) == Some(new_arity))
+                {
+                    return Err(RuntimeError::DuplicateMethod {
+                        name,
+                        arity: new_arity,
+                    });
+                }
+
+                functions.push(function);
+
+                return Ok(());
+            }
+        }
+
+        // Première surcharge : la globale est encore une fonction seule.
+        let existing_arity = Self::function_arity(&existing).ok_or(RuntimeError::TypeError)?;
+
+        if existing_arity == new_arity {
+            return Err(RuntimeError::DuplicateMethod {
+                name,
+                arity: new_arity,
+            });
+        }
+
+        let set = Value::new_overloads(name.clone(), vec![existing, function]);
+
+        globals.borrow_mut().insert(name, set);
+
+        Ok(())
+    }
+
+    /// Nombre de paramètres d'une fermeture de fonction libre.
+    pub(crate) fn function_arity(value: &Value) -> Option<usize> {
+        match value {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Closure(closure) => Some(closure.function.arity),
+                _ => None,
+            },
+
+            _ => None,
+        }
     }
 
     pub(crate) fn get_global(&mut self, wide: bool) -> Result<(), RuntimeError> {

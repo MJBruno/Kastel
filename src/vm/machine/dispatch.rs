@@ -347,6 +347,11 @@ impl VirtualMachine {
                 Ok(false)
             }
 
+            OpCode::Overload => {
+                self.op_overload(false)?;
+                Ok(false)
+            }
+
             // ========================================================
             // ITERATORS
             // ========================================================
@@ -519,6 +524,8 @@ impl VirtualMachine {
             OpCode::ImportAll => self.import_all(true)?,
 
             OpCode::Closure => self.op_closure(true)?,
+
+            OpCode::Overload => self.op_overload(true)?,
 
             OpCode::InvokeMethod => {
                 let method_constant = self.read_constant_operand(true)? as usize;

@@ -530,6 +530,11 @@ impl Value {
     // ============================================================
 
     /// Construit un record (`{ name: "Bruno", age: 25 }`).
+    /// Ensemble de surcharges d'une fonction globale (voir `Object::Overloads`).
+    pub fn new_overloads(name: String, functions: Vec<Value>) -> Self {
+        Self::new_heap_object(Object::Overloads { name, functions })
+    }
+
     pub fn new_record(fields: Vec<(String, Value)>) -> Self {
         Self::new_heap_object(Object::Record(fields))
     }
@@ -1058,6 +1063,10 @@ impl std::fmt::Display for Value {
                     write!(f, "<fun '{}'>", function.name)
                 }
 
+                Object::Overloads { name, functions } => {
+                    write!(f, "<fun '{}' ({} surcharges)>", name, functions.len())
+                }
+
                 Object::Closure(closure) => {
                     write!(f, "<closure '{}'>", closure.function.name)
                 }
@@ -1147,7 +1156,7 @@ impl Value {
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",
                 Object::Record(_) => "record",
-                Object::Function(_) | Object::Closure(_) => "function",
+                Object::Function(_) | Object::Closure(_) | Object::Overloads { .. } => "function",
                 Object::Iterator(_) => "iterator",
                 Object::Module(_) => "module",
                 Object::BoundMethod { .. } => "function",

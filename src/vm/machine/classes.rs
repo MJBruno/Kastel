@@ -426,6 +426,9 @@ impl VirtualMachine {
         self.temp_roots.push(class_value.clone());
         self.temp_roots.extend(args.iter().cloned());
 
+        // 0. Constructeur `private` : `new` réservé au corps de la classe.
+        self.ensure_constructor_access(&class_handle)?;
+
         // 1. Choix du constructeur, par arité (surcharge). Les constructeurs
         //    de la classe de base sont hérités.
         let constructor =

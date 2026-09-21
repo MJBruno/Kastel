@@ -1,6 +1,6 @@
 // Classes - properties
 class User {
-    func init(name, age) {
+    func initialize(name, age) {
         this.name = name;
         this.age = age;
     }

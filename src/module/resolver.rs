@@ -74,10 +74,10 @@ impl ModuleResolver {
         &self.std_root
     }
 
-    /// Résout `parts` (le chemin pointé par un `import`/
-    /// `from ... import`), écrit depuis le fichier `current_module`.
     /// Résout la sémantique d'un import qualifié de Kastel de manière unique
-    /// pour le TypeChecker et la VM.
+    /// pour le TypeChecker et la VM : `parts` (le chemin pointé par un
+    /// `import` / `from ... import`, écrit depuis le fichier
+    /// `current_module`) désigne soit un MODULE, soit un EXPORT d'un module.
     ///
     /// Exemples :
     /// - `import export_mod` -> module `export_mod.ks`
@@ -116,6 +116,10 @@ impl ModuleResolver {
         }
     }
 
+    /// Résout `parts` en chemin d'un FICHIER module (pas d'export), selon les
+    /// trois espaces décrits en tête de fichier : `std.*`, local, projet.
+    /// Le fichier `current_module` n'a pas besoin d'exister : seul son
+    /// répertoire compte (c'est le cas du REPL).
     pub fn resolve(
         &self,
         current_module: &Path,

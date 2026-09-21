@@ -3,6 +3,7 @@ use super::bytecode::frame_closure;
 
 use crate::{
     error::runtime_error::RuntimeError,
+    frontend::ast::CONSTRUCTOR_NAME,
     runtime::{gc_handle::Gc, object::Object, value::Value},
     stdlib::{array, dict},
 };
@@ -196,11 +197,65 @@ impl VirtualMachine {
     /// Les closures créées DANS une méthode héritent de sa classe (voir
     /// `op_closure`) : un rappel écrit dans une méthode peut donc accéder
     /// aux membres privés de cette classe.
-    fn caller_owner_class(&self) -> Option<Gc<Object>> {
+    pub(crate) fn caller_owner_class(&self) -> Option<Gc<Object>> {
         let frame = self.frames.last()?;
         let owner = frame_closure(&frame.closure).owner_class.clone();
 
         owner
+    }
+
+    /// `new C(...)` : refuse si le constructeur retenu (`initialize`, hérité
+    /// ou non) est `private` et que le code appelant n'est pas une méthode de
+    /// la classe qui le déclare. Sans constructeur déclaré (constructeur par
+    /// défaut implicite), aucun contrôle.
+    pub(crate) fn ensure_constructor_access(&self, class: &Gc<Object>) -> Result<(), RuntimeError> {
+        let mut current = Some(class.clone());
+
+        while let Some(candidate) = current {
+            let (declares, is_private, class_name, superclass) = {
+                let object = candidate.borrow();
+
+                match &*object {
+                    Object::Class {
+                        name,
+                        methods,
+                        private_members,
+                        superclass,
+                        ..
+                    } => (
+                        methods.contains_key(CONSTRUCTOR_NAME),
+                        private_members.contains(CONSTRUCTOR_NAME),
+                        name.clone(),
+                        superclass.clone(),
+                    ),
+
+                    _ => return Ok(()),
+                }
+            };
+
+            if declares {
+                if !is_private {
+                    return Ok(());
+                }
+
+                let allowed = self
+                    .caller_owner_class()
+                    .is_some_and(|owner| Gc::ptr_eq(&owner, &candidate));
+
+                return if allowed {
+                    Ok(())
+                } else {
+                    Err(RuntimeError::PrivateMemberAccess {
+                        class_name,
+                        member: CONSTRUCTOR_NAME.to_string(),
+                    })
+                };
+            }
+
+            current = superclass;
+        }
+
+        Ok(())
     }
 
     /// Refuse l'accès à `receiver.name` si `name` est un membre `private`

@@ -1,6 +1,6 @@
 // Classes - methods
 class Animal {
-    func init(name) {
+    func initialize(name) {
         this.name = name;
     }
 

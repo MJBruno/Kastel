@@ -700,3 +700,288 @@ let h = half(3);
     assert!(is_float);
 }
 
+// ============================================================
+//        SURCHARGE DE FONCTIONS, CLASSES IMPORTÉES, PRIVÉ
+// ============================================================
+
+/// Exécute `main_source` dans un projet temporaire contenant `files`.
+/// `Err("compile: ...")` = refusé à la compilation (vérificateur ou
+/// compilateur) ; `Err("runtime: ...")` = échec à l'exécution.
+fn run_project<T: Send + 'static>(
+    name: &str,
+    files: &[(&str, &str)],
+    main_source: &str,
+    extract: impl FnOnce(&VirtualMachine) -> T + Send + 'static,
+) -> Result<T, String> {
+    let root = std::env::temp_dir().join(format!("kastel_{name}_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+
+    for (file, content) in files {
+        fs::write(root.join(file), content).unwrap();
+    }
+
+    let main_path = root.join("main.ks");
+    fs::write(&main_path, main_source).unwrap();
+    let main_path = fs::canonicalize(&main_path).unwrap();
+
+    let project_root = root.clone();
+    let main_source = main_source.to_string();
+
+    let outcome = on_big_stack(move || {
+        let tokens = Lexer::new(main_source).scan_token().map_err(|_| "compile: lexer")?;
+        let statements = Parser::new(tokens)
+            .parse()
+            .map_err(|errors| format!("compile: parser {}", errors[0].message))?;
+
+        let resolver = ModuleResolver::new(project_root);
+        let type_loader = Rc::new(ModuleTypeLoader::new(resolver.clone()));
+        let context = TypeCheckContext::new(main_path.clone(), type_loader);
+
+        let mut compiler = Compiler::new();
+        execute_native(&mut compiler);
+
+        let function = Rc::new(
+            compiler
+                .compile_with_context(&statements, context)
+                .map_err(|error| format!("compile: {error}"))?,
+        );
+
+        let mut vm = VirtualMachine::new_with_loader(
+            function,
+            Some(main_path),
+            ModuleLoader::with_resolver(resolver),
+        );
+
+        vm.run().map_err(|error| format!("runtime: {error}"))?;
+
+        Ok::<T, String>(extract(&vm))
+    });
+
+    let _ = fs::remove_dir_all(&root);
+
+    outcome
+}
+
+#[test]
+fn free_functions_are_overloaded_by_arity() {
+    let source = r#"
+func describe() { return "zéro"; }
+func describe(a) { return "un"; }
+func describe(a, b) { return "deux"; }
+
+let r0 = describe();
+let r1 = describe(1);
+let r2 = describe(1, 2);
+
+// Une fonction surchargée se passe comme une valeur.
+let f = describe;
+let r3 = f(1, 2);
+
+// Et comme rappel : `map` appelle avec UN argument.
+let mapped = [1, 2, 3].map(describe);
+let first = mapped.get(0);
+"#;
+
+    assert_eq!(text_of(source, "r0"), "zéro");
+    assert_eq!(text_of(source, "r1"), "un");
+    assert_eq!(text_of(source, "r2"), "deux");
+    assert_eq!(text_of(source, "r3"), "deux");
+    assert_eq!(text_of(source, "first"), "un");
+}
+
+#[test]
+fn overloaded_function_call_with_no_matching_arity_is_an_error() {
+    // `g` est dynamique : le vérificateur ne peut pas refuser l'appel.
+    let refused = on_big_stack(|| {
+        let (_vm, result) = run_script(
+            r#"
+func describe(a) { return "un"; }
+func describe(a, b) { return "deux"; }
+
+func call_with_three(g) { return g(1, 2, 3); }
+call_with_three(describe);
+"#,
+        );
+
+        matches!(result, Err(RuntimeError::WrongArgumentCount { .. }))
+    });
+
+    assert!(refused);
+}
+
+#[test]
+fn exported_overloaded_functions_work_across_modules() {
+    let shapes = r#"
+export func area(side) { return side * side; }
+export func area(width, height) { return width * height; }
+"#;
+
+    let main = r#"
+import shapes;
+from shapes import area;
+
+let square = shapes.area(3);
+let rectangle = shapes.area(2, 5);
+let direct = area(4);
+let direct2 = area(4, 6);
+"#;
+
+    let values = run_project("overload_modules", &[("shapes.ks", shapes)], main, |vm| {
+        (
+            integer(global(vm, "square")),
+            integer(global(vm, "rectangle")),
+            integer(global(vm, "direct")),
+            integer(global(vm, "direct2")),
+        )
+    })
+    .expect("le projet doit s'exécuter");
+
+    assert_eq!(values, (9, 10, 16, 24));
+}
+
+const PERSONNE_MODULE: &str = r#"
+export class Personne {
+    private let age: int = 0;
+
+    func initialize(name: str) {
+        this.name = name;
+    }
+
+    func initialize(name: str, age: int) {
+        this.name = name;
+        this.age = age;
+    }
+
+    func getAge() -> int {
+        return this.age;
+    }
+}
+"#;
+
+#[test]
+fn imported_classes_are_checked_statically_like_local_ones() {
+    let files = [("personne.ks", PERSONNE_MODULE)];
+
+    // Constructeurs surchargés : 1 et 2 arguments valides.
+    let ok = run_project(
+        "imported_ok",
+        &files,
+        r#"
+import personne.Personne;
+let a = new Personne("A");
+let b = new Personne("B", 30);
+let age = b.getAge();
+"#,
+        |vm| integer(global(vm, "age")),
+    );
+
+    assert_eq!(ok, Ok(30));
+
+    let compile_error = |main: &str| -> String {
+        run_project("imported_err", &files, main, |_| ()).expect_err("doit être refusé")
+    };
+
+    // Aucune surcharge à 3 arguments : refusé à la COMPILATION.
+    let arity = compile_error("import personne.Personne; let p = new Personne(\"A\", 1, 2);");
+    assert!(arity.starts_with("compile:"), "{arity}");
+
+    // Champ privé d'une classe importée : refusé à la COMPILATION.
+    let private = compile_error(
+        "import personne.Personne; let p = new Personne(\"A\"); let x = p.age;",
+    );
+    assert!(private.starts_with("compile:"), "{private}");
+    assert!(private.contains("privé"), "{private}");
+
+    // Alias d'import : `P` désigne `Personne`.
+    let aliased = run_project(
+        "imported_alias",
+        &files,
+        r#"
+from personne import Personne as P;
+let p: P = new P("A", 7);
+let age = p.getAge();
+"#,
+        |vm| integer(global(vm, "age")),
+    );
+
+    assert_eq!(aliased, Ok(7));
+}
+
+#[test]
+fn a_private_constructor_forbids_new_outside_the_class() {
+    // Refusé à la compilation quand la classe est connue.
+    let refused = on_big_stack(|| {
+        let tokens = Lexer::new(
+            r#"
+class Solo {
+    private func initialize() { this.v = 1; }
+}
+let s = new Solo();
+"#
+            .to_string(),
+        )
+        .scan_token()
+        .unwrap();
+        let statements = Parser::new(tokens).parse().unwrap();
+
+        let mut compiler = Compiler::new();
+        execute_native(&mut compiler);
+
+        compiler.compile(&statements).is_err()
+    });
+
+    assert!(refused);
+
+    // Une classe dérivée qui déclare son propre constructeur public peut
+    // déléguer au constructeur privé de sa base (`base.initialize()`).
+    let value = value_of(
+        r#"
+class Base {
+    private func initialize() { this.v = 7; }
+}
+
+class Derived: Base {
+    func initialize() { base.initialize(); }
+}
+
+let d = new Derived();
+let v = d.v;
+"#,
+        "v",
+    );
+
+    assert_eq!(value, 7);
+}
+
+#[test]
+fn json_and_display_never_expose_private_fields() {
+    // `json_encode` n'encode pas les instances ; l'affichage n'en montre pas
+    // les champs.
+    assert_eq!(
+        text_of(
+            r#"
+class Secret { private let key: int = 42; }
+let s = new Secret();
+let shown = str(s);
+"#,
+            "shown"
+        ),
+        "<Secret instance>"
+    );
+
+    let refused = on_big_stack(|| {
+        let (_vm, result) = run_script(
+            r#"
+class Secret { private let key: int = 42; }
+let s = new Secret();
+let j = json_encode(s);
+"#,
+        );
+
+        result.is_err()
+    });
+
+    assert!(refused);
+}
+

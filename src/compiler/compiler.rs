@@ -14,13 +14,13 @@ use super::loops::LoopContext;
 use super::type_checker::{TypeCheckContext, TypeChecker};
 use super::variables::Global;
 
-
 /// Profondeur maximale d'une expression pour le compilateur et le
 /// vérificateur de types (tous deux récursifs). Une chaîne d'opérateurs
 /// `1 + 1 + 1 + ...` produit un arbre de la profondeur du nombre de termes :
 /// au-delà de cette limite, `CompileError::ExpressionTooDeep` plutôt qu'un
 /// débordement de la pile native.
 pub const MAX_EXPRESSION_DEPTH: usize = 5_000;
+
 #[allow(dead_code)]
 pub struct Compiler {
     pub(crate) globals: Rc<RefCell<HashMap<String, Global>>>,
@@ -38,6 +38,16 @@ pub struct Compiler {
     pub(crate) wildcard_imported: bool,
 
     pub(crate) predeclared_functions: HashSet<String>,
+
+    /// Arités des fonctions globales de même nom (surcharge par arité) :
+    /// une fonction peut être déclarée plusieurs fois avec un nombre de
+    /// paramètres différent.
+    pub(crate) function_arities: HashMap<String, Vec<usize>>,
+
+    /// Fonctions globales dont la PREMIÈRE déclaration a déjà été compilée
+    /// (`DefineGlobal`) ; les suivantes s'ajoutent à l'ensemble de
+    /// surcharges (`Overload`).
+    pub(crate) defined_functions: HashSet<String>,
 
     pub(crate) finally_blocks: Vec<Vec<Statement>>,
 
@@ -63,6 +73,8 @@ impl Compiler {
             exports: Vec::new(),
             imported_modules: HashSet::new(),
             predeclared_functions: HashSet::new(),
+            function_arities: HashMap::new(),
+            defined_functions: HashSet::new(),
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
@@ -84,6 +96,8 @@ impl Compiler {
             exports: Vec::new(),
             imported_modules: HashSet::new(),
             predeclared_functions: HashSet::new(),
+            function_arities: HashMap::new(),
+            defined_functions: HashSet::new(),
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
@@ -109,6 +123,8 @@ impl Compiler {
             exports: Vec::new(),
             imported_modules: HashSet::new(),
             predeclared_functions: HashSet::new(),
+            function_arities: HashMap::new(),
+            defined_functions: HashSet::new(),
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
@@ -165,6 +181,41 @@ impl Compiler {
         Ok(())
     }
 
+    /// Enregistre le nom global d'une fonction, classe ou interface.
+    fn predeclare_global_name(&mut self, name: &String) -> Result<(), CompileError> {
+        let existing = self.globals.borrow().get(name).cloned();
+
+        if let Some(global) = existing {
+            if !global.native {
+                return Err(CompileError::VariableAlreadyDeclared(name.clone()));
+            }
+
+            self.globals.borrow_mut().insert(
+                name.clone(),
+                Global {
+                    constant: global.constant,
+                    mutable: true,
+                    native: false,
+                },
+            );
+        } else {
+            let constant = self.identifier_constant(name)?;
+
+            self.globals.borrow_mut().insert(
+                name.clone(),
+                Global {
+                    constant,
+                    mutable: true,
+                    native: false,
+                },
+            );
+        }
+
+        self.predeclared_functions.insert(name.clone());
+
+        Ok(())
+    }
+
     fn predeclare_global_function(&mut self, statement: &Statement) -> Result<(), CompileError> {
         match statement {
             Statement::Positioned { statement, .. } => self.predeclare_global_function(statement),
@@ -185,40 +236,31 @@ impl Compiler {
              *     "variable non définie" puisque le nom global n'est
              *     enregistré qu'après compilation du corps.
              */
-            Statement::Function { name, .. }
-            | Statement::Class { name, .. }
-            | Statement::Interface { name, .. } => {
-                let existing = self.globals.borrow().get(name).cloned();
-
-                if let Some(global) = existing {
-                    if !global.native {
-                        return Err(CompileError::VariableAlreadyDeclared(name.clone()));
+            // Une fonction globale peut être surchargée par ARITÉ : les
+            // déclarations suivantes du même nom s'ajoutent à l'ensemble de
+            // surcharges (même arité = erreur).
+            Statement::Function { name, params, .. } => {
+                if let Some(arities) = self.function_arities.get_mut(name) {
+                    if arities.contains(&params.len()) {
+                        return Err(CompileError::DuplicateFunction {
+                            name: name.clone(),
+                            arity: params.len(),
+                        });
                     }
 
-                    self.globals.borrow_mut().insert(
-                        name.clone(),
-                        Global {
-                            constant: global.constant,
-                            mutable: true,
-                            native: false,
-                        },
-                    );
-                } else {
-                    let constant = self.identifier_constant(name)?;
+                    arities.push(params.len());
 
-                    self.globals.borrow_mut().insert(
-                        name.clone(),
-                        Global {
-                            constant,
-                            mutable: true,
-                            native: false,
-                        },
-                    );
+                    return Ok(());
                 }
 
-                self.predeclared_functions.insert(name.clone());
+                self.function_arities
+                    .insert(name.clone(), vec![params.len()]);
 
-                Ok(())
+                self.predeclare_global_name(name)
+            }
+
+            Statement::Class { name, .. } | Statement::Interface { name, .. } => {
+                self.predeclare_global_name(name)
             }
 
             _ => Ok(()),

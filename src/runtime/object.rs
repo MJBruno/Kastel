@@ -42,6 +42,15 @@ pub enum Object {
 
     Function(Rc<Function>),
 
+    /// Fonction GLOBALE surchargée par arité : `func f(a) {}` + `func f(a, b) {}`.
+    /// Les fermetures sont rangées dans l'ordre de déclaration ; un appel
+    /// choisit celle dont le nombre de paramètres égale celui des arguments.
+    /// Se passe comme une valeur (`let g = f;`) et s'exporte comme un seul nom.
+    Overloads {
+        name: String,
+        functions: Vec<Value>,
+    },
+
     Closure(Closure),
 
     BoundMethod {
@@ -120,6 +129,10 @@ impl Object {
 
             Object::Record(fields) => {
                 fields.clear();
+            }
+
+            Object::Overloads { functions, .. } => {
+                functions.clear();
             }
 
             Object::Function(_) => {}

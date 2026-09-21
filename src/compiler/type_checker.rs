@@ -6,7 +6,7 @@ use crate::frontend::ast::*;
 use super::{
     builtin_types,
     compiler::MAX_EXPRESSION_DEPTH,
-    module_types::{ImportedType, ModuleTypeLoader},
+    module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
     types::{FunctionType, Type},
 };
 
@@ -34,8 +34,14 @@ struct Binding {
     native: bool,
 }
 
+/// Ce que le vérificateur sait d'une classe (ou interface) : bases,
+/// méthodes surchargées, champs typés, membres privés.
+///
+/// Exporté avec l'INTERFACE de types d'un module : une classe importée est
+/// ainsi vérifiée comme une classe locale (arité des constructeurs,
+/// surcharges, champs, visibilité `private`).
 #[derive(Debug, Clone)]
-struct ClassInfo {
+pub(crate) struct ClassInfo {
     bases: Vec<String>,
     /// Une classe peut surcharger une méthode par son arité.
     /// Deux signatures de même nom et de même arité restent interdites.
@@ -66,6 +72,12 @@ pub struct TypeChecker {
     /// Alias de type du fichier (`type Person = { ... };`), développés par
     /// `resolve_type`. Locaux au fichier : ils ne s'exportent pas.
     aliases: HashMap<String, TypeExpr>,
+
+    /// Signatures de chaque fonction GLOBALE, par nom : plusieurs entrées =
+    /// surcharge par arité. Les appels directs (`add(1, 2)`) choisissent la
+    /// signature comme pour les méthodes ; le nom lui-même, pris comme valeur,
+    /// reste dynamique.
+    function_overloads: HashMap<String, Vec<FunctionType>>,
 }
 
 impl TypeChecker {
@@ -84,26 +96,42 @@ impl TypeChecker {
         checker.check_statements(statements)
     }
 
-    pub fn analyze_module(
+    pub(crate) fn analyze_module(
         statements: &[Statement],
         context: TypeCheckContext,
-    ) -> Result<HashMap<String, Type>, CompileError> {
+    ) -> Result<(HashMap<String, Type>, HashMap<String, ClassInfo>), CompileError> {
         let mut checker = Self::new_with_context(context);
         checker.collect_top_level(statements)?;
         checker.check_statements(statements)?;
 
         let mut exports = HashMap::new();
+        let mut function_exports: HashSet<String> = HashSet::new();
+
         for statement in statements {
             let Statement::Export { statement } = Self::strip_position(statement) else {
                 continue;
             };
-            let (name, ty) = checker.export_type(Self::strip_position(statement))?;
+            let inner = Self::strip_position(statement);
+            let (name, ty) = checker.export_type(inner)?;
+
+            // Une fonction exportée plusieurs fois (surcharge par arité) ne
+            // forme qu'UN export, de type dynamique côté importateur.
+            let is_function = matches!(inner, Statement::Function { .. });
+
             if exports.insert(name.clone(), ty).is_some() {
-                return Err(CompileError::DuplicateExport(name));
+                if is_function && function_exports.contains(&name) {
+                    exports.insert(name.clone(), Type::Dynamic);
+                } else {
+                    return Err(CompileError::DuplicateExport(name));
+                }
+            }
+
+            if is_function {
+                function_exports.insert(name);
             }
         }
 
-        Ok(exports)
+        Ok((exports, checker.classes))
     }
 
     fn new() -> Self {
@@ -129,6 +157,7 @@ impl TypeChecker {
             current_class: None,
             expression_depth: 0,
             aliases: HashMap::new(),
+            function_overloads: HashMap::new(),
             context: None,
         }
     }
@@ -245,8 +274,34 @@ impl TypeChecker {
                         ),
                     };
 
-                    self.declare_global_declaration(name, Type::Function(signature.clone()))?;
-                    self.functions.insert(name.clone(), signature);
+                    // Surcharge par arité : les déclarations suivantes du même
+                    // nom s'ajoutent à l'ensemble ; le nom devient alors une
+                    // valeur dynamique (les appels directs sont résolus par
+                    // arité, voir `Expression::Call`).
+                    if let Some(overloads) = self.function_overloads.get_mut(name) {
+                        if overloads
+                            .iter()
+                            .any(|existing| existing.params.len() == signature.params.len())
+                        {
+                            return Err(CompileError::DuplicateFunction {
+                                name: name.clone(),
+                                arity: signature.params.len(),
+                            });
+                        }
+
+                        overloads.push(signature);
+
+                        if let Some(binding) = self.scopes[0].get_mut(name) {
+                            binding.ty = Type::Dynamic;
+                        }
+
+                        self.functions.remove(name);
+                    } else {
+                        self.function_overloads
+                            .insert(name.clone(), vec![signature.clone()]);
+                        self.declare_global_declaration(name, Type::Function(signature.clone()))?;
+                        self.functions.insert(name.clone(), signature);
+                    }
                 }
 
                 Statement::Class {
@@ -669,7 +724,14 @@ impl TypeChecker {
 
         if items.len() == 1 && items[0].name == "*" {
             for (name, ty) in &interface.exports {
-                self.declare_import_binding(name, ImportedType::Export(ty.clone()))?;
+                self.declare_import_binding(
+                    name,
+                    ImportedType::Export {
+                        ty: ty.clone(),
+                        name: name.clone(),
+                        interface: Rc::clone(&interface),
+                    },
+                )?;
             }
             return Ok(());
         }
@@ -687,7 +749,14 @@ impl TypeChecker {
             })?;
 
             let binding_name = item.alias.as_deref().unwrap_or(&item.name);
-            self.declare_import_binding(binding_name, ImportedType::Export(ty))?;
+            self.declare_import_binding(
+                binding_name,
+                ImportedType::Export {
+                    ty,
+                    name: item.name.clone(),
+                    interface: Rc::clone(&interface),
+                },
+            )?;
         }
 
         Ok(())
@@ -700,6 +769,42 @@ impl TypeChecker {
             .resolve_import(&context.current_module, path)
     }
 
+    /// Enregistre la classe `exported_name` d'un module importé, et ses bases
+    /// (transitivement), sous leurs noms d'origine. Une classe déjà connue
+    /// localement sous ce nom n'est pas remplacée.
+    fn import_class_info(&mut self, interface: &ModuleTypeInterface, exported_name: &str) {
+        let mut pending = vec![exported_name.to_string()];
+        let mut visited = HashSet::new();
+
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+
+            let Some(info) = interface.classes.get(&name) else {
+                continue;
+            };
+
+            self.classes
+                .entry(name.clone())
+                .or_insert_with(|| info.clone());
+            self.parents
+                .entry(name.clone())
+                .or_insert_with(|| info.bases.clone());
+
+            pending.extend(info.bases.iter().cloned());
+        }
+    }
+
+    /// Nom de la classe désignée par `name`, en suivant un alias d'import
+    /// (`from m import Personne as P`).
+    fn canonical_class_name(&self, name: &str) -> String {
+        match self.aliases.get(name) {
+            Some(TypeExpr::Named(target)) => target.clone(),
+            _ => name.to_string(),
+        }
+    }
+
     fn declare_import_binding(
         &mut self,
         binding_name: &str,
@@ -707,7 +812,26 @@ impl TypeChecker {
     ) -> Result<(), CompileError> {
         let ty = match imported {
             ImportedType::Module(path) => Type::Module(path.to_string_lossy().into_owned()),
-            ImportedType::Export(ty) => ty,
+
+            ImportedType::Export {
+                ty,
+                name,
+                interface,
+            } => {
+                // Une classe importée est connue en détail (constructeurs,
+                // méthodes, champs, membres privés), pas seulement par son nom.
+                if interface.classes.contains_key(&name) {
+                    self.import_class_info(&interface, &name);
+
+                    // `from m import Personne as P` : `P` désigne `Personne`.
+                    if binding_name != name {
+                        self.aliases
+                            .insert(binding_name.to_string(), TypeExpr::Named(name));
+                    }
+                }
+
+                ty
+            }
         };
 
         let is_global_scope = self.scopes.len() == 1;
@@ -752,6 +876,16 @@ impl TypeChecker {
                     name: name.clone(),
                     suggestion: None,
                 }),
+
+            // Fonction surchargée : un seul export, dynamique côté importateur.
+            Statement::Function { name, .. }
+                if self
+                    .function_overloads
+                    .get(name)
+                    .is_some_and(|overloads| overloads.len() > 1) =>
+            {
+                Ok((name.clone(), Type::Dynamic))
+            }
 
             Statement::Function { name, .. } => self
                 .functions
@@ -856,6 +990,16 @@ impl TypeChecker {
         if return_type.is_none() {
             if let Some(function) = self.functions.get_mut(name) {
                 function.return_type = Box::new(inferred_return.clone());
+            }
+
+            // Fonction surchargée : on met à jour la signature de MÊME arité.
+            if !nested
+                && let Some(overloads) = self.function_overloads.get_mut(name)
+                && let Some(signature) = overloads
+                    .iter_mut()
+                    .find(|signature| signature.params.len() == params.len())
+            {
+                signature.return_type = Box::new(inferred_return.clone());
             }
 
             if nested {
@@ -1158,6 +1302,22 @@ impl TypeChecker {
             Expression::Call {
                 callee, arguments, ..
             } => {
+                // Fonction globale SURCHARGÉE (`add(1)`, `add(1, 2)`) : la
+                // signature est choisie par arité et par type, comme pour une
+                // méthode.
+                if let Expression::Variable(name) = callee.as_ref()
+                    && self.is_global_binding(name)
+                    && let Some(signatures) = self
+                        .function_overloads
+                        .get(name)
+                        .filter(|signatures| signatures.len() > 1)
+                        .cloned()
+                {
+                    let signature = self.resolve_overload(&signatures, arguments, name)?;
+
+                    return Ok(*signature.return_type);
+                }
+
                 // `Set(a, b, c)` (native, non redéfinie) : le type d'élément
                 // est déduit des arguments -> `Set<int>` pour `Set(1, 2, 3)`.
                 if let Expression::Variable(name) = callee.as_ref()
@@ -1331,6 +1491,12 @@ impl TypeChecker {
                 arguments,
                 ..
             } => {
+                let class_name = &self.canonical_class_name(class_name);
+
+                // Constructeur `private` : `new` n'est permis que dans le
+                // corps de la classe qui le déclare.
+                self.check_member_visibility(class_name, CONSTRUCTOR_NAME)?;
+
                 let signatures = self.find_methods(class_name, CONSTRUCTOR_NAME);
 
                 if !signatures.is_empty() {
@@ -1644,6 +1810,15 @@ impl TypeChecker {
         }
 
         Ok(Type::Dynamic)
+    }
+
+    /// `true` si `name` désigne la variable/fonction GLOBALE (aucune portée
+    /// locale ne la masque).
+    fn is_global_binding(&self, name: &str) -> bool {
+        self.scopes
+            .iter()
+            .skip(1)
+            .all(|scope| !scope.contains_key(name))
     }
 
     /// `true` si `class_name` et toutes ses bases sont déclarées dans ce
@@ -2532,6 +2707,70 @@ func half(x: int | float) -> float {
     fn array_was_renamed_list() {
         assert!(check("let a: List<int> = [1, 2];").is_ok());
         assert!(parse_fails("let a: Array<int> = [1, 2];"));
+    }
+
+    #[test]
+    fn global_functions_can_be_overloaded_by_arity() {
+        let ok = check(
+            r#"
+func area() -> int { return 0; }
+func area(a: int) -> int { return a; }
+func area(a: int, b: int) -> int { return a * b; }
+
+let x: int = area();
+let y: int = area(3);
+let z: int = area(2, 5);
+
+// Pris comme valeur, le nom reste dynamique.
+let f = area;
+
+// Une variable locale de même nom masque la fonction.
+func shadow() {
+    let area = 5;
+    return area;
+}
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        // Aucune surcharge à 3 arguments, ou mauvais type d'argument.
+        assert!(check("func f(a) {} func f(a, b) {} f(1, 2, 3);").is_err());
+        assert!(check("func f(a: int) {} func f(a: int, b: int) {} f(\"x\");").is_err());
+
+        // Même arité = doublon.
+        let duplicate = check("func f(a) {} func f(b) {}");
+        assert!(matches!(duplicate, Err(CompileError::DuplicateFunction { .. })));
+
+        // Le type de retour dépend de la surcharge choisie.
+        assert!(
+            check("func g(a: int) -> int { return a; } func g(a: str) -> str { return a; }")
+                .is_err()
+        );
+        assert!(
+            check(
+                "func g(a: int) -> int { return a; } func g(a: int, b: int) -> str { return \"s\"; } let s: str = g(1, 2); let n: int = g(1);"
+            )
+            .is_ok()
+        );
+        assert!(
+            check(
+                "func g(a: int) -> int { return a; } func g(a: int, b: int) -> str { return \"s\"; } let n: int = g(1, 2);"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn private_constructors_are_refused_statically_outside_the_class() {
+        assert!(
+            check("class S { private func initialize() { this.v = 1; } } let s = new S();")
+                .is_err()
+        );
+
+        // Public : aucun problème ; `base.initialize()` reste permis.
+        assert!(
+            check("class S { func initialize() { this.v = 1; } } let s = new S();").is_ok()
+        );
     }
 }
 

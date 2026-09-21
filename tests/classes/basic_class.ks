@@ -1,5 +1,5 @@
 class Point {
-    func init(x, y) {
+    func initialize(x, y) {
         this.x = x;
         this.y = y;
     }

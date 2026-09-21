@@ -332,6 +332,12 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
             }
         }
 
+        Object::Overloads { functions, .. } => {
+            for function in functions {
+                mark_value(function, state);
+            }
+        }
+
         Object::Function(function) => {
             mark_function(function, state);
         }

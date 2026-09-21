@@ -1,5 +1,5 @@
 class Animal {
-    func init(name) {
+    func initialize(name) {
         this.name = name;
     }
 
@@ -9,8 +9,8 @@ class Animal {
 }
 
 class Dog : Animal {
-    func init(name, breed) {
-        base.init(name);
+    func initialize(name, breed) {
+        base.initialize(name);
         this.breed = breed;
     }
 

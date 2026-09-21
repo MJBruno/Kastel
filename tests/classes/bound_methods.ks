@@ -1,6 +1,6 @@
 // Classes - bound methods
 class Counter {
-    func init() {
+    func initialize() {
         this.value = 0;
     }
 

@@ -5,7 +5,7 @@ use crate::runtime::function::Function;
 use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
-use super::type_checker::TypeChecker;
+use super::type_checker::{TypeCheckContext, TypeChecker};
 use super::variables::{Global, VariableLocation};
 
 #[allow(dead_code)]
@@ -1337,7 +1337,13 @@ impl Compiler {
             }
 
             Statement::Function { name, .. } => {
-                self.register_export(name)?;
+                // Plusieurs `export func` de même nom = surcharges d'UN seul
+                // export (les doublons de même arité sont refusés à la
+                // prédéclaration).
+                if !self.exports.iter().any(|export| export == name) {
+                    self.register_export(name)?;
+                }
+
                 self.compile_statement(statement)?;
             }
 
@@ -1359,11 +1365,31 @@ impl Compiler {
         Ok(())
     }
 
-    pub(crate) fn compile_repl(
+    /// REPL sans contexte de résolution (les imports y sont refusés).
+    #[allow(dead_code)]
+    pub(crate) fn compile_repl(self, statements: &[Statement]) -> Result<Function, CompileError> {
+        self.compile_repl_inner(statements, None)
+    }
+
+    /// REPL avec contexte de résolution : `import` et `from ... import`
+    /// fonctionnent (les chemins sont résolus à partir du répertoire courant).
+    pub(crate) fn compile_repl_with_context(
+        self,
+        statements: &[Statement],
+        context: TypeCheckContext,
+    ) -> Result<Function, CompileError> {
+        self.compile_repl_inner(statements, Some(context))
+    }
+
+    fn compile_repl_inner(
         mut self,
         statements: &[Statement],
+        context: Option<TypeCheckContext>,
     ) -> Result<Function, CompileError> {
-        TypeChecker::check(statements)?;
+        match context {
+            Some(context) => TypeChecker::check_with_context(statements, context)?,
+            None => TypeChecker::check(statements)?,
+        }
 
         for (index, statement) in statements.iter().enumerate() {
             let is_last = index + 1 == statements.len();

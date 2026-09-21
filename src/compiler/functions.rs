@@ -74,7 +74,12 @@ impl Compiler {
 
             self.emit_closure(function_constant, &function.upvalues);
 
-            self.emit_constant_op(OpCode::DefineGlobal, name_constant);
+            if self.defined_functions.insert(name.to_string()) {
+                self.emit_constant_op(OpCode::DefineGlobal, name_constant);
+            } else {
+                // Surcharge : la fonction s'ajoute à l'ensemble existant.
+                self.emit_constant_op(OpCode::Overload, name_constant);
+            }
 
             return Ok(());
         }

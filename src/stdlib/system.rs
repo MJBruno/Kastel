@@ -118,7 +118,9 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
             Object::Set(_) => "set".to_string(),
             Object::Dict(_) => "dict".to_string(),
             Object::Record(_) => "record".to_string(),
-            Object::Function(_) | Object::Closure(_) => "function".to_string(),
+            Object::Function(_) | Object::Closure(_) | Object::Overloads { .. } => {
+                "function".to_string()
+            }
             Object::Iterator(_) => "iterator".to_string(),
             Object::Module(_) => "module".to_string(),
 

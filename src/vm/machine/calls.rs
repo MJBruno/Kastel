@@ -130,6 +130,47 @@ impl VirtualMachine {
                     return Ok(());
                 }
 
+                // Fonction surchargée : on choisit la surcharge dont le nombre de
+                // paramètres égale celui des arguments, puis c'est un appel
+                // ordinaire de cette fermeture.
+                let overloads = {
+                    let object = handle.borrow();
+
+                    match &*object {
+                        Object::Overloads { functions, .. } => Some(functions.clone()),
+                        _ => None,
+                    }
+                };
+
+                if let Some(functions) = overloads {
+                    let selected = functions
+                        .iter()
+                        .find(|function| Self::function_arity(function) == Some(arg_count))
+                        .cloned();
+
+                    return match selected {
+                        Some(Value::Object(closure)) => {
+                            self.stack[callee_index] = Value::Object(closure.clone());
+                            self.call(closure, arg_count)
+                        }
+
+                        _ => {
+                            // Aucune surcharge à `arg_count` paramètres :
+                            // erreur d'arité, avec l'arité déclarée la plus petite.
+                            let expected = functions
+                                .iter()
+                                .filter_map(Self::function_arity)
+                                .min()
+                                .unwrap_or(0);
+
+                            Err(RuntimeError::WrongArgumentCount {
+                                expected,
+                                found: arg_count,
+                            })
+                        }
+                    };
+                }
+
                 let is_closure = {
                     let object = handle.borrow();
                     matches!(&*object, Object::Closure(_))
