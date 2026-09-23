@@ -1,7 +1,6 @@
 use crate::error::parse_error::ParserError;
 use crate::frontend::ast::*;
 use crate::frontend::lexer::token::TokenKind;
- 
 
 use super::Parser;
 
@@ -676,7 +675,9 @@ impl Parser {
 
                         if fields.iter().any(|(existing, _)| *existing == key) {
                             return Err(ParserError {
-                                message: format!("La clé '{key}' est déjà présente dans ce littéral"),
+                                message: format!(
+                                    "La clé '{key}' est déjà présente dans ce littéral"
+                                ),
                                 line: key_token.line,
                                 column: key_token.column,
                             });

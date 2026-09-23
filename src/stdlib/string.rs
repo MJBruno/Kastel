@@ -83,7 +83,10 @@ impl FormatSpec {
             result.fill = chars[0];
             result.align = Some(chars[1]);
             index = 2;
-        } else if chars.first().is_some_and(|c| matches!(c, '<' | '>' | '^' | '=')) {
+        } else if chars
+            .first()
+            .is_some_and(|c| matches!(c, '<' | '>' | '^' | '='))
+        {
             result.align = Some(chars[0]);
             index = 1;
         }
@@ -151,8 +154,7 @@ impl FormatSpec {
         if index != chars.len() {
             return Err(RuntimeError::FormatError(format!(
                 "spécificateur invalide '{}': caractère inattendu '{}'",
-                spec,
-                chars[index]
+                spec, chars[index]
             )));
         }
 
@@ -179,7 +181,6 @@ fn parse_usize(chars: &[char]) -> Result<usize, RuntimeError> {
         .map_err(|_| RuntimeError::FormatError("largeur ou précision trop grande".to_string()))
 }
 
-
 fn format_error(message: impl Into<String>) -> RuntimeError {
     RuntimeError::FormatError(message.into())
 }
@@ -196,11 +197,7 @@ fn apply_width(text: String, spec: &FormatSpec, numeric: bool) -> Result<String,
 
     let padding = width - length;
     let align = spec.align.unwrap_or(if numeric { '>' } else { '<' });
-    let fill = if numeric && spec.zero {
-        '0'
-    } else {
-        spec.fill
-    };
+    let fill = if numeric && spec.zero { '0' } else { spec.fill };
 
     match align {
         '<' => Ok(format!("{}{}", text, repeat_char(fill, padding))),
@@ -233,7 +230,11 @@ fn apply_numeric_equal_padding(text: String, fill: char, padding: usize) -> Stri
         split = 1;
     }
 
-    if chars.get(split) == Some(&'0') && chars.get(split + 1).is_some_and(|c| matches!(c, 'b' | 'o' | 'x' | 'X')) {
+    if chars.get(split) == Some(&'0')
+        && chars
+            .get(split + 1)
+            .is_some_and(|c| matches!(c, 'b' | 'o' | 'x' | 'X'))
+    {
         split += 2;
     }
 
@@ -326,10 +327,22 @@ fn format_integer(value: i64, spec: FormatSpec) -> Result<String, RuntimeError> 
     let magnitude = value.unsigned_abs();
 
     let (mut digits, prefix) = match kind {
-        'b' => (format!("{magnitude:b}"), if spec.alternate { "0b" } else { "" }),
-        'o' => (format!("{magnitude:o}"), if spec.alternate { "0o" } else { "" }),
-        'x' => (format!("{magnitude:x}"), if spec.alternate { "0x" } else { "" }),
-        'X' => (format!("{magnitude:X}"), if spec.alternate { "0X" } else { "" }),
+        'b' => (
+            format!("{magnitude:b}"),
+            if spec.alternate { "0b" } else { "" },
+        ),
+        'o' => (
+            format!("{magnitude:o}"),
+            if spec.alternate { "0o" } else { "" },
+        ),
+        'x' => (
+            format!("{magnitude:x}"),
+            if spec.alternate { "0x" } else { "" },
+        ),
+        'X' => (
+            format!("{magnitude:X}"),
+            if spec.alternate { "0X" } else { "" },
+        ),
         'd' | 'n' => (magnitude.to_string(), ""),
         _ => unreachable!(),
     };
@@ -348,7 +361,14 @@ fn format_integer(value: i64, spec: FormatSpec) -> Result<String, RuntimeError> 
     let text = format!("{sign}{prefix}{digits}");
 
     if spec.align == Some('=') || (spec.zero && spec.align.is_none()) {
-        return apply_width(text, &FormatSpec { align: Some('='), ..spec }, true);
+        return apply_width(
+            text,
+            &FormatSpec {
+                align: Some('='),
+                ..spec
+            },
+            true,
+        );
     }
 
     apply_width(text, &spec, true)
@@ -366,7 +386,9 @@ fn format_float(value: f64, spec: FormatSpec) -> Result<String, RuntimeError> {
         return apply_width(Value::Float(value).to_string(), &spec, true);
     }
 
-    let kind = spec.kind.unwrap_or(if spec.precision.is_some() { 'f' } else { 'g' });
+    let kind = spec
+        .kind
+        .unwrap_or(if spec.precision.is_some() { 'f' } else { 'g' });
 
     if !matches!(kind, 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | '%') {
         return Err(format_error(format!(
@@ -438,7 +460,14 @@ fn format_float(value: f64, spec: FormatSpec) -> Result<String, RuntimeError> {
     let text = format!("{sign}{rendered}");
 
     if spec.align == Some('=') || (spec.zero && spec.align.is_none()) {
-        return apply_width(text, &FormatSpec { align: Some('='), ..spec }, true);
+        return apply_width(
+            text,
+            &FormatSpec {
+                align: Some('='),
+                ..spec
+            },
+            true,
+        );
     }
 
     apply_width(text, &spec, true)
@@ -571,7 +600,7 @@ fn format_non_numeric(
             return Err(format_error(format!(
                 "conversion '!{}' inconnue; utilisez !s ou !r",
                 other
-            )))
+            )));
         }
     };
 
@@ -584,7 +613,7 @@ fn format_non_numeric(
                     "le format '{}' n'est pas valide pour {}",
                     kind,
                     value.type_name()
-                )))
+                )));
             }
         }
     }
@@ -610,7 +639,7 @@ fn format_value(
                     "conversion !{} non valide pour {}",
                     other,
                     value.type_name()
-                )))
+                )));
             }
         }
     }
@@ -697,10 +726,12 @@ fn parse_placeholder(
         )));
     };
 
-    let value = args.get(argument_index).ok_or(RuntimeError::WrongArgumentCount {
-        expected: argument_index + 1,
-        found: args.len(),
-    })?;
+    let value = args
+        .get(argument_index)
+        .ok_or(RuntimeError::WrongArgumentCount {
+            expected: argument_index + 1,
+            found: args.len(),
+        })?;
 
     let spec = FormatSpec::parse(format_spec)?;
     format_value(value, conversion, spec)
@@ -1415,18 +1446,30 @@ mod tests {
         let array = Value::new_array(vec![Value::Integer(1), Value::Integer(2)]);
         let tuple = Value::new_tuple(vec![Value::Integer(1), Value::Integer(2)]);
         let dict = Value::new_dict(vec![
-            (Value::new_string("name".to_string()), Value::new_string("Bruno".to_string())),
+            (
+                Value::new_string("name".to_string()),
+                Value::new_string("Bruno".to_string()),
+            ),
             (Value::new_string("age".to_string()), Value::Integer(20)),
         ]);
 
         assert_eq!(fmt("{}", vec![array.clone()]), "[1, 2]");
         assert_eq!(fmt("{}", vec![tuple.clone()]), "(1, 2)");
-        assert_eq!(fmt("{}", vec![dict.clone()]), "{\"name\": \"Bruno\", \"age\": 20}");
+        assert_eq!(
+            fmt("{}", vec![dict.clone()]),
+            "{\"name\": \"Bruno\", \"age\": 20}"
+        );
     }
 
     #[test]
     fn supports_escaped_braces_and_explicit_indexes() {
         assert_eq!(fmt("{{ {} }}", vec![Value::Integer(42)]), "{ 42 }");
-        assert_eq!(fmt("{1} {0}", vec![Value::new_string("A".to_string()), Value::Integer(7)]), "7 A");
+        assert_eq!(
+            fmt(
+                "{1} {0}",
+                vec![Value::new_string("A".to_string()), Value::Integer(7)]
+            ),
+            "7 A"
+        );
     }
 }

@@ -192,7 +192,11 @@ impl Compiler {
     /// `is_function` distingue une fonction (redéclarable — surcharge par
     /// arité ou redéfinition en REPL) d'une classe ou interface (jamais
     /// redéclarable).
-    fn predeclare_global_name(&mut self, name: &String, is_function: bool) -> Result<(), CompileError> {
+    fn predeclare_global_name(
+        &mut self,
+        name: &String,
+        is_function: bool,
+    ) -> Result<(), CompileError> {
         let existing = self.globals.borrow().get(name).cloned();
 
         if let Some(global) = existing {

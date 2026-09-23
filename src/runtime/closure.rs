@@ -4,7 +4,9 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use crate::runtime::{function::Function, gc_handle::Gc, object::Object, upvalue::ObjUpvalue, value::Value};
+use crate::runtime::{
+    function::Function, gc_handle::Gc, object::Object, upvalue::ObjUpvalue, value::Value,
+};
 
 #[derive(Debug, Clone)]
 pub struct Closure {
@@ -35,8 +37,6 @@ impl PartialEq for Closure {
         // `global_env` n'entre pas dans l'égalité d'une closure : il s'agit
         // du contexte d'exécution lexical du module, pas de son identité
         // fonctionnelle observable.
-        self.function == other.function
-            && self.upvalues == other.upvalues
-            && same_owner_class
+        self.function == other.function && self.upvalues == other.upvalues && same_owner_class
     }
 }

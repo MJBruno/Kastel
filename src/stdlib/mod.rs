@@ -194,9 +194,21 @@ mod standard_api_tests {
         assert!(truthy(call(&dict(), "contains", &[text("a")])));
         assert!(!truthy(call(&dict(), "contains", &[text("zzz")])));
         assert!(truthy(call(&tuple(&[]), "is_empty", &[])));
-        assert!(truthy(call(&set(&[1, 2]), "contains", &[Value::Integer(2)])));
-        assert!(truthy(call(&array(&[7, 8]), "contains", &[Value::Integer(8)])));
-        assert!(truthy(call(&tuple(&[7, 8]), "contains", &[Value::Integer(8)])));
+        assert!(truthy(call(
+            &set(&[1, 2]),
+            "contains",
+            &[Value::Integer(2)]
+        )));
+        assert!(truthy(call(
+            &array(&[7, 8]),
+            "contains",
+            &[Value::Integer(8)]
+        )));
+        assert!(truthy(call(
+            &tuple(&[7, 8]),
+            "contains",
+            &[Value::Integer(8)]
+        )));
         assert!(truthy(call(&text("Hello"), "contains", &[text("ll")])));
         assert!(!truthy(call(&text(""), "contains", &[text("x")])));
         assert!(truthy(call(&text(""), "is_empty", &[])));
@@ -294,4 +306,3 @@ mod standard_api_tests {
         assert_eq!(shown(&text("abc")), "abc");
     }
 }
-

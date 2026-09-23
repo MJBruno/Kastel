@@ -1,6 +1,7 @@
 #[allow(clippy::module_inception)]
 pub mod compiler;
 
+pub(crate) mod builtin_types;
 mod context;
 mod control_flow;
 mod declarations;
@@ -9,11 +10,10 @@ mod expressions;
 mod functions;
 mod locals;
 mod loops;
+pub(crate) mod module_types;
 mod scope;
 mod statements;
 pub mod type_checker;
 pub mod types;
-pub(crate) mod builtin_types;
-pub(crate) mod module_types;
 mod upvalue;
 pub(crate) mod variables;

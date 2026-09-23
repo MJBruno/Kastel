@@ -53,9 +53,11 @@ pub fn analyze(source: &str) -> AnalysisResult {
     let tokens = match lexer.scan_token() {
         Ok(tokens) => tokens,
         Err(errors) => {
+            let mut symbols = SymbolIndex::new();
+            symbols.rebuild_fallback(source);
             return AnalysisResult {
                 statements: Vec::new(),
-                symbols: SymbolIndex::new(),
+                symbols,
                 diagnostics: errors.into_iter().map(lexer_diagnostic).collect(),
             };
         }
@@ -66,9 +68,11 @@ pub fn analyze(source: &str) -> AnalysisResult {
     let statements = match parser.parse() {
         Ok(statements) => statements,
         Err(errors) => {
+            let mut symbols = SymbolIndex::new();
+            symbols.rebuild_fallback(source);
             return AnalysisResult {
                 statements: Vec::new(),
-                symbols: SymbolIndex::new(),
+                symbols,
                 diagnostics: errors.into_iter().map(parser_diagnostic).collect(),
             };
         }

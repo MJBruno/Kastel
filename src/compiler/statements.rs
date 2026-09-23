@@ -108,9 +108,9 @@ impl Compiler {
                                         if let Some(false) =
                                             self.context.borrow().locals.is_mutable(name)?
                                         {
-                                            return Err(
-                                                CompileError::AssignmentToConstant(name.to_string())
-                                            );
+                                            return Err(CompileError::AssignmentToConstant(
+                                                name.to_string(),
+                                            ));
                                         }
 
                                         self.emit_bytes(OpCode::AddLocalLocal, left_slot as u8);
@@ -307,10 +307,7 @@ impl Compiler {
             Statement::TypeAlias { .. } => {}
 
             Statement::Function {
-                name,
-                params,
-                body,
-                ..
+                name, params, body, ..
             } => {
                 self.compile_function_statement(name, params, body)?;
             }

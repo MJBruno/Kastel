@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 
+use crate::language::{BUILTINS, CONTEXTUAL_KEYWORDS, KEYWORDS, TYPE_NAMES};
 use crate::lsp_position::offset_to_lsp;
 use crate::text_util::{find_identifier_occurrences, find_word_at, is_identifier_char};
 use crate::workspace::Workspace;
@@ -18,6 +19,13 @@ pub fn build_rename(
     let document = workspace.get(uri)?;
 
     let old_name = find_word_at(&document.text, line as usize, character as usize)?;
+    if KEYWORDS.contains(&old_name)
+        || BUILTINS.contains(&old_name)
+        || TYPE_NAMES.contains(&old_name)
+        || CONTEXTUAL_KEYWORDS.contains(&old_name)
+    {
+        return None;
+    }
 
     /*
      * Le symbole peut être local au document courant

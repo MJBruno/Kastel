@@ -6,11 +6,15 @@ use std::{
     rc::Rc,
 };
 
-
 use crate::frontend::{lexer::lexer::Lexer, parser::Parser};
 use crate::module::resolver::{ImportResolution, ModuleResolver};
 use crate::vm::machine::VirtualMachine;
-use crate::{compiler::{compiler::Compiler, module_types::ModuleTypeLoader, type_checker::TypeCheckContext}, runtime::value::Value};
+use crate::{
+    compiler::{
+        compiler::Compiler, module_types::ModuleTypeLoader, type_checker::TypeCheckContext,
+    },
+    runtime::value::Value,
+};
 use crate::{error::compile_error::CompileError, stdlib::execute_native};
 
 #[derive(Debug)]
@@ -173,11 +177,13 @@ impl ModuleLoader {
         // ------------------------------------------------------------
         let mut lexer = Lexer::new(source.clone());
 
-        let tokens = lexer.scan_token().map_err(|errors| CompileError::ModuleLexerErrors {
-            path: path.display().to_string(),
-            source: source.clone(),
-            errors,
-        })?;
+        let tokens = lexer
+            .scan_token()
+            .map_err(|errors| CompileError::ModuleLexerErrors {
+                path: path.display().to_string(),
+                source: source.clone(),
+                errors,
+            })?;
         // ------------------------------------------------------------
         // 3. Parser
         // ------------------------------------------------------------
@@ -197,20 +203,15 @@ impl ModuleLoader {
 
         execute_native(&mut compiler);
 
-        let context = TypeCheckContext::new(
-            path.to_path_buf(),
-            Rc::clone(&self.type_loader),
-        );
+        let context = TypeCheckContext::new(path.to_path_buf(), Rc::clone(&self.type_loader));
 
         let (function, exports) = compiler
             .compile_module_with_context(&statements, context)
-            .map_err(|error| {
-            CompileError::ModuleCompileError {
+            .map_err(|error| CompileError::ModuleCompileError {
                 path: path.display().to_string(),
                 module_source: source.clone(),
                 error: Box::new(error),
-            }
-        })?;
+            })?;
 
         let function = Rc::new(function);
 

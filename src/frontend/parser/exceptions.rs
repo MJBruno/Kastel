@@ -2,7 +2,6 @@ use crate::error::parse_error::ParserError;
 use crate::frontend::ast::*;
 use crate::frontend::lexer::token::TokenKind;
 
-
 use super::Parser;
 
 #[allow(dead_code)]

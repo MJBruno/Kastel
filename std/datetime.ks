@@ -1,8 +1,15 @@
 export class DateTime {
 
+    // Sans argument : instant courant (comme avant). Avec un argument :
+    // construit une DateTime à partir d'un timestamp Unix explicite (en
+    // secondes), pour ne pas avoir à passer par `new DateTime()` puis
+    // `addSeconds(...)` juste pour représenter une date connue.
     func initialize() {
         this.value = clock();
-        this.date = this.date()
+    }
+
+    func initialize(value) {
+        this.value = value;
     }
 
     func timestamp() {
@@ -11,6 +18,12 @@ export class DateTime {
 
     // ========================================================
     // Calendar
+    //
+    // Limite connue : year()/month()/day()/hour()/minute()/second()
+    // supposent un timestamp POSITIF (dates >= 1970-01-01). Un
+    // timestamp négatif (date antérieure à 1970) donnera un résultat
+    // incorrect (le `%` de Kastel suit le signe du dividende, et les
+    // boucles ci-dessous ne descendent jamais sous year = 1970).
     // ========================================================
 
     func isLeapYear(year) {
@@ -195,38 +208,30 @@ export class DateTime {
     // ========================================================
 
     func addSeconds(value) {
-
-        let result = new DateTime();
-
-        result.value = this.value + value;
-
-        return result;
+        return new DateTime(this.value + value);
     }
 
     func addMinutes(value) {
-
-        let result = new DateTime();
-
-        result.value = this.value + value * 60;
-
-        return result;
+        return new DateTime(this.value + value * 60);
     }
 
     func addHours(value) {
-
-        let result = new DateTime();
-
-        result.value = this.value + value * 3600;
-
-        return result;
+        return new DateTime(this.value + value * 3600);
     }
 
     func addDays(value) {
-
-        let result = new DateTime();
-
-        result.value = this.value + value * 86400;
-
-        return result;
+        return new DateTime(this.value + value * 86400);
     }
+}
+
+// ========================================================
+// Fonctions de commodité au niveau du module
+// ========================================================
+
+export func now() {
+    return new DateTime();
+}
+
+export func from_timestamp(value) {
+    return new DateTime(value);
 }

@@ -116,7 +116,11 @@ impl TypeChecker {
         statements: &[Statement],
         context: TypeCheckContext,
     ) -> Result<
-        (HashMap<String, Type>, HashMap<String, ClassInfo>, HashMap<String, Type>),
+        (
+            HashMap<String, Type>,
+            HashMap<String, ClassInfo>,
+            HashMap<String, Type>,
+        ),
         CompileError,
     > {
         let mut checker = Self::new_with_context(context);
@@ -320,9 +324,7 @@ impl TypeChecker {
                             param_types
                                 .get(index)
                                 .and_then(|annotation| annotation.as_ref())
-                                .map_or(Type::Dynamic, |annotation| {
-                                    self.resolve_type(annotation)
-                                })
+                                .map_or(Type::Dynamic, |annotation| self.resolve_type(annotation))
                         })
                         .collect::<Vec<_>>();
 
@@ -467,7 +469,9 @@ impl TypeChecker {
                                     .param_types
                                     .get(index)
                                     .and_then(|annotation| annotation.as_ref())
-                                    .map_or(Type::Dynamic, |annotation| self.resolve_type(annotation))
+                                    .map_or(Type::Dynamic, |annotation| {
+                                        self.resolve_type(annotation)
+                                    })
                             })
                             .collect::<Vec<_>>();
 
@@ -907,7 +911,11 @@ impl TypeChecker {
 
             ImportedType::TypeAlias { .. } => unreachable!("traité ci-dessus"),
 
-            ImportedType::Export { ty, name, interface } => {
+            ImportedType::Export {
+                ty,
+                name,
+                interface,
+            } => {
                 // Une classe importée est connue en détail (constructeurs,
                 // méthodes, champs, membres privés), pas seulement par son nom.
                 if interface.classes.contains_key(&name) {
@@ -975,7 +983,11 @@ impl TypeChecker {
                     .get(name)
                     .is_some_and(|overloads| overloads.len() > 1) =>
             {
-                let signatures = self.function_overloads.get(name).cloned().unwrap_or_default();
+                let signatures = self
+                    .function_overloads
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_default();
 
                 Ok((name.clone(), Type::Overloads(signatures)))
             }
@@ -1196,7 +1208,10 @@ impl TypeChecker {
             )?;
         }
 
-        self.current_return_type = method.return_type.as_ref().map(|annotation| self.resolve_type(annotation));
+        self.current_return_type = method
+            .return_type
+            .as_ref()
+            .map(|annotation| self.resolve_type(annotation));
         self.check_statements(&method.body)?;
 
         let inferred_return = self.infer_return_type();
@@ -1955,7 +1970,9 @@ impl TypeChecker {
                     self.local_functions[index].get(name)
                 };
 
-                return signatures.filter(|signatures| signatures.len() > 1).cloned();
+                return signatures
+                    .filter(|signatures| signatures.len() > 1)
+                    .cloned();
             }
         }
 
@@ -2087,9 +2104,7 @@ impl TypeChecker {
             });
         }
 
-        for (index, (argument, expected)) in
-            arguments.iter().zip(&signature.params).enumerate()
-        {
+        for (index, (argument, expected)) in arguments.iter().zip(&signature.params).enumerate() {
             let actual = self.check_expression(argument)?;
 
             if !self.are_assignable(&actual, expected) {
@@ -2312,9 +2327,8 @@ let result = add(10, 20);
 
     #[test]
     fn nested_generics_and_compact_equal_parse() {
-        let result = check(
-            "let m: Dict<str, List<int>> = { \"a\": [1, 2] };\nlet v: List<int>= [1, 2];",
-        );
+        let result =
+            check("let m: Dict<str, List<int>> = { \"a\": [1, 2] };\nlet v: List<int>= [1, 2];");
         assert!(result.is_ok(), "{:?}", result.err());
     }
 
@@ -2358,12 +2372,8 @@ let m: int = c.scale(3);
 
     #[test]
     fn no_overload_for_the_given_arity_is_rejected() {
-        assert!(
-            check("class A { func f(x) { return 1; } } let a = new A(); a.f(1, 2);").is_err()
-        );
-        assert!(
-            check("class B { func initialize(x) { this.x = x; } } let b = new B();").is_err()
-        );
+        assert!(check("class A { func f(x) { return 1; } } let a = new A(); a.f(1, 2);").is_err());
+        assert!(check("class B { func initialize(x) { this.x = x; } } let b = new B();").is_err());
     }
 
     #[test]
@@ -2386,7 +2396,10 @@ let b: float = s.area(2.0);
         assert!(result.is_ok(), "{:?}", result.err());
 
         let duplicate = check("interface I { func f(); func f(); }");
-        assert!(matches!(duplicate, Err(CompileError::DuplicateMethod { .. })));
+        assert!(matches!(
+            duplicate,
+            Err(CompileError::DuplicateMethod { .. })
+        ));
 
         let wrong_call = check(
             r#"
@@ -2534,12 +2547,20 @@ class Point {
     func initialize(x: int, y: int) { this.x = x; this.y = y; }
 }
 "#;
-        assert!(check(&format!("{source}\nlet a = new Point(); let b = new Point(1); let c = new Point(1, 2);")).is_ok());
+        assert!(
+            check(&format!(
+                "{source}\nlet a = new Point(); let b = new Point(1); let c = new Point(1, 2);"
+            ))
+            .is_ok()
+        );
         assert!(check(&format!("{source}\nlet d = new Point(1, 2, 3);")).is_err());
         assert!(check(&format!("{source}\nlet e = new Point(\"x\");")).is_err());
 
         let duplicate = check("class P { func initialize(a) {} func initialize(b) {} }");
-        assert!(matches!(duplicate, Err(CompileError::DuplicateMethod { .. })));
+        assert!(matches!(
+            duplicate,
+            Err(CompileError::DuplicateMethod { .. })
+        ));
     }
 
     #[test]
@@ -2751,9 +2772,7 @@ let people: List<Person> = [{ name: "A", age: 1 }, { name: "B", age: 2 }];
 
         // Champ manquant, mauvais type, champ inexistant.
         assert!(check(&format!("{prelude}let p: Person = {{ name: \"Bruno\" }};")).is_err());
-        assert!(
-            check(&format!("{prelude}let p: Person = {{ name: 1, age: 25 }};")).is_err()
-        );
+        assert!(check(&format!("{prelude}let p: Person = {{ name: 1, age: 25 }};")).is_err());
         assert!(
             check(&format!(
                 "{prelude}let p: Person = {{ name: \"B\", age: 1 }}; p.age = \"x\";"
@@ -2882,7 +2901,10 @@ func shadow() {
 
         // Même arité = doublon.
         let duplicate = check("func f(a) {} func f(b) {}");
-        assert!(matches!(duplicate, Err(CompileError::DuplicateFunction { .. })));
+        assert!(matches!(
+            duplicate,
+            Err(CompileError::DuplicateFunction { .. })
+        ));
 
         // Le type de retour dépend de la surcharge choisie.
         assert!(
@@ -2911,9 +2933,7 @@ func shadow() {
         );
 
         // Public : aucun problème ; `base.initialize()` reste permis.
-        assert!(
-            check("class S { func initialize() { this.v = 1; } } let s = new S();").is_ok()
-        );
+        assert!(check("class S { func initialize() { this.v = 1; } } let s = new S();").is_ok());
     }
 
     #[test]
@@ -2965,4 +2985,3 @@ let x: int = p.x;
         assert!(ok.is_ok(), "{:?}", ok.err());
     }
 }
-

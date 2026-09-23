@@ -669,10 +669,7 @@ fn records_and_dicts_have_distinct_displays_and_type_names() {
 #[test]
 fn a_record_encodes_to_a_json_object() {
     assert_eq!(
-        text_of(
-            r#"let j = json_encode({ name: "B", age: 1 });"#,
-            "j"
-        ),
+        text_of(r#"let j = json_encode({ name: "B", age: 1 });"#, "j"),
         "{\"name\":\"B\",\"age\":1}"
     );
 }
@@ -729,7 +726,9 @@ fn run_project<T: Send + 'static>(
     let main_source = main_source.to_string();
 
     let outcome = on_big_stack(move || {
-        let tokens = Lexer::new(main_source).scan_token().map_err(|_| "compile: lexer")?;
+        let tokens = Lexer::new(main_source)
+            .scan_token()
+            .map_err(|_| "compile: lexer")?;
         let statements = Parser::new(tokens)
             .parse()
             .map_err(|errors| format!("compile: parser {}", errors[0].message))?;
@@ -887,9 +886,8 @@ let age = b.getAge();
     assert!(arity.starts_with("compile:"), "{arity}");
 
     // Champ privé d'une classe importée : refusé à la COMPILATION.
-    let private = compile_error(
-        "import personne.Personne; let p = new Personne(\"A\"); let x = p.age;",
-    );
+    let private =
+        compile_error("import personne.Personne; let p = new Personne(\"A\"); let x = p.age;");
     assert!(private.starts_with("compile:"), "{private}");
     assert!(private.contains("privé"), "{private}");
 
@@ -1125,4 +1123,3 @@ let sum = a + b;
     assert_eq!(value.1, "one");
     assert_eq!(value.2, "other");
 }
-

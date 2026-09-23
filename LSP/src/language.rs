@@ -1,162 +1,224 @@
-//! Constantes du langage Kastel partagées entre le LSP et l'analyse.
+//! Métadonnées de langage du LSP Kastel.
 //!
-//! Ces listes doivent rester synchronisées avec le lexer/parser/stdlib
-//! réels du crate `kastel` (dépendance de chemin `..`). En cas de
-//! doute sur un nom, se référer à :
-//!   - `src/frontend/lexer/token.rs` (`Token::keyword`) pour les mots-clés
-//!   - `src/stdlib/*.rs` (`register` / `dispatch_method`) pour la stdlib
+//! Cette table est volontairement alignée sur le lexer, le système de types
+//! et les dispatchers réels de `kastel`.
 
-/// Mots-clés réservés du langage.
+/// Mots-clés réservés par `Token::keyword`.
 pub const KEYWORDS: &[&str] = &[
-    "const", "let", "func", "return", "if", "else", "while", "for", "in", "match", "break",
-    "continue", "import", "from", "as", "export", "class", "new", "this", "base", "interface",
-    "try", "catch", "throw", "finally", "is", "true", "false", "None",
+    "let", "const", "func", "return", "if", "else", "while", "for", "in", "match",
+    "true", "false", "None", "break", "continue", "import", "from", "as", "export",
+    "class", "new", "this", "base", "interface", "try", "catch", "throw", "finally", "is",
 ];
 
-/// Fonctions/valeurs globales fournies par le runtime Kastel :
-/// `(nom, signature affichée, courte description)`.
-///
-/// À étendre au fur et à mesure que la stdlib grossit — voir
-/// `src/stdlib/mod.rs::register_natives` dans le crate `kastel` pour
-/// la liste faisant foi.
+/// Types disponibles dans la syntaxe Kastel.
+pub const TYPE_NAMES: &[&str] = &[
+    "int", "float", "str", "bool", "None", "List", "Dict", "Tuple", "Set", "Range",
+    "dynamic", "any",
+];
+
+/// Mots contextuels utilisés par les membres de classe et les alias.
+pub const CONTEXTUAL_KEYWORDS: &[&str] = &["public", "private", "type"];
+
+/// Fonctions natives globales réellement exposées par le runtime.
+/// `(nom, signature, documentation)`.
 pub const BUILTIN_FUNCTIONS: &[(&str, &str, &str)] = &[
-    // -- io --
     ("print", "print(value)", "Affiche une valeur sans retour à la ligne."),
     ("println", "println(value)", "Affiche une valeur suivie d'un retour à la ligne."),
     ("input", "input(prompt?)", "Lit une ligne depuis l'entrée standard."),
-    // -- math --
-    ("rand", "rand()", "Nombre flottant aléatoire entre 0.0 et 1.0."),
-    ("rand_int", "rand_int(min, max)", "Entier aléatoire dans [min, max]."),
-    ("rand_range", "rand_range(start, end)", "Entier aléatoire dans [start, end)."),
-    ("abs", "abs(x)", "Valeur absolue."),
-    ("floor", "floor(x)", "Arrondi à l'entier inférieur (renvoie un entier)."),
-    ("ceil", "ceil(x)", "Arrondi à l'entier supérieur (renvoie un entier)."),
-    ("round", "round(x)", "Arrondi au plus proche, pair en cas d'égalité (renvoie un entier)."),
-    ("sqrt", "sqrt(x)", "Racine carrée (renvoie toujours un flottant)."),
-    ("pow", "pow(base, exp)", "Puissance. Entier si base et exposant (≥0) sont entiers, flottant sinon."),
-    ("min", "min(a, b)", "Le plus petit des deux."),
-    ("max", "max(a, b)", "Le plus grand des deux."),
-    ("sin", "sin(x)", "Sinus (radians)."),
-    ("cos", "cos(x)", "Cosinus (radians)."),
-    ("tan", "tan(x)", "Tangente (radians)."),
-    ("log", "log(x)", "Logarithme naturel."),
-    ("log10", "log10(x)", "Logarithme base 10."),
-    ("exp", "exp(x)", "Exponentielle."),
-    // -- string --
-    ("format", "format(template, ...args)", "Interpole `{}` dans `template` avec les arguments."),
-    // -- iterator --
-    ("range", "range(stop) / range(start, stop) / range(start, stop, step)", "Séquence d'entiers, utilisable dans `for x in range(...)`."),
-    ("list", "list(iterable)", "Convertit un itérable en tableau."),
-    // -- dict --
-    ("dict", "dict()", "Crée un dictionnaire vide."),
-    // -- system --
-    ("int", "int(value)", "Convertit vers un entier."),
-    ("float", "float(value)", "Convertit vers un flottant."),
-    ("str", "str(value)", "Convertit vers une chaîne."),
-    ("bool", "bool(value)", "Convertit vers un booléen."),
-    ("type", "type(value)", "Nom du type de la valeur (\"integer\", \"string\", ...)."),
+    ("int", "int(value)", "Convertit une valeur en entier."),
+    ("float", "float(value)", "Convertit une valeur en flottant."),
+    ("str", "str(value)", "Convertit une valeur en chaîne."),
+    ("bool", "bool(value)", "Convertit une valeur en booléen."),
+    ("type", "type(value)", "Renvoie le nom du type d'une valeur."),
     ("clock", "clock()", "Horodatage courant."),
     ("cwd", "cwd()", "Répertoire de travail courant."),
     ("env", "env(name)", "Lit une variable d'environnement."),
-    // -- debug --
-    ("inspect", "inspect(value)", "Représentation détaillée d'une valeur (stderr)."),
-    ("debug", "debug(...)", "Trace de debug (stderr)."),
+    ("rand", "rand()", "Nombre flottant aléatoire."),
+    ("rand_int", "rand_int(max)", "Entier aléatoire dans [0, max)."),
+    ("rand_range", "rand_range(low, high)", "Entier aléatoire dans [low, high)."),
+    ("abs", "abs(x)", "Valeur absolue."),
+    ("floor", "floor(x)", "Arrondi vers -∞."),
+    ("ceil", "ceil(x)", "Arrondi vers +∞."),
+    ("round", "round(x)", "Arrondi au plus proche."),
+    ("sqrt", "sqrt(x)", "Racine carrée."),
+    ("pow", "pow(base, exp)", "Puissance."),
+    ("min", "min(a, b)", "Minimum de deux valeurs."),
+    ("max", "max(a, b)", "Maximum de deux valeurs."),
+    ("sin", "sin(x)", "Sinus, en radians."),
+    ("cos", "cos(x)", "Cosinus, en radians."),
+    ("tan", "tan(x)", "Tangente, en radians."),
+    ("asin", "asin(x)", "Arc sinus, en radians."),
+    ("acos", "acos(x)", "Arc cosinus, en radians."),
+    ("atan", "atan(x)", "Arc tangente, en radians."),
+    ("atan2", "atan2(y, x)", "Arc tangente à deux arguments."),
+    ("log", "log(x)", "Logarithme naturel."),
+    ("log10", "log10(x)", "Logarithme base 10."),
+    ("exp", "exp(x)", "Exponentielle."),
+    ("idiv", "idiv(a, b)", "Division entière arrondie vers -∞."),
+    ("wrapping_add", "wrapping_add(a, b)", "Addition entière modulo 2^64."),
+    ("wrapping_sub", "wrapping_sub(a, b)", "Soustraction entière modulo 2^64."),
+    ("wrapping_mul", "wrapping_mul(a, b)", "Multiplication entière modulo 2^64."),
+    ("dict", "dict()", "Crée un dictionnaire vide."),
+    ("list", "list(iterable)", "Convertit un itérable en List."),
+    ("range", "range(stop) / range(start, stop) / range(start, stop, step)", "Crée une séquence entière."),
+    ("format", "format(template, ...args)", "Formate une chaîne avec des valeurs."),
+    ("inspect", "inspect(value)", "Représentation détaillée sur stderr."),
+    ("debug", "debug(...)", "Trace de débogage sur stderr."),
+    ("json_encode", "json_encode(value)", "Encode une valeur en JSON."),
+    ("json_decode", "json_decode(text)", "Décode une chaîne JSON."),
+    ("file_read", "file_read(path)", "Lit tout un fichier."),
+    ("file_read_lines", "file_read_lines(path)", "Lit les lignes d'un fichier."),
+    ("file_write", "file_write(path, content)", "Écrit un fichier."),
+    ("file_append", "file_append(path, content)", "Ajoute au fichier."),
+    ("file_exists", "file_exists(path)", "Teste l'existence d'un fichier."),
+    ("file_delete", "file_delete(path)", "Supprime un fichier."),
+    ("file_size", "file_size(path)", "Renvoie la taille d'un fichier."),
+    ("path_join", "path_join(parts)", "Assemble des segments de chemin."),
+    ("path_exists", "path_exists(path)", "Teste l'existence d'un chemin."),
+    ("path_is_dir", "path_is_dir(path)", "Teste si le chemin est un dossier."),
+    ("path_is_file", "path_is_file(path)", "Teste si le chemin est un fichier."),
+    ("path_absolute", "path_absolute(path)", "Renvoie un chemin absolu."),
+    ("path_basename", "path_basename(path)", "Extrait le nom de fichier."),
+    ("path_dirname", "path_dirname(path)", "Extrait le dossier parent."),
+    ("path_extension", "path_extension(path)", "Extrait l'extension."),
+    ("path_stem", "path_stem(path)", "Extrait le stem."),
+    ("os_name", "os_name()", "Nom du système d'exploitation."),
+    ("os_arch", "os_arch()", "Architecture de la machine."),
+    ("args", "args()", "Arguments du processus courant."),
+    ("exit", "exit(code)", "Termine le processus."),
+    ("Set", "Set(...values)", "Crée un ensemble Set."),
 ];
 
-/// Juste les noms, pour les vérifications rapides (ex. filtrage des
-/// faux positifs « identifiant non défini » dans `semantic.rs`).
+/// Noms reconnus par l'analyse sémantique comme builtins.
 pub const BUILTINS: &[&str] = &[
-    "print", "println", "input", "rand", "rand_int", "rand_range", "abs", "floor", "ceil",
-    "round", "sqrt", "pow", "min", "max", "sin", "cos", "tan", "log", "log10", "exp", "format",
-    "range", "list", "dict", "int", "float", "str", "bool", "type", "clock", "cwd", "env",
-    "inspect", "debug",
+    "print", "println", "input", "int", "float", "str", "bool", "type", "clock", "cwd", "env",
+    "rand", "rand_int", "rand_range", "abs", "floor", "ceil", "round", "sqrt", "pow", "min", "max",
+    "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "log", "log10", "exp", "idiv",
+    "wrapping_add", "wrapping_sub", "wrapping_mul", "dict", "list", "range", "format", "inspect", "debug",
+    "json_encode", "json_decode", "file_read", "file_read_lines", "file_write", "file_append", "file_exists",
+    "file_delete", "file_size", "path_join", "path_exists", "path_is_dir", "path_is_file", "path_absolute",
+    "path_basename", "path_dirname", "path_extension", "path_stem", "os_name", "os_arch", "args", "exit", "Set",
 ];
 
-/// Méthodes disponibles sur un tableau (`array`) : `(nom, signature, doc)`.
-///
-/// NOTE : `length` est une **propriété** (`arr.length`, sans
-/// parenthèses) et non une méthode — `arr.length()` échoue à
-/// l'exécution. Elle est listée ici avec une signature sans
-/// parenthèses pour refléter cela dans la complétion/hover.
-pub const ARRAY_METHODS: &[(&str, &str, &str)] = &[
-    ("length", "arr.length", "Nombre d'éléments (propriété, sans parenthèses)."),
-    ("push", "arr.push(value)", "Ajoute un élément à la fin."),
-    ("pop", "arr.pop()", "Retire et renvoie le dernier élément."),
-    ("insert", "arr.insert(index, value)", "Insère `value` à `index`."),
-    ("remove", "arr.remove(index)", "Retire et renvoie l'élément à `index`."),
-    ("get", "arr.get(index)", "Élément à `index`."),
-    ("set", "arr.set(index, value)", "Remplace l'élément à `index`."),
-    ("contains", "arr.contains(value)", "Vrai si `value` est présente."),
-    ("index_of", "arr.index_of(value)", "Index de la première occurrence de `value`."),
-    ("slice", "arr.slice(start, end)", "Sous-tableau `[start, end)`."),
-    ("reverse", "arr.reverse()", "Inverse le tableau en place."),
-    ("join", "arr.join(separator)", "Concatène les éléments en une chaîne."),
-    ("clear", "arr.clear()", "Vide le tableau."),
-    ("first", "arr.first()", "Premier élément."),
-    ("last", "arr.last()", "Dernier élément."),
-    ("sort", "arr.sort()", "Trie le tableau en place, par ordre croissant."),
-    ("copy", "arr.copy()", "Copie superficielle du tableau."),
-    ("map", "arr.map(fn)", "Nouveau tableau via `fn` appliquée à chaque élément."),
-    ("filter", "arr.filter(fn)", "Nouveau tableau des éléments où `fn` est vrai."),
-    ("reduce", "arr.reduce(fn, initial)", "Réduit le tableau à une seule valeur."),
-    ("any", "arr.any(fn)", "Vrai si `fn` est vrai pour au moins un élément."),
-    ("all", "arr.all(fn)", "Vrai si `fn` est vrai pour tous les éléments."),
+/// Méthodes du conteneur syntaxique `List<T>`.
+pub const LIST_METHODS: &[(&str, &str, &str)] = &[
+    ("size", "value.size() -> int", "Nombre d'éléments."),
+    ("is_empty", "value.is_empty() -> bool", "Indique si la liste est vide."),
+    ("add", "value.add(element) -> bool", "Ajoute un élément à la fin."),
+    ("remove", "value.remove(element) -> bool", "Supprime la première occurrence."),
+    ("remove_at", "value.remove_at(index) -> T", "Supprime l'élément à l'index."),
+    ("to_string", "value.to_string() -> str", "Convertit la liste en chaîne."),
+    ("pop", "value.pop() -> T", "Retire et renvoie le dernier élément."),
+    ("insert", "value.insert(index, element)", "Insère un élément à l'index."),
+    ("get", "value.get(index) -> T", "Lit un élément."),
+    ("set", "value.set(index, element)", "Remplace un élément."),
+    ("contains", "value.contains(element) -> bool", "Teste l'appartenance."),
+    ("index_of", "value.index_of(element) -> int", "Renvoie le premier index."),
+    ("slice", "value.slice(start, end) -> List<T>", "Extrait une tranche."),
+    ("reverse", "value.reverse()", "Inverse la liste."),
+    ("join", "value.join(separator)", "Concatène les éléments."),
+    ("clear", "value.clear()", "Vide la liste."),
+    ("first", "value.first() -> T", "Premier élément."),
+    ("last", "value.last() -> T", "Dernier élément."),
+    ("sort", "value.sort()", "Trie la liste."),
+    ("copy", "value.copy() -> List<T>", "Copie superficielle."),
+    ("iter", "value.iter()", "Renvoie un itérateur."),
 ];
 
-/// Méthodes disponibles sur une chaîne (`string`).
+/// Méthodes réelles de `str`.
 pub const STRING_METHODS: &[(&str, &str, &str)] = &[
-    ("length", "s.length()", "Nombre de caractères."),
-    ("upper", "s.upper()", "Version en majuscules."),
-    ("lower", "s.lower()", "Version en minuscules."),
-    ("contains", "s.contains(needle)", "Vrai si `needle` apparaît dans la chaîne."),
-    ("starts_with", "s.starts_with(prefix)", "Vrai si la chaîne commence par `prefix`."),
-    ("ends_with", "s.ends_with(suffix)", "Vrai si la chaîne se termine par `suffix`."),
-    ("index_of", "s.index_of(needle)", "Index de la première occurrence de `needle`."),
-    ("last_index_of", "s.last_index_of(needle)", "Index de la dernière occurrence de `needle`."),
-    ("replace", "s.replace(from, to)", "Remplace la première occurrence de `from` par `to`."),
-    ("replace_all", "s.replace_all(from, to)", "Remplace toutes les occurrences de `from` par `to`."),
-    ("split", "s.split(separator)", "Découpe la chaîne en tableau."),
-    ("substring", "s.substring(start, length)", "Sous-chaîne de `length` caractères à partir de `start`."),
-    ("slice", "s.slice(start, end)", "Sous-chaîne `[start, end)`."),
-    ("trim", "s.trim()", "Retire les espaces en début et fin."),
-    ("trim_start", "s.trim_start()", "Retire les espaces en début."),
-    ("trim_end", "s.trim_end()", "Retire les espaces en fin."),
-    ("repeat", "s.repeat(n)", "Répète la chaîne `n` fois."),
-    ("reverse", "s.reverse()", "Chaîne inversée."),
-    ("char_at", "s.char_at(index)", "Caractère à `index`."),
-    ("get", "s.get(index)", "Caractère à `index`."),
-    ("join", "s.join(array)", "Utilise la chaîne comme séparateur pour joindre `array`."),
-    ("is_empty", "s.is_empty()", "Vrai si la chaîne est vide."),
-    ("is_digit", "s.is_digit()", "Vrai si tous les caractères sont des chiffres."),
-    ("is_alpha", "s.is_alpha()", "Vrai si tous les caractères sont alphabétiques."),
-    ("is_alphanumeric", "s.is_alphanumeric()", "Vrai si tous les caractères sont alphanumériques."),
-    ("to_int", "s.to_int()", "Conversion en entier."),
-    ("to_float", "s.to_float()", "Conversion en flottant."),
+    ("size", "value.size() -> int", "Nombre de caractères."),
+    ("is_empty", "value.is_empty() -> bool", "Indique si la chaîne est vide."),
+    ("to_string", "value.to_string() -> str", "Renvoie la chaîne elle-même."),
+    ("get", "value.get(index) -> str", "Caractère à l'index."),
+    ("contains", "value.contains(needle) -> bool", "Teste la présence d'une sous-chaîne."),
+    ("starts_with", "value.starts_with(prefix) -> bool", "Teste le préfixe."),
+    ("ends_with", "value.ends_with(suffix) -> bool", "Teste le suffixe."),
+    ("index_of", "value.index_of(needle) -> int", "Premier index d'une sous-chaîne."),
+    ("last_index_of", "value.last_index_of(needle) -> int", "Dernier index d'une sous-chaîne."),
+    ("slice", "value.slice(start, end) -> str", "Extrait une tranche."),
+    ("substring", "value.substring(start, length) -> str", "Extrait une sous-chaîne."),
+    ("upper", "value.upper() -> str", "Convertit en majuscules."),
+    ("lower", "value.lower() -> str", "Convertit en minuscules."),
+    ("trim", "value.trim() -> str", "Supprime les espaces autour."),
+    ("trim_start", "value.trim_start() -> str", "Supprime les espaces au début."),
+    ("trim_end", "value.trim_end() -> str", "Supprime les espaces à la fin."),
+    ("replace", "value.replace(from, to) -> str", "Remplace une occurrence."),
+    ("replace_all", "value.replace_all(from, to) -> str", "Remplace toutes les occurrences."),
+    ("split", "value.split(separator) -> List<str>", "Découpe la chaîne."),
+    ("join", "value.join(list) -> str", "Utilise la chaîne comme séparateur."),
+    ("repeat", "value.repeat(count) -> str", "Répète la chaîne."),
+    ("char_at", "value.char_at(index) -> str", "Lit un caractère."),
+    ("to_int", "value.to_int() -> int", "Convertit vers int."),
+    ("to_float", "value.to_float() -> float", "Convertit vers float."),
+    ("is_digit", "value.is_digit() -> bool", "Teste si tous les caractères sont numériques."),
+    ("is_alpha", "value.is_alpha() -> bool", "Teste si tous les caractères sont alphabétiques."),
+    ("is_alphanumeric", "value.is_alphanumeric() -> bool", "Teste les caractères alphanumériques."),
+    ("reverse", "value.reverse() -> str", "Inverse la chaîne."),
+    ("iter", "value.iter()", "Renvoie un itérateur."),
 ];
 
-/// Méthodes disponibles sur un dictionnaire (`dict`).
+/// Méthodes réelles de `Dict<K, V>`.
 pub const DICT_METHODS: &[(&str, &str, &str)] = &[
-    ("length", "d.length()", "Nombre de paires clé/valeur."),
-    ("get", "d.get(key)", "Valeur associée à `key`."),
-    ("get_or", "d.get_or(key, default)", "Valeur associée à `key`, ou `default` si absente."),
-    ("set", "d.set(key, value)", "Associe `value` à `key`."),
-    ("has", "d.has(key)", "Vrai si `key` est présente."),
-    ("remove", "d.remove(key)", "Retire `key` et renvoie sa valeur."),
-    ("keys", "d.keys()", "Tableau des clés, dans l'ordre d'insertion."),
-    ("values", "d.values()", "Tableau des valeurs, dans l'ordre d'insertion."),
-    ("items", "d.items()", "Tableau de paires [clé, valeur]."),
-    ("clear", "d.clear()", "Vide le dictionnaire."),
-    ("copy", "d.copy()", "Copie superficielle du dictionnaire."),
-    ("update", "d.update(other)", "Fusionne les paires de `other`."),
+    ("size", "value.size() -> int", "Nombre de paires."),
+    ("is_empty", "value.is_empty() -> bool", "Indique si le dictionnaire est vide."),
+    ("contains", "value.contains(key) -> bool", "Teste l'existence d'une clé."),
+    ("entries", "value.entries()", "Renvoie les paires dans l'ordre d'insertion."),
+    ("to_string", "value.to_string() -> str", "Convertit en chaîne."),
+    ("get", "value.get(key) -> V", "Lit une valeur."),
+    ("set", "value.set(key, value)", "Associe une valeur à une clé."),
+    ("remove", "value.remove(key) -> V", "Retire une clé."),
+    ("keys", "value.keys() -> List<K>", "Renvoie les clés."),
+    ("values", "value.values() -> List<V>", "Renvoie les valeurs."),
+    ("clear", "value.clear()", "Vide le dictionnaire."),
+    ("get_or", "value.get_or(key, default) -> V", "Lit une clé avec valeur par défaut."),
+    ("update", "value.update(other)", "Fusionne un autre dictionnaire."),
+    ("copy", "value.copy() -> Dict<K, V>", "Copie superficielle."),
+    ("iter", "value.iter()", "Renvoie un itérateur."),
 ];
 
-/// Méthodes disponibles sur un tuple (`tuple`) — immuable.
+/// Méthodes réelles de `Set<T>`.
+pub const SET_METHODS: &[(&str, &str, &str)] = &[
+    ("add", "value.add(element) -> bool", "Ajoute un élément."),
+    ("remove", "value.remove(element) -> bool", "Supprime un élément."),
+    ("contains", "value.contains(element) -> bool", "Teste l'appartenance."),
+    ("size", "value.size() -> int", "Nombre d'éléments."),
+    ("is_empty", "value.is_empty() -> bool", "Indique si l'ensemble est vide."),
+    ("clear", "value.clear()", "Vide l'ensemble."),
+    ("copy", "value.copy() -> Set<T>", "Copie superficielle."),
+    ("to_list", "value.to_list() -> List<T>", "Convertit en List."),
+    ("union", "value.union(other) -> Set<T>", "Union de deux ensembles."),
+    ("intersection", "value.intersection(other) -> Set<T>", "Intersection."),
+    ("difference", "value.difference(other) -> Set<T>", "Différence."),
+    ("symmetric_difference", "value.symmetric_difference(other) -> Set<T>", "Différence symétrique."),
+    ("is_subset", "value.is_subset(other) -> bool", "Teste si l'ensemble est inclus."),
+    ("is_superset", "value.is_superset(other) -> bool", "Teste si l'ensemble contient l'autre."),
+    ("equals", "value.equals(other) -> bool", "Teste l'égalité."),
+    ("to_string", "value.to_string() -> str", "Convertit en chaîne."),
+    ("iter", "value.iter()", "Renvoie un itérateur."),
+];
+
+/// Méthodes des tuples immuables.
 pub const TUPLE_METHODS: &[(&str, &str, &str)] = &[
-    ("length", "t.length", "Nombre d'éléments (propriété OU méthode : `t.length` et `t.length()` marchent tous les deux)."),
-    ("get", "t.get(index)", "Élément à `index`."),
-    ("contains", "t.contains(value)", "Vrai si `value` est présente."),
-    ("index_of", "t.index_of(value)", "Index de la première occurrence de `value`."),
-    ("first", "t.first()", "Premier élément."),
-    ("last", "t.last()", "Dernier élément."),
-    ("to_array", "t.to_array()", "Copie les éléments dans un nouveau tableau (mutable)."),
+    ("size", "value.size() -> int", "Nombre d'éléments."),
+    ("is_empty", "value.is_empty() -> bool", "Indique si le tuple est vide."),
+    ("to_string", "value.to_string() -> str", "Convertit en chaîne."),
+    ("get", "value.get(index) -> T", "Lit un élément."),
+    ("contains", "value.contains(value) -> bool", "Teste l'appartenance."),
+    ("index_of", "value.index_of(value) -> int", "Premier index."),
+    ("first", "value.first() -> T", "Premier élément."),
+    ("last", "value.last() -> T", "Dernier élément."),
+    ("to_list", "value.to_list() -> List<T>", "Convertit en List."),
+    ("iter", "value.iter()", "Renvoie un itérateur."),
+];
+
+/// Méthodes de `Range`.
+pub const RANGE_METHODS: &[(&str, &str, &str)] = &[
+    ("size", "value.size() -> int", "Nombre d'éléments produits."),
+    ("is_empty", "value.is_empty() -> bool", "Indique si la range est vide."),
+    ("start", "value.start() -> int", "Borne de départ."),
+    ("stop", "value.stop() -> int", "Borne de fin exclusive."),
+    ("step", "value.step() -> int", "Pas."),
+    ("to_string", "value.to_string() -> str", "Convertit en chaîne."),
+    ("iter", "value.iter()", "Renvoie un itérateur."),
 ];

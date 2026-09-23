@@ -108,20 +108,22 @@ impl ModuleTypeLoader {
             message: error.to_string(),
         })?;
 
-        let tokens = Lexer::new(source.clone())
-            .scan_token()
-            .map_err(|errors| CompileError::ModuleLexerErrors {
+        let tokens = Lexer::new(source.clone()).scan_token().map_err(|errors| {
+            CompileError::ModuleLexerErrors {
+                path: path.display().to_string(),
+                source: source.clone(),
+                errors,
+            }
+        })?;
+
+        let mut parser = Parser::new(tokens);
+        let statements = parser
+            .parse()
+            .map_err(|errors| CompileError::ModuleParserErrors {
                 path: path.display().to_string(),
                 source: source.clone(),
                 errors,
             })?;
-
-        let mut parser = Parser::new(tokens);
-        let statements = parser.parse().map_err(|errors| CompileError::ModuleParserErrors {
-            path: path.display().to_string(),
-            source: source.clone(),
-            errors,
-        })?;
 
         let context = TypeCheckContext::new(path.to_path_buf(), Rc::new(self.clone()));
         TypeChecker::analyze_module(&statements, context)
@@ -155,9 +157,7 @@ impl ModuleTypeLoader {
         parts: &[String],
     ) -> Result<ImportedType, CompileError> {
         match self.resolver.resolve_import(current_file, parts)? {
-            ImportResolution::Module(path) => {
-                Ok(ImportedType::Module(canonicalize_path(&path)?))
-            }
+            ImportResolution::Module(path) => Ok(ImportedType::Module(canonicalize_path(&path)?)),
 
             ImportResolution::Export { module, name } => {
                 let interface = self.interface(&module)?;
@@ -188,13 +188,12 @@ impl ModuleTypeLoader {
 }
 
 fn canonicalize_path(path: &Path) -> Result<PathBuf, CompileError> {
-    path.canonicalize().map_err(|error| CompileError::ModuleReadError {
-        path: path.display().to_string(),
-        message: error.to_string(),
-    })
+    path.canonicalize()
+        .map_err(|error| CompileError::ModuleReadError {
+            path: path.display().to_string(),
+            message: error.to_string(),
+        })
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -259,10 +258,8 @@ import std.math
 let a: float = math.sin(math.to_radians(90))
 "#,
         );
-        let valid_result = TypeChecker::check_with_context(
-            &valid,
-            TypeCheckContext::new(main, loader),
-        );
+        let valid_result =
+            TypeChecker::check_with_context(&valid, TypeCheckContext::new(main, loader));
         assert!(valid_result.is_ok(), "float annotation must be accepted");
 
         let _ = fs::remove_dir_all(root);
@@ -432,12 +429,10 @@ export type Number2 = Number;
 
         // Alias qui référence lui-même un autre alias exporté (Number2 = Number).
         assert!(
-            check("from mathx import Number2; let n: Number2 = 1; let m: Number2 = 2.5;")
-                .is_ok()
+            check("from mathx import Number2; let n: Number2 = 1; let m: Number2 = 2.5;").is_ok()
         );
         assert!(check("from mathx import Number2; let n: Number2 = \"x\";").is_err());
 
         let _ = fs::remove_dir_all(root);
     }
 }
-

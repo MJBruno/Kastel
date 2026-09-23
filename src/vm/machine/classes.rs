@@ -145,13 +145,8 @@ impl VirtualMachine {
 
         self.stack.truncate(start);
 
-        let class_value = Value::new_class(
-            class_name,
-            superclass,
-            interfaces,
-            methods,
-            private_members,
-        );
+        let class_value =
+            Value::new_class(class_name, superclass, interfaces, methods, private_members);
 
         let class_handle = match &class_value {
             Value::Object(handle) => handle.clone(),

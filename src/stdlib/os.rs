@@ -46,9 +46,7 @@ pub fn native_args(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
-    let values = std::env::args()
-        .map(Value::new_string)
-        .collect::<Vec<_>>();
+    let values = std::env::args().map(Value::new_string).collect::<Vec<_>>();
 
     Ok(Value::new_array(values))
 }

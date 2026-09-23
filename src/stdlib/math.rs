@@ -96,12 +96,14 @@ pub fn native_abs(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 
     match args[0] {
-        Value::Integer(value) => value
-            .checked_abs()
-            .map(Value::Integer)
-            .ok_or(RuntimeError::IntegerOverflow {
-                operation: "valeur absolue",
-            }),
+        Value::Integer(value) => {
+            value
+                .checked_abs()
+                .map(Value::Integer)
+                .ok_or(RuntimeError::IntegerOverflow {
+                    operation: "valeur absolue",
+                })
+        }
 
         Value::Float(value) => Ok(Value::Float(value.abs())),
 

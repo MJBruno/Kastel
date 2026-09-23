@@ -278,7 +278,10 @@ let r = plus_one(total);
         let globals = vm.globals.borrow();
 
         // 300 * 1000 + (0 + 1 + ... + 299)
-        assert!(matches!(globals.get("total"), Some(Value::Integer(344_850))));
+        assert!(matches!(
+            globals.get("total"),
+            Some(Value::Integer(344_850))
+        ));
         assert!(matches!(globals.get("n"), Some(Value::Integer(2))));
         assert!(matches!(globals.get("k"), Some(Value::Integer(6))));
         assert!(matches!(globals.get("r"), Some(Value::Integer(344_851))));

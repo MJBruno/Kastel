@@ -24,7 +24,8 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError,
+    compiler::compiler::Compiler,
+    error::runtime_error::RuntimeError,
     runtime::gc_handle::Gc,
     runtime::object::Object,
     runtime::value::{ContainerGuard, MAX_JSON_DEPTH, Value},
@@ -90,18 +91,11 @@ fn encode_object(handle: &Gc<Object>, out: &mut String) -> Result<(), RuntimeErr
     // débordement de pile natif.
     let is_container = matches!(
         &*handle.borrow(),
-        Object::Array(_)
-            | Object::Tuple(_)
-            | Object::Set(_)
-            | Object::Dict(_)
-            | Object::Record(_)
+        Object::Array(_) | Object::Tuple(_) | Object::Set(_) | Object::Dict(_) | Object::Record(_)
     );
 
     let _guard = if is_container {
-        Some(
-            ContainerGuard::enter(handle, MAX_JSON_DEPTH)
-                .ok_or(RuntimeError::CyclicStructure)?,
-        )
+        Some(ContainerGuard::enter(handle, MAX_JSON_DEPTH).ok_or(RuntimeError::CyclicStructure)?)
     } else {
         None
     };

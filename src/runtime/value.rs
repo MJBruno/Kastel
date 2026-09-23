@@ -1054,102 +1054,102 @@ impl std::fmt::Display for Value {
                 };
 
                 match &*handle.borrow() {
-                Object::String(value) => write!(f, "{value}"),
+                    Object::String(value) => write!(f, "{value}"),
 
-                Object::Array(array) => Self::fmt_sequence(f, "[", "]", array),
+                    Object::Array(array) => Self::fmt_sequence(f, "[", "]", array),
 
-                // Tuple à un seul élément : virgule finale (`(1,)`) pour
-                // le distinguer visuellement d'un simple groupement
-                // `(1)`, comme la syntaxe littérale elle-même l'exige.
-                Object::Tuple(elements) if elements.len() == 1 => {
-                    write!(f, "(")?;
-                    elements[0].fmt_repr(f)?;
-                    write!(f, ",)")
-                }
-
-                Object::Tuple(elements) => Self::fmt_sequence(f, "(", ")", elements),
-
-                // `{1, 2, 3}` ; l'ensemble vide s'écrit `Set()` car `{}` est
-                // le dict vide.
-                Object::Set(elements) if elements.is_empty() => write!(f, "Set()"),
-
-                Object::Set(elements) => Self::fmt_sequence(f, "{", "}", elements),
-
-                Object::Dict(fields) => {
-                    write!(f, "{{")?;
-
-                    for (index, (key, value)) in fields.iter().enumerate() {
-                        if index > 0 {
-                            write!(f, ", ")?;
-                        }
-
-                        key.fmt_repr(f)?;
-                        write!(f, ": ")?;
-                        value.fmt_repr(f)?;
+                    // Tuple à un seul élément : virgule finale (`(1,)`) pour
+                    // le distinguer visuellement d'un simple groupement
+                    // `(1)`, comme la syntaxe littérale elle-même l'exige.
+                    Object::Tuple(elements) if elements.len() == 1 => {
+                        write!(f, "(")?;
+                        elements[0].fmt_repr(f)?;
+                        write!(f, ",)")
                     }
 
-                    write!(f, "}}")
-                }
+                    Object::Tuple(elements) => Self::fmt_sequence(f, "(", ")", elements),
 
-                // `{name: "Bruno", age: 25}` : noms de champs SANS guillemets
-                // (contrairement aux clés de dict).
-                Object::Record(fields) => {
-                    write!(f, "{{")?;
+                    // `{1, 2, 3}` ; l'ensemble vide s'écrit `Set()` car `{}` est
+                    // le dict vide.
+                    Object::Set(elements) if elements.is_empty() => write!(f, "Set()"),
 
-                    for (index, (name, value)) in fields.iter().enumerate() {
-                        if index > 0 {
-                            write!(f, ", ")?;
-                        }
+                    Object::Set(elements) => Self::fmt_sequence(f, "{", "}", elements),
 
-                        write!(f, "{name}: ")?;
-                        value.fmt_repr(f)?;
-                    }
+                    Object::Dict(fields) => {
+                        write!(f, "{{")?;
 
-                    write!(f, "}}")
-                }
-
-                Object::Function(function) => {
-                    write!(f, "<fun '{}'>", function.name)
-                }
-
-                Object::Overloads { name, functions } => {
-                    write!(f, "<fun '{}' ({} surcharges)>", name, functions.len())
-                }
-
-                Object::Closure(closure) => {
-                    write!(f, "<closure '{}'>", closure.function.name)
-                }
-
-                Object::Iterator(_) => {
-                    write!(f, "<iterator>")
-                }
-
-                Object::Module(module) => {
-                    write!(f, "<module '{}'>", module.name)
-                }
-                Object::Class { name, .. } => {
-                    write!(f, "<class '{}'>", name)
-                }
-
-                Object::Instance { class, .. } => match class.as_ref() {
-                    Some(class_handle) => {
-                        let class_ref = class_handle.borrow();
-
-                        match &*class_ref {
-                            Object::Class { name, .. } => {
-                                write!(f, "<{} instance>", name)
+                        for (index, (key, value)) in fields.iter().enumerate() {
+                            if index > 0 {
+                                write!(f, ", ")?;
                             }
-                            _ => write!(f, "<instance>"),
+
+                            key.fmt_repr(f)?;
+                            write!(f, ": ")?;
+                            value.fmt_repr(f)?;
                         }
+
+                        write!(f, "}}")
                     }
-                    None => write!(f, "<instance>"),
-                },
-                Object::Interface { name, .. } => {
-                    write!(f, "<interface '{}'>", name)
-                }
-                Object::BoundMethod { .. } => {
-                    write!(f, "<bound method>")
-                }
+
+                    // `{name: "Bruno", age: 25}` : noms de champs SANS guillemets
+                    // (contrairement aux clés de dict).
+                    Object::Record(fields) => {
+                        write!(f, "{{")?;
+
+                        for (index, (name, value)) in fields.iter().enumerate() {
+                            if index > 0 {
+                                write!(f, ", ")?;
+                            }
+
+                            write!(f, "{name}: ")?;
+                            value.fmt_repr(f)?;
+                        }
+
+                        write!(f, "}}")
+                    }
+
+                    Object::Function(function) => {
+                        write!(f, "<fun '{}'>", function.name)
+                    }
+
+                    Object::Overloads { name, functions } => {
+                        write!(f, "<fun '{}' ({} surcharges)>", name, functions.len())
+                    }
+
+                    Object::Closure(closure) => {
+                        write!(f, "<closure '{}'>", closure.function.name)
+                    }
+
+                    Object::Iterator(_) => {
+                        write!(f, "<iterator>")
+                    }
+
+                    Object::Module(module) => {
+                        write!(f, "<module '{}'>", module.name)
+                    }
+                    Object::Class { name, .. } => {
+                        write!(f, "<class '{}'>", name)
+                    }
+
+                    Object::Instance { class, .. } => match class.as_ref() {
+                        Some(class_handle) => {
+                            let class_ref = class_handle.borrow();
+
+                            match &*class_ref {
+                                Object::Class { name, .. } => {
+                                    write!(f, "<{} instance>", name)
+                                }
+                                _ => write!(f, "<instance>"),
+                            }
+                        }
+                        None => write!(f, "<instance>"),
+                    },
+                    Object::Interface { name, .. } => {
+                        write!(f, "<interface '{}'>", name)
+                    }
+                    Object::BoundMethod { .. } => {
+                        write!(f, "<bound method>")
+                    }
                 }
             }
         }
@@ -1233,26 +1233,29 @@ impl Value {
                 // un résultat hors intervalle est une erreur, pas un nombre
                 // faux (`factorial(21)` renvoyait un négatif). Pour un calcul
                 // volontairement cyclique : `wrapping_add/sub/mul`.
-                NumericOp::Add => a
-                    .checked_add(b)
-                    .map(Value::Integer)
-                    .ok_or(RuntimeError::IntegerOverflow {
-                        operation: "addition",
-                    }),
+                NumericOp::Add => {
+                    a.checked_add(b)
+                        .map(Value::Integer)
+                        .ok_or(RuntimeError::IntegerOverflow {
+                            operation: "addition",
+                        })
+                }
 
-                NumericOp::Subtract => a
-                    .checked_sub(b)
-                    .map(Value::Integer)
-                    .ok_or(RuntimeError::IntegerOverflow {
-                        operation: "soustraction",
-                    }),
+                NumericOp::Subtract => {
+                    a.checked_sub(b)
+                        .map(Value::Integer)
+                        .ok_or(RuntimeError::IntegerOverflow {
+                            operation: "soustraction",
+                        })
+                }
 
-                NumericOp::Multiply => a
-                    .checked_mul(b)
-                    .map(Value::Integer)
-                    .ok_or(RuntimeError::IntegerOverflow {
-                        operation: "multiplication",
-                    }),
+                NumericOp::Multiply => {
+                    a.checked_mul(b)
+                        .map(Value::Integer)
+                        .ok_or(RuntimeError::IntegerOverflow {
+                            operation: "multiplication",
+                        })
+                }
 
                 NumericOp::Divide => {
                     if b == 0 {
@@ -1310,12 +1313,13 @@ impl Value {
 
     pub fn negate_values(a: Value) -> Result<Value, RuntimeError> {
         match a {
-            Value::Integer(a) => a
-                .checked_neg()
-                .map(Value::Integer)
-                .ok_or(RuntimeError::IntegerOverflow {
-                    operation: "négation",
-                }),
+            Value::Integer(a) => {
+                a.checked_neg()
+                    .map(Value::Integer)
+                    .ok_or(RuntimeError::IntegerOverflow {
+                        operation: "négation",
+                    })
+            }
 
             Value::Float(a) => Ok(Value::Float(-a)),
 

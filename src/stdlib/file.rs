@@ -48,7 +48,8 @@ pub fn native_file_read_lines(args: &[Value]) -> Result<Value, RuntimeError> {
 
     let path = expect_string(&args[0])?;
 
-    let content = fs::read_to_string(&path).map_err(|error| io_error("read_lines", &path, error))?;
+    let content =
+        fs::read_to_string(&path).map_err(|error| io_error("read_lines", &path, error))?;
 
     let lines = content
         .lines()
