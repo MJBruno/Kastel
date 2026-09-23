@@ -1,10 +1,13 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleInstance;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
+use crate::runtime::hashed::{DictEntries, SetElements};
 use crate::runtime::object::Object;
 use crate::stdlib::NativeFn;
 
@@ -338,65 +341,162 @@ impl Value {
     }
 
     // ============================================================
+    //                CLÉS : HACHAGE ET ÉGALITÉ
+    // ============================================================
+    //
+    // Partagés par `Dict` (clés) et `Set` (éléments). Contrat : deux clés
+    // ÉGALES (`key_equals`) ont le MÊME hachage (`key_hash`).
+    //
+    //   * nombres : `1` et `1.0` sont la même clé, comparés EXACTEMENT
+    //     (`Integer(2^53 + 1)` n'égale pas `Float(2^53)`) ;
+    //   * chaînes et tuples : par contenu (les tuples sont immuables) ;
+    //   * booléens, `None`, plages, fonctions natives : par valeur ;
+    //   * tout autre objet (liste, dict, record, ensemble, fonction, instance) :
+    //     par IDENTITÉ.
+    // ============================================================
+
+    /// `Integer(i) == Float(f)` sans passer par une conversion qui perd de la
+    /// précision : le flottant doit être un entier exact, dans l'intervalle
+    /// des i64, et égal à `i`.
+    fn integer_equals_float(i: i64, f: f64) -> bool {
+        const I64_MAX_EXCLUSIVE: f64 = 9_223_372_036_854_775_808.0;
+
+        f.fract() == 0.0 && f >= i64::MIN as f64 && f < I64_MAX_EXCLUSIVE && (f as i64) == i
+    }
+
+    /// Égalité des clés de `Dict` et des éléments de `Set`.
+    pub fn key_equals(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Integer(i), Value::Float(f)) | (Value::Float(f), Value::Integer(i)) => {
+                Self::integer_equals_float(*i, *f)
+            }
+
+            (Value::Object(left), Value::Object(right)) => {
+                if let (Object::Tuple(left), Object::Tuple(right)) =
+                    (&*left.borrow(), &*right.borrow())
+                {
+                    return left.len() == right.len()
+                        && left
+                            .iter()
+                            .zip(right.iter())
+                            .all(|(left, right)| Self::key_equals(left, right));
+                }
+
+                Value::equals(a.clone(), b.clone())
+            }
+
+            _ => Value::equals(a.clone(), b.clone()),
+        }
+    }
+
+    /// Nom historique de `key_equals` (unicité des éléments d'un ensemble).
+    pub fn set_equals(a: &Value, b: &Value) -> bool {
+        Self::key_equals(a, b)
+    }
+
+    /// Hachage cohérent avec `key_equals`.
+    pub fn key_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        self.hash_into(&mut hasher);
+
+        hasher.finish()
+    }
+
+    fn hash_into(&self, state: &mut DefaultHasher) {
+        const I64_MAX_EXCLUSIVE: f64 = 9_223_372_036_854_775_808.0;
+
+        match self {
+            Value::None => 0u8.hash(state),
+
+            Value::Boolean(value) => {
+                1u8.hash(state);
+                value.hash(state);
+            }
+
+            Value::Integer(value) => {
+                2u8.hash(state);
+                value.hash(state);
+            }
+
+            Value::Float(value) => {
+                // Un flottant ENTIER se hache comme l'entier égal (`1.0` et
+                // `1` sont la même clé) ; `-0.0` tombe aussi dans ce cas.
+                if value.fract() == 0.0 && *value >= i64::MIN as f64 && *value < I64_MAX_EXCLUSIVE {
+                    2u8.hash(state);
+                    (*value as i64).hash(state);
+                } else {
+                    3u8.hash(state);
+                    value.to_bits().hash(state);
+                }
+            }
+
+            Value::Range { start, stop, step } => {
+                4u8.hash(state);
+                start.to_bits().hash(state);
+                stop.to_bits().hash(state);
+                step.to_bits().hash(state);
+            }
+
+            Value::NativeFunction(function) => {
+                5u8.hash(state);
+                (*function as usize).hash(state);
+            }
+
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::String(text) => {
+                    6u8.hash(state);
+                    text.hash(state);
+                }
+
+                Object::Tuple(elements) => {
+                    7u8.hash(state);
+                    elements.len().hash(state);
+
+                    for element in elements {
+                        element.hash_into(state);
+                    }
+                }
+
+                // Identité : le hachage ne dépend PAS du contenu (qui peut
+                // changer) et n'emprunte donc pas l'objet.
+                _ => {
+                    8u8.hash(state);
+                    handle.as_id().hash(state);
+                }
+            },
+        }
+    }
+
+    // ============================================================
     //                          SET
     // ============================================================
     //
     // Set = ensemble Kastel : éléments UNIQUES, mutable, sans ordre
-    // garanti. Comme Array et Dict, c'est un objet PARTAGÉ : `let b = a;`
+    // garanti (l'ordre d'insertion est conservé mais n'est pas un
+    // contrat). Comme List et Dict, c'est un objet PARTAGÉ : `let b = a;`
     // désigne le même ensemble, `a.copy()` en fabrique un nouveau.
     //
-    // Représentation : `Object::Set(Vec<Value>)`. L'unicité repose sur
-    // `Value::set_equals` (voir ci-dessous) et n'est garantie que si TOUS
-    // les ajouts passent par `new_set` / `set_add`.
+    // Représentation : `Object::Set(SetElements)` (voir `runtime::hashed`) :
+    // appartenance, ajout et recherche en O(1), retrait en O(n).
     // ============================================================
-
-    /// Égalité utilisée pour l'unicité des éléments d'un ensemble :
-    /// `Value::equals` (nombres, booléens, `None`, chaînes par valeur, autres
-    /// objets par identité), avec en plus la comparaison STRUCTURELLE des
-    /// tuples — immuables, donc sûrs à comparer par contenu :
-    /// `Set((1, 2), (1, 2))` ne contient qu'un élément.
-    pub fn set_equals(a: &Value, b: &Value) -> bool {
-        if let (Value::Object(left), Value::Object(right)) = (a, b)
-            && let (Object::Tuple(left), Object::Tuple(right)) =
-                (&*left.borrow(), &*right.borrow())
-        {
-            return left.len() == right.len()
-                && left
-                    .iter()
-                    .zip(right)
-                    .all(|(left, right)| Self::set_equals(left, right));
-        }
-
-        Value::equals(a.clone(), b.clone())
-    }
 
     /// Construit un ensemble en éliminant les doublons (le premier
     /// exemplaire est conservé).
     pub fn new_set(elements: Vec<Value>) -> Self {
-        let mut unique: Vec<Value> = Vec::with_capacity(elements.len());
-
-        for element in elements {
-            if !unique
-                .iter()
-                .any(|existing| Self::set_equals(existing, &element))
-            {
-                unique.push(element);
-            }
-        }
-
-        Self::new_heap_object(Object::Set(unique))
+        Self::new_heap_object(Object::Set(SetElements::from_values(elements)))
     }
 
     /// Construit un ensemble à partir d'éléments DÉJÀ uniques (sous-ensemble
     /// ou copie d'un ensemble existant) : évite de refaire le dédoublonnage.
     /// L'appelant garantit l'unicité.
     pub(crate) fn new_set_unchecked(elements: Vec<Value>) -> Self {
-        Self::new_heap_object(Object::Set(elements))
+        Self::new_heap_object(Object::Set(SetElements::from_unique(elements)))
     }
 
     fn with_set<R>(
         &self,
-        f: impl FnOnce(&Vec<Value>) -> Result<R, RuntimeError>,
+        f: impl FnOnce(&SetElements) -> Result<R, RuntimeError>,
     ) -> Result<R, RuntimeError> {
         match self {
             Value::Object(handle) => match &*handle.borrow() {
@@ -410,7 +510,7 @@ impl Value {
 
     fn with_set_mut<R>(
         &self,
-        f: impl FnOnce(&mut Vec<Value>) -> Result<R, RuntimeError>,
+        f: impl FnOnce(&mut SetElements) -> Result<R, RuntimeError>,
     ) -> Result<R, RuntimeError> {
         match self {
             Value::Object(handle) => match &mut *handle.borrow_mut() {
@@ -423,40 +523,38 @@ impl Value {
     }
 
     pub fn set_contains(&self, value: &Value) -> Result<bool, RuntimeError> {
-        self.with_set(|set| {
-            Ok(set
-                .iter()
-                .any(|element| Self::set_equals(element, value)))
-        })
+        let hash = value.key_hash();
+
+        self.with_set(|set| Ok(set.position(value, hash).is_some()))
     }
 
     /// Ajoute `value`. `true` si l'élément est nouveau, `false` s'il était
     /// déjà présent (l'ensemble n'est alors pas modifié).
     pub fn set_add(&self, value: Value) -> Result<bool, RuntimeError> {
-        // Deux emprunts SUCCESSIFS (lecture puis écriture) : comparer sous
-        // un emprunt mutable ferait paniquer `s.add(s)`, où `value` et
-        // l'ensemble sont le même objet.
-        if self.set_contains(&value)? {
+        // Hachage et recherche AVANT l'emprunt en écriture : comparer ou
+        // hacher sous un emprunt mutable ferait paniquer `s.add(s)`, où
+        // `value` et l'ensemble sont le même objet.
+        let hash = value.key_hash();
+
+        if self.with_set(|set| Ok(set.position(&value, hash).is_some()))? {
             return Ok(false);
         }
 
         self.with_set_mut(|set| {
-            set.push(value);
+            set.push_new(value, hash);
             Ok(true)
         })
     }
 
     /// Retire `value`. `true` s'il était présent, `false` sinon (pas d'erreur).
     pub fn set_remove(&self, value: &Value) -> Result<bool, RuntimeError> {
-        let position = self.with_set(|set| {
-            Ok(set
-                .iter()
-                .position(|element| Self::set_equals(element, value)))
-        })?;
+        let hash = value.key_hash();
+
+        let position = self.with_set(|set| Ok(set.position(value, hash)))?;
 
         match position {
             Some(index) => self.with_set_mut(|set| {
-                set.remove(index);
+                set.remove_at(index);
                 Ok(true)
             }),
 
@@ -477,7 +575,7 @@ impl Value {
 
     /// Copie des éléments (instantané, dans l'ordre interne).
     pub fn set_elements(&self) -> Result<Vec<Value>, RuntimeError> {
-        self.with_set(|set| Ok(set.clone()))
+        self.with_set(|set| Ok(set.to_vec()))
     }
 
     // ============================================================
@@ -551,178 +649,129 @@ impl Value {
         }
     }
 
+    // ------------------------------------------------------------
+    // DICT : clés hachées (voir `key_hash` / `key_equals`)
+    // ------------------------------------------------------------
+
     pub fn new_dict(entries: Vec<(Value, Value)>) -> Self {
-        Self::new_heap_object(Object::Dict(entries))
+        Self::new_heap_object(Object::Dict(DictEntries::from_pairs(entries)))
+    }
+
+    fn with_dict<R>(
+        &self,
+        f: impl FnOnce(&DictEntries) -> Result<R, RuntimeError>,
+    ) -> Result<R, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Dict(entries) => f(entries),
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
+    }
+
+    fn with_dict_mut<R>(
+        &self,
+        f: impl FnOnce(&mut DictEntries) -> Result<R, RuntimeError>,
+    ) -> Result<R, RuntimeError> {
+        match self {
+            Value::Object(handle) => match &mut *handle.borrow_mut() {
+                Object::Dict(entries) => f(entries),
+                _ => Err(RuntimeError::TypeError),
+            },
+
+            _ => Err(RuntimeError::TypeError),
+        }
     }
 
     pub fn dict_get(&self, key: &Value) -> Result<Value, RuntimeError> {
-        match self {
-            Value::Object(handle) => match &*handle.borrow() {
-                Object::Dict(entries) => entries
-                    .iter()
-                    .find(|(entry_key, _)| Value::equals(entry_key.clone(), key.clone()))
-                    .map(|(_, value)| value.clone())
-                    .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
-                        name: key.to_string(),
-                        suggestion: None,
-                    }),
+        let hash = key.key_hash();
 
-                _ => Err(RuntimeError::TypeError),
-            },
-
-            _ => Err(RuntimeError::TypeError),
-        }
+        self.with_dict(|entries| {
+            entries
+                .position(key, hash)
+                .map(|position| entries[position].1.clone())
+                .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
+                    name: key.to_string(),
+                    suggestion: None,
+                })
+        })
     }
 
     pub fn dict_set(&self, key: &Value, value: Value) -> Result<(), RuntimeError> {
-        match self {
-            Value::Object(handle) => {
-                let mut object = handle.borrow_mut();
+        // Hachage et recherche AVANT l'emprunt en écriture (voir `set_add`).
+        let hash = key.key_hash();
 
-                match &mut *object {
-                    Object::Dict(entries) => {
-                        if let Some((_, existing)) = entries
-                            .iter_mut()
-                            .find(|(entry_key, _)| Value::equals(entry_key.clone(), key.clone()))
-                        {
-                            *existing = value;
-                        } else {
-                            entries.push((key.clone(), value));
-                        }
+        let position = self.with_dict(|entries| Ok(entries.position(key, hash)))?;
 
-                        Ok(())
-                    }
-
-                    _ => Err(RuntimeError::TypeError),
-                }
+        self.with_dict_mut(|entries| {
+            match position {
+                Some(position) => entries.set_value_at(position, value),
+                None => entries.push_new(key.clone(), value, hash),
             }
 
-            _ => Err(RuntimeError::TypeError),
-        }
+            Ok(())
+        })
     }
 
     pub fn dict_contains(&self, key: &Value) -> Result<bool, RuntimeError> {
-        match self {
-            Value::Object(handle) => match &*handle.borrow() {
-                Object::Dict(entries) => Ok(entries
-                    .iter()
-                    .any(|(entry_key, _)| Value::equals(entry_key.clone(), key.clone()))),
+        let hash = key.key_hash();
 
-                _ => Err(RuntimeError::TypeError),
-            },
-
-            _ => Err(RuntimeError::TypeError),
-        }
+        self.with_dict(|entries| Ok(entries.position(key, hash).is_some()))
     }
 
     pub fn dict_remove(&self, key: &Value) -> Result<Value, RuntimeError> {
-        match self {
-            Value::Object(handle) => {
-                let mut object = handle.borrow_mut();
+        let hash = key.key_hash();
 
-                match &mut *object {
-                    Object::Dict(entries) => {
-                        let index = entries
-                            .iter()
-                            .position(|(entry_key, _)| {
-                                Value::equals(entry_key.clone(), key.clone())
-                            })
-                            .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
-                                name: key.to_string(),
-                                suggestion: None,
-                            })?;
+        let position = self
+            .with_dict(|entries| Ok(entries.position(key, hash)))?
+            .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
+                name: key.to_string(),
+                suggestion: None,
+            })?;
 
-                        Ok(entries.remove(index).1)
-                    }
-
-                    _ => Err(RuntimeError::TypeError),
-                }
-            }
-
-            _ => Err(RuntimeError::TypeError),
-        }
+        self.with_dict_mut(|entries| Ok(entries.remove_at(position).1))
     }
 
     pub fn dict_len(&self) -> Result<usize, RuntimeError> {
-        match self {
-            Value::Object(handle) => match &*handle.borrow() {
-                Object::Dict(entries) => Ok(entries.len()),
-                _ => Err(RuntimeError::TypeError),
-            },
-
-            _ => Err(RuntimeError::TypeError),
-        }
+        self.with_dict(|entries| Ok(entries.len()))
     }
 
     pub fn dict_keys(&self) -> Result<Value, RuntimeError> {
-        match self {
-            Value::Object(handle) => match &*handle.borrow() {
-                Object::Dict(entries) => {
-                    let keys = entries.iter().map(|(key, _)| key.clone()).collect();
+        self.with_dict(|entries| {
+            let keys = entries.iter().map(|(key, _)| key.clone()).collect();
 
-                    Ok(Value::new_array(keys))
-                }
-
-                _ => Err(RuntimeError::TypeError),
-            },
-
-            _ => Err(RuntimeError::TypeError),
-        }
+            Ok(Value::new_array(keys))
+        })
     }
 
     pub fn dict_values(&self) -> Result<Value, RuntimeError> {
-        match self {
-            Value::Object(handle) => match &*handle.borrow() {
-                Object::Dict(entries) => {
-                    let values = entries.iter().map(|(_, value)| value.clone()).collect();
+        self.with_dict(|entries| {
+            let values = entries.iter().map(|(_, value)| value.clone()).collect();
 
-                    Ok(Value::new_array(values))
-                }
-
-                _ => Err(RuntimeError::TypeError),
-            },
-
-            _ => Err(RuntimeError::TypeError),
-        }
+            Ok(Value::new_array(values))
+        })
     }
 
     pub fn dict_items(&self) -> Result<Value, RuntimeError> {
-        match self {
-            Value::Object(handle) => match &*handle.borrow() {
-                Object::Dict(entries) => {
-                    let items = entries
-                        .iter()
-                        .map(|(key, value)| Value::new_array(vec![key.clone(), value.clone()]))
-                        .collect();
+        self.with_dict(|entries| {
+            let items = entries
+                .iter()
+                .map(|(key, value)| Value::new_array(vec![key.clone(), value.clone()]))
+                .collect();
 
-                    Ok(Value::new_array(items))
-                }
-
-                _ => Err(RuntimeError::TypeError),
-            },
-
-            _ => Err(RuntimeError::TypeError),
-        }
+            Ok(Value::new_array(items))
+        })
     }
 
     pub fn dict_clear(&self) -> Result<(), RuntimeError> {
-        match self {
-            Value::Object(handle) => {
-                let mut object = handle.borrow_mut();
-
-                match &mut *object {
-                    Object::Dict(entries) => {
-                        entries.clear();
-                        Ok(())
-                    }
-
-                    _ => Err(RuntimeError::TypeError),
-                }
-            }
-
-            _ => Err(RuntimeError::TypeError),
-        }
+        self.with_dict_mut(|entries| {
+            entries.clear();
+            Ok(())
+        })
     }
+
     // ============================================================
     //                      ACCÈS UNIFIÉ AUX PROPRIÉTÉS
     // ============================================================
@@ -1326,8 +1375,10 @@ impl Value {
     pub fn equals(a: Value, b: Value) -> bool {
         match (a, b) {
             (Value::Integer(a), Value::Integer(b)) => a == b,
-            (Value::Integer(a), Value::Float(b)) => a as f64 == b,
-            (Value::Float(a), Value::Integer(b)) => a == b as f64,
+            // Comparaison EXACTE : `Integer(2^53 + 1)` n'égale pas `Float(2^53)`
+            // (même règle que les clés de Dict/Set, voir `key_equals`).
+            (Value::Integer(a), Value::Float(b)) => Value::integer_equals_float(a, b),
+            (Value::Float(a), Value::Integer(b)) => Value::integer_equals_float(b, a),
             (Value::Float(a), Value::Float(b)) => a == b,
 
             (Value::Boolean(a), Value::Boolean(b)) => a == b,

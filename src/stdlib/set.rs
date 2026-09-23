@@ -32,9 +32,8 @@ fn expect_args(args: &[Value], expected: usize) -> Result<(), RuntimeError> {
 fn elements_of(value: &Value) -> Result<Vec<Value>, RuntimeError> {
     match value {
         Value::Object(handle) => match &*handle.borrow() {
-            Object::Set(elements) | Object::Array(elements) | Object::Tuple(elements) => {
-                Ok(elements.clone())
-            }
+            Object::Array(elements) | Object::Tuple(elements) => Ok(elements.clone()),
+            Object::Set(elements) => Ok(elements.to_vec()),
 
             _ => Err(RuntimeError::TypeError),
         },

@@ -68,8 +68,37 @@ let id: str | int = "abc-1";
 * L'arithmétique sur une union est typée membre par membre : `Number + Number` vaut `int | float`.
 * Pas de restriction (« narrowing ») par `is` pour l'instant.
 
+## Unions en paramètre de fonction
+
+`int | float` (ou un alias qui s'y résout) fonctionne comme annotation de paramètre, exactement comme pour `let` — y
+compris **exportée** : `export func half(n: Number) -> float { return n / 2; }` peut être appelée depuis un autre
+module avec un `int` ou un `float`. La vérification est faite par le même mécanisme que pour un type simple, membre
+par membre : voir la section « Union » ci-dessus.
+
 ## Limites
 
-* Alias non exportables entre modules ; classes et alias ne partagent pas encore de génériques (`type Box<T> = ...`).
+* Classes et alias ne partagent pas encore de génériques (`type Box<T> = ...`).
 * Les classes importées d'un autre module restent typées sans détail.
 * Un record se compare par identité (`==`) ; comparer les champs se fait champ par champ.
+
+## Alias exportables entre modules
+
+```kastel
+// shapes.ks
+export type Point = { x: int, y: int };
+export type Number = int | float;
+
+export func origin() -> Point { return { x: 0, y: 0 }; }
+```
+
+```kastel
+// main.ks
+from shapes import Point, Number, origin;   // ou : import shapes.Point;
+
+let p: Point = origin();
+let n: Number = 3;
+```
+
+* `export type X = ...;` rend l'alias visible aux autres modules, résolu (les alias qu'il référence sont déjà développés) — un alias non exporté reste local au fichier.
+* Import ciblé (`from m import X;`), par point (`import m.X;`, comme pour une classe) ou par `from m import *;` : les trois fonctionnent.
+* Un alias n'a **aucune existence à l'exécution** : `let leak = Point;` (l'utiliser comme valeur) est refusé — rien n'est défini au runtime sous ce nom, contrairement à une classe importée.

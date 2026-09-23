@@ -3,7 +3,7 @@
 
 ```javascript
 let s = "Bonjour Monde";
-println(s.length()); // 13
+println(s.size()); // 13
 println(s.get(2)); // n
 println(s.contains('Monde')); // true
 println(s.starts_with('Bon')); // true
@@ -28,7 +28,7 @@ println('42'.to_int()); // 42
 println('3.5'.to_float()); // 3.5
 println(str(123)); // "123"
 
-let c = s.to_iterator().collect() // Collects the characters of the string into a collection (like an array or list)
+let c = s.iter().collect() // Collects the characters of the string into a collection (like an array or list)
 
 println(c); // ['B', 'o', 'n', 'j', 'o', 'u', 'r', ' ', 'M', 'o', 'n', 'd', 'e']
 ```

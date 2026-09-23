@@ -27,6 +27,10 @@ pub struct ModuleTypeInterface {
     /// Détail des classes et interfaces du module (constructeurs, méthodes
     /// surchargées, champs typés, membres privés), par nom.
     pub(crate) classes: HashMap<String, ClassInfo>,
+
+    /// Alias de type EXPORTÉS (`export type Person = { ... };`), déjà
+    /// résolus (sans référence aux noms locaux du module qui les déclare).
+    pub(crate) type_aliases: HashMap<String, Type>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +43,12 @@ pub enum ImportedType {
         ty: Type,
         name: String,
         interface: Rc<ModuleTypeInterface>,
+    },
+
+    /// Un alias de type exporté (`export type Person = { ... };`) : aucune
+    /// valeur à l'exécution, seulement un type déjà résolu.
+    TypeAlias {
+        resolved: Type,
     },
 }
 
@@ -115,11 +125,12 @@ impl ModuleTypeLoader {
 
         let context = TypeCheckContext::new(path.to_path_buf(), Rc::new(self.clone()));
         TypeChecker::analyze_module(&statements, context)
-            .map(|(exports, classes)| {
+            .map(|(exports, classes, type_aliases)| {
                 Rc::new(ModuleTypeInterface {
                     path: path.to_path_buf(),
                     exports,
                     classes,
+                    type_aliases,
                 })
             })
             .map_err(|error| match error {
@@ -151,17 +162,21 @@ impl ModuleTypeLoader {
             ImportResolution::Export { module, name } => {
                 let interface = self.interface(&module)?;
 
-                let ty = interface.exports.get(&name).cloned().ok_or_else(|| {
-                    CompileError::ExportNotFound {
-                        module: parts[..parts.len() - 1].join("."),
-                        name: name.clone(),
-                    }
-                })?;
+                if let Some(ty) = interface.exports.get(&name).cloned() {
+                    return Ok(ImportedType::Export {
+                        ty,
+                        name,
+                        interface,
+                    });
+                }
 
-                Ok(ImportedType::Export {
-                    ty,
-                    name,
-                    interface,
+                if let Some(resolved) = interface.type_aliases.get(&name).cloned() {
+                    return Ok(ImportedType::TypeAlias { resolved });
+                }
+
+                Err(CompileError::ExportNotFound {
+                    module: parts[..parts.len() - 1].join("."),
+                    name: name.clone(),
                 })
             }
         }
@@ -252,4 +267,177 @@ let a: float = math.sin(math.to_radians(90))
 
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn exported_type_aliases_are_usable_from_another_module() {
+        let root = temp_dir("kastel_typecheck_exported_alias_test");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("shapes.ks"),
+            r#"
+export type Point = { x: int, y: int };
+export type Number = int | float;
+
+// Alias NON exporté : ne doit PAS être visible depuis un autre module.
+type Internal = str;
+
+export func origin() -> Point {
+    return { x: 0, y: 0 };
 }
+"#,
+        )
+        .unwrap();
+
+        let main = project.join("main.ks");
+        fs::write(&main, "").unwrap();
+
+        let resolver = ModuleResolver::new(project);
+        let loader = Rc::new(ModuleTypeLoader::new(resolver));
+
+        let check = |source: &str| {
+            TypeChecker::check_with_context(
+                &parse(source),
+                TypeCheckContext::new(main.clone(), Rc::clone(&loader)),
+            )
+        };
+
+        // `from m import X;` pour un alias de type.
+        assert!(
+            check(
+                r#"
+from shapes import Point;
+let p: Point = { x: 1, y: 2 };
+let n: int = p.x;
+"#
+            )
+            .is_ok()
+        );
+        assert!(
+            check(
+                r#"
+from shapes import Point;
+let p: Point = { x: 1 };
+"#
+            )
+            .is_err(),
+            "un champ manquant doit être refusé"
+        );
+
+        // `import m.X;` pour un alias de type — comme pour une classe.
+        assert!(
+            check(
+                r#"
+import shapes.Point;
+let p: Point = { x: 1, y: 2 };
+"#
+            )
+            .is_ok()
+        );
+
+        // Alias ET fonction du même module ensemble ; le type de retour
+        // de `origin()` est bien `Point`.
+        assert!(
+            check(
+                r#"
+from shapes import Point, origin;
+let p: Point = origin();
+let x: int = p.x;
+"#
+            )
+            .is_ok()
+        );
+
+        // `from m import *;` importe aussi les alias.
+        assert!(
+            check(
+                r#"
+from shapes import *;
+let n: Number = 1;
+let p: Point = { x: 1, y: 2 };
+"#
+            )
+            .is_ok()
+        );
+
+        // Union importée : mêmes règles qu'un union local.
+        assert!(
+            check(
+                r#"
+from shapes import Number;
+let n: Number = "x";
+"#
+            )
+            .is_err()
+        );
+
+        // Alias NON exporté : introuvable.
+        assert!(
+            check("from shapes import Internal;").is_err(),
+            "un alias non exporté ne doit pas être importable"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn union_typed_function_parameters_are_checked_across_modules() {
+        let root = temp_dir("kastel_typecheck_union_param_test");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("mathx.ks"),
+            r#"
+export type Number = int | float;
+
+// Union LITTÉRALE (pas d'alias) dans la signature.
+export func classify(x: int | str) -> str {
+    return "ok";
+}
+
+// Union VIA UN ALIAS déclaré APRÈS cette fonction : couvre exactement la
+// régression corrigée (`register_aliases` devait déballer `export`).
+export func half(n: Number) -> float {
+    return n / 2;
+}
+
+export type Number2 = Number;
+"#,
+        )
+        .unwrap();
+
+        let main = project.join("main.ks");
+        fs::write(&main, "").unwrap();
+
+        let resolver = ModuleResolver::new(project);
+        let loader = Rc::new(ModuleTypeLoader::new(resolver));
+
+        let check = |source: &str| {
+            TypeChecker::check_with_context(
+                &parse(source),
+                TypeCheckContext::new(main.clone(), Rc::clone(&loader)),
+            )
+        };
+
+        // Union littérale : les deux membres passent, un troisième type non.
+        assert!(check("from mathx import classify; let a: str = classify(1);").is_ok());
+        assert!(check("from mathx import classify; let a: str = classify(\"x\");").is_ok());
+        assert!(check("from mathx import classify; classify(1.5);").is_err());
+
+        // Union via alias exporté, utilisée par une fonction déclarée AVANT
+        // l'alias dans le fichier source.
+        assert!(check("from mathx import half; let h: float = half(4);").is_ok());
+        assert!(check("from mathx import half; let h: float = half(4.5);").is_ok());
+        assert!(check("from mathx import half; half(\"x\");").is_err());
+
+        // Alias qui référence lui-même un autre alias exporté (Number2 = Number).
+        assert!(
+            check("from mathx import Number2; let n: Number2 = 1; let m: Number2 = 2.5;")
+                .is_ok()
+        );
+        assert!(check("from mathx import Number2; let n: Number2 = \"x\";").is_err());
+
+        let _ = fs::remove_dir_all(root);
+    }
+}
+

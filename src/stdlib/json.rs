@@ -128,7 +128,24 @@ fn encode_object(handle: &Gc<Object>, out: &mut String) -> Result<(), RuntimeErr
             Ok(())
         }
 
-        Object::Tuple(items) | Object::Set(items) => {
+        Object::Tuple(items) => {
+            out.push('[');
+
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+
+                encode_value(item, out)?;
+            }
+
+            out.push(']');
+
+            Ok(())
+        }
+
+        // Un ensemble devient un tableau JSON (ordre non garanti).
+        Object::Set(items) => {
             out.push('[');
 
             for (index, item) in items.iter().enumerate() {

@@ -985,3 +985,144 @@ let j = json_encode(s);
     assert!(refused);
 }
 
+// ============================================================
+//           ALIAS DE TYPE EXPORTÉS ENTRE MODULES
+// ============================================================
+
+const SHAPES_MODULE: &str = r#"
+export type Point = { x: int, y: int };
+export type Number = int | float;
+
+export func origin() -> Point {
+    return { x: 0, y: 0 };
+}
+"#;
+
+#[test]
+fn importing_a_type_only_alias_does_not_break_at_runtime() {
+    // Avant le correctif, importer un nom qui n'est QU'un alias de type
+    // (aucune valeur exportée) faisait planter l'exécution : le bytecode
+    // généré essayait de lire une propriété absente du module. Ici,
+    // `from shapes import Point;` ne doit produire AUCUN bytecode pour
+    // `Point`, et le reste de la ligne doit s'exécuter normalement.
+    let files = [("shapes.ks", SHAPES_MODULE)];
+
+    let value = run_project(
+        "type_alias_from_import",
+        &files,
+        r#"
+from shapes import Point, origin;
+
+let p: Point = origin();
+let x: int = p.x;
+"#,
+        |vm| integer(global(vm, "x")),
+    );
+
+    assert_eq!(value, Ok(0));
+
+    // `import m.Point;` (forme à un seul nom) : même garantie.
+    let value = run_project(
+        "type_alias_import_dot",
+        &files,
+        r#"
+import shapes.Point;
+
+let p: Point = { x: 3, y: 4 };
+let x: int = p.x;
+"#,
+        |vm| integer(global(vm, "x")),
+    );
+
+    assert_eq!(value, Ok(3));
+
+    // `from m import *;` : les alias de type suivent aussi le `*`.
+    let value = run_project(
+        "type_alias_wildcard",
+        &files,
+        r#"
+from shapes import *;
+
+let n: Number = 5;
+let p: Point = { x: 1, y: 2 };
+let x: int = p.x + n;
+"#,
+        |vm| integer(global(vm, "x")),
+    );
+
+    assert_eq!(value, Ok(6));
+}
+
+#[test]
+fn a_type_only_import_does_not_leak_a_runtime_binding() {
+    // `Point` n'existe QUE comme type : y faire référence comme VALEUR à
+    // l'exécution (et non dans une annotation de type) doit rester une
+    // erreur — l'import n'a créé aucune globale "Point".
+    let files = [("shapes.ks", SHAPES_MODULE)];
+
+    let refused = run_project(
+        "type_alias_no_runtime_leak",
+        &files,
+        r#"
+from shapes import Point;
+let x = Point;
+"#,
+        |_| (),
+    );
+
+    assert!(refused.is_err(), "{refused:?}");
+}
+
+#[test]
+fn union_typed_parameters_work_across_modules_end_to_end() {
+    // Couvre bout en bout (typage ET exécution) la régression de
+    // `register_aliases` : `half` est déclarée AVANT l'alias `Number` dans
+    // le fichier source, et l'appel se fait depuis un AUTRE module.
+    let files = [(
+        "mathx.ks",
+        r#"
+export func half(n: Number) -> float {
+    return n / 2;
+}
+
+export type Number = int | float;
+export type Classifier = int | str;
+
+export func classify(x: Classifier) -> str {
+    if x == 1 {
+        return "one";
+    }
+    return "other";
+}
+"#,
+    )];
+
+    let value = run_project(
+        "union_param_cross_module",
+        &files,
+        r#"
+from mathx import half, classify;
+
+let a = half(4);
+let b = half(4.5);
+let c = classify(1);
+let d = classify("x");
+let sum = a + b;
+"#,
+        |vm| {
+            let sum = match global(vm, "sum") {
+                Value::Float(value) => value,
+                other => panic!("flottant attendu, reçu {other:?}"),
+            };
+            let c = global(vm, "c").to_string();
+            let d = global(vm, "d").to_string();
+            (sum, c, d)
+        },
+    )
+    .expect("le projet doit s'exécuter");
+
+    assert_eq!(value.0, 4.25);
+    assert_eq!(value.1, "one");
+    assert_eq!(value.2, "other");
+}
+

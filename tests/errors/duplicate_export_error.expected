@@ -1,8 +1,0 @@
-error: la variable 'x' est déjà déclarée dans cette portée
-
-  --> duplicate_export_error.ks:2:1
-   |
- 2 | export let x = 1;
-   | ^^^^^^
-
-help: renommez l'une des deux déclarations, ou retirez `let`/`const` si vous vouliez réaffecter 'x'.

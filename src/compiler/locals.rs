@@ -19,6 +19,11 @@ pub struct Local {
 
     /// Pour distinguer une déclaration `const` ou `let`.
     pub mutable: bool,
+
+    /// Non vide si cette locale contient une FONCTION déclarée par `func`
+    /// (et non une variable) : arités déjà déclarées sous ce nom, pour la
+    /// surcharge de fonctions locales.
+    pub function_arities: Vec<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,11 +99,43 @@ impl LocalTable {
             depth: None,
             slot,
             mutable,
+            function_arities: Vec::new(),
         });
 
         self.max_slots = self.max_slots.max(self.locals.len());
 
         Ok(slot)
+    }
+
+    /// Fonction locale `name` déjà déclarée DANS la portée `depth` : son slot
+    /// et les arités déjà prises (base de la surcharge de fonctions locales).
+    pub fn local_function_in_scope(&self, name: &str, depth: usize) -> Option<(u8, Vec<usize>)> {
+        for local in self.locals.iter().rev() {
+            let Some(local_depth) = local.depth else {
+                continue;
+            };
+
+            if local_depth < depth {
+                break;
+            }
+
+            if local.name == name {
+                return if local.function_arities.is_empty() {
+                    None
+                } else {
+                    Some((local.slot, local.function_arities.clone()))
+                };
+            }
+        }
+
+        None
+    }
+
+    /// Note que la locale `slot` contient une fonction de `arity` paramètres.
+    pub fn add_function_arity(&mut self, slot: u8, arity: usize) {
+        if let Some(local) = self.locals.get_mut(slot as usize) {
+            local.function_arities.push(arity);
+        }
     }
 
     pub fn is_mutable(&self, name: &str) -> Result<Option<bool>, CompileError> {

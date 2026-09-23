@@ -5,11 +5,35 @@ use crate::runtime::function::Function;
 use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
+use super::module_types::ImportedType;
 use super::type_checker::{TypeCheckContext, TypeChecker};
 use super::variables::{Global, VariableLocation};
 
 #[allow(dead_code)]
 impl Compiler {
+    /// `true` si `path` (segments pointés, ex. `["m", "Person"]`) désigne un
+    /// alias de TYPE pur — aucune valeur à l'exécution (voir
+    /// `ModuleTypeInterface::type_aliases`). `compile_import` et
+    /// `compile_from_import` n'émettent alors aucun bytecode pour ce nom :
+    /// en émettre aurait fait échouer le programme à l'exécution en tentant
+    /// de lire une propriété absente du module (rien n'y définit ce nom).
+    ///
+    /// `false` sans `self.type_context` (imports non résolus dans ce
+    /// contexte de compilation) : le comportement d'avant reste alors
+    /// inchangé.
+    fn is_type_only_import(&self, path: &[String]) -> bool {
+        let Some(context) = &self.type_context else {
+            return false;
+        };
+
+        matches!(
+            context
+                .module_loader
+                .resolve_import(&context.current_module, path),
+            Ok(ImportedType::TypeAlias { .. })
+        )
+    }
+
     pub(crate) fn register_export(&mut self, name: &str) -> Result<(), CompileError> {
         if self.exports.iter().any(|export| export == name) {
             return Err(CompileError::DuplicateExport(name.to_string()));
@@ -426,6 +450,7 @@ impl Compiler {
                         constant,
                         mutable: true,
                         native: false,
+                        is_function: false,
                     },
                 );
 
@@ -512,6 +537,7 @@ impl Compiler {
                         constant,
                         mutable: true,
                         native: false,
+                        is_function: false,
                     },
                 );
 
@@ -1202,6 +1228,19 @@ impl Compiler {
                 return Err(CompileError::InvalidImport);
             }
 
+            // `from m import Person;` où `Person` n'est qu'un alias de
+            // type : rien à faire à l'exécution.
+            let full_path: Vec<String> = module
+                .parts
+                .iter()
+                .cloned()
+                .chain(std::iter::once(item.name.clone()))
+                .collect();
+
+            if self.is_type_only_import(&full_path) {
+                continue;
+            }
+
             let binding_name = item.alias.as_deref().unwrap_or(&item.name);
 
             if let Some(global) = self.globals.borrow().get(binding_name) {
@@ -1230,6 +1269,7 @@ impl Compiler {
                     constant: binding_constant,
                     mutable: false,
                     native: false,
+                    is_function: false,
                 },
             );
         }
@@ -1285,6 +1325,12 @@ impl Compiler {
             return Err(CompileError::InvalidImport);
         }
 
+        // `import m.Person;` où `Person` n'est qu'un alias de type : rien à
+        // faire à l'exécution (le vérificateur de types l'a déjà validé).
+        if self.is_type_only_import(path) {
+            return Ok(());
+        }
+
         if let Some(global) = self.globals.borrow().get(binding_name) {
             if !global.native {
                 return Err(CompileError::VariableAlreadyDeclared(
@@ -1312,6 +1358,7 @@ impl Compiler {
                 constant: binding_constant,
                 mutable: false,
                 native: false,
+                is_function: false,
             },
         );
 
@@ -1357,6 +1404,13 @@ impl Compiler {
                 self.compile_statement(statement)?;
             }
 
+            // Un alias de type n'a aucune existence à l'exécution (pas de
+            // global défini) : il n'entre donc PAS dans la liste des exports
+            // runtime du module. Son export passe uniquement par
+            // l'interface de TYPES du module (voir `ModuleTypeInterface`,
+            // qui contient les alias exportés à part).
+            Statement::TypeAlias { .. } => {}
+
             _ => {
                 return Err(CompileError::InvalidExport);
             }
@@ -1386,10 +1440,12 @@ impl Compiler {
         statements: &[Statement],
         context: Option<TypeCheckContext>,
     ) -> Result<Function, CompileError> {
-        match context {
+        match context.clone() {
             Some(context) => TypeChecker::check_with_context(statements, context)?,
             None => TypeChecker::check(statements)?,
         }
+
+        self.type_context = context;
 
         for (index, statement) in statements.iter().enumerate() {
             let is_last = index + 1 == statements.len();

@@ -70,14 +70,26 @@ pub struct TypeChecker {
     expression_depth: usize,
 
     /// Alias de type du fichier (`type Person = { ... };`), développés par
-    /// `resolve_type`. Locaux au fichier : ils ne s'exportent pas.
+    /// `resolve_type`. Toujours en `TypeExpr` brut : ils peuvent référencer
+    /// d'autres alias LOCAUX déclarés plus loin dans le même fichier.
     aliases: HashMap<String, TypeExpr>,
+
+    /// Alias de type IMPORTÉS d'un autre module (`from m import Person;`,
+    /// `import m.Person;`), déjà résolus par le module qui les exporte (voir
+    /// `ModuleTypeInterface::type_aliases`) : autonomes, sans référence aux
+    /// noms locaux de ce module-ci.
+    imported_type_aliases: HashMap<String, Type>,
 
     /// Signatures de chaque fonction GLOBALE, par nom : plusieurs entrées =
     /// surcharge par arité. Les appels directs (`add(1, 2)`) choisissent la
     /// signature comme pour les méthodes ; le nom lui-même, pris comme valeur,
     /// reste dynamique.
     function_overloads: HashMap<String, Vec<FunctionType>>,
+
+    /// Comme `function_overloads`, pour les fonctions LOCALES : une entrée
+    /// par portée (parallèle à `scopes`, l'indice 0 — le global — restant
+    /// vide car il utilise `function_overloads`).
+    local_functions: Vec<HashMap<String, Vec<FunctionType>>>,
 }
 
 impl TypeChecker {
@@ -96,15 +108,23 @@ impl TypeChecker {
         checker.check_statements(statements)
     }
 
+    /// Analyse un module sans l'exécuter : exports (valeurs), classes en
+    /// détail, et alias de type exportés par `export type X = ...;` (résolus
+    /// en `Type` autonome, sans référence aux noms locaux du module source —
+    /// voir `resolve_type`).
     pub(crate) fn analyze_module(
         statements: &[Statement],
         context: TypeCheckContext,
-    ) -> Result<(HashMap<String, Type>, HashMap<String, ClassInfo>), CompileError> {
+    ) -> Result<
+        (HashMap<String, Type>, HashMap<String, ClassInfo>, HashMap<String, Type>),
+        CompileError,
+    > {
         let mut checker = Self::new_with_context(context);
         checker.collect_top_level(statements)?;
         checker.check_statements(statements)?;
 
         let mut exports = HashMap::new();
+        let mut type_aliases = HashMap::new();
         let mut function_exports: HashSet<String> = HashSet::new();
 
         for statement in statements {
@@ -112,6 +132,19 @@ impl TypeChecker {
                 continue;
             };
             let inner = Self::strip_position(statement);
+
+            // `export type Person = { ... };` : n'entre PAS dans `exports`
+            // (aucune valeur à l'exécution), mais dans sa propre table.
+            if let Statement::TypeAlias { name, type_expr } = inner {
+                let resolved = checker.resolve_type(type_expr);
+
+                if type_aliases.insert(name.clone(), resolved).is_some() {
+                    return Err(CompileError::DuplicateExport(name.clone()));
+                }
+
+                continue;
+            }
+
             let (name, ty) = checker.export_type(inner)?;
 
             // Une fonction exportée plusieurs fois (surcharge par arité) ne
@@ -119,9 +152,11 @@ impl TypeChecker {
             let is_function = matches!(inner, Statement::Function { .. });
 
             if exports.insert(name.clone(), ty).is_some() {
-                if is_function && function_exports.contains(&name) {
-                    exports.insert(name.clone(), Type::Dynamic);
-                } else {
+                // Deuxième `export func` de même nom : `export_type` a déjà
+                // rendu l'ensemble COMPLET des signatures (surcharge), que
+                // l'insertion vient de mettre en place. Tout autre doublon
+                // est une erreur.
+                if !(is_function && function_exports.contains(&name)) {
                     return Err(CompileError::DuplicateExport(name));
                 }
             }
@@ -131,7 +166,7 @@ impl TypeChecker {
             }
         }
 
-        Ok((exports, checker.classes))
+        Ok((exports, checker.classes, type_aliases))
     }
 
     fn new() -> Self {
@@ -157,7 +192,9 @@ impl TypeChecker {
             current_class: None,
             expression_depth: 0,
             aliases: HashMap::new(),
+            imported_type_aliases: HashMap::new(),
             function_overloads: HashMap::new(),
+            local_functions: vec![HashMap::new()],
             context: None,
         }
     }
@@ -178,7 +215,15 @@ impl TypeChecker {
 
     fn register_aliases(&mut self, statements: &[Statement]) -> Result<(), CompileError> {
         for statement in statements {
-            if let Statement::TypeAlias { name, type_expr } = Self::strip_position(statement) {
+            // `export type X = ...;` doit être reconnu au même titre qu'un
+            // alias non exporté : l'export ne change que sa visibilité pour
+            // les AUTRES modules, pas sa disponibilité dans CE fichier. Sans
+            // ce déballage, une signature de fonction du même fichier qui
+            // utilise un alias EXPORTÉ (même déclaré plus haut) le voyait
+            // comme un type nommé non résolu au lieu de sa forme réelle.
+            if let Statement::TypeAlias { name, type_expr } =
+                Self::strip_position_and_export(statement)
+            {
                 if self.aliases.contains_key(name) {
                     return Err(CompileError::VariableAlreadyDeclared(name.clone()));
                 }
@@ -188,6 +233,16 @@ impl TypeChecker {
         }
 
         Ok(())
+    }
+
+    /// Comme `strip_position`, en retirant aussi UN `Export` enveloppant.
+    fn strip_position_and_export(statement: &Statement) -> &Statement {
+        let statement = Self::strip_position(statement);
+
+        match statement {
+            Statement::Export { statement } => Self::strip_position(statement),
+            other => other,
+        }
     }
 
     /// Convertit une annotation en type sémantique en développant les ALIAS
@@ -204,10 +259,17 @@ impl TypeChecker {
         }
 
         match expr {
-            TypeExpr::Named(name) => match self.aliases.get(name) {
-                Some(target) => self.resolve_type_at(target, depth + 1),
-                None => Type::from_type_expr(expr),
-            },
+            TypeExpr::Named(name) => {
+                if let Some(target) = self.aliases.get(name) {
+                    return self.resolve_type_at(target, depth + 1);
+                }
+
+                if let Some(resolved) = self.imported_type_aliases.get(name) {
+                    return resolved.clone();
+                }
+
+                Type::from_type_expr(expr)
+            }
 
             TypeExpr::Generic { name, arguments } => Type::build_generic(
                 name,
@@ -733,6 +795,17 @@ impl TypeChecker {
                     },
                 )?;
             }
+
+            // Les alias de type exportés entrent aussi dans le `*`.
+            for (name, resolved) in &interface.type_aliases {
+                self.declare_import_binding(
+                    name,
+                    ImportedType::TypeAlias {
+                        resolved: resolved.clone(),
+                    },
+                )?;
+            }
+
             return Ok(());
         }
 
@@ -741,22 +814,31 @@ impl TypeChecker {
                 return Err(CompileError::InvalidImport);
             }
 
-            let ty = interface.exports.get(&item.name).cloned().ok_or_else(|| {
-                CompileError::ExportNotFound {
-                    module: module.parts.join("."),
-                    name: item.name.clone(),
-                }
-            })?;
-
             let binding_name = item.alias.as_deref().unwrap_or(&item.name);
-            self.declare_import_binding(
-                binding_name,
-                ImportedType::Export {
-                    ty,
-                    name: item.name.clone(),
-                    interface: Rc::clone(&interface),
-                },
-            )?;
+
+            if let Some(ty) = interface.exports.get(&item.name).cloned() {
+                self.declare_import_binding(
+                    binding_name,
+                    ImportedType::Export {
+                        ty,
+                        name: item.name.clone(),
+                        interface: Rc::clone(&interface),
+                    },
+                )?;
+                continue;
+            }
+
+            // `from m import Person;` : Person n'est qu'un alias de type,
+            // sans valeur à l'exécution (voir `declare_import_binding`).
+            if let Some(resolved) = interface.type_aliases.get(&item.name).cloned() {
+                self.declare_import_binding(binding_name, ImportedType::TypeAlias { resolved })?;
+                continue;
+            }
+
+            return Err(CompileError::ExportNotFound {
+                module: module.parts.join("."),
+                name: item.name.clone(),
+            });
         }
 
         Ok(())
@@ -810,14 +892,22 @@ impl TypeChecker {
         binding_name: &str,
         imported: ImportedType,
     ) -> Result<(), CompileError> {
+        // Un alias de type n'a AUCUNE existence à l'exécution : pas de
+        // liaison-valeur à déclarer, juste le type rendu disponible sous
+        // `binding_name` (voir `resolve_type_at`).
+        if let ImportedType::TypeAlias { resolved } = imported {
+            self.imported_type_aliases
+                .insert(binding_name.to_string(), resolved);
+
+            return Ok(());
+        }
+
         let ty = match imported {
             ImportedType::Module(path) => Type::Module(path.to_string_lossy().into_owned()),
 
-            ImportedType::Export {
-                ty,
-                name,
-                interface,
-            } => {
+            ImportedType::TypeAlias { .. } => unreachable!("traité ci-dessus"),
+
+            ImportedType::Export { ty, name, interface } => {
                 // Une classe importée est connue en détail (constructeurs,
                 // méthodes, champs, membres privés), pas seulement par son nom.
                 if interface.classes.contains_key(&name) {
@@ -877,14 +967,17 @@ impl TypeChecker {
                     suggestion: None,
                 }),
 
-            // Fonction surchargée : un seul export, dynamique côté importateur.
+            // Fonction surchargée : UN export, typé par l'ensemble de ses
+            // signatures (l'importateur choisit par arité et par type).
             Statement::Function { name, .. }
                 if self
                     .function_overloads
                     .get(name)
                     .is_some_and(|overloads| overloads.len() > 1) =>
             {
-                Ok((name.clone(), Type::Dynamic))
+                let signatures = self.function_overloads.get(name).cloned().unwrap_or_default();
+
+                Ok((name.clone(), Type::Overloads(signatures)))
             }
 
             Statement::Function { name, .. } => self
@@ -937,14 +1030,37 @@ impl TypeChecker {
         let nested = self.scopes.len() > 1;
         let parent_scope_index = self.scopes.len() - 1;
         if nested {
-            self.declare(
-                name,
-                Binding {
-                    ty: Type::Function(declared_signature.clone()),
-                    _mutable: true,
-                    native: false,
-                },
-            )?;
+            // Surcharge locale : une fonction du même nom est déjà déclarée
+            // dans CETTE portée (même arité = erreur).
+            if let Some(overloads) = self.local_functions[parent_scope_index].get_mut(name) {
+                if overloads
+                    .iter()
+                    .any(|existing| existing.params.len() == declared_signature.params.len())
+                {
+                    return Err(CompileError::DuplicateFunction {
+                        name: name.to_string(),
+                        arity: declared_signature.params.len(),
+                    });
+                }
+
+                overloads.push(declared_signature.clone());
+
+                if let Some(binding) = self.scopes[parent_scope_index].get_mut(name) {
+                    binding.ty = Type::Dynamic;
+                }
+            } else {
+                self.declare(
+                    name,
+                    Binding {
+                        ty: Type::Function(declared_signature.clone()),
+                        _mutable: true,
+                        native: false,
+                    },
+                )?;
+
+                self.local_functions[parent_scope_index]
+                    .insert(name.to_string(), vec![declared_signature.clone()]);
+            }
         }
 
         self.push_scope();
@@ -990,6 +1106,16 @@ impl TypeChecker {
         if return_type.is_none() {
             if let Some(function) = self.functions.get_mut(name) {
                 function.return_type = Box::new(inferred_return.clone());
+            }
+
+            // Fonction locale surchargée : signature de MÊME arité.
+            if nested
+                && let Some(overloads) = self.local_functions[parent_scope_index].get_mut(name)
+                && let Some(signature) = overloads
+                    .iter_mut()
+                    .find(|signature| signature.params.len() == params.len())
+            {
+                signature.return_type = Box::new(inferred_return.clone());
             }
 
             // Fonction surchargée : on met à jour la signature de MÊME arité.
@@ -1306,12 +1432,7 @@ impl TypeChecker {
                 // signature est choisie par arité et par type, comme pour une
                 // méthode.
                 if let Expression::Variable(name) = callee.as_ref()
-                    && self.is_global_binding(name)
-                    && let Some(signatures) = self
-                        .function_overloads
-                        .get(name)
-                        .filter(|signatures| signatures.len() > 1)
-                        .cloned()
+                    && let Some(signatures) = self.overloads_of(name)
                 {
                     let signature = self.resolve_overload(&signatures, arguments, name)?;
 
@@ -1385,6 +1506,16 @@ impl TypeChecker {
                     Type::Function(signature) => {
                         let function_name = self.expression_name(callee);
                         self.check_call_signature(&signature, arguments, &function_name)
+                    }
+
+                    // Fonction surchargée importée d'un module : signature
+                    // choisie par arité et par type.
+                    Type::Overloads(signatures) => {
+                        let function_name = self.expression_name(callee);
+                        let signature =
+                            self.resolve_overload(&signatures, arguments, &function_name)?;
+
+                        Ok(*signature.return_type)
                     }
 
                     Type::Dynamic => {
@@ -1812,13 +1943,23 @@ impl TypeChecker {
         Ok(Type::Dynamic)
     }
 
-    /// `true` si `name` désigne la variable/fonction GLOBALE (aucune portée
-    /// locale ne la masque).
-    fn is_global_binding(&self, name: &str) -> bool {
-        self.scopes
-            .iter()
-            .skip(1)
-            .all(|scope| !scope.contains_key(name))
+    /// Signatures de la fonction SURCHARGÉE désignée par `name` (locale ou
+    /// globale : la portée la plus proche qui définit `name` l'emporte, comme
+    /// pour une variable). `None` si ce n'est pas une fonction surchargée.
+    fn overloads_of(&self, name: &str) -> Option<Vec<FunctionType>> {
+        for index in (0..self.scopes.len()).rev() {
+            if self.scopes[index].contains_key(name) {
+                let signatures = if index == 0 {
+                    self.function_overloads.get(name)
+                } else {
+                    self.local_functions[index].get(name)
+                };
+
+                return signatures.filter(|signatures| signatures.len() > 1).cloned();
+            }
+        }
+
+        None
     }
 
     /// `true` si `class_name` et toutes ses bases sont déclarées dans ce
@@ -2086,11 +2227,13 @@ impl TypeChecker {
 
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        self.local_functions.push(HashMap::new());
     }
 
     fn pop_scope(&mut self) {
         debug_assert!(self.scopes.len() > 1);
         self.scopes.pop();
+        self.local_functions.pop();
     }
 
     fn with_location<T>(
@@ -2771,6 +2914,55 @@ func shadow() {
         assert!(
             check("class S { func initialize() { this.v = 1; } } let s = new S();").is_ok()
         );
+    }
+
+    #[test]
+    fn an_exported_alias_resolves_in_a_function_declared_after_it_in_the_same_file() {
+        // Régression : `register_aliases` ne déballait pas l'enveloppe
+        // `Export`, donc un alias EXPORTÉ n'était jamais enregistré avant que
+        // `collect_declarations` calcule les signatures de fonctions du même
+        // fichier — `origin()` était alors typé `Point` (non résolu) au lieu
+        // de `{ x: int, y: int }`, même si `Point` est déclaré AVANT
+        // `origin` dans le fichier.
+        let ok = check(
+            r#"
+export type Point = { x: int, y: int };
+export type Number = int | float;
+
+export func origin() -> Point {
+    return { x: 0, y: 0 };
+}
+
+let p: Point = origin();
+let x: int = p.x;
+
+func half(n: Number) -> float {
+    return n / 2;
+}
+let h: float = half(4);
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+    }
+
+    #[test]
+    fn an_exported_alias_resolves_in_a_function_declared_before_it() {
+        // Sens inverse : la fonction précède l'alias qu'elle utilise dans le
+        // même fichier (référence en avant), couvert par `register_aliases`
+        // (première passe, avant `collect_declarations`).
+        let ok = check(
+            r#"
+export func origin() -> Point {
+    return { x: 0, y: 0 };
+}
+
+export type Point = { x: int, y: int };
+
+let p: Point = origin();
+let x: int = p.x;
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
     }
 }
 

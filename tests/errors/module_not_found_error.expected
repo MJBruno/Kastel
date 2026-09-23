@@ -1,6 +1,0 @@
-error: erreur de module : Module introuvable : \\?\C:\Users\BRUNO\Desktop\Espace\Kastel\tests\errors\this_module_does_not_exist.ks
-
-  --> module_not_found_error.ks:1:1
-   |
- 1 | import this_module_does_not_exist;
-   | ^^^^^^

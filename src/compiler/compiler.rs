@@ -41,13 +41,18 @@ pub struct Compiler {
 
     /// Arités des fonctions globales de même nom (surcharge par arité) :
     /// une fonction peut être déclarée plusieurs fois avec un nombre de
-    /// paramètres différent.
+    /// paramètres différent. Toute déclaration de fonction globale émet
+    /// `OpCode::Overload` (voir `compile_function_statement`), qui définit,
+    /// remplace ou étend selon ce qui existe déjà à l'exécution.
     pub(crate) function_arities: HashMap<String, Vec<usize>>,
 
-    /// Fonctions globales dont la PREMIÈRE déclaration a déjà été compilée
-    /// (`DefineGlobal`) ; les suivantes s'ajoutent à l'ensemble de
-    /// surcharges (`Overload`).
-    pub(crate) defined_functions: HashSet<String>,
+    /// Copie du contexte de résolution passé au vérificateur de types
+    /// (`None` si le module compile sans résolution d'imports, ou en REPL
+    /// sans contexte). Permet à `compile_import` / `compile_from_import` de
+    /// savoir si un nom importé est un alias de TYPE pur (aucune valeur à
+    /// l'exécution : voir `ModuleTypeInterface::type_aliases`), auquel cas
+    /// aucun bytecode n'est émis pour lui.
+    pub(crate) type_context: Option<TypeCheckContext>,
 
     pub(crate) finally_blocks: Vec<Vec<Statement>>,
 
@@ -74,7 +79,7 @@ impl Compiler {
             imported_modules: HashSet::new(),
             predeclared_functions: HashSet::new(),
             function_arities: HashMap::new(),
-            defined_functions: HashSet::new(),
+            type_context: None,
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
@@ -97,7 +102,7 @@ impl Compiler {
             imported_modules: HashSet::new(),
             predeclared_functions: HashSet::new(),
             function_arities: HashMap::new(),
-            defined_functions: HashSet::new(),
+            type_context: None,
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
@@ -124,7 +129,7 @@ impl Compiler {
             imported_modules: HashSet::new(),
             predeclared_functions: HashSet::new(),
             function_arities: HashMap::new(),
-            defined_functions: HashSet::new(),
+            type_context: None,
             finally_blocks: Vec::new(),
             current_line: 0,
             current_column: 0,
@@ -160,6 +165,7 @@ impl Compiler {
                 constant,
                 mutable: true,
                 native: true,
+                is_function: false,
             },
         );
 
@@ -182,11 +188,18 @@ impl Compiler {
     }
 
     /// Enregistre le nom global d'une fonction, classe ou interface.
-    fn predeclare_global_name(&mut self, name: &String) -> Result<(), CompileError> {
+    ///
+    /// `is_function` distingue une fonction (redéclarable — surcharge par
+    /// arité ou redéfinition en REPL) d'une classe ou interface (jamais
+    /// redéclarable).
+    fn predeclare_global_name(&mut self, name: &String, is_function: bool) -> Result<(), CompileError> {
         let existing = self.globals.borrow().get(name).cloned();
 
         if let Some(global) = existing {
-            if !global.native {
+            // Une fonction peut toujours redéclarer une fonction existante
+            // (surcharge, ou redéfinition en REPL) ; tout le reste (variable,
+            // classe, interface) reste protégé.
+            if !global.native && !(is_function && global.is_function) {
                 return Err(CompileError::VariableAlreadyDeclared(name.clone()));
             }
 
@@ -196,6 +209,7 @@ impl Compiler {
                     constant: global.constant,
                     mutable: true,
                     native: false,
+                    is_function,
                 },
             );
         } else {
@@ -207,6 +221,7 @@ impl Compiler {
                     constant,
                     mutable: true,
                     native: false,
+                    is_function,
                 },
             );
         }
@@ -256,11 +271,11 @@ impl Compiler {
                 self.function_arities
                     .insert(name.clone(), vec![params.len()]);
 
-                self.predeclare_global_name(name)
+                self.predeclare_global_name(name, true)
             }
 
             Statement::Class { name, .. } | Statement::Interface { name, .. } => {
-                self.predeclare_global_name(name)
+                self.predeclare_global_name(name, false)
             }
 
             _ => Ok(()),
@@ -343,10 +358,12 @@ impl Compiler {
         statements: &[Statement],
         context: Option<TypeCheckContext>,
     ) -> Result<(Function, Vec<String>), CompileError> {
-        match context {
+        match context.clone() {
             Some(context) => TypeChecker::check_with_context(statements, context)?,
             None => TypeChecker::check(statements)?,
         }
+
+        self.type_context = context;
 
         self.predeclare_global_functions(statements)?;
 

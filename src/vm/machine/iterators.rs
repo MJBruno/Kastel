@@ -161,10 +161,10 @@ impl VirtualMachine {
                 let value = {
                     let object = array.borrow();
 
-                    let (Object::Array(elements) | Object::Tuple(elements) | Object::Set(elements)) =
-                        &*object
-                    else {
-                        return Err(RuntimeError::TypeError);
+                    let elements: &[Value] = match &*object {
+                        Object::Array(elements) | Object::Tuple(elements) => &elements[..],
+                        Object::Set(elements) => &elements[..],
+                        _ => return Err(RuntimeError::TypeError),
                     };
 
                     elements

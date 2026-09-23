@@ -352,6 +352,11 @@ impl VirtualMachine {
                 Ok(false)
             }
 
+            OpCode::OverloadLocal => {
+                self.op_overload_local()?;
+                Ok(false)
+            }
+
             // ========================================================
             // ITERATORS
             // ========================================================

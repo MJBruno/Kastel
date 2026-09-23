@@ -26,6 +26,10 @@ pub enum Type {
     Record(Vec<(String, Type)>),
     /// Union : `int | float`.
     Union(Vec<Type>),
+    /// Fonction SURCHARGÉE par arité (`func f(a)` + `func f(a, b)`), telle
+    /// qu'exportée par un module : un appel choisit la signature par arité
+    /// et par type.
+    Overloads(Vec<FunctionType>),
     /// `Set<T>` : ensemble d'éléments uniques de type `T`.
     Set(Box<Type>),
     /// `list`, `dict`, `tuple`, `set` non paramétrés.
@@ -235,6 +239,12 @@ impl Type {
         }
 
         match (self, expected) {
+            // Une fonction surchargée convient à un type fonction si UNE de
+            // ses signatures y convient.
+            (Type::Overloads(signatures), Type::Function(_)) => signatures
+                .iter()
+                .any(|signature| Type::Function(signature.clone()).is_assignable_to(expected, parents)),
+
             // Typage structurel : le record fourni doit avoir TOUS les champs
             // attendus, avec des types compatibles (champs en plus permis).
             (Type::Record(actual), Type::Record(expected)) => {
@@ -635,6 +645,9 @@ impl fmt::Display for Type {
                     write!(f, "{name}: {field}")?;
                 }
                 write!(f, " }}")
+            }
+            Type::Overloads(signatures) => {
+                write!(f, "function ({} surcharges)", signatures.len())
             }
             Type::Union(members) => {
                 for (index, member) in members.iter().enumerate() {

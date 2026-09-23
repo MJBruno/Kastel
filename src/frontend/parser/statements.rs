@@ -87,7 +87,7 @@ impl Parser {
     }
 
     /// `type Person = { name: str, age: int };`
-    fn parse_type_alias_statement(&mut self) -> Result<Statement, ParserError> {
+    pub(super) fn parse_type_alias_statement(&mut self) -> Result<Statement, ParserError> {
         self.advance(); // `type`
 
         let name = self.consume(TokenKind::Identifier, "Nom d'alias de type attendu")?;

@@ -1,9 +1,0 @@
-error: nombre d'arguments incorrect
-
-  --> wrong_argument_count_error.ks:1:8
-   |
- 1 | println(abs(1, 2));
-   |        ^
-   |
-   = expected: 1 argument(s)
-   = found: 2 argument(s)

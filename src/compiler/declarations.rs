@@ -89,6 +89,7 @@ impl Compiler {
                 constant: name_constant,
                 mutable,
                 native: false,
+                is_function: false,
             },
         );
 

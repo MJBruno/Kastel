@@ -327,12 +327,13 @@ impl Value {
             IteratorKind::Array { array, index } => {
                 let array = array.borrow();
 
-                let (Object::Array(elements) | Object::Tuple(elements) | Object::Set(elements)) = &*array
-                else {
-                    return Err(RuntimeError::TypeError);
+                let length = match &*array {
+                    Object::Array(elements) | Object::Tuple(elements) => elements.len(),
+                    Object::Set(elements) => elements.len(),
+                    _ => return Err(RuntimeError::TypeError),
                 };
 
-                Ok(*index < elements.len())
+                Ok(*index < length)
             }
 
             // Les adaptateurs avec callback doivent passer par la VM.
@@ -403,9 +404,10 @@ impl Value {
             IteratorKind::Array { array, index } => {
                 let array = array.borrow();
 
-                let (Object::Array(elements) | Object::Tuple(elements) | Object::Set(elements)) = &*array
-                else {
-                    return Err(RuntimeError::TypeError);
+                let elements: &[Value] = match &*array {
+                    Object::Array(elements) | Object::Tuple(elements) => &elements[..],
+                    Object::Set(elements) => &elements[..],
+                    _ => return Err(RuntimeError::TypeError),
                 };
 
                 if *index >= elements.len() {

@@ -107,11 +107,15 @@ pub enum OpCode {
     /// l'ensemble de surcharges de la globale `nom` (voir
     /// `Object::Overloads`). Opérande constante : préfixable par `Wide`.
     Overload,
+
+    /// `OverloadLocal <slot>` : comme `Overload`, pour une fonction LOCALE
+    /// stockée dans la variable locale `slot`.
+    OverloadLocal,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::Overload as usize + 1;
+    pub const COUNT: usize = Self::OverloadLocal as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -189,7 +193,8 @@ mod tests {
         assert_eq!(OpCode::Wide as u8, 64);
         assert_eq!(OpCode::Record as u8, 65);
         assert_eq!(OpCode::Overload as u8, 66);
-        assert_eq!(OpCode::COUNT, 67);
+        assert_eq!(OpCode::OverloadLocal as u8, 67);
+        assert_eq!(OpCode::COUNT, 68);
     }
 
     #[test]

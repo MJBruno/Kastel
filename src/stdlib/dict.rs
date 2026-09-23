@@ -206,7 +206,7 @@ pub fn native_dict_update(args: &[Value]) -> Result<Value, RuntimeError> {
             let object = handle.borrow();
 
             match &*object {
-                Object::Dict(entries) => entries.clone(),
+                Object::Dict(entries) => entries.to_vec(),
                 _ => return Err(RuntimeError::TypeError),
             }
         }
@@ -238,7 +238,7 @@ pub fn native_dict_copy(args: &[Value]) -> Result<Value, RuntimeError> {
             let object = handle.borrow();
 
             match &*object {
-                Object::Dict(entries) => entries.clone(),
+                Object::Dict(entries) => entries.to_vec(),
                 _ => return Err(RuntimeError::TypeError),
             }
         }

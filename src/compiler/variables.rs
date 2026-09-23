@@ -11,6 +11,13 @@ pub struct Global {
     pub constant: u16,
     pub mutable: bool,
     pub native: bool,
+
+    /// `true` si ce nom a été déclaré par `func` (au moins une fois).
+    /// Permet à une fonction globale d'être redéclarée sans erreur — pour
+    /// la surcharge par arité (fichier) et pour la redéfinition en ligne
+    /// (REPL) — alors qu'une variable ou une classe de même nom reste
+    /// protégée contre toute redéclaration.
+    pub is_function: bool,
 }
 
 /// Indique l'emplacement où une variable a été résolue par le compilateur.

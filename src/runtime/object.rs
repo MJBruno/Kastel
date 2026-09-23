@@ -5,6 +5,7 @@ use std::rc::Rc;
 use crate::module::module::ModuleInstance;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
+use crate::runtime::hashed::{DictEntries, SetElements};
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::iterator::IteratorState;
 use crate::runtime::upvalue::ObjUpvalue;
@@ -22,7 +23,7 @@ pub enum Object {
     /// `Value::new_tuple` / `Value::tuple_get` dans `runtime::value`.
     Tuple(Vec<Value>),
 
-    Dict(Vec<(Value, Value)>),
+    Dict(DictEntries),
 
     /// Record : `{ name: "Bruno", age: 25 }`. Champs NOMMÉS (identifiants), en
     /// nombre FIXE, dans l'ordre de déclaration. Accès par `p.name` ; on peut
@@ -38,7 +39,7 @@ pub enum Object {
     /// `Value::new_set` / `Value::set_add` (voir `runtime::value`). L'ordre
     /// d'insertion est conservé en interne, mais il ne fait PAS partie du
     /// contrat : un programme ne doit pas s'y fier.
-    Set(Vec<Value>),
+    Set(SetElements),
 
     Function(Rc<Function>),
 

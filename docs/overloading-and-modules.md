@@ -54,7 +54,42 @@ Le REPL résout les imports à partir du **répertoire courant** (comme un fichi
 Le cache des modules est partagé entre les lignes. Chaque ligne est vérifiée seule : les types des lignes précédentes ne sont pas
 mémorisés.
 
-## 4. Constructeur `private`
+## 4. Fonctions locales surchargeables, REPL scindé
+
+Une fonction déclarée DANS une autre fonction peut désormais être surchargée par arité, exactement comme une fonction globale (nouvel opcode `OverloadLocal`).
+
+Le REPL a été séparé dans son propre fichier (`src/app/repl.rs`) ; `application.rs` ne garde que `Application::run`, l'exécution d'un fichier et l'aide.
+
+`Dict` et `Set` ont maintenant un index de hachage (`runtime/hashed.rs`) : recherche, insertion et appartenance en O(1) moyen au lieu de O(n) — voir `docs/hashed-containers.md`.
+
+## 5. Redéfinir une fonction dans le REPL
+
+```text
+>>> func double(x) { return x * 2; }
+>>> double(21)
+42
+>>> func double(x) { return x * 3; }
+>>> double(21)
+63
+```
+
+Toute déclaration de fonction globale émet désormais un seul opcode, `Overload`, qui définit, remplace (même arité) ou étend (arité différente) la globale existante selon ce qui s'y trouve déjà à l'exécution — que ce soit la première déclaration d'un fichier, une surcharge dans le même fichier, ou une redéfinition entre deux lignes du REPL (où chaque ligne est compilée séparément).
+
+## 6. Alias de type exportables entre modules
+
+```kastel
+// shapes.ks
+export type Point = { x: int, y: int };
+```
+```kastel
+// main.ks
+from shapes import Point;
+let p: Point = { x: 1, y: 2 };
+```
+
+Voir `docs/records-and-types.md#alias-exportables-entre-modules` pour le détail (import ciblé, par point, wildcard, absence de valeur à l'exécution).
+
+## 7. Constructeur `private`
 
 `private func initialize(...)` interdit `new` **hors du corps de la classe** qui le déclare — à la compilation quand la classe est
 connue (locale ou importée), et à l'exécution sinon. Une classe dérivée qui déclare son propre `initialize` public peut déléguer au

@@ -47,13 +47,26 @@ impl Compiler {
                     .map(|global| global.constant)
                     .ok_or_else(|| CompileError::VariableAlreadyDeclared(name.to_string()))?
             } else {
-                if let Some(global) = self.globals.borrow().get(name) {
-                    if !global.native {
-                        return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
-                    }
+                // Chemin emprunté quand ce nom n'a pas été prédéclaré par le
+                // pré-passage du compilateur — c'est le cas du REPL (voir
+                // `compile_repl_inner`, qui ne l'exécute pas) : une fonction
+                // globale peut donc s'y trouver déjà (ligne précédente).
+                // Une fonction peut toujours redéclarer une fonction (REPL :
+                // redéfinition ; fichier sans pré-passage : surcharge) ;
+                // toute autre collision (variable, classe...) reste refusée.
+                let existing = self.globals.borrow().get(name).cloned();
+
+                if let Some(global) = &existing
+                    && !global.native
+                    && !global.is_function
+                {
+                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
                 }
 
-                let constant = self.identifier_constant(name)?;
+                let constant = match &existing {
+                    Some(global) => global.constant,
+                    None => self.identifier_constant(name)?,
+                };
 
                 self.globals.borrow_mut().insert(
                     name.to_string(),
@@ -61,6 +74,7 @@ impl Compiler {
                         constant,
                         mutable: true,
                         native: false,
+                        is_function: true,
                     },
                 );
 
@@ -74,12 +88,15 @@ impl Compiler {
 
             self.emit_closure(function_constant, &function.upvalues);
 
-            if self.defined_functions.insert(name.to_string()) {
-                self.emit_constant_op(OpCode::DefineGlobal, name_constant);
-            } else {
-                // Surcharge : la fonction s'ajoute à l'ensemble existant.
-                self.emit_constant_op(OpCode::Overload, name_constant);
-            }
+            // `Overload` couvre aussi bien la toute PREMIÈRE déclaration
+            // (la globale n'existe pas encore : la fonction la définit,
+            // comme `DefineGlobal`) que les suivantes (ajout à l'ensemble de
+            // surcharges, ou remplacement d'une même arité). C'est ce
+            // dernier cas qui permet la REDÉFINITION d'une fonction dans le
+            // REPL, où chaque ligne est un `Compiler` distinct : rien n'y
+            // distingue localement "jamais vue" de "déjà déclarée par une
+            // ligne précédente".
+            self.emit_constant_op(OpCode::Overload, name_constant);
 
             return Ok(());
         }
@@ -88,12 +105,42 @@ impl Compiler {
         // LOCAL / NESTED FUNCTION
         // ========================================================
 
+        // Surcharge locale : une fonction du même nom est déjà déclarée
+        // dans CETTE portée (même arité = erreur).
+        let overload_target = self
+            .context
+            .borrow()
+            .locals
+            .local_function_in_scope(name, self.scope_depth);
+
+        if let Some((_, arities)) = &overload_target
+            && arities.contains(&params.len())
+        {
+            return Err(CompileError::DuplicateFunction {
+                name: name.to_string(),
+                arity: params.len(),
+            });
+        }
+
         let function = self.compile_function(name, params, body)?;
 
         let function_constant =
             self.make_constant(Value::new_function(Rc::new(function.clone())))?;
 
         self.emit_closure(function_constant, &function.upvalues);
+
+        if let Some((existing_slot, _)) = overload_target {
+            // La fermeture est au sommet de la pile : `OverloadLocal` la
+            // retire et l'ajoute à l'ensemble de la locale `existing_slot`.
+            self.emit_bytes(OpCode::OverloadLocal, existing_slot);
+
+            self.context
+                .borrow_mut()
+                .locals
+                .add_function_arity(existing_slot, params.len());
+
+            return Ok(());
+        }
 
         let slot = self
             .context
@@ -105,6 +152,11 @@ impl Compiler {
             .borrow_mut()
             .locals
             .mark_initialized(self.scope_depth);
+
+        self.context
+            .borrow_mut()
+            .locals
+            .add_function_arity(slot, params.len());
 
         debug_assert_eq!(self.context.borrow().locals.len() - 1, slot as usize);
 

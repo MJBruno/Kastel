@@ -214,9 +214,14 @@ impl Parser {
             self.parse_class_statement()?
         } else if self.match_token(TokenKind::Interface) {
             self.parse_interface_statement()?
+        } else if self.check(TokenKind::Identifier) && self.peek().lexeme == "type" {
+            // `export type Person = { ... };` : rend l'alias visible aux
+            // AUTRES modules (voir `ModuleTypeInterface::type_aliases`). Un
+            // alias non exporté reste local au fichier qui le déclare.
+            self.parse_type_alias_statement()?
         } else {
             return Err(ParserError {
-                message: "'export' doit être suivi de let, const, function, class ou interface"
+                message: "'export' doit être suivi de let, const, function, class, interface ou type"
                     .to_string(),
                 line: self.peek().line,
                 column: self.peek().column,

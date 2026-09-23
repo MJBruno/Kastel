@@ -32,67 +32,119 @@ impl VirtualMachine {
     }
 
     /// `Overload <nom>` : la fonction au sommet de la pile rejoint
-    /// l'ensemble de surcharges de la globale `nom`, qui doit déjà contenir
-    /// une fonction de même nom (première déclaration).
-    ///
-    /// * globale = fonction seule -> elle devient un ensemble
-    ///   `[ancienne, nouvelle]` ;
-    /// * globale = ensemble -> la nouvelle y est ajoutée EN PLACE, donc une
-    ///   valeur `let g = f;` déjà prise voit aussi la nouvelle surcharge.
-    ///
-    /// Deux surcharges de même arité restent refusées (le compilateur les
-    /// détecte déjà ; ceci protège le cas d'un bytecode incohérent).
+    /// l'ensemble de surcharges de la globale `nom` (voir `merge_overload`).
+    /// Si la globale n'existe pas encore (REPL), la fonction la définit.
     pub(crate) fn op_overload(&mut self, wide: bool) -> Result<(), RuntimeError> {
         let constant = self.read_constant_byte(wide)?;
         let name = constant.as_string_value().ok_or(RuntimeError::TypeError)?;
 
         let function = self.pop()?;
-
-        let new_arity = Self::function_arity(&function).ok_or(RuntimeError::TypeError)?;
+        Self::function_arity(&function).ok_or(RuntimeError::TypeError)?;
 
         let globals = self.current_global_env();
-        let existing = globals
-            .borrow()
-            .get(&name)
-            .cloned()
-            .ok_or(RuntimeError::TypeError)?;
+        let existing = globals.borrow().get(&name).cloned();
 
-        // Ensemble déjà constitué : ajout en place.
-        if let Value::Object(handle) = &existing {
+        let replacement = match existing {
+            Some(existing) => Self::merge_overload(&existing, function)?,
+            None => Some(function),
+        };
+
+        if let Some(value) = replacement {
+            globals.borrow_mut().insert(name, value);
+        }
+
+        Ok(())
+    }
+
+    /// `OverloadLocal <slot>` : comme `Overload`, pour une fonction LOCALE
+    /// (déclarée dans une autre fonction) rangée dans la variable locale
+    /// `slot`.
+    pub(crate) fn op_overload_local(&mut self) -> Result<(), RuntimeError> {
+        let slot = self.read_byte()? as usize;
+        let function = self.pop()?;
+
+        Self::function_arity(&function).ok_or(RuntimeError::TypeError)?;
+
+        let (slot_start, local_count) = {
+            let frame = self.frames.last().ok_or(RuntimeError::InvalidFunction)?;
+
+            (frame.slot_start, frame.local_count)
+        };
+
+        if slot >= local_count {
+            return Err(RuntimeError::InvalidFunction);
+        }
+
+        let index = slot_start
+            .checked_add(1)
+            .and_then(|index| index.checked_add(slot))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let existing = self
+            .stack
+            .get(index)
+            .cloned()
+            .ok_or(RuntimeError::StackUnderflow)?;
+
+        if let Some(value) = Self::merge_overload(&existing, function)? {
+            self.stack[index] = value;
+        }
+
+        Ok(())
+    }
+
+    /// Fusionne `function` dans `existing` :
+    ///
+    /// * `existing` = ensemble de surcharges -> ajout EN PLACE (une valeur
+    ///   `let g = f;` déjà prise voit aussi la nouvelle surcharge), ou
+    ///   REMPLACEMENT en place si une surcharge de même arité existe déjà
+    ///   (redéfinition dans le REPL) ; renvoie `None` ;
+    /// * `existing` = fonction seule -> de même arité : elle est remplacée
+    ///   (`Some(function)`), sinon les deux forment un ensemble ;
+    /// * `existing` = autre chose (variable) -> remplacé par la fonction.
+    ///
+    /// Le compilateur refuse déjà deux surcharges de même arité dans un même
+    /// fichier ; seul le REPL peut donc arriver au cas « même arité ».
+    fn merge_overload(existing: &Value, function: Value) -> Result<Option<Value>, RuntimeError> {
+        let new_arity = Self::function_arity(&function).ok_or(RuntimeError::TypeError)?;
+
+        if let Value::Object(handle) = existing {
             let mut object = handle.borrow_mut();
 
             if let Object::Overloads { functions, .. } = &mut *object {
-                if functions
+                match functions
                     .iter()
-                    .any(|other| Self::function_arity(other) == Some(new_arity))
+                    .position(|other| Self::function_arity(other) == Some(new_arity))
                 {
-                    return Err(RuntimeError::DuplicateMethod {
-                        name,
-                        arity: new_arity,
-                    });
+                    Some(position) => functions[position] = function,
+                    None => functions.push(function),
                 }
 
-                functions.push(function);
-
-                return Ok(());
+                return Ok(None);
             }
         }
 
-        // Première surcharge : la globale est encore une fonction seule.
-        let existing_arity = Self::function_arity(&existing).ok_or(RuntimeError::TypeError)?;
+        match Self::function_arity(existing) {
+            Some(existing_arity) if existing_arity != new_arity => {
+                let name = Self::function_name(existing).unwrap_or_default();
 
-        if existing_arity == new_arity {
-            return Err(RuntimeError::DuplicateMethod {
-                name,
-                arity: new_arity,
-            });
+                Ok(Some(Value::new_overloads(name, vec![existing.clone(), function])))
+            }
+
+            _ => Ok(Some(function)),
         }
+    }
 
-        let set = Value::new_overloads(name.clone(), vec![existing, function]);
+    /// Nom d'une fermeture de fonction libre.
+    fn function_name(value: &Value) -> Option<String> {
+        match value {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Closure(closure) => Some(closure.function.name.clone()),
+                _ => None,
+            },
 
-        globals.borrow_mut().insert(name, set);
-
-        Ok(())
+            _ => None,
+        }
     }
 
     /// Nombre de paramètres d'une fermeture de fonction libre.
