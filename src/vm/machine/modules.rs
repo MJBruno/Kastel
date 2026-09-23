@@ -145,7 +145,11 @@ impl VirtualMachine {
         let globals = self
             .frames
             .last()
-            .and_then(|frame| super::bytecode::frame_closure(&frame.closure).global_env.upgrade())
+            .and_then(|frame| {
+                super::bytecode::frame_closure(&frame.closure)
+                    .global_env
+                    .upgrade()
+            })
             .unwrap_or_else(|| Rc::clone(&self.globals));
 
         let mut globals = globals.borrow_mut();

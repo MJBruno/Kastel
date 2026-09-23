@@ -1,5 +1,5 @@
 class Node {
-    func init(value) {
+    func initialize(value) {
         this.value = value;
         this.next = None;
     }

@@ -54,7 +54,10 @@ impl Parser {
 
                 if fields.iter().any(|(existing, _)| *existing == name.lexeme) {
                     return Err(ParserError {
-                        message: format!("Le champ '{}' est déjà déclaré dans ce type", name.lexeme),
+                        message: format!(
+                            "Le champ '{}' est déjà déclaré dans ce type",
+                            name.lexeme
+                        ),
                         line: name.line,
                         column: name.column,
                     });

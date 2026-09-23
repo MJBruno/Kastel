@@ -61,11 +61,7 @@ impl VirtualMachine {
             (enclosing.global_env.clone(), enclosing.owner_class.clone())
         };
 
-        let closure = Object::new_closure(
-            Rc::clone(&function),
-            pending_upvalues,
-            global_env,
-        );
+        let closure = Object::new_closure(Rc::clone(&function), pending_upvalues, global_env);
 
         // Une fonction anonyme écrite DANS une méthode appartient à la même
         // classe : elle peut accéder aux membres privés (et à `base`). Pour

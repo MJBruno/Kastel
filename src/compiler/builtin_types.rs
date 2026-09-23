@@ -60,7 +60,9 @@ pub fn all() -> HashMap<String, Type> {
     types.insert("min".into(), binary(Dynamic, Dynamic, Dynamic));
     types.insert("max".into(), binary(Dynamic, Dynamic, Dynamic));
 
-    for name in ["sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "log10"] {
+    for name in [
+        "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "log10",
+    ] {
         types.insert(name.into(), unary(Float, Float));
     }
 
@@ -89,10 +91,7 @@ pub fn all() -> HashMap<String, Type> {
     // par FunctionType pour l'instant. Il reste donc dynamique jusqu'à
     // l'introduction d'un modèle d'arité optionnelle.
     types.insert("range".into(), Dynamic);
-    types.insert(
-        "list".into(),
-        unary(Dynamic, ArrayDynamic),
-    );
+    types.insert("list".into(), unary(Dynamic, ArrayDynamic));
 
     // Debug
     types.insert("inspect".into(), unary(Dynamic, Str));

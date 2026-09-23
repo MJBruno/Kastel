@@ -221,8 +221,9 @@ impl Parser {
             self.parse_type_alias_statement()?
         } else {
             return Err(ParserError {
-                message: "'export' doit être suivi de let, const, function, class, interface ou type"
-                    .to_string(),
+                message:
+                    "'export' doit être suivi de let, const, function, class, interface ou type"
+                        .to_string(),
                 line: self.peek().line,
                 column: self.peek().column,
             });

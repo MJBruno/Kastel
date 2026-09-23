@@ -19,6 +19,6 @@ while i < 50000 {
 println(total);
 
 let last = make_garbage(2000);
-println(last.length);
+println(last.size());
 println(last.get(0));
 println(last.get(2));

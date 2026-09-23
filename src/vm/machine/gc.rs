@@ -1,7 +1,7 @@
 use super::VirtualMachine;
+use crate::error::runtime_error::RuntimeError;
 use crate::runtime::gc;
 use crate::runtime::value::Value;
-use crate::error::runtime_error::RuntimeError;
 
 impl VirtualMachine {
     pub fn collect_garbage(&mut self) -> usize {

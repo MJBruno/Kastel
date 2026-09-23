@@ -19,11 +19,13 @@ mod protocol;
 mod references;
 mod rename;
 mod semantic;
+mod signature_help;
 mod server;
 mod source_position;
 mod span;
 mod symbols;
 mod text_util;
+mod type_info;
 mod uri_util;
 mod workspace;
 mod workspace_index; // ← AJOUT

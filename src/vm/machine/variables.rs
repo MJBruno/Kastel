@@ -128,7 +128,10 @@ impl VirtualMachine {
             Some(existing_arity) if existing_arity != new_arity => {
                 let name = Self::function_name(existing).unwrap_or_default();
 
-                Ok(Some(Value::new_overloads(name, vec![existing.clone(), function])))
+                Ok(Some(Value::new_overloads(
+                    name,
+                    vec![existing.clone(), function],
+                )))
             }
 
             _ => Ok(Some(function)),

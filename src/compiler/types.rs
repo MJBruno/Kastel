@@ -40,7 +40,10 @@ pub enum Type {
     Range,
     Function(FunctionType),
     Named(String),
-    Generic { name: String, arguments: Vec<Type> },
+    Generic {
+        name: String,
+        arguments: Vec<Type>,
+    },
     /// Référence statique vers un module chargé par le resolver.
     Module(String),
     /// Absence d'information statique. Ce n'est jamais une erreur en soi.
@@ -204,7 +207,11 @@ impl Type {
 
     /// Retourne `true` si `actual` peut être affecté à `expected` sans
     /// déclencher d'erreur statique.
-    pub fn is_assignable_to(&self, expected: &Type, parents: &impl Fn(&str) -> Vec<String>) -> bool {
+    pub fn is_assignable_to(
+        &self,
+        expected: &Type,
+        parents: &impl Fn(&str) -> Vec<String>,
+    ) -> bool {
         if self.is_dynamic() || expected.is_dynamic() {
             return true;
         }
@@ -241,9 +248,11 @@ impl Type {
         match (self, expected) {
             // Une fonction surchargée convient à un type fonction si UNE de
             // ses signatures y convient.
-            (Type::Overloads(signatures), Type::Function(_)) => signatures
-                .iter()
-                .any(|signature| Type::Function(signature.clone()).is_assignable_to(expected, parents)),
+            (Type::Overloads(signatures), Type::Function(_)) => {
+                signatures.iter().any(|signature| {
+                    Type::Function(signature.clone()).is_assignable_to(expected, parents)
+                })
+            }
 
             // Typage structurel : le record fourni doit avoir TOUS les champs
             // attendus, avec des types compatibles (champs en plus permis).
@@ -299,16 +308,30 @@ impl Type {
                         .params
                         .iter()
                         .zip(&expected.params)
-                        .all(|(actual, expected)| actual == expected || actual.is_dynamic() || expected.is_dynamic())
-                    && actual.return_type.is_assignable_to(&expected.return_type, parents)
+                        .all(|(actual, expected)| {
+                            actual == expected || actual.is_dynamic() || expected.is_dynamic()
+                        })
+                    && actual
+                        .return_type
+                        .is_assignable_to(&expected.return_type, parents)
             }
 
-            (Type::Generic { name: actual_name, arguments: actual_args }, Type::Generic { name: expected_name, arguments: expected_args }) => {
+            (
+                Type::Generic {
+                    name: actual_name,
+                    arguments: actual_args,
+                },
+                Type::Generic {
+                    name: expected_name,
+                    arguments: expected_args,
+                },
+            ) => {
                 actual_name == expected_name
                     && actual_args.len() == expected_args.len()
-                    && actual_args.iter().zip(expected_args).all(|(actual, expected)| {
-                        actual.is_assignable_to(expected, parents)
-                    })
+                    && actual_args
+                        .iter()
+                        .zip(expected_args)
+                        .all(|(actual, expected)| actual.is_assignable_to(expected, parents))
             }
 
             _ => false,
@@ -377,13 +400,11 @@ impl Type {
         match self {
             Type::Array(element) => (**element).clone(),
             Type::ArrayDynamic => Type::Dynamic,
-            Type::Tuple(elements) => {
-                elements
-                    .iter()
-                    .cloned()
-                    .reduce(|a, b| a.merge(&b))
-                    .unwrap_or(Type::Dynamic)
-            }
+            Type::Tuple(elements) => elements
+                .iter()
+                .cloned()
+                .reduce(|a, b| a.merge(&b))
+                .unwrap_or(Type::Dynamic),
             Type::TupleDynamic => Type::Dynamic,
             Type::Set(element) => (**element).clone(),
             Type::SetDynamic => Type::Dynamic,
@@ -417,10 +438,9 @@ impl Type {
             (Type::Array(_) | Type::ArrayDynamic, "push") => Some("add(value)"),
 
             // `Array` s'appelle désormais `List`.
-            (
-                Type::Tuple(_) | Type::TupleDynamic | Type::Set(_) | Type::SetDynamic,
-                "to_array",
-            ) => Some("to_list()"),
+            (Type::Tuple(_) | Type::TupleDynamic | Type::Set(_) | Type::SetDynamic, "to_array") => {
+                Some("to_list()")
+            }
 
             (Type::Dict(_, _) | Type::DictDynamic, "has") => Some("contains(key)"),
             (Type::Dict(_, _) | Type::DictDynamic, "items") => Some("entries()"),
@@ -805,7 +825,10 @@ mod tests {
         let left = Type::Tuple(vec![Type::Int, Type::Int]);
         let right = Type::Tuple(vec![Type::Float, Type::Int]);
 
-        assert_eq!(left.merge(&right), Type::Tuple(vec![Type::Float, Type::Int]));
+        assert_eq!(
+            left.merge(&right),
+            Type::Tuple(vec![Type::Float, Type::Int])
+        );
     }
 
     #[test]

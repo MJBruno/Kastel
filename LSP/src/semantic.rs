@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::analyzer::Diagnostic;
-use crate::language::{BUILTINS, KEYWORDS};
+use crate::language::{BUILTINS, CONTEXTUAL_KEYWORDS, KEYWORDS, TYPE_NAMES};
 use crate::text_util::{is_identifier_byte, mask_strings_and_comments};
 use crate::workspace::Workspace;
 
@@ -137,6 +137,23 @@ fn should_skip_identifier(source: &str, ident: &Ident) -> bool {
         return true;
     }
 
+    // Modificateurs contextuels (`public`, `private`) et noms de types
+    // intégrés ne sont pas des références runtime.
+    if CONTEXTUAL_KEYWORDS.contains(&name) || TYPE_NAMES.contains(&name) {
+        return true;
+    }
+
+    // Un chemin d'import (`import std.math`, `from dog import Dog`)
+    // n'est pas une suite de références runtime.
+    if is_import_line(source, ident.offset) {
+        return true;
+    }
+
+    // Le nom immédiatement après une déclaration n'est pas une référence.
+    if is_declaration_name(source, ident.offset) {
+        return true;
+    }
+
     // `object.member` : le membre ne doit pas être recherché comme variable.
     if is_member_access(source, ident.offset) {
         return true;
@@ -147,6 +164,29 @@ fn should_skip_identifier(source: &str, ident: &Ident) -> bool {
 
 fn is_member_access(source: &str, offset: usize) -> bool {
     source[..offset].trim_end().ends_with('.')
+}
+
+
+fn is_import_line(source: &str, offset: usize) -> bool {
+    let line_start = source[..offset].rfind('\n').map(|index| index + 1).unwrap_or(0);
+    let line = source[line_start..]
+        .split('\n')
+        .next()
+        .unwrap_or("")
+        .trim_start();
+    line.starts_with("import ") || line.starts_with("from ")
+}
+
+fn is_declaration_name(source: &str, offset: usize) -> bool {
+    let line_start = source[..offset].rfind('\n').map(|index| index + 1).unwrap_or(0);
+    let prefix = &source[line_start..offset];
+    let mut previous = None;
+    for part in prefix.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        if !part.is_empty() {
+            previous = Some(part);
+        }
+    }
+    matches!(previous, Some("func" | "class" | "interface" | "type" | "let" | "const"))
 }
 
 fn is_resolved(
@@ -675,10 +715,10 @@ mod tests {
 
     #[test]
     fn detects_undefined_identifier() {
-        let source = r#"println("TEST ARRAY METHODS");
+        let source = r#"println("TEST LIST METHODS");
 
 let values = [1, 2, 3];
-println(val.length)
+println(val.size)
 "#;
 
         let workspace = workspace_with(source);
@@ -694,7 +734,7 @@ println(val.length)
     #[test]
     fn allows_declared_identifier() {
         let source = r#"let values = [1, 2, 3];
-println(values.length)
+println(values.size)
 "#;
 
         let workspace = workspace_with(source);
@@ -855,7 +895,7 @@ println(hidden);
 
     #[test]
     fn ignores_member_access() {
-        let source = "let values = [1, 2, 3];\nprintln(values.length)\n";
+        let source = "let values = [1, 2, 3];\nprintln(values.size)\n";
         let workspace = workspace_with(source);
         let diagnostics = analyze(&workspace, "file:///main.ks");
         assert!(diagnostics.is_empty());

@@ -31,6 +31,11 @@ pub fn utf16_character_to_byte_index(text: &str, character: usize) -> usize {
     text.len()
 }
 
+/// Retourne une ligne exacte sans modifier les unités UTF-16 utilisées par LSP.
+pub fn find_line(source: &str, line: usize) -> Option<&str> {
+    source.split('\n').nth(line)
+}
+
 /// Vrai si le byte peut faire partie d'un identifiant Kastel.
 pub fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
@@ -83,7 +88,8 @@ pub fn is_identifier_boundary(source: &str, start: usize, end: usize) -> bool {
 /// Trouve tous les offsets byte des occurrences de `name` en tant
 /// qu'identifiant entier (ignore `VALUE2` quand on cherche `VALUE`).
 pub fn find_identifier_occurrences(source: &str, name: &str) -> Vec<usize> {
-    let bytes = source.as_bytes();
+    let masked = mask_strings_and_comments(source);
+    let bytes = masked.as_bytes();
 
     let name_bytes = name.as_bytes();
 
@@ -313,6 +319,18 @@ mod tests {
     #[test]
     fn empty_name_returns_no_occurrence() {
         assert!(find_identifier_occurrences("abc", "",).is_empty());
+    }
+
+    #[test]
+    fn ignores_strings_and_comments() {
+        let source = r#"let value = 1;
+// value
+println("value");
+value = 2;
+"#;
+
+        let occurrences = find_identifier_occurrences(source, "value");
+        assert_eq!(occurrences.len(), 2);
     }
 
     #[test]

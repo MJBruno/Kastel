@@ -36,10 +36,7 @@ pub enum ImportResolution {
     Module(PathBuf),
 
     /// `import foo.Bar` quand `foo.ks` existe et exporte `Bar`.
-    Export {
-        module: PathBuf,
-        name: String,
-    },
+    Export { module: PathBuf, name: String },
 }
 
 #[derive(Debug, Clone)]
@@ -286,10 +283,7 @@ mod tests {
             .resolve(&current_module, &["helper".to_string()])
             .expect("local helper.ks should resolve");
 
-        assert_eq!(
-            resolved,
-            sub_dir.join("helper.ks").canonicalize().unwrap()
-        );
+        assert_eq!(resolved, sub_dir.join("helper.ks").canonicalize().unwrap());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -340,8 +334,7 @@ mod tests {
 
         write(&demo.join("export_mod.ks"), "export class Personne {}");
 
-        let resolver =
-            ModuleResolver::new(project_root).with_std_root(std_root);
+        let resolver = ModuleResolver::new(project_root).with_std_root(std_root);
 
         let current_module = demo.join("main.ks");
         let resolution = resolver
@@ -402,8 +395,7 @@ mod tests {
 
         let project_root = dir.join("project");
 
-        let resolver =
-            ModuleResolver::new(project_root.clone()).with_std_root(dir.join("std"));
+        let resolver = ModuleResolver::new(project_root.clone()).with_std_root(dir.join("std"));
 
         let current_module = project_root.join("main.ks");
 

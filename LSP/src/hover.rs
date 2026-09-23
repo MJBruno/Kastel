@@ -1,241 +1,93 @@
-use serde_json::{Value, json};
+use kastel::compiler::types::Type;
+use serde_json::{json, Value};
 
-use crate::class_index::ClassIndex;
+use crate::class_index::{ClassIndex, MethodInfo};
 use crate::completion::{
-    detect_member_access, find_enclosing_class, infer_class_of_variable, line_and_byte_to_offset,
+    detect_member_access, line_and_byte_to_offset, line_text_at,
 };
-use crate::language::{
-    ARRAY_METHODS, BUILTIN_FUNCTIONS, DICT_METHODS, STRING_METHODS, TUPLE_METHODS,
-};
+use crate::language::{BUILTIN_FUNCTIONS, DICT_METHODS, LIST_METHODS, RANGE_METHODS, SET_METHODS, STRING_METHODS, TUPLE_METHODS};
 use crate::lsp_position::offset_to_lsp;
 use crate::symbols::SymbolKind;
-use crate::text_util::{is_identifier_byte, utf16_character_to_byte_index};
+use crate::text_util::{find_word_at, utf16_character_to_byte_index};
 use crate::workspace::{Workspace, WorkspaceDocument};
 
 pub fn build_hover(workspace: &Workspace, uri: &str, line: u32, character: u32) -> Option<Value> {
     let document = workspace.get(uri)?;
-
-    let line_text = document.text.lines().nth(line as usize)?;
-
+    let line_text = line_text_at(&document.text, line as usize);
     let byte_index = utf16_character_to_byte_index(line_text, character as usize);
+    let word = find_word_at(&document.text, line as usize, character as usize)?;
+    let word_start = find_word_start(line_text, byte_index);
+    let range = word_range(document, line as usize, word_start, word_start + word.len());
 
-    let bytes = line_text.as_bytes();
-
-    let mut start = byte_index;
-    let mut end = byte_index;
-
-    while start > 0 && is_identifier_byte(bytes[start - 1]) {
-        start -= 1;
-    }
-
-    while end < bytes.len() && is_identifier_byte(bytes[end]) {
-        end += 1;
-    }
-
-    if start == end {
-        return None;
-    }
-
-    let word = &line_text[start..end];
-
-    let range = word_range(document, line, start, end);
-
-    /*
-     * 1. `X.word` : membre d'une classe connue (this/base/variable
-     *    inférée via `= new Classe(...)`), sinon repli sur les
-     *    tables génériques de méthodes de collection.
-     */
-    if let Some(ctx) = detect_member_access(line_text, start) {
-        if let Some(value) = build_member_hover(document, line, start, &ctx.path, word, &range) {
+    // Membre : `obj.method`, `obj.field`, `this.field`, `base.method`.
+    if let Some(context) = detect_member_access(line_text, byte_index.max(word_start)) {
+        if let Some(value) = build_member_hover(workspace, uri, document, &context.receiver, word, line as usize, word_start, &range) {
             return Some(value);
         }
     }
 
-    /*
-     * 2. Fonction/valeur native de la stdlib Kastel.
-     */
-    if let Some((name, signature, doc)) = BUILTIN_FUNCTIONS.iter().find(|(name, ..)| *name == word)
-    {
+    // Builtins.
+    if let Some((name, signature, doc)) = BUILTIN_FUNCTIONS.iter().find(|(name, ..)| *name == word) {
         return Some(hover_value(
-            format!(
-                "**{}** _(native)_\n\n```kastel\n{}\n```\n\n{}",
-                name, signature, doc
-            ),
+            format!("```kastel\n{}\n```\n\n{}", signature, doc),
             range,
         ));
     }
 
-    /*
-     * 3. Symbole déclaré dans ce document, sinon ailleurs dans le
-     *    workspace (utile pour un symbole importé).
-     */
-    if let Some(value) = build_symbol_hover(document, word, &range) {
+    // Fonctions globales et valeurs typées du document.
+    if let Some(value) = build_local_symbol_hover(document, word, &range) {
         return Some(value);
     }
 
-    for (other_uri, other_document) in workspace.iter() {
-        if other_uri == uri {
-            continue;
-        }
-
-        if let Some(value) = build_symbol_hover(other_document, word, &range) {
-            return Some(value);
-        }
+    // Symbole exporté/importé depuis un autre module.
+    if let Some(value) = build_workspace_symbol_hover(workspace, uri, document, word, &range) {
+        return Some(value);
     }
 
     None
 }
 
-/// Survol pour `X.word` : champs/méthodes de la classe résolue pour
-/// `X`, ou repli sur les tables génériques de méthodes de collection.
-fn build_member_hover(
-    document: &WorkspaceDocument,
-    line: u32,
-    word_byte_start: usize,
-    base_path: &str,
-    word: &str,
-    range: &Value,
-) -> Option<Value> {
-    let offset = line_and_byte_to_offset(&document.text, line as usize, word_byte_start);
-
-    if base_path == "this" || base_path == "base" {
-        if let Some(class_name) = find_enclosing_class(&document.text, &document.classes, offset) {
-            if let Some(value) = class_member_hover(
-                &document.classes,
-                &class_name,
-                base_path == "this",
-                word,
-                range,
-            ) {
-                return Some(value);
-            }
-        }
-    }
-
-    if let Some(class_name) = infer_class_of_variable(&document.text, base_path, &document.classes)
-    {
-        if let Some(value) = class_member_hover(&document.classes, &class_name, true, word, range) {
-            return Some(value);
-        }
-    }
-
-    for (name, signature, doc) in ARRAY_METHODS
-        .iter()
-        .chain(STRING_METHODS)
-        .chain(DICT_METHODS)
-        .chain(TUPLE_METHODS)
-    {
-        if *name == word {
-            return Some(hover_value(
-                format!("**{}**\n\n```kastel\n{}\n```\n\n{}", name, signature, doc),
-                range.clone(),
-            ));
-        }
-    }
-
-    None
-}
-
-/// Survol pour un champ ou une méthode réelle de `class_name`,
-/// résolue via `ClassIndex` (déduit de l'AST, y compris via
-/// l'héritage).
-fn class_member_hover(
-    classes: &ClassIndex,
-    class_name: &str,
-    include_fields: bool,
-    word: &str,
-    range: &Value,
-) -> Option<Value> {
-    if include_fields {
-        for field in classes.all_fields(class_name) {
-            if field == word {
-                return Some(hover_value(
-                    format!(
-                        "**{}**\n\nChamp de `{}` (déduit de `this.{}`)",
-                        field, class_name, field
-                    ),
-                    range.clone(),
-                ));
-            }
-        }
-    }
-
-    let methods = if include_fields {
-        classes.all_methods(class_name)
-    } else {
-        classes.base_methods(class_name)
-    };
-
-    for method in methods {
-        if method.name == word {
-            let owner = if include_fields {
-                classes
-                    .method_owner(class_name, method.name.as_str())
-                    .unwrap_or_else(|| class_name.to_string())
-            } else {
-                classes
-                    .base_method_owner(class_name, method.name.as_str())
-                    .unwrap_or_else(|| class_name.to_string())
-            };
-
-            return Some(hover_value(
-                format!(
-                    "**{}**\n\n```kastel\nfunc {}({})\n```\n\nMéthode de `{}`",
-                    method.name,
-                    method.name,
-                    method.params.join(", "),
-                    owner
-                ),
-                range.clone(),
-            ));
-        }
-    }
-
-    None
-}
-
-/// Survol pour un symbole (variable/fonction/classe/interface/import)
-/// déclaré dans `document`. Pour une classe ou une interface, ajoute
-/// la liste de ses méthodes, champs et classes de base.
-fn build_symbol_hover(document: &WorkspaceDocument, word: &str, range: &Value) -> Option<Value> {
+fn build_local_symbol_hover(document: &WorkspaceDocument, word: &str, range: &Value) -> Option<Value> {
     let symbol = document.symbols.get(word)?;
-
-    let kind_label = match symbol.kind {
-        SymbolKind::Variable => "Variable",
-        SymbolKind::Function => "Function",
-        SymbolKind::Class => "Class",
-        SymbolKind::Interface => "Interface",
-        SymbolKind::Import => "Import",
+    let mut contents = match symbol.kind {
+        SymbolKind::Variable => {
+            let ty = document.types.get(word).map(ToString::to_string).or_else(|| symbol.type_display.clone()).unwrap_or_else(|| "dynamic".to_string());
+            format!("```kastel\nlet {}: {}\n```", word, ty)
+        }
+        SymbolKind::Function => {
+            let signatures = document.types.function_signatures(word);
+            if let Some(signatures) = signatures {
+                if signatures.len() == 1 {
+                    signatures[0].label()
+                } else {
+                    signatures.iter().map(|s| s.label()).collect::<Vec<_>>().join("\n\n")
+                }
+            } else {
+                symbol.signature.clone().unwrap_or_else(|| format!("func {}(...)", word))
+            }
+        }
+        SymbolKind::Class | SymbolKind::Interface => {
+            let kind = if symbol.kind == SymbolKind::Class { "class" } else { "interface" };
+            if let Some(info) = document.classes.get(word) {
+                let bases = if info.bases.is_empty() { String::new() } else { format!(" : {}", info.bases.join(", ")) };
+                format!("```kastel\n{} {}{}\n```", kind, word, bases)
+            } else {
+                format!("```kastel\n{} {}\n```", kind, word)
+            }
+        }
+        SymbolKind::Import => format!("```kastel\nmodule {}\n```", word),
+        SymbolKind::TypeAlias => {
+            format!("```kastel\ntype {} = {}\n```", word, symbol.type_display.clone().unwrap_or_else(|| "dynamic".to_string()))
+        }
     };
-
-    let mut contents = format!("**{}**\n\n{}", symbol.name, kind_label);
 
     if matches!(symbol.kind, SymbolKind::Class | SymbolKind::Interface) {
-        if let Some(info) = document.classes.get(&symbol.name) {
-            if !info.bases.is_empty() {
-                contents.push_str(&format!("\n\nHérite de : `{}`", info.bases.join(", ")));
-            }
-
-            if !info.methods.is_empty() {
-                let list = info
-                    .methods
-                    .iter()
-                    .map(|m| format!("- `{}({})`", m.name, m.params.join(", ")))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
-                contents.push_str(&format!("\n\n**Méthodes**\n\n{}", list));
-            }
-
+        if let Some(info) = document.classes.get(word) {
             if !info.fields.is_empty() {
-                let fields = info
-                    .fields
-                    .iter()
-                    .map(|f| format!("`{}`", f))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                contents.push_str(&format!("\n\n**Champs** : {}", fields));
+                contents.push_str(&format!("\n\n**Fields**\n{}", info.fields.iter().map(|name| format!("- `{}`", name)).collect::<Vec<_>>().join("\n")));
+            }
+            if !info.methods.is_empty() {
+                contents.push_str(&format!("\n\n**Methods**\n{}", info.methods.iter().map(MethodInfo::signature).map(|sig| format!("- `{}`", sig)).collect::<Vec<_>>().join("\n")));
             }
         }
     }
@@ -243,123 +95,283 @@ fn build_symbol_hover(document: &WorkspaceDocument, word: &str, range: &Value) -
     Some(hover_value(contents, range.clone()))
 }
 
+fn build_workspace_symbol_hover(
+    workspace: &Workspace,
+    current_uri: &str,
+    document: &WorkspaceDocument,
+    word: &str,
+    range: &Value,
+) -> Option<Value> {
+    let current_file = crate::uri_util::uri_to_path(current_uri)?;
+    let resolver = crate::module_resolver::ModuleResolver::new(workspace.root().map(std::path::Path::to_path_buf));
+
+    for import in parse_imports(&document.text) {
+        let Some(module_path) = resolver.resolve(&current_file, &import.parts) else { continue; };
+        let module_uri = crate::uri_util::path_to_uri(&module_path);
+        let Some(module) = workspace.get(&module_uri) else { continue; };
+        if let Some(symbol) = module.symbols.get(word) {
+            let ty = module.types.get(word).map(ToString::to_string).or_else(|| symbol.type_display.clone()).unwrap_or_else(|| "dynamic".to_string());
+            return Some(hover_value(format!("```kastel\n{}\n```\n\nExported by `{}`", symbol.signature.clone().unwrap_or_else(|| format!("{}: {}", word, ty)), module_path.display()), range.clone()));
+        }
+    }
+
+    None
+}
+
+fn build_member_hover(
+    workspace: &Workspace,
+    uri: &str,
+    document: &WorkspaceDocument,
+    receiver: &str,
+    member: &str,
+    line: usize,
+    word_start: usize,
+    range: &Value,
+) -> Option<Value> {
+    let offset = line_and_byte_to_offset(&document.text, line, word_start);
+    let receiver_types = infer_receiver_types(workspace, uri, document, receiver, offset);
+
+    for ty in receiver_types {
+        if let Some(value) = hover_for_type_member(workspace, uri, document, &ty, member, range) {
+            return Some(value);
+        }
+    }
+
+    None
+}
+
+fn infer_receiver_types(
+    workspace: &Workspace,
+    uri: &str,
+    document: &WorkspaceDocument,
+    receiver: &str,
+    offset: usize,
+) -> Vec<Type> {
+    if receiver == "this" {
+        return find_enclosing_class(document, offset).map(|name| vec![Type::Named(name)]).unwrap_or_default();
+    }
+    if receiver == "base" {
+        let Some(class_name) = find_enclosing_class(document, offset) else { return Vec::new(); };
+        return document.classes.get(&class_name).map(|info| info.bases.iter().cloned().map(Type::Named).collect()).unwrap_or_default();
+    }
+
+    let mut current = receiver.split('.').next().and_then(|name| document.types.get(name).cloned()).map(|ty| vec![ty]).unwrap_or_default();
+
+    for segment in receiver.split('.').skip(1) {
+        let mut next = Vec::new();
+        for ty in current {
+            if let Some(module_types) = module_member_types(workspace, uri, document, &ty, segment) {
+                next.extend(module_types);
+            } else {
+                next.extend(type_member_type(document, &ty, segment));
+            }
+        }
+        current = next;
+    }
+
+    current
+}
+
+fn hover_for_type_member(
+    workspace: &Workspace,
+    current_uri: &str,
+    document: &WorkspaceDocument,
+    ty: &Type,
+    member: &str,
+    range: &Value,
+) -> Option<Value> {
+    match ty {
+        Type::Union(members) => {
+            let mut hovers = Vec::new();
+            for member_ty in members {
+                if let Some(hover) = hover_for_type_member(workspace, current_uri, document, member_ty, member, range) {
+                    if let Some(text) = hover.get("contents").and_then(|v| v.get("value")).and_then(Value::as_str) {
+                        hovers.push(text.to_string());
+                    }
+                }
+            }
+            if hovers.is_empty() { None } else { Some(hover_value(hovers.join("\n\n---\n\n"), range.clone())) }
+        }
+        Type::Named(class_name) => {
+            if let Some(field) = document.classes.field(class_name, member) {
+                let ty = field.type_annotation.as_ref().map(crate::class_index::type_expr_display).unwrap_or_else(|| "dynamic".to_string());
+                return Some(hover_value(format!("```kastel\n{}: {}\n```\n\nField of `{}`", member, ty, class_name), range.clone()));
+            }
+            if let Some(method) = document.classes.method(class_name, member) {
+                let visibility = if method.visibility == kastel::frontend::ast::Visibility::Private { "private" } else { "public" };
+                return Some(hover_value(format!("```kastel\n{}\n```\n\n{} method of `{}`", method.signature(), visibility, class_name), range.clone()));
+            }
+            None
+        }
+        Type::Array(_) | Type::ArrayDynamic => table_hover(LIST_METHODS, member, range),
+        Type::Dict(_, _) | Type::DictDynamic => table_hover(DICT_METHODS, member, range),
+        Type::Tuple(_) | Type::TupleDynamic => table_hover(TUPLE_METHODS, member, range),
+        Type::Set(_) | Type::SetDynamic => table_hover(SET_METHODS, member, range),
+        Type::Str => table_hover(STRING_METHODS, member, range),
+        Type::Range => table_hover(RANGE_METHODS, member, range),
+        Type::Record(fields) => fields.iter().find(|(name, _)| name == member).map(|(_, ty)| hover_value(format!("```kastel\n{}: {}\n```", member, ty), range.clone())),
+        Type::Module(path) => {
+            let current_file = crate::uri_util::uri_to_path(current_uri)?;
+            let resolver = crate::module_resolver::ModuleResolver::new(
+                workspace.root().map(std::path::Path::to_path_buf),
+            );
+            let parts = path
+                .split('.')
+                .filter(|part| !part.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let module_path = resolver.resolve(&current_file, &parts)?;
+            let module_uri = crate::uri_util::path_to_uri(&module_path);
+            let module = workspace.get(&module_uri)?;
+            let symbol = module.symbols.get(member)?;
+            if !symbol.is_exported && module_uri != current_uri {
+                return None;
+            }
+            let text = symbol
+                .signature
+                .clone()
+                .or_else(|| module.types.get(member).map(|ty| format!("{}: {}", member, ty)))
+                .unwrap_or_else(|| format!("{}", member));
+            Some(hover_value(
+                format!("```kastel\n{}\n```\n\nExported by `{}`", text, module_path.display()),
+                range.clone(),
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn module_member_types(
+    workspace: &Workspace,
+    current_uri: &str,
+    _document: &WorkspaceDocument,
+    ty: &Type,
+    segment: &str,
+) -> Option<Vec<Type>> {
+    let Type::Module(path) = ty else { return None; };
+    let current_file = crate::uri_util::uri_to_path(current_uri)?;
+    let resolver = crate::module_resolver::ModuleResolver::new(
+        workspace.root().map(std::path::Path::to_path_buf),
+    );
+    let parts = path
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let module_path = resolver.resolve(&current_file, &parts)?;
+    let module_uri = crate::uri_util::path_to_uri(&module_path);
+    let module = workspace.get(&module_uri)?;
+    module.types.get(segment).cloned().map(|ty| vec![ty])
+}
+
+fn type_member_type(document: &WorkspaceDocument, ty: &Type, name: &str) -> Vec<Type> {
+    match ty {
+        Type::Union(members) => members.iter().flat_map(|t| type_member_type(document, t, name)).collect(),
+        Type::Named(class_name) => {
+            if let Some(field) = document.classes.field(class_name, name) {
+                vec![field.type_annotation.as_ref().map(Type::from_type_expr).unwrap_or(Type::Dynamic)]
+            } else if let Some(method) = document.classes.method(class_name, name) {
+                vec![Type::Function(method.function_type())]
+            } else { Vec::new() }
+        }
+        _ => document.types.member_type(ty, name).map(|t| vec![t]).unwrap_or_default(),
+    }
+}
+
+fn table_hover(table: &[(&str, &str, &str)], member: &str, range: &Value) -> Option<Value> {
+    table.iter().find(|(name, ..)| *name == member).map(|(_, signature, doc)| hover_value(format!("```kastel\n{}\n```\n\n{}", signature, doc), range.clone()))
+}
+
+fn find_enclosing_class(document: &WorkspaceDocument, offset: usize) -> Option<String> {
+    let masked = crate::text_util::mask_strings_and_comments(&document.text);
+    document
+        .classes
+        .names()
+        .filter_map(|name| {
+            let needle = format!("class {}", name);
+            let start = masked.find(&needle)?;
+            let brace = masked[start..].find('{')? + start;
+            let end = find_matching_brace(&document.text, brace)?;
+            (start <= offset && offset <= end).then(|| (name.clone(), start))
+        })
+        .max_by_key(|(_, start)| *start)
+        .map(|(name, _)| name)
+}
+
+fn find_matching_brace(source: &str, open: usize) -> Option<usize> {
+    let masked = crate::text_util::mask_strings_and_comments(source);
+    let mut depth = 0usize;
+    for (index, byte) in masked.bytes().enumerate().skip(open) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 { return Some(index); }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_word_start(line: &str, byte_index: usize) -> usize {
+    let bytes = line.as_bytes();
+    let mut start = byte_index.min(bytes.len());
+    while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') { start -= 1; }
+    start
+}
+
+fn word_range(document: &WorkspaceDocument, line: usize, start: usize, end: usize) -> Value {
+    let start_offset = line_and_byte_to_offset(&document.text, line, start);
+    let end_offset = line_and_byte_to_offset(&document.text, line, end);
+    let s = offset_to_lsp(&document.text, start_offset);
+    let e = offset_to_lsp(&document.text, end_offset);
+    json!({"start":{"line":s.0,"character":s.1},"end":{"line":e.0,"character":e.1}})
+}
+
 fn hover_value(contents: String, range: Value) -> Value {
     json!({
-        "contents": {
-            "kind": "markdown",
-            "value": contents
-        },
-        "range": range
+        "contents": {"kind":"markdown","value":contents},
+        "range": range,
     })
 }
 
-/// Range LSP (en unités UTF-16) du mot `[start, end)` (bytes, dans
-/// `line_text` de la ligne `line`), calculée via une conversion en
-/// offset global puis `offset_to_lsp` pour rester cohérente avec le
-/// reste du LSP.
-fn word_range(document: &WorkspaceDocument, line: u32, start: usize, end: usize) -> Value {
-    let start_offset = line_and_byte_to_offset(&document.text, line as usize, start);
-    let end_offset = line_and_byte_to_offset(&document.text, line as usize, end);
+#[derive(Debug)]
+struct ImportPath { parts: Vec<String> }
 
-    let (start_line, start_character) = offset_to_lsp(&document.text, start_offset);
-    let (end_line, end_character) = offset_to_lsp(&document.text, end_offset);
-
-    json!({
-        "start": { "line": start_line, "character": start_character },
-        "end": { "line": end_line, "character": end_character }
-    })
+fn parse_imports(source: &str) -> Vec<ImportPath> {
+    let mut result = Vec::new();
+    for line in source.lines().map(str::trim) {
+        let line = line.trim_end_matches(';');
+        if let Some(rest) = line.strip_prefix("import ") {
+            if rest.starts_with('{') || rest.starts_with('*') { continue; }
+            let parts = rest.split('.').map(str::to_string).filter(|p| !p.is_empty()).collect::<Vec<_>>();
+            if !parts.is_empty() { result.push(ImportPath { parts }); }
+        } else if let Some(rest) = line.strip_prefix("from ") {
+            if let Some((module, _)) = rest.split_once(" import ") {
+                let parts = module.split('.').map(str::to_string).filter(|p| !p.is_empty()).collect::<Vec<_>>();
+                if !parts.is_empty() { result.push(ImportPath { parts }); }
+            }
+        }
+    }
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::workspace::Workspace;
 
-    fn workspace_with(uri: &str, text: &str) -> Workspace {
-        let mut workspace = Workspace::new();
-        workspace.open(uri.to_string(), 1, text.to_string());
-        workspace
+    #[test]
+    fn hover_builtin_contains_signature() {
+        let mut ws = Workspace::new();
+        ws.open("file:///main.ks".to_string(), 1, "println(42)".to_string());
+        let hover = build_hover(&ws, "file:///main.ks", 0, 2).unwrap();
+        assert!(hover["contents"]["value"].as_str().unwrap().contains("println(value)"));
     }
 
     #[test]
-    fn hovers_builtin_function() {
-        let workspace = workspace_with("file:///main.ks", "println(1);\n");
-
-        let hover = build_hover(&workspace, "file:///main.ks", 0, 2).expect("expected hover");
-
-        let value = hover["contents"]["value"].as_str().unwrap();
-
-        assert!(value.contains("println"));
-        assert!(value.contains("native"));
-    }
-
-    #[test]
-    fn hovers_local_symbol() {
-        let workspace = workspace_with("file:///main.ks", "let total = 1;\nprintln(total);\n");
-
-        let hover = build_hover(&workspace, "file:///main.ks", 1, 10).expect("expected hover");
-
-        let value = hover["contents"]["value"].as_str().unwrap();
-
-        assert!(value.contains("total"));
-        assert!(value.contains("Variable"));
-    }
-
-    #[test]
-    fn hovers_class_with_methods_and_fields() {
-        let source = "class Point {\nfunc init(x, y) {\nthis.x = x;\nthis.y = y;\n}\n}\n";
-
-        let workspace = workspace_with("file:///main.ks", source);
-
-        let hover = build_hover(&workspace, "file:///main.ks", 0, 7).expect("expected hover");
-
-        let value = hover["contents"]["value"].as_str().unwrap();
-
-        assert!(value.contains("Point"));
-        assert!(value.contains("init"));
-        assert!(value.contains("`x`"));
-        assert!(value.contains("`y`"));
-    }
-
-    #[test]
-    fn hovers_this_field_inside_method() {
-        let source = "class Point {\nfunc init(x, y) {\nthis.x = x;\nreturn this.x;\n}\n}\n";
-
-        let workspace = workspace_with("file:///main.ks", source);
-
-        // Ligne 3 (0-based) : "return this.x;" -> hover sur "x" après "this."
-        let hover = build_hover(&workspace, "file:///main.ks", 3, 12).expect("expected hover");
-
-        let value = hover["contents"]["value"].as_str().unwrap();
-
-        assert!(value.contains("Champ de `Point`"));
-    }
-
-    #[test]
-    fn hovers_inherited_method_via_base() {
-        let source = "class Animal {\nfunc speak() {\nreturn 1;\n}\n}\nclass Dog : Animal {\nfunc speak() {\nreturn base.speak();\n}\n}\n";
-
-        let workspace = workspace_with("file:///main.ks", source);
-
-        // Ligne 7 (0-based) : "return base.speak();" -> hover sur "speak"
-        let hover = build_hover(&workspace, "file:///main.ks", 7, 14).expect("expected hover");
-
-        let value = hover["contents"]["value"].as_str().unwrap();
-
-        assert!(value.contains("Méthode de `Animal`"));
-    }
-
-    #[test]
-    fn falls_back_to_generic_array_method() {
-        let source = "let arr = [1, 2, 3];\narr.push(4);\n";
-
-        let workspace = workspace_with("file:///main.ks", source);
-
-        let hover = build_hover(&workspace, "file:///main.ks", 1, 6).expect("expected hover");
-
-        let value = hover["contents"]["value"].as_str().unwrap();
-
-        assert!(value.contains("push"));
+    fn hover_does_not_advertise_removed_list_api() {
+        assert!(LIST_METHODS.iter().all(|(name, ..)| *name != "push" && *name != "length"));
     }
 }

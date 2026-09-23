@@ -31,12 +31,12 @@ pub mod iterators;
 pub mod methods;
 pub mod modules;
 pub mod objects;
+pub mod patterns;
 pub mod profiling;
 pub mod properties;
 pub mod stack;
 pub mod tuples;
 pub mod variables;
-pub mod patterns;
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) enum HotLoopCache {
@@ -259,11 +259,7 @@ impl VirtualMachine {
     ) -> Self {
         let chunk = Rc::clone(&function.chunk);
         let local_count = function.local_count as usize;
-        let closure = Object::new_closure(
-            function,
-            Vec::new(),
-            Rc::downgrade(&globals),
-        );
+        let closure = Object::new_closure(function, Vec::new(), Rc::downgrade(&globals));
 
         let vm = Self {
             stack: vec![Value::None],
@@ -303,11 +299,7 @@ impl VirtualMachine {
 
         let chunk = Rc::clone(&function.chunk);
         let local_count = function.local_count as usize;
-        let closure = Object::new_closure(
-            function,
-            Vec::new(),
-            Rc::downgrade(&self.globals),
-        );
+        let closure = Object::new_closure(function, Vec::new(), Rc::downgrade(&self.globals));
 
         self.stack.clear();
         self.stack.push(Value::None);
@@ -348,12 +340,8 @@ impl VirtualMachine {
         module_loader: ModuleLoader,
         globals: Rc<RefCell<HashMap<String, Value>>>,
     ) -> Result<HashMap<String, Value>, RuntimeError> {
-        let mut vm = Self::new_with_loader_and_globals(
-            function,
-            Some(module_path),
-            module_loader,
-            globals,
-        );
+        let mut vm =
+            Self::new_with_loader_and_globals(function, Some(module_path), module_loader, globals);
 
         if let Err(error) = vm.run() {
             return Err(RuntimeError::WithLocation {

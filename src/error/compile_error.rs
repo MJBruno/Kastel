@@ -221,19 +221,40 @@ impl std::fmt::Display for CompileError {
             }
 
             CompileError::TypeMismatch { expected, found } => {
-                write!(f, "Type incompatible : '{found}' ne peut pas être utilisé comme '{expected}'")
+                write!(
+                    f,
+                    "Type incompatible : '{found}' ne peut pas être utilisé comme '{expected}'"
+                )
             }
 
             CompileError::InvalidUnaryOperation { operator, found } => {
-                write!(f, "Opérateur '{operator}' invalide pour une valeur de type '{found}'")
+                write!(
+                    f,
+                    "Opérateur '{operator}' invalide pour une valeur de type '{found}'"
+                )
             }
 
-            CompileError::InvalidBinaryOperation { operator, left, right } => {
-                write!(f, "Opérateur '{operator}' invalide entre '{left}' et '{right}'")
+            CompileError::InvalidBinaryOperation {
+                operator,
+                left,
+                right,
+            } => {
+                write!(
+                    f,
+                    "Opérateur '{operator}' invalide entre '{left}' et '{right}'"
+                )
             }
 
-            CompileError::WrongArgumentType { function, index, expected, found } => {
-                write!(f, "Argument {index} de '{function}' : '{found}' fourni, '{expected}' attendu")
+            CompileError::WrongArgumentType {
+                function,
+                index,
+                expected,
+                found,
+            } => {
+                write!(
+                    f,
+                    "Argument {index} de '{function}' : '{found}' fourni, '{expected}' attendu"
+                )
             }
 
             CompileError::NotCallable { found } => {
@@ -340,16 +361,14 @@ impl std::fmt::Display for CompileError {
                     None => write!(f, "Erreur de syntaxe dans le module '{path}'"),
                 }
             }
-            CompileError::ModuleLexerErrors { path, errors, .. } => {
-                match errors.first() {
-                    Some(error) => write!(
-                        f,
-                        "Erreur lexicale dans le module '{path}' à {}:{} : {}",
-                        error.line, error.column, error.message
-                    ),
-                    None => write!(f, "Erreur lexicale dans le module '{path}'"),
-                }
-            }
+            CompileError::ModuleLexerErrors { path, errors, .. } => match errors.first() {
+                Some(error) => write!(
+                    f,
+                    "Erreur lexicale dans le module '{path}' à {}:{} : {}",
+                    error.line, error.column, error.message
+                ),
+                None => write!(f, "Erreur lexicale dans le module '{path}'"),
+            },
             CompileError::InvalidJump => {
                 write!(f, "Saut de bytecode invalide")
             }
@@ -383,10 +402,7 @@ impl std::fmt::Display for CompileError {
             }
 
             CompileError::RenamedMember { name, replacement } => {
-                write!(
-                    f,
-                    "'{name}' n'existe plus : utilisez '{replacement}'"
-                )
+                write!(f, "'{name}' n'existe plus : utilisez '{replacement}'")
             }
 
             CompileError::DuplicateFunction { name, arity } => {

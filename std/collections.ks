@@ -42,7 +42,7 @@ export func flatten(items) {
     let result = [];
 
     for item in items {
-        if type(item) == "array" {
+        if type(item) == "list" {
             for inner in flatten(item) {
                 result.add(inner);
             }

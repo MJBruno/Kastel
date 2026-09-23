@@ -207,8 +207,9 @@ impl SetElements {
     }
 
     pub fn position(&self, value: &Value, hash: u64) -> Option<usize> {
-        self.index
-            .find(hash, |position| Value::key_equals(&self.items[position], value))
+        self.index.find(hash, |position| {
+            Value::key_equals(&self.items[position], value)
+        })
     }
 
     /// Ajoute un élément que l'appelant SAIT absent (aucune comparaison ici).

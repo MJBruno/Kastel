@@ -112,6 +112,24 @@ impl Server {
                 }
             }
 
+            "textDocument/signatureHelp" => {
+                if let Some(message) = self.signature_help(request.id, request.params) {
+                    messages.push(message);
+                }
+            }
+
+            "textDocument/prepareRename" => {
+                if let Some(message) = self.prepare_rename(request.id, request.params) {
+                    messages.push(message);
+                }
+            }
+
+            "workspace/symbol" => {
+                if let Some(message) = self.workspace_symbols(request.id, request.params) {
+                    messages.push(message);
+                }
+            }
+
             "shutdown" => {
                 messages.push(ServerMessage::Response(self.shutdown(request.id)));
             }
@@ -139,16 +157,33 @@ impl Server {
     }
 
     fn initialize(&mut self, id: Option<Value>, params: Option<Value>) -> RpcResponse {
-        if let Some(root_uri) = params
+        let root_path = params
             .as_ref()
             .and_then(|value| value.get("rootUri"))
             .and_then(Value::as_str)
-        {
-            if let Some(path) = uri_to_path(root_uri) {
-                self.module_resolver = Some(ModuleResolver::new(Some(path.clone())));
+            .and_then(uri_to_path)
+            .or_else(|| {
+                params
+                    .as_ref()
+                    .and_then(|value| value.get("workspaceFolders"))
+                    .and_then(Value::as_array)
+                    .and_then(|folders| folders.first())
+                    .and_then(|folder| folder.get("uri"))
+                    .and_then(Value::as_str)
+                    .and_then(uri_to_path)
+            })
+            .or_else(|| {
+                params
+                    .as_ref()
+                    .and_then(|value| value.get("rootPath"))
+                    .and_then(Value::as_str)
+                    .map(std::path::PathBuf::from)
+            });
 
-                self.index_workspace(&path);
-            }
+        if let Some(path) = root_path {
+            self.workspace.set_root(path.clone());
+            self.module_resolver = Some(ModuleResolver::new(Some(path.clone())));
+            self.index_workspace(&path);
         }
 
         RpcResponse::new(
@@ -159,12 +194,19 @@ impl Server {
                     "hoverProvider": true,
                     "definitionProvider": true,
                     "referencesProvider": true,
-                    "renameProvider": true,
                     "documentSymbolProvider": true,
-                    "documentHighlightProvider": true,
                     "documentFormattingProvider": true,
+                    "signatureHelpProvider": {
+                        "triggerCharacters": ["(", ","],
+                        "retriggerCharacters": [","]
+                    },
+                    "workspaceSymbolProvider": true,
+                    "documentHighlightProvider": true,
                     "completionProvider": {
-                        "triggerCharacters": [".", ":"]
+                        "triggerCharacters": [".", ":", "<"]
+                    },
+                    "renameProvider": {
+                        "prepareProvider": true
                     }
                 }
             }),
@@ -267,7 +309,17 @@ impl Server {
 
         let uri = params.get("textDocument")?.get("uri")?.as_str()?;
 
-        self.workspace.close(uri);
+        // Conserver l'index du fichier sur disque après fermeture dans VS Code.
+        // Cela évite de perdre ses définitions dès que l'éditeur émet
+        // `didClose` pour un module importé.
+        if let Some(path) = uri_to_path(uri) {
+            let _ = self.workspace.close(uri);
+            if path.is_file() {
+                let _ = self.workspace.open_file(path_to_uri(&path), &path);
+            }
+        } else {
+            let _ = self.workspace.close(uri);
+        }
 
         eprintln!(
             "Closed document: {} ({} document(s))",
@@ -288,8 +340,9 @@ impl Server {
         };
 
         let analysis = crate::analyzer::analyze(&document.text);
+        let statements = analysis.statements;
 
-        for statement in &analysis.statements {
+        for statement in &statements {
             self.load_statement_imports(uri, statement, &resolver);
         }
     }
@@ -303,31 +356,35 @@ impl Server {
         use kastel::frontend::ast::Statement;
 
         match statement {
-            Statement::Positioned { statement, .. } => {
+            Statement::Positioned { statement, .. } | Statement::Export { statement } => {
                 self.load_statement_imports(uri, statement, resolver);
             }
-
             Statement::Import { path } => {
-                let Some(current_file) = uri_to_path(uri) else {
-                    return;
-                };
-
-                let Some(module_path) = resolver.resolve(&current_file, path) else {
-                    eprintln!("Module not found: {}", path.join("."),);
-
-                    return;
-                };
-
-                let module_uri = path_to_uri(&module_path);
-
-                if self.workspace.get(&module_uri).is_none() {
-                    if let Err(error) = self.workspace.open_file(module_uri.clone(), &module_path) {
-                        eprintln!("Failed to load {}: {}", module_uri, error,);
-                    }
+                self.load_module(uri, path, resolver);
+            }
+            Statement::FromImport { module, .. } => {
+                self.load_module(uri, &module.parts, resolver);
+            }
+            Statement::Block(body) => {
+                for statement in body {
+                    self.load_statement_imports(uri, statement, resolver);
                 }
             }
-
             _ => {}
+        }
+    }
+
+    fn load_module(&mut self, uri: &str, parts: &[String], resolver: &ModuleResolver) {
+        let Some(current_file) = uri_to_path(uri) else { return; };
+        let Some(module_path) = resolver.resolve(&current_file, parts) else {
+            eprintln!("Module not found: {}", parts.join("."));
+            return;
+        };
+        let module_uri = path_to_uri(&module_path);
+        if self.workspace.get(&module_uri).is_none() {
+            if let Err(error) = self.workspace.open_file(module_uri, &module_path) {
+                eprintln!("Failed to load {}: {}", module_path.display(), error);
+            }
         }
     }
 
@@ -361,6 +418,7 @@ impl Server {
                             crate::symbols::SymbolKind::Class => 5,
                             crate::symbols::SymbolKind::Interface => 11,
                             crate::symbols::SymbolKind::Import => 2,
+                            crate::symbols::SymbolKind::TypeAlias => 26,
                         };
 
                         json!({
@@ -562,6 +620,84 @@ impl Server {
             id,
             result.unwrap_or_else(|| Value::Array(Vec::new())),
         )))
+    }
+
+    fn signature_help(&self, id: Option<Value>, params: Option<Value>) -> Option<ServerMessage> {
+        let id = id?;
+        let params = params?;
+        let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+        let position = params.get("position")?;
+        let line = position.get("line")?.as_u64()? as u32;
+        let character = position.get("character")?.as_u64()? as u32;
+        let result = crate::signature_help::build_signature_help(&self.workspace, uri, line, character);
+        Some(ServerMessage::Response(RpcResponse::new(id, result.unwrap_or(Value::Null))))
+    }
+
+    fn prepare_rename(&self, id: Option<Value>, params: Option<Value>) -> Option<ServerMessage> {
+        let id = id?;
+        let params = params?;
+        let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+        let position = params.get("position")?;
+        let line = position.get("line")?.as_u64()? as usize;
+        let character = position.get("character")?.as_u64()? as usize;
+        let document = self.workspace.get(uri)?;
+        let word = crate::text_util::find_word_at(&document.text, line, character)?;
+        if crate::language::KEYWORDS.contains(&word)
+            || crate::language::BUILTINS.contains(&word)
+            || crate::language::TYPE_NAMES.contains(&word)
+            || crate::language::CONTEXTUAL_KEYWORDS.contains(&word)
+        {
+            return None;
+        }
+        let line_text = crate::text_util::find_line(&document.text, line)?;
+        let start = crate::text_util::utf16_character_to_byte_index(line_text, character);
+        let word_start = {
+            let bytes = line_text.as_bytes();
+            let mut value = start.min(bytes.len());
+            while value > 0 && (bytes[value - 1].is_ascii_alphanumeric() || bytes[value - 1] == b'_') { value -= 1; }
+            value
+        };
+        let absolute = crate::completion::line_and_byte_to_offset(&document.text, line, word_start);
+        let end = absolute + word.len();
+        let s = crate::lsp_position::offset_to_lsp(&document.text, absolute);
+        let e = crate::lsp_position::offset_to_lsp(&document.text, end);
+        Some(ServerMessage::Response(RpcResponse::new(id, json!({
+            "range": { "start": {"line": s.0, "character": s.1}, "end": {"line": e.0, "character": e.1} },
+            "placeholder": word,
+        }))))
+    }
+
+    fn workspace_symbols(&self, id: Option<Value>, params: Option<Value>) -> Option<ServerMessage> {
+        let id = id?;
+        let query = params
+            .as_ref()
+            .and_then(|value| value.get("query"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let mut result = Vec::new();
+        for (uri, document) in self.workspace.iter() {
+            for symbol in document.symbols.iter() {
+                if !symbol.name.to_ascii_lowercase().contains(&query.to_ascii_lowercase()) { continue; }
+                let start = crate::lsp_position::offset_to_lsp(&document.text, symbol.span.start);
+                let end = crate::lsp_position::offset_to_lsp(&document.text, symbol.span.end);
+                result.push(json!({
+                    "name": symbol.name,
+                    "kind": match symbol.kind {
+                        crate::symbols::SymbolKind::Variable => 13,
+                        crate::symbols::SymbolKind::Function => 12,
+                        crate::symbols::SymbolKind::Class => 5,
+                        crate::symbols::SymbolKind::Interface => 11,
+                        crate::symbols::SymbolKind::Import => 2,
+                        crate::symbols::SymbolKind::TypeAlias => 26,
+                    },
+                    "uri": uri,
+                    "containerName": null,
+                    "range": { "start": {"line":start.0,"character":start.1}, "end": {"line":end.0,"character":end.1} },
+                }));
+            }
+        }
+        result.sort_by(|a,b| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+        Some(ServerMessage::Response(RpcResponse::new(id, Value::Array(result))))
     }
 
     fn shutdown(&mut self, id: Option<Value>) -> RpcResponse {

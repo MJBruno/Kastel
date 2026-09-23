@@ -13,7 +13,7 @@
 //   import std.os;
 //   println(os.name());
 //   println(os.env("HOME"));
-//   if os.args().length < 2 {
+//   if os.args().size() < 2 {
 //       println("usage: kastel script.ks <fichier>");
 //       os.exit(1);
 //   }

@@ -409,7 +409,11 @@ mod tests {
     #[test]
     fn methods_accept_arrays_as_other_operand() {
         let a = ints(&[1, 2]);
-        let array = Value::new_array(vec![Value::Integer(2), Value::Integer(2), Value::Integer(3)]);
+        let array = Value::new_array(vec![
+            Value::Integer(2),
+            Value::Integer(2),
+            Value::Integer(3),
+        ]);
 
         let union = native_union(&[a, array]).unwrap();
         assert_eq!(size(&union), 3);

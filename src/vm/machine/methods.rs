@@ -363,7 +363,8 @@ impl VirtualMachine {
 
         // `iter()` : convention unique pour obtenir un itérateur (la syntaxe
         // principale reste `for x in collection`).
-        if method_name == "iter" && !matches!(&receiver, Value::Object(handle) if matches!(&*handle.borrow(), Object::Instance { .. }))
+        if method_name == "iter"
+            && !matches!(&receiver, Value::Object(handle) if matches!(&*handle.borrow(), Object::Instance { .. }))
         {
             if arg_count != 0 {
                 return Err(RuntimeError::WrongArgumentCount {
@@ -386,7 +387,8 @@ impl VirtualMachine {
                 // API standard : size(), is_empty(), start(), stop(), step(),
                 // to_string(). Le reste (map, filter, take...) passe par
                 // l'itérateur.
-                match Self::range_method(&method_name, *start, *stop, *step, &receiver, arg_count)? {
+                match Self::range_method(&method_name, *start, *stop, *step, &receiver, arg_count)?
+                {
                     Some(result) => result,
 
                     None => {

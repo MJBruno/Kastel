@@ -1,12 +1,9 @@
-use std::{
-    env, fs,
-    path::PathBuf,
-    process::ExitCode,
-    rc::Rc,
-};
+use std::{env, fs, path::PathBuf, process::ExitCode, rc::Rc};
 
 use crate::{
-    compiler::{compiler::Compiler, module_types::ModuleTypeLoader, type_checker::TypeCheckContext},
+    compiler::{
+        compiler::Compiler, module_types::ModuleTypeLoader, type_checker::TypeCheckContext,
+    },
     error::kastel_error::KastelError,
     error::runtime_error::RuntimeError,
     frontend::{lexer::lexer::Lexer, parser::Parser},
