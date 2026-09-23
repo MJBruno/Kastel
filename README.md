@@ -63,23 +63,23 @@ L'objectif n'est pas uniquement de créer un langage avec une syntaxe moderne, m
 
 | Domaine       | Fonctionnalités                                               |
 | ------------- | ------------------------------------------------------------- |
-| Langage       | Typage dynamique                                              |
+| Langage       | Typage dynamique, annotations de types optionnelles, inférence et types union                                              |
 | Variables     | `let`, `const`                                                |
-| Fonctions     | Fonctions, récursivité, fonctions imbriquées,fonction-anonyme, fonction flèché                  |
+| Fonctions     | Fonctions, récursivité, fonctions imbriquées, fonctions anonymes, fonctions fléchées                  |
 | Closures      | Captures lexicales, upvalues, closures                        |
-| Collections   | Tableaux dynamiques, dictionnaires, objets                    |
+| Collections   | Listes dynamiques, dictionnaires, objets                    |
 | Contrôle      | `if`,`match`, boucles, `break`, `continue`                            |
 | Itération     | `for .. in`, itérateurs, `range()` lazy                       |
 | OOP           | Classes, instances, champs, méthodes                          |
 | Héritage      | Héritage simple, override, `base`                             |
-| Constructeurs | `new`, `init`, constructeurs hérités                          |
+| Constructeurs | `new`, `initialize`, constructeurs hérités                          |
 | Interfaces    | Interfaces multiples, héritage d'interfaces, validation       |
 | Méthodes      | `this`, méthodes liées (`BoundMethod`)                        |
 | Modules       | `import`, `export`, chargement de modules                     |
 | Bytecode      | Chunks, constantes, opcodes, désassemblage                    |
 | Runtime       | VM stack-based                                                |
 | Mémoire       | Garbage Collector mark/sweep avec gestion des cycles          |
-| Native        | I/O, math, strings, arrays, objects, iterators, system, debug |
+| Native        | I/O, math, strings, lists, objects, iterators, system, debug |
 | Diagnostics   | Erreurs de compilation et runtime localisées                  |
 | Debug         | VM trace, GC trace, désassemblage bytecode                    |
 
@@ -235,7 +235,7 @@ constant access
 local slots
 upvalue slots
 jump targets
-function calls
+func calls
 argument counts
 opcode validity
 ```
@@ -272,7 +272,7 @@ Le système d'objets peut représenter :
 
 ```text
 String
-Array
+List
 Dict
 Function
 Closure
@@ -339,11 +339,11 @@ closed Value
 
 Exemple :
 
-```JavaScript
-function make_counter() {
+```kastel
+func make_counter() {
     let count = 0;
 
-    function increment() {
+    func increment() {
         count = count + 1;
         return count;
     }
@@ -360,11 +360,49 @@ println(counter());
 
 Résultat :
 
-```JavaScript
+```kastel
 1
 2
 3
 ```
+
+---
+
+# 🧩 Typage
+
+Kastel utilise un modèle de typage dynamique avec des **annotations de types optionnelles** et de l'**inférence**.
+
+Une annotation peut être ajoutée explicitement :
+
+```kastel
+let name: str = "Bruno";
+let count: int = 10;
+```
+
+L'inférence permet de conserver une écriture concise :
+
+```kastel
+let count = 10;
+let message = "hello";
+```
+
+Les types union permettent d'accepter plusieurs types :
+
+```kastel
+let value: int|float = 10;
+
+func multiply_by_four(value: int|float) -> float {
+    return value * 4;
+}
+```
+
+Les collections peuvent également être annotées :
+
+```kastel
+let values: List<int|float> = [];
+```
+
+Ce modèle permet d'utiliser les types progressivement sans abandonner le caractère dynamique du langage.
 
 ---
 
@@ -384,13 +422,13 @@ BoundMethod
 
 ## Classes
 
-```JavaScript
+```kastel
 class Person {
-    function init(name) {
+    func initialize(name) {
         this.name = name;
     }
 
-    function greet() {
+    func greet() {
         println(this.name);
     }
 }
@@ -404,9 +442,9 @@ person.greet();
 
 Chaque instance possède ses propres champs :
 
-```JavaScript
+```kastel
 class User {
-    function show() {
+    func show() {
         println(this.name);
     }
 }
@@ -436,15 +474,15 @@ Les champs sont stockés séparément pour chaque instance.
 
 Kastel supporte l'héritage simple :
 
-```JavaScript
+```kastel
 class Animal {
-    function speak() {
+    func speak() {
         println("animal");
     }
 }
 
 class Dog : Animal {
-    function speak() {
+    func speak() {
         println("dog");
     }
 }
@@ -466,15 +504,15 @@ dog
 
 Une méthode peut appeler explicitement l'implémentation du parent :
 
-```JavaScript
+```kastel
 class Animal {
-    function speak() {
+    func speak() {
         println("animal");
     }
 }
 
 class Dog : Animal {
-    function speak() {
+    func speak() {
         println("dog");
         base.speak();
     }
@@ -496,13 +534,13 @@ La résolution de `base` fonctionne également avec plusieurs niveaux d'héritag
 
 ---
 
-## `init` et constructeurs
+## `initialize` et constructeurs
 
 Les instances sont créées avec `new` :
 
-```JavaScript
+```kastel
 class Person {
-    function init(name) {
+    func initialize(name) {
         this.name = name;
     }
 }
@@ -512,9 +550,9 @@ let person = new Person("Bruno");
 
 Les constructeurs peuvent être hérités :
 
-```JavaScript
+```kastel
 class Animal {
-    function init(name) {
+    func initialize(name) {
         this.name = name;
     }
 }
@@ -526,16 +564,16 @@ let dog = new Dog("Rex");
 
 Une classe enfant peut appeler explicitement son constructeur parent :
 
-```JavaScript
+```kastel
 class Animal {
-    function init(name) {
+    func initialize(name) {
         this.name = name;
     }
 }
 
 class Dog : Animal {
-    function init(name, age) {
-        base.init(name);
+    func initialize(name, age) {
+        base.initialize(name);
         this.age = age;
     }
 }
@@ -543,7 +581,7 @@ class Dog : Animal {
 let dog = new Dog("Rex", 5);
 ```
 
-La valeur retournée par `init` ne remplace pas l'instance créée par `new`.
+La valeur retournée par `initialize` ne remplace pas l'instance créée par `new`.
 
 ---
 
@@ -551,9 +589,9 @@ La valeur retournée par `init` ne remplace pas l'instance créée par `new`.
 
 Les méthodes peuvent être récupérées comme valeurs :
 
-```JavaScript
+```kastel
 class Counter {
-    function show() {
+    func show() {
         println(this.value);
     }
 }
@@ -577,7 +615,7 @@ BoundMethod
 
 Le `receiver` reste associé à la méthode :
 
-```JavaScript
+```kastel
 let show = counter.show;
 
 counter = null;
@@ -611,17 +649,17 @@ champ d'instance ?
 
 Ainsi un champ peut masquer une méthode :
 
-```JavaScript
-function field_callback() {
+```kastel
+func field_callback() {
     println("field");
 }
 
 class Test {
-    function callback() {
+    func callback() {
         println("method");
     }
 
-    function init() {
+    func initialize() {
         this.callback = field_callback;
     }
 }
@@ -643,13 +681,13 @@ field
 
 Kastel supporte les interfaces et leur héritage.
 
-```JavaScript
+```kastel
 interface Printable {
-    function print();
+    func print();
 }
 
 class Document : Printable {
-    function print() {
+    func print() {
         println("document");
     }
 }
@@ -657,21 +695,21 @@ class Document : Printable {
 
 Une classe peut implémenter plusieurs interfaces :
 
-```JavaScript
+```kastel
 interface Printable {
-    function print();
+    func print();
 }
 
 interface Serializable {
-    function save();
+    func save();
 }
 
 class Document : Printable, Serializable {
-    function print() {
+    func print() {
         println("print");
     }
 
-    function save() {
+    func save() {
         println("save");
     }
 }
@@ -679,13 +717,13 @@ class Document : Printable, Serializable {
 
 Les interfaces peuvent également hériter d'autres interfaces :
 
-```JavaScript
+```kastel
 interface Printable {
-    function print();
+    func print();
 }
 
 interface Document : Printable {
-    function save();
+    func save();
 }
 ```
 
@@ -711,7 +749,7 @@ RuntimeError
 
 Le langage fournit l'opérateur `is` pour tester l'appartenance d'une instance à une classe ou une interface :
 
-```JavaScript
+```kastel
 class Animal {}
 
 class Dog : Animal {}
@@ -724,20 +762,20 @@ println(dog is Animal);
 
 Résultat :
 
-```JavaScript
+```kastel
 true
 true
 ```
 
 Les interfaces sont également supportées :
 
-```JavaScript
+```kastel
 interface Printable {
-    function print();
+    func print();
 }
 
 class Document : Printable {
-    function print() {
+    func print() {
         println("document");
     }
 }
@@ -749,7 +787,7 @@ println(document is Printable);
 
 Résultat :
 
-```JavaScript
+```kastel
 true
 ```
 
@@ -791,7 +829,7 @@ globals
 call frames
 open upvalues
 modules
-function constants
+func constants
 closed upvalues
 ```
 
@@ -808,7 +846,7 @@ Instance
 └── fields
 
 Closure
-├── function
+├── func
 ├── upvalues
 └── owner_class
 
@@ -850,7 +888,7 @@ src/native/
 ├── io.rs
 ├── math.rs
 ├── string.rs
-├── array.rs
+├── list.rs
 ├── object.rs
 ├── iterator.rs
 ├── system.rs
@@ -859,7 +897,7 @@ src/native/
 
 ## I/O
 
-```JavaScript
+```kastel
 print(...)
 println(...)
 input(...)
@@ -867,7 +905,7 @@ input(...)
 
 ## Math
 
-```JavaScript
+```kastel
 abs(x)
 floor(x)
 ceil(x)
@@ -894,7 +932,7 @@ rand_range(start, end)
 
 ## Strings
 
-```JavaScript
+```kastel
 format(...)
 strlen(value)
 lower(value)
@@ -909,23 +947,21 @@ replace(value, from, to)
 split(value, separator)
 ```
 
-## Arrays
+## Lists
 
-```JavaScript
-array.push(value)
-array.pop()
-array.length()
+```kastel
+list.add(value)
+list.remove(index)
+list.size()
 
-array.insert(index, value)
-array.remove(index)
-
-array.contains(value)
-array.clear()
+list.insert(index, value)
+list.contains(value)
+list.clear()
 ```
 
 ## Objects
 
-```JavaScript
+```kastel
 object()
 
 object.get(key)
@@ -939,14 +975,14 @@ object.length()
 
 ## Iterateurs
 
-```JavaScript
+```kastel
 range(...)
 list(iterator)
 ```
 
 `range()` est conçu comme une représentation légère et lazy.
 
-```JavaScript
+```kastel
 for i in range(5) {
     println(i);
 }
@@ -954,7 +990,7 @@ for i in range(5) {
 
 Résultat :
 
-```JavaScript
+```kastel
 0
 1
 2
@@ -964,7 +1000,7 @@ Résultat :
 
 ## System
 
-```JavaScript
+```kastel
 int(value)
 float(value)
 str(value)
@@ -978,7 +1014,7 @@ env(name)
 
 ## Debug
 
-```JavaScript
+```kastel
 inspect(value)
 debug(value)
 ```
@@ -989,7 +1025,7 @@ debug(value)
 
 Kastel utilise une syntaxe `for .. in` :
 
-```JavaScript
+```kastel
 for value in [10, 20, 30] {
     println(value);
 }
@@ -997,7 +1033,7 @@ for value in [10, 20, 30] {
 
 Avec une plage :
 
-```JavaScript
+```kastel
 for i in range(5) {
     println(i);
 }
@@ -1005,7 +1041,7 @@ for i in range(5) {
 
 Plage avec début, fin et pas :
 
-```JavaScript
+```kastel
 for i in range(2, 10, 2) {
     println(i);
 }
@@ -1013,7 +1049,7 @@ for i in range(2, 10, 2) {
 
 Résultat :
 
-```JavaScript
+```kastel
 2
 4
 6
@@ -1022,7 +1058,7 @@ Résultat :
 
 Les plages descendantes sont également supportées :
 
-```JavaScript
+```kastel
 for i in range(10, 0, -1) {
     println(i);
 }
@@ -1038,10 +1074,13 @@ Kastel possède un système de modules permettant de séparer un programme en pl
 
 Les opérations principales sont :
 
-```JavaScript
-import ...
-export ...
+```kastel
+import dog.Dog;
+from dog import *;
+import dog { Dog, Animals, details };
 ```
+
+Les symboles publics peuvent être exposés avec `export`.
 
 Le runtime utilise un `ModuleLoader`.
 
@@ -1153,7 +1192,7 @@ VM
 Functions
 Closures
 Upvalues
-Arrays
+Lists
 Objects
 Iterators
 Modules
@@ -1237,7 +1276,7 @@ Kastel/
 │   │   ├── io.rs
 │   │   ├── math.rs
 │   │   ├── string.rs
-│   │   ├── array.rs
+│   │   ├── list.rs
 │   │   ├── object.rs
 │   │   ├── iterator.rs
 │   │   ├── system.rs
@@ -1281,7 +1320,7 @@ Les mécanismes fondamentaux sont désormais en place :
 ✅ Récursivité
 ✅ Closures
 ✅ Upvalues
-✅ Arrays
+✅ Lists
 ✅ Dictionaries / Objects
 ✅ Iterators
 ✅ range()
@@ -1293,7 +1332,7 @@ Les mécanismes fondamentaux sont désormais en place :
 ✅ Override
 ✅ this
 ✅ base
-✅ init
+✅ initialize
 ✅ Constructeurs hérités
 ✅ Interfaces
 ✅ Héritage d'interfaces
@@ -1462,13 +1501,13 @@ cargo test
 Exécuter un programme :
 
 ```bash
-cargo run --bin kastel -- examples/main.ks
+cargo run --bin kastel -- demo/main.ks
 ```
 
 Avec la trace GC :
 
 ```bash
-cargo run --bin kastel --features trace_gc -q -- examples/main.ks
+cargo run --bin kastel --features trace_gc -q -- demo/main.ks
 ```
 
 ---
