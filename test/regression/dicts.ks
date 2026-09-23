@@ -1,7 +1,7 @@
 // GC - dictionaries
 let keep = {
-    name: "Bruno",
-    age: 1
+    "name": "Bruno",
+    "age": 1
 };
 
 for i in range(10000) {
