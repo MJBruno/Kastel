@@ -53,7 +53,7 @@ export func run_tests(cases) {
             test_func();
             passed = passed + 1;
             println(format("  ok   {}", name));
-        } catch error {
+        } catch (error) {
             failed = failed + 1;
             println(format("  FAIL {} - {}", name, error));
         }

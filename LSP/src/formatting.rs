@@ -414,8 +414,8 @@ fn needs_space_between(
         _ => {}
     }
 
-    // Les génériques restent compacts : `List<int>`, `Dict<str, int>` et
-    // `func map<T>(...)`, tandis que les comparaisons restent `a < b`.
+    // Les génériques restent compacts : `List<int>`, `Dict<str, int>`,
+    // `Map<str, List<int>>`, etc. Les comparaisons restent espacées : `a < b`.
     if current_is_generic_angle(current, previous, next, current_index, tokens)
         || current_is_generic_close(current, current_index, tokens)
         || previous_is_generic_close(previous, current, current_index, tokens)
@@ -425,6 +425,11 @@ fn needs_space_between(
 
     if current.kind == TokenKind::Operator {
         return !is_unary_operator(tokens, current_index);
+    }
+
+    // Aucun espace après l'ouverture d'un générique : `Dict<str, int>`.
+    if previous.text == "<" && is_generic_open_at(current_index - 1, tokens) {
+        return false;
     }
 
     if previous.kind == TokenKind::Operator {
@@ -480,6 +485,16 @@ fn is_unary_operator(tokens: &[Token], index: usize) -> bool {
     }
 }
 
+fn is_generic_open_at(index: usize, tokens: &[Token]) -> bool {
+    if index >= tokens.len() || tokens[index].text != "<" || index == 0 {
+        return false;
+    }
+
+    let previous = &tokens[index - 1];
+    let next = tokens.get(index + 1);
+    current_is_generic_angle(&tokens[index], previous, next, index, tokens)
+}
+
 fn current_is_generic_angle(
     current: &Token,
     previous: &Token,
@@ -496,36 +511,50 @@ fn current_is_generic_angle(
         return false;
     }
 
-    // Une comparaison classique `a < b` ne doit surtout pas devenir
-    // `a<b>...`. Les génériques usuels ont un nom de type ou un paramètre
-    // de type qui commence par une majuscule (`List`, `T`, `Personne`, ...).
-    if next.kind == TokenKind::Word
-        && previous.text.chars().next().is_some_and(|c| c.is_ascii_lowercase())
-        && next.text.chars().next().is_some_and(|c| c.is_ascii_lowercase())
-    {
+    // Seuls les mots qui peuvent introduire un paramétrage de type ouvrent
+    // ici un groupe générique. Cela permet notamment `Dict<str, int>` et
+    // `List<int>` sans transformer `a < b` en `a<b`.
+    if !is_generic_head(previous.text.as_str()) {
         return false;
     }
 
-    let mut level = 0usize;
+    let mut depth = 0usize;
     for token in tokens.iter().skip(current_index + 1) {
-        if token.text == "<" {
-            level += 1;
-        } else if token.text == ">" {
-            if level == 0 {
-                return true;
+        match token.text.as_str() {
+            "<" => depth += 1,
+            ">" => {
+                if depth == 0 {
+                    return true;
+                }
+                depth -= 1;
             }
-            level -= 1;
-        } else if level == 0
-            && matches!(
+            _ if depth == 0 && matches!(
                 token.kind,
                 TokenKind::Semicolon | TokenKind::OpenBrace | TokenKind::CloseBrace
-            )
-        {
-            return false;
+            ) => return false,
+            _ => {}
         }
     }
 
     false
+}
+
+fn is_generic_head(name: &str) -> bool {
+    matches!(
+        name,
+        "List"
+            | "Dict"
+            | "Set"
+            | "Tuple"
+            | "Range"
+            | "Option"
+            | "Result"
+            | "Map"
+            | "Future"
+            | "Promise"
+            | "Iterator"
+            | "Iterable"
+    ) || name.chars().next().is_some_and(|c| c.is_ascii_uppercase())
 }
 
 fn current_is_generic_close(current: &Token, current_index: usize, tokens: &[Token]) -> bool {
@@ -533,44 +562,37 @@ fn current_is_generic_close(current: &Token, current_index: usize, tokens: &[Tok
         return false;
     }
 
-    let mut level = 0usize;
+    let mut depth = 0usize;
     for open_index in (0..current_index).rev() {
         let token = &tokens[open_index];
 
-        if token.text == ">" {
-            level += 1;
-            continue;
-        }
+        match token.text.as_str() {
+            ">" => depth += 1,
+            "<" => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
 
-        if token.text == "<" {
-            if level > 0 {
-                level -= 1;
-                continue;
+                let open_previous = open_index.checked_sub(1).and_then(|index| tokens.get(index));
+                let open_next = tokens.get(open_index + 1);
+
+                return match (open_previous, open_next) {
+                    (Some(previous), Some(next)) => current_is_generic_angle(
+                        token,
+                        previous,
+                        Some(next),
+                        open_index,
+                        tokens,
+                    ),
+                    _ => false,
+                };
             }
-
-            let open_previous = open_index.checked_sub(1).and_then(|index| tokens.get(index));
-            let open_next = tokens.get(open_index + 1);
-
-            if let (Some(open_previous), Some(open_next)) = (open_previous, open_next) {
-                return current_is_generic_angle(
-                    token,
-                    open_previous,
-                    Some(open_next),
-                    open_index,
-                    tokens,
-                );
-            }
-
-            return false;
-        }
-
-        if level == 0
-            && matches!(
+            _ if depth == 0 && matches!(
                 token.kind,
                 TokenKind::Semicolon | TokenKind::OpenBrace | TokenKind::CloseBrace
-            )
-        {
-            break;
+            ) => break,
+            _ => {}
         }
     }
 

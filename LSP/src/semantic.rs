@@ -159,6 +159,36 @@ fn should_skip_identifier(source: &str, ident: &Ident) -> bool {
         return true;
     }
 
+    // Les clés de littéraux objet et les champs de types structurés ne sont
+    // pas des références de variables.
+    //
+    //     { nom: "Mahasolo", age: 28 }
+    //     type Users = { nom: str, age: int }
+    //
+    // Dans les deux cas, l'identifiant est suivi immédiatement de `:`.
+    if is_object_key_or_field(source, ident.offset) {
+        return true;
+    }
+
+    false
+}
+
+fn is_object_key_or_field(source: &str, offset: usize) -> bool {
+    let mut chars = source[offset..].chars();
+
+    // Saute le nom de l'identifiant courant.
+    while let Some(c) = chars.next() {
+        if !(c.is_ascii_alphanumeric() || c == '_') {
+            // Puis les espaces éventuels avant `:`.
+            if c.is_whitespace() {
+                if chars.skip_while(|next| next.is_whitespace()).next() == Some(':') {
+                    return true;
+                }
+            }
+            return c == ':';
+        }
+    }
+
     false
 }
 
