@@ -278,7 +278,7 @@ impl Compiler {
                 self.predeclare_global_name(name, true)
             }
 
-            Statement::Class { name, .. } | Statement::Interface { name, .. } => {
+            Statement::Class { name, .. } | Statement::Interface { name, .. } | Statement::Enum { name, .. } => {
                 self.predeclare_global_name(name, false)
             }
 

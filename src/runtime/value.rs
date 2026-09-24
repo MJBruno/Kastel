@@ -178,6 +178,22 @@ impl Value {
             private_members,
         })
     }
+
+    pub fn new_enum(name: String, variants: HashMap<String, Value>) -> Self {
+        Self::new_heap_object(Object::Enum { name, variants })
+    }
+
+    pub fn new_enum_variant(
+        enum_name: String,
+        variant_name: String,
+        methods: HashMap<String, Vec<Value>>,
+    ) -> Self {
+        Self::new_heap_object(Object::EnumVariant {
+            enum_name,
+            variant_name,
+            methods,
+        })
+    }
     pub fn new_interface(
         name: String,
         bases: Vec<Gc<Object>>,
@@ -840,6 +856,35 @@ impl Value {
                     })
                 }
 
+                Object::Enum { variants, .. } => {
+                    variants.get(name).cloned().ok_or_else(|| RuntimeError::ObjectFieldNotFound {
+                        name: name.to_string(),
+                        suggestion: None,
+                    })
+                }
+
+                Object::EnumVariant { methods, .. } => {
+                    if let Some(overloads) = methods.get(name) {
+                        if overloads.len() == 1 {
+                            let method_handle = match &overloads[0] {
+                                Value::Object(handle) => handle.clone(),
+                                _ => return Err(RuntimeError::TypeError),
+                            };
+
+                            return Ok(Value::new_bound_method(method_handle, self.clone()));
+                        }
+
+                        return Err(RuntimeError::AmbiguousMethod {
+                            name: name.to_string(),
+                        });
+                    }
+
+                    Err(RuntimeError::ObjectFieldNotFound {
+                        name: name.to_string(),
+                        suggestion: None,
+                    })
+                }
+
                 // Un dict se lit par clé (`d["name"]`, `d.get("name")`),
                 // PAS par `d.name` : les champs nommés sont ceux d'un record.
                 Object::Dict(_) => Err(RuntimeError::ObjectFieldNotFound {
@@ -901,6 +946,13 @@ impl Value {
                             }),
                         }
                     }
+                    Object::Enum { .. } | Object::EnumVariant { .. } => {
+                        Err(RuntimeError::ObjectFieldNotFound {
+                            name: name.to_string(),
+                            suggestion: None,
+                        })
+                    }
+
                     Object::Instance { fields, .. } => {
                         fields.insert(name.to_string(), value);
                         Ok(())
@@ -1147,6 +1199,12 @@ impl std::fmt::Display for Value {
                     Object::Interface { name, .. } => {
                         write!(f, "<interface '{}'>", name)
                     }
+                    Object::Enum { name, .. } => {
+                        write!(f, "<enum '{}'>", name)
+                    }
+                    Object::EnumVariant { enum_name, variant_name, .. } => {
+                        write!(f, "{enum_name}.{variant_name}")
+                    }
                     Object::BoundMethod { .. } => {
                         write!(f, "<bound method>")
                     }
@@ -1211,6 +1269,7 @@ impl Value {
                 Object::BoundMethod { .. } => "function",
                 Object::Class { .. } => "class",
                 Object::Interface { .. } => "interface",
+                Object::Enum { .. } | Object::EnumVariant { .. } => "enum",
                 Object::Instance { .. } => "object",
             },
         }

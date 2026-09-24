@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use kastel::frontend::ast::Statement;
 
-use crate::analyzer::{analyze, Diagnostic};
+use crate::analyzer::{Diagnostic, analyze};
 use crate::class_index::ClassIndex;
 use crate::symbols::SymbolIndex;
 use crate::type_info::TypeInfo;
@@ -79,7 +79,8 @@ impl Workspace {
     }
 
     pub fn open(&mut self, uri: String, version: i64, text: String) {
-        self.documents.insert(uri, WorkspaceDocument::new(version, text));
+        self.documents
+            .insert(uri, WorkspaceDocument::new(version, text));
     }
 
     pub fn open_file(&mut self, uri: String, path: &Path) -> std::io::Result<()> {

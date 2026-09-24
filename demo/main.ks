@@ -1,24 +1,23 @@
-func make_garbage(n) {
-    let junk = [];
-    let i = 0;
-    while i < n {
-        junk = [i, i * 2, i * i];
-        i = i + 1;
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+enum Status {
+    Pending,
+    Running,
+    Finished
+
+    func is_finished() -> bool {
+        return this == Status.Finished;
     }
-    return junk;
 }
 
-let total = 0;
-let i = 0;
-while i < 50000 {
-    let temp = [i, i + 1, i + 2];
-    total = total + temp.get(0);
-    i = i + 1;
-}
+let color: Color = Color.Red;
+let status: Status = Status.Finished;
 
-println(total);
-
-let last = make_garbage(2000);
-println(last.size());
-println(last.get(0));
-println(last.get(2));
+println(color);
+println(status);
+println(status.is_finished());
+println(Color.Blue == color);

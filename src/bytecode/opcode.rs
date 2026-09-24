@@ -111,11 +111,16 @@ pub enum OpCode {
     /// `OverloadLocal <slot>` : comme `Overload`, pour une fonction LOCALE
     /// stockée dans la variable locale `slot`.
     OverloadLocal,
+
+    /// Construit un enum et ses variants singleton. Deux octets suivent :
+    /// nombre de variants puis nombre de méthodes. Ajouté en dernier pour
+    /// préserver les discriminants des opcodes existants.
+    Enum,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::OverloadLocal as usize + 1;
+    pub const COUNT: usize = Self::Enum as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -194,7 +199,8 @@ mod tests {
         assert_eq!(OpCode::Record as u8, 65);
         assert_eq!(OpCode::Overload as u8, 66);
         assert_eq!(OpCode::OverloadLocal as u8, 67);
-        assert_eq!(OpCode::COUNT, 68);
+        assert_eq!(OpCode::Enum as u8, 68);
+        assert_eq!(OpCode::COUNT, 69);
     }
 
     #[test]

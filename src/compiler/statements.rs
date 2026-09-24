@@ -302,6 +302,14 @@ impl Compiler {
                 self.compile_interface(name, bases, methods)?;
             }
 
+            Statement::Enum {
+                name,
+                variants,
+                methods,
+            } => {
+                self.compile_enum(name, variants, methods)?;
+            }
+
             // Un alias de type n'existe qu'à la compilation (vérificateur) :
             // aucun code à générer.
             Statement::TypeAlias { .. } => {}
@@ -461,6 +469,93 @@ impl Compiler {
                     .borrow_mut()
                     .locals
                     .declare_local(name, self.scope_depth, true)?;
+
+            self.context
+                .borrow_mut()
+                .locals
+                .mark_initialized(self.scope_depth);
+
+            debug_assert_eq!(self.context.borrow().locals.len() - 1, slot as usize);
+        }
+
+        Ok(())
+    }
+
+    // ============================================================
+    // ENUM
+    // ============================================================
+
+    pub(crate) fn compile_enum(
+        &mut self,
+        name: &str,
+        variants: &[String],
+        methods: &[FunctionMethod],
+    ) -> Result<(), CompileError> {
+        if variants.len() > u8::MAX as usize || methods.len() > u8::MAX as usize {
+            return Err(CompileError::TooManyObjectFields);
+        }
+
+        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name) {
+            if let Some(global) = self.globals.borrow().get(name) {
+                if !global.native {
+                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
+                }
+            }
+        }
+
+        let name_constant = self.identifier_constant(name)?;
+        self.emit_constant_op(OpCode::Constant, name_constant);
+
+        for variant in variants {
+            let variant_constant = self.identifier_constant(variant)?;
+            self.emit_constant_op(OpCode::Constant, variant_constant);
+        }
+
+        for method in methods {
+            let method_name_constant = self.identifier_constant(&method.name)?;
+            self.emit_constant_op(OpCode::Constant, method_name_constant);
+
+            let function = self.compile_method(&method.name, &method.params, &method.body)?;
+            let function_constant =
+                self.make_constant(Value::new_function(std::rc::Rc::new(function.clone())))?;
+
+            self.emit_closure(function_constant, &function.upvalues);
+        }
+
+        self.emit_byte(OpCode::Enum.into());
+        self.emit_byte(variants.len() as u8);
+        self.emit_byte(methods.len() as u8);
+
+        if !self.in_function && self.scope_depth == 0 {
+            let name_constant = if self.predeclared_functions.contains(name) {
+                self.globals
+                    .borrow()
+                    .get(name)
+                    .map(|global| global.constant)
+                    .ok_or_else(|| CompileError::VariableAlreadyDeclared(name.to_string()))?
+            } else {
+                let constant = self.identifier_constant(name)?;
+
+                self.globals.borrow_mut().insert(
+                    name.to_string(),
+                    Global {
+                        constant,
+                        mutable: true,
+                        native: false,
+                        is_function: false,
+                    },
+                );
+
+                constant
+            };
+
+            self.emit_constant_op(OpCode::DefineGlobal, name_constant);
+        } else {
+            let slot = self
+                .context
+                .borrow_mut()
+                .locals
+                .declare_local(name, self.scope_depth, true)?;
 
             self.context
                 .borrow_mut()
@@ -1397,6 +1492,11 @@ impl Compiler {
             }
 
             Statement::Interface { name, .. } => {
+                self.register_export(name)?;
+                self.compile_statement(statement)?;
+            }
+
+            Statement::Enum { name, .. } => {
                 self.register_export(name)?;
                 self.compile_statement(statement)?;
             }

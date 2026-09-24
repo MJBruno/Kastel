@@ -186,6 +186,8 @@ impl Chunk {
 
             OpCode::Interface => self.constant_instruction("OP_INTERFACE", offset),
 
+            OpCode::Enum => self.two_byte_instruction("OP_ENUM", offset),
+
             // =====================================================
             // EXCEPTIONS
             // =====================================================

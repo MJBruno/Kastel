@@ -8,7 +8,7 @@ Rappel : le GC est un *mark & sweep* posé sur des `Rc`. Le « sweep » ne libè
 non marqué. La correction dépend donc d'un ensemble de racines exact.
 
 | Trou d'origine | Correctif |
-|---|---|
+ | --- | --- |
 | Résultats intermédiaires de `map`/`filter`/`reduce`/`any`/`all` tenus par une variable Rust pendant les rappels | `VirtualMachine::temp_roots` (racines temporaires, marquées par le GC) ; `with_temp_roots` enracine le receveur et les arguments, `protect` enracine chaque résultat |
 | Cliché des éléments d'un tableau modifié par le rappel | le cliché est enraciné |
 | Méthodes d'itérateur (`next`, `to_list`, `any`…) | `invoke_iterator_method` enracine ses arguments ; `iterator_collect` protège chaque valeur |
@@ -22,7 +22,7 @@ doit être enracinée* (`with_temp_roots` / `protect`).
 ## 2. Limites de profondeur
 
 | Zone | Limite | Erreur |
-|---|---|---|
+| --- | --- | --- |
 | Appels Kastel (frames) | `MAX_CALL_DEPTH` = 100 000 | `RuntimeError::StackOverflow` (catchable) |
 | Rappels natifs imbriqués (`map`, constructeurs, itérateurs…) | `MAX_NATIVE_DEPTH` = 500 | `RuntimeError::StackOverflow` |
 | Imbrication syntaxique (parenthèses, blocs, unaires) | `MAX_NESTING_DEPTH` = 500 (parser) | erreur de parsing |

@@ -60,6 +60,13 @@ fn integer(value: Value) -> i64 {
     }
 }
 
+fn boolean(value: Value) -> bool {
+    match value {
+        Value::Boolean(value) => value,
+        other => panic!("booléen attendu, reçu {other:?}"),
+    }
+}
+
 // ============================================================
 //                      RACINES DU GC
 // ============================================================
@@ -762,6 +769,144 @@ fn run_project<T: Send + 'static>(
     outcome
 }
 
+// ============================================================
+//                           ENUMS
+// ============================================================
+
+#[test]
+fn enum_variants_are_qualified_and_typed() {
+    let (vm, result) = run_script(
+        r#"
+        enum Color {
+            Red,
+            Green,
+            Blue
+        }
+
+        let color: Color = Color.Red;
+        let same = color;
+        "#,
+    );
+
+    assert!(result.is_ok(), "l'enum simple doit s'exécuter");
+    assert_eq!(format!("{}", global(&vm, "color")), "Color.Red");
+    assert_eq!(format!("{}", global(&vm, "same")), "Color.Red");
+}
+
+#[test]
+fn enum_methods_use_this_and_compare_singleton_variants() {
+    let (vm, result) = run_script(
+        r#"
+        enum Status {
+            Pending,
+            Running,
+            Finished
+
+            func is_finished() -> bool {
+                return this == Status.Finished;
+            }
+        }
+
+        let status: Status = Status.Finished;
+        let done = status.is_finished();
+        let pending = Status.Pending.is_finished();
+        "#,
+    );
+
+    assert!(result.is_ok(), "les méthodes d'enum doivent recevoir this");
+    assert!(boolean(global(&vm, "done")));
+    assert!(!boolean(global(&vm, "pending")));
+}
+
+#[test]
+fn enum_export_import_preserves_type_and_methods() {
+    let states = r#"
+        export enum Status {
+            Pending,
+            Running,
+            Finished
+
+            func is_finished() -> bool {
+                return this == Status.Finished;
+            }
+        }
+        "#;
+
+    let result = run_project(
+        "enum_import",
+        &[("states.ks", states)],
+        r#"
+        import states { Status as State };
+
+        let status: State = State.Finished;
+        let done = status.is_finished();
+        "#,
+        |vm| boolean(global(vm, "done")),
+    );
+
+    assert_eq!(result, Ok(true));
+}
+
+#[test]
+fn enum_rejects_bare_variant_names() {
+    let source = r#"
+        enum Color {
+            Red,
+            Green,
+            Blue
+        }
+
+        let color = Red;
+        "#;
+
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
+    let mut compiler = Compiler::new();
+    execute_native(&mut compiler);
+
+    assert!(
+        compiler.compile(&statements).is_err(),
+        "un variant d'enum ne doit pas être importé dans l'espace global"
+    );
+}
+
+#[test]
+fn enum_cannot_be_instantiated_with_new() {
+    let source = r#"
+        enum Color { Red, Green }
+        let color = new Color();
+        "#;
+
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
+    let mut compiler = Compiler::new();
+    execute_native(&mut compiler);
+
+    assert!(compiler.compile(&statements).is_err());
+}
+
+#[test]
+fn enum_duplicate_variants_are_rejected() {
+    let source = r#"
+        enum Color {
+            Red,
+            Red
+        }
+        "#;
+
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+    let result = Parser::new(tokens).parse();
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn enum_opcode_does_not_shift_existing_opcode_values() {
+    assert_eq!(crate::bytecode::opcode::OpCode::OverloadLocal as u8, 67);
+    assert_eq!(crate::bytecode::opcode::OpCode::Enum as u8, 68);
+    assert_eq!(crate::bytecode::opcode::OpCode::COUNT, 69);
+}
+
 #[test]
 fn free_functions_are_overloaded_by_arity() {
     let source = r#"
@@ -1043,7 +1188,7 @@ from shapes import *;
 
 let n: Number = 5;
 let p: Point = { x: 1, y: 2 };
-let x: int = p.x + n;
+let x: Number = p.x + n;
 "#,
         |vm| integer(global(vm, "x")),
     );

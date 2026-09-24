@@ -416,6 +416,7 @@ impl VirtualMachine {
                         Object::Module(_) => 7,
                         Object::Set(_) => 8,
                         Object::Record(_) => 9,
+                        Object::EnumVariant { .. } => 10,
                         _ => 5,
                     }
                 };
@@ -624,6 +625,78 @@ impl VirtualMachine {
                         }
 
                         self.execute_call(arg_count)?;
+
+                        return Ok(());
+                    }
+
+                    10 => {
+                        let (method, expected) = {
+                            let object = handle.borrow();
+
+                            match &*object {
+                                Object::EnumVariant { methods, .. } => {
+                                    let method = methods.get(&method_name).and_then(|overloads| {
+                                        overloads.iter().find(|value| {
+                                            matches!(
+                                                value,
+                                                Value::Object(method_handle)
+                                                    if matches!(
+                                                        &*method_handle.borrow(),
+                                                        Object::Closure(closure)
+                                                            if closure.function.arity == arg_count + 1
+                                                    )
+                                            )
+                                        })
+                                    }).cloned();
+
+                                    let expected = methods.get(&method_name).and_then(|overloads| {
+                                        overloads.first().and_then(|value| match value {
+                                            Value::Object(method_handle) => {
+                                                let method_object = method_handle.borrow();
+                                                match &*method_object {
+                                                    Object::Closure(closure) => {
+                                                        closure.function.arity.checked_sub(1)
+                                                    }
+                                                    _ => None,
+                                                }
+                                            }
+                                            _ => None,
+                                        })
+                                    });
+
+                                    (method, expected)
+                                }
+
+                                _ => return Err(RuntimeError::TypeError),
+                            }
+                        };
+
+                        let Some(Value::Object(method_handle)) = method else {
+                            if let Some(expected) = expected {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected,
+                                    found: arg_count,
+                                });
+                            }
+
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        };
+
+                        if !matches!(&*method_handle.borrow(), Object::Closure(_)) {
+                            return Err(RuntimeError::NotCallable);
+                        }
+
+                        self.push(Value::Object(method_handle));
+                        self.push(receiver);
+
+                        for argument in args.iter().skip(1) {
+                            self.push(argument.clone());
+                        }
+
+                        self.execute_call(arg_count + 1)?;
 
                         return Ok(());
                     }

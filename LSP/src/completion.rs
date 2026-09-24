@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use kastel::compiler::types::Type;
 use kastel::frontend::ast::{Statement, Visibility};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::class_index::{ClassIndex, MethodInfo};
 use crate::language::{
@@ -53,13 +53,7 @@ pub fn build_completion(
     if let Some(context) = detect_member_access(line_text, byte_index) {
         let offset = line_and_byte_to_offset(&document.text, line as usize, byte_index);
         if context.is_import_line {
-            add_import_member_completions(
-                workspace,
-                uri,
-                &context,
-                &mut items,
-                &mut seen,
-            );
+            add_import_member_completions(workspace, uri, &context, &mut items, &mut seen);
         } else {
             add_receiver_completions(
                 workspace,
@@ -126,10 +120,7 @@ pub(crate) fn detect_member_access(line: &str, byte_index: usize) -> Option<Memb
     }
 
     // Ne traite comme accès membre que les chemins d'identifiants simples.
-    if !receiver
-        .chars()
-        .all(|c| is_identifier_char(c) || c == '.')
-    {
+    if !receiver.chars().all(|c| is_identifier_char(c) || c == '.') {
         return None;
     }
 
@@ -169,7 +160,17 @@ fn add_receiver_completions(
     let receiver_types = infer_receiver_types(workspace, uri, document, receiver_path, offset);
 
     for ty in receiver_types {
-        add_type_members(workspace, uri, document, &ty, receiver_path, prefix, offset, items, seen);
+        add_type_members(
+            workspace,
+            uri,
+            document,
+            &ty,
+            receiver_path,
+            prefix,
+            offset,
+            items,
+            seen,
+        );
     }
 
     // Un typage dynamique ne permet pas de déduire une API sûre. On conserve
@@ -207,7 +208,17 @@ fn add_type_members(
     match ty {
         Type::Union(members) => {
             for member in members {
-                add_type_members(workspace, uri, document, member, receiver_path, prefix, offset, items, seen);
+                add_type_members(
+                    workspace,
+                    uri,
+                    document,
+                    member,
+                    receiver_path,
+                    prefix,
+                    offset,
+                    items,
+                    seen,
+                );
             }
         }
         Type::Named(class_name) => {
@@ -227,7 +238,9 @@ fn add_type_members(
             );
         }
         Type::Module(module_path) => {
-            let Some(current_file) = uri_to_path(uri) else { return; };
+            let Some(current_file) = uri_to_path(uri) else {
+                return;
+            };
             let resolver = ModuleResolver::new(workspace.root().map(Path::to_path_buf));
             let parts = module_path
                 .split('.')
@@ -313,12 +326,7 @@ pub(crate) fn infer_receiver_types(
         let Some(info) = document.classes.get(&class_name) else {
             return Vec::new();
         };
-        return info
-            .bases
-            .iter()
-            .cloned()
-            .map(Type::Named)
-            .collect();
+        return info.bases.iter().cloned().map(Type::Named).collect();
     }
 
     if let Some(first) = receiver_path.split('.').next() {
@@ -346,12 +354,17 @@ pub(crate) fn infer_receiver_types(
 
     // `new Class(...)` sans annotation : le TypeInfo courant devrait déjà le
     // déduire. Ce repli sert uniquement aux sources partielles.
-    if let Some(class_name) = infer_class_of_variable(&document.text, receiver_path, &document.classes) {
+    if let Some(class_name) =
+        infer_class_of_variable(&document.text, receiver_path, &document.classes)
+    {
         return vec![Type::Named(class_name)];
     }
 
     // Résolution d'un alias de module simple.
-    if let Some(import) = parse_import_bindings(&document.text).into_iter().find(|i| i.local == receiver_path) {
+    if let Some(import) = parse_import_bindings(&document.text)
+        .into_iter()
+        .find(|i| i.local == receiver_path)
+    {
         if let Some(current_file) = uri_to_path(uri) {
             let resolver = ModuleResolver::new(workspace.root().map(Path::to_path_buf));
             if let Some(module_path) = resolver.resolve(&current_file, &import.parts) {
@@ -362,7 +375,6 @@ pub(crate) fn infer_receiver_types(
 
     Vec::new()
 }
-
 
 fn infer_local_type(document: &WorkspaceDocument, name: &str, offset: usize) -> Option<Type> {
     if let Some(ty) = infer_parameter_type(&document.text, name, offset) {
@@ -382,7 +394,9 @@ fn infer_local_type(document: &WorkspaceDocument, name: &str, offset: usize) -> 
             last = Some(start);
             break;
         }
-        if start == 0 { break; }
+        if start == 0 {
+            break;
+        }
         search_end = start;
     }
 
@@ -439,21 +453,33 @@ fn infer_parameter_type(source: &str, name: &str, offset: usize) -> Option<Type>
     while let Some(relative) = masked[search..].find("func ") {
         let func_start = search + relative;
         let name_start = func_start + 5;
-        let Some(paren_rel) = masked[name_start..].find('(') else { break; };
+        let Some(paren_rel) = masked[name_start..].find('(') else {
+            break;
+        };
         let open = name_start + paren_rel;
         let declared_name = masked[name_start..open].trim();
         if declared_name.is_empty() {
             search = open + 1;
             continue;
         }
-        let Some(close) = find_matching_delimiter(bytes, open, b'(', b')') else { break; };
-        let Some(brace_rel) = masked[close + 1..].find('{') else { break; };
+        let Some(close) = find_matching_delimiter(bytes, open, b'(', b')') else {
+            break;
+        };
+        let Some(brace_rel) = masked[close + 1..].find('{') else {
+            break;
+        };
         let brace = close + 1 + brace_rel;
-        let Some(body_end) = find_matching_delimiter(bytes, brace, b'{', b'}') else { break; };
+        let Some(body_end) = find_matching_delimiter(bytes, brace, b'{', b'}') else {
+            break;
+        };
         if offset > brace && offset <= body_end {
             if let Some(ty) = parameter_type_in_list(source, open + 1, close, name) {
                 let span_len = body_end - brace;
-                if best.as_ref().map(|(length, _)| span_len < *length).unwrap_or(true) {
+                if best
+                    .as_ref()
+                    .map(|(length, _)| span_len < *length)
+                    .unwrap_or(true)
+                {
                     best = Some((span_len, ty));
                 }
             }
@@ -515,7 +541,9 @@ fn find_matching_delimiter(source: &[u8], open: usize, opening: u8, closing: u8)
             value if value == opening => depth += 1,
             value if value == closing => {
                 depth = depth.saturating_sub(1);
-                if depth == 0 { return Some(index); }
+                if depth == 0 {
+                    return Some(index);
+                }
             }
             _ => {}
         }
@@ -525,11 +553,18 @@ fn find_matching_delimiter(source: &[u8], open: usize, opening: u8, closing: u8)
 
 fn parse_type_text(text: &str) -> Option<Type> {
     let text = text.trim();
-    if text.is_empty() { return None; }
+    if text.is_empty() {
+        return None;
+    }
 
     let union = split_type_union(text);
     if union.len() > 1 {
-        return Some(Type::union_of(union.into_iter().filter_map(|part| parse_type_text(&part)).collect()));
+        return Some(Type::union_of(
+            union
+                .into_iter()
+                .filter_map(|part| parse_type_text(&part))
+                .collect(),
+        ));
     }
 
     if let Some(open) = text.find('<') {
@@ -541,10 +576,15 @@ fn parse_type_text(text: &str) -> Option<Type> {
                 .collect::<Vec<_>>();
             return match (name, args.as_slice()) {
                 ("List", [element]) => Some(Type::Array(Box::new(element.clone()))),
-                ("Dict", [key, value]) => Some(Type::Dict(Box::new(key.clone()), Box::new(value.clone()))),
+                ("Dict", [key, value]) => {
+                    Some(Type::Dict(Box::new(key.clone()), Box::new(value.clone())))
+                }
                 ("Tuple", _) => Some(Type::Tuple(args)),
                 ("Set", [element]) => Some(Type::Set(Box::new(element.clone()))),
-                _ => Some(Type::Generic { name: name.to_string(), arguments: args }),
+                _ => Some(Type::Generic {
+                    name: name.to_string(),
+                    arguments: args,
+                }),
             };
         }
     }
@@ -627,17 +667,28 @@ fn member_result_types(
             Vec::new()
         }
         Type::Module(path) => {
-            let Some(current_file) = uri_to_path(uri) else { return Vec::new(); };
+            let Some(current_file) = uri_to_path(uri) else {
+                return Vec::new();
+            };
             let resolver = ModuleResolver::new(workspace.root().map(Path::to_path_buf));
             let parts = path
                 .split('.')
                 .filter(|part| !part.is_empty())
                 .map(str::to_string)
                 .collect::<Vec<_>>();
-            let Some(module_path) = resolver.resolve(&current_file, &parts) else { return Vec::new(); };
+            let Some(module_path) = resolver.resolve(&current_file, &parts) else {
+                return Vec::new();
+            };
             let module_uri = path_to_uri(&module_path);
-            let Some(module) = workspace.get(&module_uri) else { return Vec::new(); };
-            module.types.get(name).cloned().map(|ty| vec![ty]).unwrap_or_default()
+            let Some(module) = workspace.get(&module_uri) else {
+                return Vec::new();
+            };
+            module
+                .types
+                .get(name)
+                .cloned()
+                .map(|ty| vec![ty])
+                .unwrap_or_default()
         }
         _ => document
             .types
@@ -661,8 +712,10 @@ fn add_class_members(
             .field(class_name, field_name)
             .map(|field| match field.visibility {
                 Visibility::Public => true,
-                Visibility::Private => allow_private
-                    && classes.field_owner(class_name, field_name).as_deref() == current_class,
+                Visibility::Private => {
+                    allow_private
+                        && classes.field_owner(class_name, field_name).as_deref() == current_class
+                }
             })
             .unwrap_or(true);
         if !visible || !field_name.starts_with(prefix) || !seen.insert(field_name.to_string()) {
@@ -684,9 +737,8 @@ fn add_class_members(
 
     for method in classes.all_methods(class_name) {
         if method.visibility == Visibility::Private {
-            let owner_is_current = classes
-                .method_owner(class_name, &method.name)
-                .as_deref() == current_class;
+            let owner_is_current =
+                classes.method_owner(class_name, &method.name).as_deref() == current_class;
             if !allow_private || !owner_is_current {
                 continue;
             }
@@ -734,7 +786,11 @@ fn add_import_member_completions(
 
     // `import math.` / `from math import ...` : proposer les sous-modules.
     if let Some(current_file) = uri_to_path(uri) {
-        let path_parts = context.receiver.split('.').map(str::to_string).collect::<Vec<_>>();
+        let path_parts = context
+            .receiver
+            .split('.')
+            .map(str::to_string)
+            .collect::<Vec<_>>();
         let names = list_submodules(workspace.root(), &current_file, &path_parts);
         for name in names {
             if !name.starts_with(&context.prefix) || !seen.insert(name.clone()) {
@@ -760,13 +816,19 @@ fn add_imported_name_completions(
     items: &mut Vec<Value>,
     seen: &mut HashSet<String>,
 ) {
-    let Some(current_file) = uri_to_path(uri) else { return; };
+    let Some(current_file) = uri_to_path(uri) else {
+        return;
+    };
     let resolver = ModuleResolver::new(workspace.root().map(Path::to_path_buf));
 
     for import in parse_import_bindings(&document.text) {
-        let Some(module_path) = resolver.resolve(&current_file, &import.parts) else { continue; };
+        let Some(module_path) = resolver.resolve(&current_file, &import.parts) else {
+            continue;
+        };
         let module_uri = path_to_uri(&module_path);
-        let Some(module) = workspace.get(&module_uri) else { continue; };
+        let Some(module) = workspace.get(&module_uri) else {
+            continue;
+        };
         add_document_completions(&module.symbols, prefix, true, items, seen);
     }
 }
@@ -783,7 +845,10 @@ fn resolve_module_path(workspace: &Workspace, uri: &str, receiver: &str) -> Opti
         }
     }
 
-    resolver.resolve(&current_file, &receiver.split('.').map(str::to_string).collect::<Vec<_>>())
+    resolver.resolve(
+        &current_file,
+        &receiver.split('.').map(str::to_string).collect::<Vec<_>>(),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -801,20 +866,39 @@ fn parse_import_bindings(source: &str) -> Vec<ImportBinding> {
             if rest.starts_with('{') || rest.starts_with('*') {
                 continue;
             }
-            let parts = rest.split('.').map(str::to_string).filter(|s| !s.is_empty()).collect::<Vec<_>>();
+            let parts = rest
+                .split('.')
+                .map(str::to_string)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>();
             if let Some(last) = parts.last() {
-                imports.push(ImportBinding { local: last.clone(), parts });
+                imports.push(ImportBinding {
+                    local: last.clone(),
+                    parts,
+                });
             }
             continue;
         }
         if let Some(rest) = line.strip_prefix("from ") {
             if let Some((module, names)) = rest.split_once(" import ") {
-                let parts = module.trim().split('.').map(str::to_string).filter(|s| !s.is_empty()).collect::<Vec<_>>();
+                let parts = module
+                    .trim()
+                    .split('.')
+                    .map(str::to_string)
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>();
                 for item in names.trim().trim_matches(['{', '}']).split(',') {
                     let mut p = item.trim().split_whitespace();
                     let Some(name) = p.next() else { continue };
-                    let local = if p.next() == Some("as") { p.next().unwrap_or(name) } else { name };
-                    imports.push(ImportBinding { local: local.to_string(), parts: parts.clone() });
+                    let local = if p.next() == Some("as") {
+                        p.next().unwrap_or(name)
+                    } else {
+                        name
+                    };
+                    imports.push(ImportBinding {
+                        local: local.to_string(),
+                        parts: parts.clone(),
+                    });
                 }
             }
         }
@@ -897,7 +981,9 @@ fn keyword_snippet(keyword: &str) -> Option<&'static str> {
 
 fn add_builtin_completions(prefix: &str, items: &mut Vec<Value>, seen: &mut HashSet<String>) {
     for (name, signature, doc) in BUILTIN_FUNCTIONS {
-        if !name.starts_with(prefix) || !seen.insert((*name).to_string()) { continue; }
+        if !name.starts_with(prefix) || !seen.insert((*name).to_string()) {
+            continue;
+        }
         items.push(json!({
             "label": *name,
             "kind": KIND_FUNCTION,
@@ -912,7 +998,9 @@ fn add_builtin_completions(prefix: &str, items: &mut Vec<Value>, seen: &mut Hash
 
 fn add_type_completions(prefix: &str, items: &mut Vec<Value>, seen: &mut HashSet<String>) {
     for name in TYPE_NAMES {
-        if !name.starts_with(prefix) || !seen.insert((*name).to_string()) { continue; }
+        if !name.starts_with(prefix) || !seen.insert((*name).to_string()) {
+            continue;
+        }
         items.push(json!({
             "label": *name,
             "kind": KIND_TYPE_PARAMETER,
@@ -930,8 +1018,12 @@ fn add_document_completions(
     seen: &mut HashSet<String>,
 ) {
     for symbol in symbols.iter() {
-        if imported && !symbol.is_exported { continue; }
-        if !symbol.name.starts_with(prefix) || !seen.insert(symbol.name.clone()) { continue; }
+        if imported && !symbol.is_exported {
+            continue;
+        }
+        if !symbol.name.starts_with(prefix) || !seen.insert(symbol.name.clone()) {
+            continue;
+        }
         items.push(symbol_completion(symbol, imported));
     }
 }
@@ -975,8 +1067,18 @@ fn find_enclosing_class(document: &WorkspaceDocument, offset: usize) -> Option<S
     fn visit(statements: &[Statement], source: &str, offset: usize, current: &mut Option<String>) {
         for raw in statements {
             match raw {
-                Statement::Positioned { statement, .. } => visit(std::slice::from_ref(statement.as_ref()), source, offset, current),
-                Statement::Export { statement } => visit(std::slice::from_ref(statement.as_ref()), source, offset, current),
+                Statement::Positioned { statement, .. } => visit(
+                    std::slice::from_ref(statement.as_ref()),
+                    source,
+                    offset,
+                    current,
+                ),
+                Statement::Export { statement } => visit(
+                    std::slice::from_ref(statement.as_ref()),
+                    source,
+                    offset,
+                    current,
+                ),
                 Statement::Class { name, .. } => {
                     if let Some(span) = find_class_span(source, name) {
                         if span.0 <= offset && offset <= span.1 {
@@ -1011,7 +1113,9 @@ fn find_matching_brace(source: &str, open: usize) -> Option<usize> {
             b'{' => depth += 1,
             b'}' => {
                 depth = depth.saturating_sub(1);
-                if depth == 0 { return Some(index); }
+                if depth == 0 {
+                    return Some(index);
+                }
             }
             _ => {}
         }
@@ -1032,14 +1136,24 @@ fn infer_class_of_variable(source: &str, variable: &str, classes: &ClassIndex) -
         let tail = &source[end..source.len().min(end + 180)];
         if let Some(annotation) = tail.strip_prefix(":") {
             let annotation = annotation.trim_start();
-            if let Some(name) = annotation.split(|c: char| c == '=' || c.is_whitespace()).next() {
-                if !name.is_empty() && classes.contains(name) { return Some(name.to_string()); }
+            if let Some(name) = annotation
+                .split(|c: char| c == '=' || c.is_whitespace())
+                .next()
+            {
+                if !name.is_empty() && classes.contains(name) {
+                    return Some(name.to_string());
+                }
             }
         }
         if let Some(new_pos) = tail.find("new ") {
             let after = &tail[new_pos + 4..];
-            let name = after.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap_or("");
-            if classes.contains(name) { return Some(name.to_string()); }
+            let name = after
+                .split(|c: char| c == '(' || c.is_whitespace())
+                .next()
+                .unwrap_or("");
+            if classes.contains(name) {
+                return Some(name.to_string());
+            }
         }
         search = end;
     }
@@ -1048,22 +1162,36 @@ fn infer_class_of_variable(source: &str, variable: &str, classes: &ClassIndex) -
 
 fn list_submodules(root: Option<&Path>, current_file: &Path, path_parts: &[String]) -> Vec<String> {
     let mut candidates = Vec::new();
-    let bases = [current_file.parent().map(PathBuf::from), root.map(PathBuf::from)];
+    let bases = [
+        current_file.parent().map(PathBuf::from),
+        root.map(PathBuf::from),
+    ];
 
     for base in bases.into_iter().flatten() {
         let mut dir = base;
         for part in path_parts {
-            if !is_identifier_char_string(part) { dir = PathBuf::new(); break; }
+            if !is_identifier_char_string(part) {
+                dir = PathBuf::new();
+                break;
+            }
             dir.push(part);
         }
-        if dir.as_os_str().is_empty() || !dir.is_dir() { continue; }
-        let Ok(entries) = fs::read_dir(dir) else { continue; };
+        if dir.as_os_str().is_empty() || !dir.is_dir() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if let Some(name) = path.file_name().and_then(|s| s.to_str()) { candidates.push(name.to_string()); }
+                if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                    candidates.push(name.to_string());
+                }
             } else if path.extension().and_then(|s| s.to_str()) == Some("ks") {
-                if let Some(name) = path.file_stem().and_then(|s| s.to_str()) { candidates.push(name.to_string()); }
+                if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                    candidates.push(name.to_string());
+                }
             }
         }
     }
@@ -1072,8 +1200,12 @@ fn list_submodules(root: Option<&Path>, current_file: &Path, path_parts: &[Strin
     candidates
 }
 
-fn is_identifier_char(c: char) -> bool { c.is_ascii_alphanumeric() || c == '_' }
-fn is_identifier_char_string(s: &str) -> bool { !s.is_empty() && s.chars().all(is_identifier_char) }
+fn is_identifier_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+fn is_identifier_char_string(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(is_identifier_char)
+}
 
 #[cfg(test)]
 mod tests {

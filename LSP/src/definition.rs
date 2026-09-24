@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use kastel::compiler::types::Type;
 use kastel::frontend::ast::Statement;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::completion::{detect_member_access, infer_receiver_types, line_and_byte_to_offset};
 use crate::lsp_position::offset_to_lsp;
@@ -46,14 +46,9 @@ pub fn build_definition(
     // 1. Accès membre : `obj.method`, `obj.field`, `this.method`,
     //    `module.export`.
     if let Some(context) = detect_member_access(line_text, byte_index) {
-        if let Some(result) = resolve_member_definition(
-            workspace,
-            uri,
-            document,
-            &context.receiver,
-            word,
-            absolute,
-        ) {
+        if let Some(result) =
+            resolve_member_definition(workspace, uri, document, &context.receiver, word, absolute)
+        {
             return Some(result);
         }
     }
@@ -93,11 +88,7 @@ fn resolve_member_definition(
             Type::Union(members) => {
                 for member_ty in members {
                     if let Some(result) = resolve_single_member_definition(
-                        workspace,
-                        uri,
-                        document,
-                        &member_ty,
-                        member,
+                        workspace, uri, document, &member_ty, member,
                     ) {
                         return Some(result);
                     }
@@ -284,7 +275,14 @@ fn resolve_import_statement(
 ) -> Option<Value> {
     match statement {
         Statement::Positioned { statement, .. } | Statement::Export { statement } => {
-            resolve_import_statement(workspace, current_uri, current_file, statement, name, resolver)
+            resolve_import_statement(
+                workspace,
+                current_uri,
+                current_file,
+                statement,
+                name,
+                resolver,
+            )
         }
         Statement::Import { path } => {
             let imported_name = path.last()?;
@@ -301,7 +299,12 @@ fn resolve_import_statement(
                     let mut parts = module.parts.clone();
                     parts.push(item.name.clone());
                     if let Ok(resolution) = resolver.resolve_import(current_file, &parts) {
-                        if let Some(result) = resolve_import_resolution(workspace, current_uri, resolution, &item.name) {
+                        if let Some(result) = resolve_import_resolution(
+                            workspace,
+                            current_uri,
+                            resolution,
+                            &item.name,
+                        ) {
                             return Some(result);
                         }
                     }
@@ -315,18 +318,50 @@ fn resolve_import_statement(
         | Statement::Try { try_body: body, .. } => body.iter().find_map(|child| {
             resolve_import_statement(workspace, current_uri, current_file, child, name, resolver)
         }),
-        Statement::If { then_branch, else_branch, .. } => {
-            then_branch.iter().find_map(|child| {
-                resolve_import_statement(workspace, current_uri, current_file, child, name, resolver)
-            }).or_else(|| {
-                else_branch.as_ref().and_then(|branch| branch.iter().find_map(|child| {
-                    resolve_import_statement(workspace, current_uri, current_file, child, name, resolver)
-                }))
+        Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => then_branch
+            .iter()
+            .find_map(|child| {
+                resolve_import_statement(
+                    workspace,
+                    current_uri,
+                    current_file,
+                    child,
+                    name,
+                    resolver,
+                )
             })
+            .or_else(|| {
+                else_branch.as_ref().and_then(|branch| {
+                    branch.iter().find_map(|child| {
+                        resolve_import_statement(
+                            workspace,
+                            current_uri,
+                            current_file,
+                            child,
+                            name,
+                            resolver,
+                        )
+                    })
+                })
+            }),
+        Statement::Match { arms, .. } => {
+            arms.iter()
+                .flat_map(|arm| arm.body.iter())
+                .find_map(|child| {
+                    resolve_import_statement(
+                        workspace,
+                        current_uri,
+                        current_file,
+                        child,
+                        name,
+                        resolver,
+                    )
+                })
         }
-        Statement::Match { arms, .. } => arms.iter().flat_map(|arm| arm.body.iter()).find_map(|child| {
-            resolve_import_statement(workspace, current_uri, current_file, child, name, resolver)
-        }),
         _ => None,
     }
 }
@@ -349,7 +384,10 @@ fn resolve_import_resolution(
             }
             symbol_location(&module_uri, module, name)
         }
-        ImportResolution::Export { module, name: export_name } => {
+        ImportResolution::Export {
+            module,
+            name: export_name,
+        } => {
             let module_uri = path_to_uri(&module);
             let module_doc = workspace.get(&module_uri)?;
             let symbol = module_doc.symbols.get(&export_name)?;

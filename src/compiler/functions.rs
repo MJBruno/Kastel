@@ -47,13 +47,16 @@ impl Compiler {
                     .map(|global| global.constant)
                     .ok_or_else(|| CompileError::VariableAlreadyDeclared(name.to_string()))?
             } else {
-                // Chemin emprunté quand ce nom n'a pas été prédéclaré par le
-                // pré-passage du compilateur — c'est le cas du REPL (voir
-                // `compile_repl_inner`, qui ne l'exécute pas) : une fonction
-                // globale peut donc s'y trouver déjà (ligne précédente).
-                // Une fonction peut toujours redéclarer une fonction (REPL :
-                // redéfinition ; fichier sans pré-passage : surcharge) ;
-                // toute autre collision (variable, classe...) reste refusée.
+                // Chaque compilation du REPL possède son propre Chunk.
+                // L'indice de constante enregistré dans un Global provenant
+                // d'une compilation précédente appartient donc à un ancien
+                // Chunk et ne peut pas être réutilisé.
+                //
+                // Une fonction globale peut être redéclarée dans le REPL
+                // (redéfinition) ou dans un contexte sans pré-passage
+                // (surcharge). Les collisions avec une variable, une classe,
+                // etc. restent interdites.
+
                 let existing = self.globals.borrow().get(name).cloned();
 
                 if let Some(global) = &existing
@@ -63,10 +66,8 @@ impl Compiler {
                     return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
                 }
 
-                let constant = match &existing {
-                    Some(global) => global.constant,
-                    None => self.identifier_constant(name)?,
-                };
+                // Toujours créer une constante dans le Chunk courant.
+                let constant = self.identifier_constant(name)?;
 
                 self.globals.borrow_mut().insert(
                     name.to_string(),
@@ -88,14 +89,15 @@ impl Compiler {
 
             self.emit_closure(function_constant, &function.upvalues);
 
-            // `Overload` couvre aussi bien la toute PREMIÈRE déclaration
-            // (la globale n'existe pas encore : la fonction la définit,
-            // comme `DefineGlobal`) que les suivantes (ajout à l'ensemble de
-            // surcharges, ou remplacement d'une même arité). C'est ce
-            // dernier cas qui permet la REDÉFINITION d'une fonction dans le
-            // REPL, où chaque ligne est un `Compiler` distinct : rien n'y
-            // distingue localement "jamais vue" de "déjà déclarée par une
-            // ligne précédente".
+            // `Overload` couvre :
+            //
+            // - la première déclaration ;
+            // - une surcharge ;
+            // - une redéfinition dans le REPL.
+            //
+            // Dans le REPL, chaque ligne possède son propre Chunk. Le
+            // `name_constant` utilisé ici appartient donc toujours au Chunk
+            // actuellement compilé.
             self.emit_constant_op(OpCode::Overload, name_constant);
 
             return Ok(());
@@ -130,8 +132,9 @@ impl Compiler {
         self.emit_closure(function_constant, &function.upvalues);
 
         if let Some((existing_slot, _)) = overload_target {
-            // La fermeture est au sommet de la pile : `OverloadLocal` la
-            // retire et l'ajoute à l'ensemble de la locale `existing_slot`.
+            // La fermeture est au sommet de la pile : `OverloadLocal`
+            // la retire et l'ajoute à l'ensemble de la locale
+            // `existing_slot`.
             self.emit_bytes(OpCode::OverloadLocal, existing_slot);
 
             self.context

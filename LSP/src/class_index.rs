@@ -244,7 +244,11 @@ impl ClassIndex {
         }
 
         let info = self.classes.get(name)?;
-        if let Some(method) = info.methods.iter().find(|method| method.name == method_name) {
+        if let Some(method) = info
+            .methods
+            .iter()
+            .find(|method| method.name == method_name)
+        {
             return Some(method);
         }
 
@@ -445,7 +449,9 @@ fn collect_this_fields_in_statement(statement: &Statement, out: &mut Vec<String>
                 collect_this_fields(statements, out);
             }
         }
-        Statement::While { body, .. } | Statement::ForIn { body, .. } => collect_this_fields(body, out),
+        Statement::While { body, .. } | Statement::ForIn { body, .. } => {
+            collect_this_fields(body, out)
+        }
         Statement::Match { arms, .. } => {
             for arm in arms {
                 collect_this_fields(&arm.body, out);

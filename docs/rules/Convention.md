@@ -804,7 +804,7 @@ Les littéraux suivants ont les types :
 | `"hello"`  | `str`             |
 | `'hello'`  | `str`             |
 | `None`     | `None`            |
-| `[1, 2]`   | `List<int>`      |
+| `[1, 2]`   | `List<int>`       |
 | `{1, 2}`   | `Set<int>`        |
 | `(1, "a")` | `Tuple<int, str>` |
 

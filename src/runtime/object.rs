@@ -84,6 +84,22 @@ pub enum Object {
         methods: HashSet<(String, usize)>,
     },
 
+    /// Définition runtime d'un enum. Les variants sont des valeurs stables
+    /// stockées ici et accessibles par `EnumName.Variant`.
+    Enum {
+        name: String,
+        variants: HashMap<String, Value>,
+    },
+
+    /// Valeur singleton d'un variant d'enum. Les méthodes sont partagées par
+    /// tous les variants via les mêmes handles de closure, sans créer de
+    /// cycle GC enum -> variant -> enum.
+    EnumVariant {
+        enum_name: String,
+        variant_name: String,
+        methods: HashMap<String, Vec<Value>>,
+    },
+
     Instance {
         class: Option<Gc<Object>>,
         fields: HashMap<String, Value>,
@@ -195,6 +211,14 @@ impl Object {
 
             Object::Interface { bases, methods, .. } => {
                 bases.clear();
+                methods.clear();
+            }
+
+            Object::Enum { variants, .. } => {
+                variants.clear();
+            }
+
+            Object::EnumVariant { methods, .. } => {
                 methods.clear();
             }
 

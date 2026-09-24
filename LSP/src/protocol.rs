@@ -16,10 +16,7 @@ pub struct RpcResponse {
 }
 
 impl RpcResponse {
-    pub fn new(
-        id: Value,
-        result: Value,
-    ) -> Self {
+    pub fn new(id: Value, result: Value) -> Self {
         Self {
             jsonrpc: "2.0",
             id,

@@ -81,7 +81,12 @@ fn collect_statements(
     for raw in statements {
         let statement = unwrap(raw);
         match statement {
-            Statement::Let { name, value, type_annotation, .. } => {
+            Statement::Let {
+                name,
+                value,
+                type_annotation,
+                ..
+            } => {
                 let ty = type_annotation
                     .as_ref()
                     .map(|expr| resolve_type_expr(info, expr))
@@ -89,7 +94,13 @@ fn collect_statements(
                 info.symbols.insert(name.clone(), ty.clone());
                 scopes.last_mut().unwrap().insert(name.clone(), ty);
             }
-            Statement::Function { name, params, param_types, return_type, body } => {
+            Statement::Function {
+                name,
+                params,
+                param_types,
+                return_type,
+                body,
+            } => {
                 let params_with_types = params
                     .iter()
                     .enumerate()
@@ -122,7 +133,10 @@ fn collect_statements(
                         Type::Function(signature.function_type())
                     },
                 );
-                info.functions.entry(name.clone()).or_default().push(signature);
+                info.functions
+                    .entry(name.clone())
+                    .or_default()
+                    .push(signature);
 
                 let mut function_scope = HashMap::new();
                 for (param, ty) in &info.functions[name].last().unwrap().params {
@@ -142,7 +156,8 @@ fn collect_statements(
             }
             Statement::Import { path } => {
                 if let Some(name) = path.last() {
-                    info.symbols.insert(name.clone(), Type::Module(path.join(".")));
+                    info.symbols
+                        .insert(name.clone(), Type::Module(path.join(".")));
                 }
             }
             Statement::FromImport { items, .. } => {
@@ -159,7 +174,11 @@ fn collect_statements(
                 collect_statements(body, info, scopes);
                 scopes.pop();
             }
-            Statement::If { then_branch, else_branch, .. } => {
+            Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 scopes.push(HashMap::new());
                 collect_statements(then_branch, info, scopes);
                 scopes.pop();
@@ -174,8 +193,13 @@ fn collect_statements(
                 collect_statements(body, info, scopes);
                 scopes.pop();
             }
-            Statement::ForIn { variable, iterable, body } => {
-                let element_type = infer_expression(info, iterable, scopes.last().unwrap()).element_type();
+            Statement::ForIn {
+                variable,
+                iterable,
+                body,
+            } => {
+                let element_type =
+                    infer_expression(info, iterable, scopes.last().unwrap()).element_type();
                 let mut loop_scope = HashMap::new();
                 loop_scope.insert(variable.clone(), element_type);
                 scopes.push(loop_scope);
@@ -189,7 +213,12 @@ fn collect_statements(
                     scopes.pop();
                 }
             }
-            Statement::Try { try_body, catch_name, catch_body, finally_body } => {
+            Statement::Try {
+                try_body,
+                catch_name,
+                catch_body,
+                finally_body,
+            } => {
                 scopes.push(HashMap::new());
                 collect_statements(try_body, info, scopes);
                 scopes.pop();
@@ -213,11 +242,7 @@ fn collect_statements(
     }
 }
 
-fn infer_return_type(
-    info: &TypeInfo,
-    body: &[Statement],
-    params: &[(String, Type)],
-) -> Type {
+fn infer_return_type(info: &TypeInfo, body: &[Statement], params: &[(String, Type)]) -> Type {
     let mut env = info.symbols.clone();
     env.extend(params.iter().cloned());
     let mut result = None;
@@ -243,16 +268,27 @@ fn collect_returns(
                     Some(previous) => previous.merge(&ty),
                 });
             }
-            Statement::If { then_branch, else_branch, .. } => {
+            Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 collect_returns(info, then_branch, env, result);
                 if let Some(branch) = else_branch {
                     collect_returns(info, branch, env, result);
                 }
             }
-            Statement::While { body, .. } | Statement::ForIn { body, .. } | Statement::Block(body) => {
+            Statement::While { body, .. }
+            | Statement::ForIn { body, .. }
+            | Statement::Block(body) => {
                 collect_returns(info, body, env, result);
             }
-            Statement::Try { try_body, catch_body, finally_body, .. } => {
+            Statement::Try {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
                 collect_returns(info, try_body, env, result);
                 if let Some(body) = catch_body {
                     collect_returns(info, body, env, result);
@@ -291,7 +327,10 @@ fn infer_expression(info: &TypeInfo, expr: &Expression, env: &HashMap<String, Ty
             Type::Array(Box::new(element))
         }
         Expression::Tuple(items) => Type::Tuple(
-            items.iter().map(|item| infer_expression(info, item, env)).collect(),
+            items
+                .iter()
+                .map(|item| infer_expression(info, item, env))
+                .collect(),
         ),
         Expression::Dict(items) => {
             let value = items
@@ -307,11 +346,18 @@ fn infer_expression(info: &TypeInfo, expr: &Expression, env: &HashMap<String, Ty
                 .map(|(name, value)| (name.clone(), infer_expression(info, value, env)))
                 .collect(),
         ),
-        Expression::Unary { operator, right, .. } => match operator {
+        Expression::Unary {
+            operator, right, ..
+        } => match operator {
             UnaryOp::Not => Type::Bool,
             UnaryOp::Negate | UnaryOp::BitNot => infer_expression(info, right, env),
         },
-        Expression::Binary { left, operator, right, .. } => {
+        Expression::Binary {
+            left,
+            operator,
+            right,
+            ..
+        } => {
             let left_ty = infer_expression(info, left, env);
             let right_ty = infer_expression(info, right, env);
             match operator {
@@ -359,8 +405,11 @@ fn infer_expression(info: &TypeInfo, expr: &Expression, env: &HashMap<String, Ty
             params: vec![Type::Dynamic; params.len()],
             return_type: Box::new(Type::Dynamic),
         }),
-        Expression::Ternary { then_expr, else_expr, .. } => infer_expression(info, then_expr, env)
-            .merge(&infer_expression(info, else_expr, env)),
+        Expression::Ternary {
+            then_expr,
+            else_expr,
+            ..
+        } => infer_expression(info, then_expr, env).merge(&infer_expression(info, else_expr, env)),
     }
 }
 

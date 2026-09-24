@@ -130,6 +130,10 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
 
             Object::Interface { .. } => "interface".to_string(),
 
+            Object::Enum { name, .. } => name.clone(),
+
+            Object::EnumVariant { enum_name, .. } => enum_name.clone(),
+
             Object::Instance { class, .. } => match class.as_ref() {
                 Some(class_handle) => {
                     let class_ref = class_handle.borrow();

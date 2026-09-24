@@ -196,9 +196,11 @@ fn is_member_access(source: &str, offset: usize) -> bool {
     source[..offset].trim_end().ends_with('.')
 }
 
-
 fn is_import_line(source: &str, offset: usize) -> bool {
-    let line_start = source[..offset].rfind('\n').map(|index| index + 1).unwrap_or(0);
+    let line_start = source[..offset]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
     let line = source[line_start..]
         .split('\n')
         .next()
@@ -208,7 +210,10 @@ fn is_import_line(source: &str, offset: usize) -> bool {
 }
 
 fn is_declaration_name(source: &str, offset: usize) -> bool {
-    let line_start = source[..offset].rfind('\n').map(|index| index + 1).unwrap_or(0);
+    let line_start = source[..offset]
+        .rfind('\n')
+        .map(|index| index + 1)
+        .unwrap_or(0);
     let prefix = &source[line_start..offset];
     let mut previous = None;
     for part in prefix.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
@@ -216,7 +221,10 @@ fn is_declaration_name(source: &str, offset: usize) -> bool {
             previous = Some(part);
         }
     }
-    matches!(previous, Some("func" | "class" | "interface" | "type" | "let" | "const"))
+    matches!(
+        previous,
+        Some("func" | "class" | "interface" | "type" | "let" | "const")
+    )
 }
 
 fn is_resolved(

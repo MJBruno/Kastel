@@ -43,13 +43,15 @@ struct Binding {
 #[derive(Debug, Clone)]
 pub(crate) struct ClassInfo {
     bases: Vec<String>,
-    /// Une classe peut surcharger une méthode par son arité.
+    /// Une classe ou un enum peut surcharger une méthode par son arité.
     /// Deux signatures de même nom et de même arité restent interdites.
     methods: HashMap<String, Vec<FunctionType>>,
     /// Champs déclarés par `let nom: type = ...;` dans le corps de la classe.
     fields: HashMap<String, Type>,
     /// Membres (champs et méthodes) déclarés `private` dans cette classe.
     private_members: HashSet<String>,
+    /// Variants nommés d'un enum. Vide pour les classes/interfaces.
+    enum_variants: HashSet<String>,
 }
 
 /// Vérificateur statique graduel de Kastel.
@@ -448,6 +450,73 @@ impl TypeChecker {
                             methods: method_map,
                             fields: field_map,
                             private_members,
+                            enum_variants: HashSet::new(),
+                        },
+                    );
+                    self.declare_global_declaration(name, Type::Named(name.clone()))?;
+                }
+
+                Statement::Enum {
+                    name,
+                    variants,
+                    methods,
+                } => {
+                    let mut method_map: HashMap<String, Vec<FunctionType>> = HashMap::new();
+
+                    for method in methods {
+                        let params = method
+                            .params
+                            .iter()
+                            .enumerate()
+                            .map(|(index, _)| {
+                                method
+                                    .param_types
+                                    .get(index)
+                                    .and_then(|annotation| annotation.as_ref())
+                                    .map_or(Type::Dynamic, |annotation| {
+                                        self.resolve_type(annotation)
+                                    })
+                            })
+                            .collect::<Vec<_>>();
+
+                        let signature = FunctionType {
+                            params,
+                            return_type: Box::new(
+                                method
+                                    .return_type
+                                    .as_ref()
+                                    .map(|annotation| self.resolve_type(annotation))
+                                    .unwrap_or(Type::Dynamic),
+                            ),
+                        };
+
+                        let overloads = method_map.entry(method.name.clone()).or_default();
+
+                        if overloads
+                            .iter()
+                            .any(|existing| existing.params.len() == signature.params.len())
+                        {
+                            return Err(CompileError::DuplicateMethod {
+                                class_name: name.clone(),
+                                method_name: method.name.clone(),
+                                arity: signature.params.len(),
+                            });
+                        }
+
+                        overloads.push(signature);
+                    }
+
+                    let enum_variants = variants.iter().cloned().collect::<HashSet<_>>();
+
+                    self.parents.insert(name.clone(), Vec::new());
+                    self.classes.insert(
+                        name.clone(),
+                        ClassInfo {
+                            bases: Vec::new(),
+                            methods: method_map,
+                            fields: HashMap::new(),
+                            private_members: HashSet::new(),
+                            enum_variants,
                         },
                     );
                     self.declare_global_declaration(name, Type::Named(name.clone()))?;
@@ -513,6 +582,7 @@ impl TypeChecker {
                             methods: method_map,
                             fields: HashMap::new(),
                             private_members: HashSet::new(),
+                            enum_variants: HashSet::new(),
                         },
                     );
                     self.declare_global_declaration(name, Type::Named(name.clone()))?;
@@ -752,6 +822,8 @@ impl TypeChecker {
             Statement::Export { statement } => self.check_statement(statement),
 
             Statement::Class { name, methods, .. } => self.check_class(name, methods),
+
+            Statement::Enum { name, methods, .. } => self.check_class(name, methods),
 
             Statement::Interface { .. } => Ok(()),
 
@@ -1002,7 +1074,7 @@ impl TypeChecker {
                     suggestion: None,
                 }),
 
-            Statement::Class { name, .. } | Statement::Interface { name, .. } => {
+            Statement::Class { name, .. } | Statement::Interface { name, .. } | Statement::Enum { name, .. } => {
                 Ok((name.clone(), Type::Named(name.clone())))
             }
 
@@ -1639,6 +1711,17 @@ impl TypeChecker {
             } => {
                 let class_name = &self.canonical_class_name(class_name);
 
+                if self
+                    .classes
+                    .get(class_name)
+                    .is_some_and(|info| !info.enum_variants.is_empty())
+                {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "class".to_string(),
+                        found: format!("enum {class_name}"),
+                    });
+                }
+
                 // Constructeur `private` : `new` n'est permis que dans le
                 // corps de la classe qui le déclare.
                 self.check_member_visibility(class_name, CONSTRUCTOR_NAME)?;
@@ -1877,6 +1960,15 @@ impl TypeChecker {
                     // sans contexte d'appel. Les appels directs sont traités
                     // plus haut et sélectionnent la bonne signature.
                     return Ok(Type::Dynamic);
+                }
+
+                // Variant d'enum : `Color.Red` retourne le même type `Color`.
+                if self
+                    .classes
+                    .get(class_name)
+                    .is_some_and(|info| info.enum_variants.contains(name))
+                {
+                    return Ok(Type::Named(class_name.clone()));
                 }
 
                 // Champ déclaré (`let age: int = 0;`) : son type est connu.

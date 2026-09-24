@@ -15,7 +15,7 @@
 //!
 //! Les chaînes et commentaires sont traités comme du contenu opaque.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::lsp_position::offset_to_lsp;
 use crate::text_util::mask_strings_and_comments;
@@ -87,21 +87,15 @@ pub fn format_source(source: &str, tab_size: u32, insert_spaces: bool) -> String
         // Aération volontairement légère : au maximum une ligne vide entre
         // déclarations de haut niveau, et entre méthodes d'une même classe.
         if let Some(previous_index) = previous_non_blank {
-            if should_insert_blank_line(
-                &output[previous_index],
-                content,
-                print_depth,
-                depth,
-            ) {
+            if should_insert_blank_line(&output[previous_index], content, print_depth, depth) {
                 if output.last().is_none_or(|line| !line.trim().is_empty()) {
                     output.push(String::new());
                 }
             }
         }
 
-        let mut line = String::with_capacity(
-            content.len() + print_depth as usize * indent_unit.len(),
-        );
+        let mut line =
+            String::with_capacity(content.len() + print_depth as usize * indent_unit.len());
         for _ in 0..print_depth {
             line.push_str(&indent_unit);
         }
@@ -188,9 +182,7 @@ fn normalize_line(line: &str, in_block_comment: &mut bool) -> String {
                     i += 1;
                 }
 
-                if i >= chars.len()
-                    && !(i >= 2 && chars[i - 2] == '*' && chars[i - 1] == '/')
-                {
+                if i >= chars.len() && !(i >= 2 && chars[i - 2] == '*' && chars[i - 1] == '/') {
                     *in_block_comment = true;
                 }
 
@@ -344,20 +336,9 @@ fn tokenize_code(code: &str) -> Vec<Token> {
         let operator = match three.as_deref() {
             Some("===") | Some("!==") => three.clone(),
             _ => match two.as_deref() {
-                Some("==")
-                | Some("!=")
-                | Some("<=")
-                | Some(">=")
-                | Some("&&")
-                | Some("||")
-                | Some("->")
-                | Some("+=")
-                | Some("-=")
-                | Some("*=")
-                | Some("/=")
-                | Some("%=")
-                | Some("=>")
-                | Some("??") => two.clone(),
+                Some("==") | Some("!=") | Some("<=") | Some(">=") | Some("&&") | Some("||")
+                | Some("->") | Some("+=") | Some("-=") | Some("*=") | Some("/=") | Some("%=")
+                | Some("=>") | Some("??") => two.clone(),
                 _ => None,
             },
         };
@@ -528,10 +509,14 @@ fn current_is_generic_angle(
                 }
                 depth -= 1;
             }
-            _ if depth == 0 && matches!(
-                token.kind,
-                TokenKind::Semicolon | TokenKind::OpenBrace | TokenKind::CloseBrace
-            ) => return false,
+            _ if depth == 0
+                && matches!(
+                    token.kind,
+                    TokenKind::Semicolon | TokenKind::OpenBrace | TokenKind::CloseBrace
+                ) =>
+            {
+                return false;
+            }
             _ => {}
         }
     }
@@ -574,24 +559,26 @@ fn current_is_generic_close(current: &Token, current_index: usize, tokens: &[Tok
                     continue;
                 }
 
-                let open_previous = open_index.checked_sub(1).and_then(|index| tokens.get(index));
+                let open_previous = open_index
+                    .checked_sub(1)
+                    .and_then(|index| tokens.get(index));
                 let open_next = tokens.get(open_index + 1);
 
                 return match (open_previous, open_next) {
-                    (Some(previous), Some(next)) => current_is_generic_angle(
-                        token,
-                        previous,
-                        Some(next),
-                        open_index,
-                        tokens,
-                    ),
+                    (Some(previous), Some(next)) => {
+                        current_is_generic_angle(token, previous, Some(next), open_index, tokens)
+                    }
                     _ => false,
                 };
             }
-            _ if depth == 0 && matches!(
-                token.kind,
-                TokenKind::Semicolon | TokenKind::OpenBrace | TokenKind::CloseBrace
-            ) => break,
+            _ if depth == 0
+                && matches!(
+                    token.kind,
+                    TokenKind::Semicolon | TokenKind::OpenBrace | TokenKind::CloseBrace
+                ) =>
+            {
+                break;
+            }
             _ => {}
         }
     }
@@ -648,7 +635,11 @@ fn is_declaration_start(line: &str) -> bool {
 
     matches!(
         (first, second),
-        ("func", _) | ("class", _) | ("interface", _) | ("enum", _) | ("type", _)
+        ("func", _)
+            | ("class", _)
+            | ("interface", _)
+            | ("enum", _)
+            | ("type", _)
             | ("export", "func")
             | ("export", "class")
             | ("export", "interface")
@@ -700,7 +691,11 @@ fn collapse_blank_lines(lines: Vec<String>) -> Vec<String> {
     for line in lines {
         let is_blank = line.trim().is_empty();
 
-        if is_blank && out.last().is_some_and(|previous: &String| previous.trim().is_empty()) {
+        if is_blank
+            && out
+                .last()
+                .is_some_and(|previous: &String| previous.trim().is_empty())
+        {
             continue;
         }
 
@@ -804,7 +799,8 @@ let z = a < b && b > c;
 
     #[test]
     fn adds_one_blank_line_between_methods() {
-        let source = "class Point {\nfunc first() {\nreturn 1;\n}\nfunc second() {\nreturn 2;\n}\n}\n";
+        let source =
+            "class Point {\nfunc first() {\nreturn 1;\n}\nfunc second() {\nreturn 2;\n}\n}\n";
 
         let formatted = format_source(source, 4, true);
 
@@ -820,10 +816,7 @@ let z = a < b && b > c;
 
         let formatted = format_source(source, 4, true);
 
-        assert_eq!(
-            formatted,
-            "if x {\n    foo();\n} else {\n    bar();\n}\n"
-        );
+        assert_eq!(formatted, "if x {\n    foo();\n} else {\n    bar();\n}\n");
     }
 
     #[test]
@@ -832,7 +825,7 @@ let z = a < b && b > c;
 
         let formatted = format_source(source, 4, true);
 
-        assert!(formatted.contains("let s = \"{ not a brace }\"; // { comment }") );
+        assert!(formatted.contains("let s = \"{ not a brace }\"; // { comment }"));
         assert!(formatted.ends_with("return s;\n}\n"));
     }
 

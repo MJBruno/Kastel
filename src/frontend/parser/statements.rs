@@ -48,6 +48,8 @@ impl Parser {
             vec![self.parse_class_statement()?]
         } else if self.match_token(TokenKind::Interface) {
             vec![self.parse_interface_statement()?]
+        } else if self.match_token(TokenKind::Enum) {
+            vec![self.parse_enum_statement()?]
         } else if self.match_token(TokenKind::Return) {
             vec![self.parse_return_statement()?]
         } else if self.match_token(TokenKind::Break) {

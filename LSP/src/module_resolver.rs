@@ -16,9 +16,8 @@ pub struct ModuleResolver {
 
 impl ModuleResolver {
     pub fn new(root: Option<PathBuf>) -> Self {
-        let root = root.unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
+        let root =
+            root.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
         Self {
             inner: KastelResolver::new(root),

@@ -33,7 +33,7 @@ Clés = **chaînes**, ajout et retrait dynamiques. On lit **par clé** (`d["name
 **Les deux formes ne se mélangent pas** : `{ name: 1, "age": 2 }` est une erreur de syntaxe, tout comme une clé répétée.
 
 | Littéral | Type | Accès |
-|---|---|---|
+| --- | --- | --- |
 | `{ name: "Bruno" }` | Record | `p.name` |
 | `{ "name": "Bruno" }` | Dict | `d["name"]`, `d.get("name")` |
 | `{1, 2, 3}` | Set | `s.contains(2)` |

@@ -434,6 +434,14 @@ impl VirtualMachine {
                 Ok(false)
             }
 
+            OpCode::Enum => {
+                let variant_count = self.read_byte()? as usize;
+                let method_count = self.read_byte()? as usize;
+
+                self.op_enum(variant_count, method_count)?;
+                Ok(false)
+            }
+
             // ========================================================
             // EXCEPTIONS
             // ========================================================

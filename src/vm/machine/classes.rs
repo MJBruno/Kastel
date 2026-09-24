@@ -633,3 +633,123 @@ impl VirtualMachine {
         Ok(false)
     }
 }
+
+
+impl VirtualMachine {
+    // ========================================================
+    // ENUM
+    // ========================================================
+
+    pub(crate) fn op_enum(
+        &mut self,
+        variant_count: usize,
+        method_count: usize,
+    ) -> Result<(), RuntimeError> {
+        let method_values = method_count
+            .checked_mul(2)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let total = 1usize
+            .checked_add(variant_count)
+            .and_then(|value| value.checked_add(method_values))
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if self.stack.len() < total {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let start = self.stack.len() - total;
+
+        let enum_name = self
+            .stack
+            .get(start)
+            .and_then(Value::as_string_value)
+            .ok_or(RuntimeError::TypeError)?;
+
+        let variants_start = start + 1;
+        let methods_start = variants_start + variant_count;
+        let mut methods = HashMap::<String, Vec<Value>>::with_capacity(method_count);
+
+        for index in 0..method_count {
+            let base = methods_start + index * 2;
+
+            let method_name = self
+                .stack
+                .get(base)
+                .and_then(Value::as_string_value)
+                .ok_or(RuntimeError::TypeError)?;
+
+            let method = self
+                .stack
+                .get(base + 1)
+                .cloned()
+                .ok_or(RuntimeError::StackUnderflow)?;
+
+            let arity = match &method {
+                Value::Object(handle) => {
+                    let object = handle.borrow();
+                    match &*object {
+                        Object::Closure(closure) => closure
+                            .function
+                            .arity
+                            .checked_sub(1)
+                            .ok_or(RuntimeError::TypeError)?,
+                        _ => return Err(RuntimeError::NotCallable),
+                    }
+                }
+                _ => return Err(RuntimeError::NotCallable),
+            };
+
+            let overloads = methods.entry(method_name.clone()).or_default();
+
+            if overloads.iter().any(|existing| match existing {
+                Value::Object(handle) => {
+                    let object = handle.borrow();
+                    matches!(
+                        &*object,
+                        Object::Closure(closure)
+                            if closure.function.arity.checked_sub(1) == Some(arity)
+                    )
+                }
+                _ => false,
+            }) {
+                return Err(RuntimeError::DuplicateMethod {
+                    name: method_name,
+                    arity,
+                });
+            }
+
+            overloads.push(method);
+        }
+
+        let mut variants = HashMap::<String, Value>::with_capacity(variant_count);
+
+        for index in 0..variant_count {
+            let variant_name = self
+                .stack
+                .get(variants_start + index)
+                .and_then(Value::as_string_value)
+                .ok_or(RuntimeError::TypeError)?;
+
+            if variants.contains_key(&variant_name) {
+                return Err(RuntimeError::ObjectFieldNotFound {
+                    name: variant_name,
+                    suggestion: None,
+                });
+            }
+
+            let value = Value::new_enum_variant(
+                enum_name.clone(),
+                variant_name.clone(),
+                methods.clone(),
+            );
+
+            variants.insert(variant_name, value);
+        }
+
+        self.stack.truncate(start);
+        self.push(Value::new_enum(enum_name, variants));
+
+        Ok(())
+    }
+}

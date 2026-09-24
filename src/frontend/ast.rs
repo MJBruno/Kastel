@@ -270,6 +270,15 @@ pub enum Statement {
         fields: Vec<ClassField>,
         methods: Vec<FunctionMethod>,
     },
+
+    /// Enum à variants nommés : `enum Color { Red, Green, Blue }`.
+    /// Les variants sont accessibles uniquement sous la forme `Color.Red`.
+    Enum {
+        name: String,
+        variants: Vec<String>,
+        methods: Vec<FunctionMethod>,
+    },
+
     Interface {
         name: String,
         bases: Vec<String>,

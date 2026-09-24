@@ -5,8 +5,12 @@ Ce document couvre les « limites connues » levées dans cette version.
 ## 1. Fonctions globales surchargées par arité
 
 ```kastel
-func area(side: int) -> int { return side * side; }
-func area(width: int, height: int) -> int { return width * height; }
+func area(side: int) -> int { 
+    return side * side; 
+}
+func area(width: int, height: int) -> int {
+    return width * height; 
+}
 
 area(3);      // 9
 area(2, 5);   // 10
@@ -81,6 +85,7 @@ Toute déclaration de fonction globale émet désormais un seul opcode, `Overloa
 // shapes.ks
 export type Point = { x: int, y: int };
 ```
+
 ```kastel
 // main.ks
 from shapes import Point;
@@ -96,8 +101,16 @@ connue (locale ou importée), et à l'exécution sinon. Une classe dérivée qui
 constructeur privé de sa base par `base.initialize(...)` :
 
 ```kastel
-class Base    { private func initialize() { this.v = 7; } }
-class Derived: Base { func initialize() { base.initialize(); } }
+class Base    { 
+  private func initialize() { 
+      this.v = 7; 
+  } 
+}
+class Derived: Base { 
+    func initialize() { 
+      base.initialize(); 
+    } 
+}
 
 new Derived();  // permis
 new Base();     // refusé

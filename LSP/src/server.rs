@@ -234,20 +234,12 @@ impl Server {
                     loaded += 1;
                 }
                 Err(error) => {
-                    eprintln!(
-                        "Failed to index {}: {}",
-                        uri,
-                        error
-                    );
+                    eprintln!("Failed to index {}: {}", uri, error);
                 }
             }
         }
 
-        eprintln!(
-            "Workspace indexed: {} loaded / {} scanned",
-            loaded,
-            total
-        );
+        eprintln!("Workspace indexed: {} loaded / {} scanned", loaded, total);
     }
 
     /// Construit le message `publishDiagnostics` complet :
@@ -257,15 +249,9 @@ impl Server {
 
         let mut all = document.diagnostics.clone();
 
-        all.extend(
-            crate::semantic::analyze(&self.workspace, uri)
-        );
+        all.extend(crate::semantic::analyze(&self.workspace, uri));
 
-        Some(build_diagnostics(
-            uri,
-            &document.text,
-            all,
-        ))
+        Some(build_diagnostics(uri, &document.text, all))
     }
 
     fn did_open(&mut self, params: Option<Value>) -> Option<Value> {
@@ -375,7 +361,9 @@ impl Server {
     }
 
     fn load_module(&mut self, uri: &str, parts: &[String], resolver: &ModuleResolver) {
-        let Some(current_file) = uri_to_path(uri) else { return; };
+        let Some(current_file) = uri_to_path(uri) else {
+            return;
+        };
         let Some(module_path) = resolver.resolve(&current_file, parts) else {
             eprintln!("Module not found: {}", parts.join("."));
             return;
@@ -458,7 +446,11 @@ impl Server {
         )))
     }
 
-    fn document_highlight(&self, id: Option<Value>, params: Option<Value>) -> Option<ServerMessage> {
+    fn document_highlight(
+        &self,
+        id: Option<Value>,
+        params: Option<Value>,
+    ) -> Option<ServerMessage> {
         let id = id?;
         let params = params?;
 
@@ -629,8 +621,12 @@ impl Server {
         let position = params.get("position")?;
         let line = position.get("line")?.as_u64()? as u32;
         let character = position.get("character")?.as_u64()? as u32;
-        let result = crate::signature_help::build_signature_help(&self.workspace, uri, line, character);
-        Some(ServerMessage::Response(RpcResponse::new(id, result.unwrap_or(Value::Null))))
+        let result =
+            crate::signature_help::build_signature_help(&self.workspace, uri, line, character);
+        Some(ServerMessage::Response(RpcResponse::new(
+            id,
+            result.unwrap_or(Value::Null),
+        )))
     }
 
     fn prepare_rename(&self, id: Option<Value>, params: Option<Value>) -> Option<ServerMessage> {
@@ -654,17 +650,24 @@ impl Server {
         let word_start = {
             let bytes = line_text.as_bytes();
             let mut value = start.min(bytes.len());
-            while value > 0 && (bytes[value - 1].is_ascii_alphanumeric() || bytes[value - 1] == b'_') { value -= 1; }
+            while value > 0
+                && (bytes[value - 1].is_ascii_alphanumeric() || bytes[value - 1] == b'_')
+            {
+                value -= 1;
+            }
             value
         };
         let absolute = crate::completion::line_and_byte_to_offset(&document.text, line, word_start);
         let end = absolute + word.len();
         let s = crate::lsp_position::offset_to_lsp(&document.text, absolute);
         let e = crate::lsp_position::offset_to_lsp(&document.text, end);
-        Some(ServerMessage::Response(RpcResponse::new(id, json!({
-            "range": { "start": {"line": s.0, "character": s.1}, "end": {"line": e.0, "character": e.1} },
-            "placeholder": word,
-        }))))
+        Some(ServerMessage::Response(RpcResponse::new(
+            id,
+            json!({
+                "range": { "start": {"line": s.0, "character": s.1}, "end": {"line": e.0, "character": e.1} },
+                "placeholder": word,
+            }),
+        )))
     }
 
     fn workspace_symbols(&self, id: Option<Value>, params: Option<Value>) -> Option<ServerMessage> {
@@ -677,7 +680,13 @@ impl Server {
         let mut result = Vec::new();
         for (uri, document) in self.workspace.iter() {
             for symbol in document.symbols.iter() {
-                if !symbol.name.to_ascii_lowercase().contains(&query.to_ascii_lowercase()) { continue; }
+                if !symbol
+                    .name
+                    .to_ascii_lowercase()
+                    .contains(&query.to_ascii_lowercase())
+                {
+                    continue;
+                }
                 let start = crate::lsp_position::offset_to_lsp(&document.text, symbol.span.start);
                 let end = crate::lsp_position::offset_to_lsp(&document.text, symbol.span.end);
                 result.push(json!({
@@ -696,8 +705,16 @@ impl Server {
                 }));
             }
         }
-        result.sort_by(|a,b| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
-        Some(ServerMessage::Response(RpcResponse::new(id, Value::Array(result))))
+        result.sort_by(|a, b| {
+            a["name"]
+                .as_str()
+                .unwrap_or("")
+                .cmp(b["name"].as_str().unwrap_or(""))
+        });
+        Some(ServerMessage::Response(RpcResponse::new(
+            id,
+            Value::Array(result),
+        )))
     }
 
     fn shutdown(&mut self, id: Option<Value>) -> RpcResponse {

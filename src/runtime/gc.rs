@@ -407,6 +407,20 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
             let _ = methods;
         }
 
+        Object::Enum { variants, .. } => {
+            for value in variants.values() {
+                mark_value(value, state);
+            }
+        }
+
+        Object::EnumVariant { methods, .. } => {
+            for overloads in methods.values() {
+                for value in overloads {
+                    mark_value(value, state);
+                }
+            }
+        }
+
         Object::Instance { class, fields } => {
             if let Some(class) = class {
                 mark_object(class, state);
