@@ -1128,6 +1128,71 @@ let j = json_encode(s);
     assert!(refused);
 }
 
+#[test]
+fn protected_members_work_through_class_inheritance() {
+    let value = value_of(
+        r#"
+class Base {
+    protected let value: int = 7;
+    protected func getValue() -> int { return this.value; }
+}
+
+class Derived: Base {
+    func read() -> int {
+        return this.value + this.getValue();
+    }
+}
+
+let d = new Derived();
+let result = d.read();
+"#,
+        "result",
+    );
+    assert_eq!(value, 14);
+}
+
+#[test]
+fn protected_access_is_rejected_from_outside_at_runtime_for_dynamic_values() {
+    let result = run_script(
+        r#"
+class Base {
+    protected let value: int = 7;
+}
+
+func read(value) {
+    return value.value;
+}
+
+let b = new Base();
+read(b);
+"#,
+    );
+    assert!(result.1.is_err());
+}
+
+#[test]
+fn protected_static_members_work_from_derived_class() {
+    let value = value_of(
+        r#"
+class Base {
+    protected static let answer: int = 42;
+    protected static func getAnswer() -> int { return Base.answer; }
+}
+
+class Derived: Base {
+    func read() -> int {
+        return Base.answer + Base.getAnswer();
+    }
+}
+
+let d = new Derived();
+let result = d.read();
+"#,
+        "result",
+    );
+    assert_eq!(value, 84);
+}
+
 // ============================================================
 //           ALIAS DE TYPE EXPORTÉS ENTRE MODULES
 // ============================================================

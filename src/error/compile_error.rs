@@ -167,6 +167,11 @@ pub enum CompileError {
         member: String,
     },
 
+    ProtectedMemberAccess {
+        class_name: String,
+        member: String,
+    },
+
     /// Méthode de collection supprimée par la standardisation de l'API
     /// (`length` -> `size()`, `push` -> `add(value)`...).
     RenamedMember {
@@ -401,6 +406,13 @@ impl std::fmt::Display for CompileError {
                 )
             }
 
+            CompileError::ProtectedMemberAccess { class_name, member } => {
+                write!(
+                    f,
+                    "Le membre '{class_name}.{member}' est protégé : accès réservé à la classe et à ses classes dérivées"
+                )
+            }
+
             CompileError::RenamedMember { name, replacement } => {
                 write!(f, "'{name}' n'existe plus : utilisez '{replacement}'")
             }
@@ -581,6 +593,16 @@ impl CompileError {
                 0,
             )
             .with_help("scindez l'expression en plusieurs instructions intermédiaires."),
+
+            CompileError::ProtectedMemberAccess { class_name, member } => Diagnostic::new(
+                format!("le membre '{member}' de la classe '{class_name}' est protégé"),
+                0,
+                0,
+            )
+            .with_len(member.len())
+            .with_help(
+                "utilisez ce membre depuis la classe qui le déclare ou depuis une classe dérivée.",
+            ),
 
             CompileError::RenamedMember { name, replacement } => Diagnostic::new(
                 format!("'{name}' a été remplacé par '{replacement}'"),

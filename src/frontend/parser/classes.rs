@@ -34,7 +34,7 @@ impl Parser {
         let mut methods = Vec::new();
 
         while !self.check(TokenKind::RightBrace) && !self.is_at_end() {
-            // Modificateurs optionnels : `public`/`private` (visibilité) et
+            // Modificateurs optionnels : `public`/`protected`/`private` (visibilité) et
             // `static` (portée), dans n'importe quel ordre.
             let (visibility, is_static) = self.parse_member_modifiers();
 
@@ -195,7 +195,7 @@ impl Parser {
     // MEMBRES DE CLASSE : VISIBILITÉ ET CHAMPS
     // ============================================================
 
-    /// Lit les modificateurs `public`/`private` (visibilité) et `static`
+    /// Lit les modificateurs `public`/`protected`/`private` (visibilité) et `static`
     /// (portée) d'un membre, dans n'importe quel ordre, chacun facultatif.
     /// Ce sont des mots-clés CONTEXTUELS, comme `public`/`private` déjà :
     /// hors du corps d'une classe (ou sans `let`/`func` au bout de la
@@ -215,7 +215,7 @@ impl Parser {
 
             let lexeme = self.peek().lexeme.clone();
 
-            if !matches!(lexeme.as_str(), "public" | "private" | "static") {
+            if !matches!(lexeme.as_str(), "public" | "protected" | "private" | "static") {
                 break;
             }
 
@@ -228,7 +228,7 @@ impl Parser {
                     && self.tokens[self.current + 1].kind == TokenKind::Identifier
                     && matches!(
                         self.tokens[self.current + 1].lexeme.as_str(),
-                        "public" | "private" | "static"
+                        "public" | "protected" | "private" | "static"
                     )
                     && matches!(
                         self.tokens[self.current + 2].kind,
@@ -241,6 +241,7 @@ impl Parser {
 
             match lexeme.as_str() {
                 "static" => is_static = true,
+                "protected" => visibility = Visibility::Protected,
                 "private" => visibility = Visibility::Private,
                 "public" => visibility = Visibility::Public,
                 _ => unreachable!(),

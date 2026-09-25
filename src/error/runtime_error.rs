@@ -114,6 +114,12 @@ pub enum RuntimeError {
         member: String,
     },
 
+    /// Accès à un membre `protected` depuis l'extérieur de la hiérarchie.
+    ProtectedMemberAccess {
+        class_name: String,
+        member: String,
+    },
+
     /// Profondeur d'appels dépassée (récursion sans fin, ou rappels
     /// natifs imbriqués trop profondément). `limit` est la limite atteinte.
     StackOverflow {
@@ -286,6 +292,13 @@ impl std::fmt::Display for RuntimeError {
                 write!(
                     f,
                     "Le membre '{member}' de la classe '{class_name}' est privé : accès refusé en dehors de la classe."
+                )
+            }
+
+            RuntimeError::ProtectedMemberAccess { class_name, member } => {
+                write!(
+                    f,
+                    "Le membre '{member}' de la classe '{class_name}' est protégé : accès réservé à la classe et à ses classes dérivées."
                 )
             }
 
@@ -524,6 +537,15 @@ impl RuntimeError {
             )
             .with_help(
                 "utilisez une méthode publique de la classe (par exemple un accesseur) au lieu d'accéder directement au membre.",
+            ),
+
+            RuntimeError::ProtectedMemberAccess { class_name, member } => Diagnostic::new(
+                format!("le membre '{member}' de la classe '{class_name}' est protégé"),
+                0,
+                0,
+            )
+            .with_help(
+                "utilisez ce membre depuis la classe qui le déclare ou depuis une classe dérivée.",
             ),
 
             // Variantes sans donnée exploitable pour expected/found/help :

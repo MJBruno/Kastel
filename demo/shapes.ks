@@ -1,14 +1,16 @@
-export class Compteur {
-    static let total: int = 12;
-    private static let secret: int = 42;
+class Animal {
+    protected let name: str = "Animal";
 
-    static func creer() -> Compteur {
-        Compteur.total += 1;
-        return new Compteur();
-    }
-
-    func incrementer() {
-        Compteur.total = Compteur.total + 1;
+    protected func speak() -> str {
+        return "sound";
     }
 }
 
+class Dog: Animal {
+    func describe() -> str {
+        return this.name + " " + this.speak();
+    }
+}
+
+let dog = new Dog();
+println(dog.describe());

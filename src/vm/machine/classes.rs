@@ -19,7 +19,7 @@ impl VirtualMachine {
         method_count: usize,
         static_method_count: usize,
         static_field_count: usize,
-        private_count: usize,
+        restricted_count: usize,
     ) -> Result<(), RuntimeError> {
         let method_values = method_count
             .checked_mul(2)
@@ -38,13 +38,17 @@ impl VirtualMachine {
         //   [nom_méthode closure]*              (instance)
         //   [nom_méthode_statique closure]*      (static)
         //   [nom_champ_statique valeur]*         (static)
-        //   [nom_membre_privé]*
+        //   [nom_membre_restreint tag]*                (protected/private)
+        let restricted_values = restricted_count
+            .checked_mul(2)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
         let total = base_count
             .checked_add(1)
             .and_then(|value| value.checked_add(method_values))
             .and_then(|value| value.checked_add(static_method_values))
             .and_then(|value| value.checked_add(static_field_values))
-            .and_then(|value| value.checked_add(private_count))
+            .and_then(|value| value.checked_add(restricted_values))
             .ok_or(RuntimeError::InvalidFunction)?;
 
         if self.stack.len() < total {
@@ -221,17 +225,33 @@ impl VirtualMachine {
             statics.insert(field_name, value);
         }
 
-        let private_start = static_fields_start + static_field_values;
-        let mut private_members = HashSet::<String>::with_capacity(private_count);
+        let restricted_start = static_fields_start + static_field_values;
+        let mut private_members = HashSet::<String>::new();
+        let mut protected_members = HashSet::<String>::new();
 
-        for index in 0..private_count {
+        for index in 0..restricted_count {
+            let base = restricted_start + index * 2;
+
             let member = self
                 .stack
-                .get(private_start + index)
+                .get(base)
                 .and_then(Value::as_string_value)
                 .ok_or(RuntimeError::TypeError)?;
 
-            private_members.insert(member);
+            let tag = match self.stack.get(base + 1) {
+                Some(Value::Integer(tag)) => *tag,
+                _ => return Err(RuntimeError::TypeError),
+            };
+
+            match tag {
+                1 => {
+                    protected_members.insert(member);
+                }
+                2 => {
+                    private_members.insert(member);
+                }
+                _ => return Err(RuntimeError::InvalidFunction),
+            }
         }
 
         self.stack.truncate(start);
@@ -244,6 +264,7 @@ impl VirtualMachine {
             static_methods,
             statics,
             private_members,
+            protected_members,
         );
 
         let class_handle = match &class_value {

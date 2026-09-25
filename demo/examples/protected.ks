@@ -14,3 +14,6 @@ class Dog: Animal {
 
 let dog = new Dog();
 println(dog.describe());
+
+// erreur
+// println(dog.name);

@@ -103,13 +103,13 @@ pub const FIELD_INITIALIZER_PREFIX: &str = "__fields_";
 
 /// Visibilité d'un membre de classe (champ ou méthode).
 ///
-/// `Public` est la valeur par défaut : une classe sans modificateur se
-/// comporte exactement comme avant. `Private` restreint l'accès au corps de
-/// la classe qui déclare le membre (contrôlé statiquement quand le type est
-/// connu, et TOUJOURS à l'exécution).
+/// `Public` est la valeur par défaut. `Protected` autorise l'accès depuis
+/// la classe qui déclare le membre et depuis ses classes dérivées. `Private`
+/// limite l'accès à la classe qui déclare le membre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visibility {
     Public,
+    Protected,
     Private,
 }
 

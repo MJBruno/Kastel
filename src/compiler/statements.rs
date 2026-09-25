@@ -384,10 +384,10 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        // Membres privés (champs ET méthodes, statiques ou non), sans
-        // doublon. La VM les enregistre dans la classe et refuse tout accès
-        // depuis l'extérieur du corps de cette classe.
-        let mut private_members: Vec<&str> = Vec::new();
+        // Membres `protected` ou `private` (champs ET méthodes, statiques ou
+        // non), sans doublon. La VM enregistre leur visibilité pour refaire
+        // le contrôle lorsque le type statique est dynamique.
+        let mut restricted_members: Vec<(&str, Visibility)> = Vec::new();
 
         let declared = fields
             .iter()
@@ -399,12 +399,14 @@ impl Compiler {
             );
 
         for (member, visibility) in declared {
-            if visibility == Visibility::Private && !private_members.contains(&member) {
-                private_members.push(member);
+            if visibility != Visibility::Public
+                && !restricted_members.iter().any(|(name, _)| *name == member)
+            {
+                restricted_members.push((member, visibility));
             }
         }
 
-        if private_members.len() > u8::MAX as usize {
+        if restricted_members.len() > u8::MAX as usize {
             return Err(CompileError::TooManyObjectFields);
         }
 
@@ -471,11 +473,19 @@ impl Compiler {
             }
         }
 
-        // Noms des membres privés, empilés en dernier.
-        for member in &private_members {
+        // Noms et tags des membres restreints, empilés en dernier.
+        // 1 = protected, 2 = private.
+        for (member, visibility) in &restricted_members {
             let member_constant = self.identifier_constant(member)?;
-
             self.emit_constant_op(OpCode::Constant, member_constant);
+
+            let visibility_tag = match visibility {
+                Visibility::Protected => 1_i64,
+                Visibility::Private => 2_i64,
+                Visibility::Public => unreachable!("un membre public ne peut pas être restreint"),
+            };
+            let tag_constant = self.make_constant(Value::Integer(visibility_tag))?;
+            self.emit_constant_op(OpCode::Constant, tag_constant);
         }
 
         self.emit_byte(OpCode::Class.into());
@@ -483,7 +493,7 @@ impl Compiler {
         self.emit_byte(instance_methods.len() as u8);
         self.emit_byte(static_methods.len() as u8);
         self.emit_byte(static_fields.len() as u8);
-        self.emit_byte(private_members.len() as u8);
+        self.emit_byte(restricted_members.len() as u8);
 
         if !self.in_function && self.scope_depth == 0 {
             // Réutilise la constante déjà enregistrée par la pré-déclaration

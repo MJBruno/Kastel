@@ -79,10 +79,10 @@ pub enum Object {
         /// Jamais hérité : une classe dérivée n'a pas accès aux statiques de
         /// sa base sous son propre nom.
         statics: HashMap<String, Value>,
-        /// Noms des membres (champs et méthodes, statiques ou non) déclarés
-        /// `private` dans CETTE classe. L'accès n'est permis que depuis le
-        /// corps de la classe (voir `VirtualMachine::ensure_member_access`).
+        /// Noms des membres déclarés `private` dans CETTE classe.
         private_members: HashSet<String>,
+        /// Noms des membres déclarés `protected` dans CETTE classe.
+        protected_members: HashSet<String>,
     },
 
     Interface {

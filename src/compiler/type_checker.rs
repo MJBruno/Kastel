@@ -39,7 +39,7 @@ struct Binding {
 ///
 /// Exporté avec l'INTERFACE de types d'un module : une classe importée est
 /// ainsi vérifiée comme une classe locale (arité des constructeurs,
-/// surcharges, champs, visibilité `private`).
+/// surcharges, champs, visibilité `protected`/`private`).
 #[derive(Debug, Clone)]
 pub(crate) struct ClassInfo {
     bases: Vec<String>,
@@ -50,6 +50,8 @@ pub(crate) struct ClassInfo {
     fields: HashMap<String, Type>,
     /// Membres (champs et méthodes) déclarés `private` dans cette classe.
     private_members: HashSet<String>,
+    /// Membres (champs et méthodes) déclarés `protected` dans cette classe.
+    protected_members: HashSet<String>,
     /// Variants nommés d'un enum. Vide pour les classes/interfaces.
     enum_variants: HashSet<String>,
 }
@@ -379,6 +381,7 @@ impl TypeChecker {
                     let mut method_map: HashMap<String, Vec<FunctionType>> = HashMap::new();
                     let mut field_map: HashMap<String, Type> = HashMap::new();
                     let mut private_members: HashSet<String> = HashSet::new();
+                    let mut protected_members: HashSet<String> = HashSet::new();
 
                     // Les membres `static` sont volontairement ABSENTS de
                     // `ClassInfo` : un accès `NomClasse.membre` est donc
@@ -397,8 +400,14 @@ impl TypeChecker {
                                 .unwrap_or(Type::Dynamic),
                         );
 
-                        if field.visibility == Visibility::Private {
-                            private_members.insert(field.name.clone());
+                        match field.visibility {
+                            Visibility::Private => {
+                                private_members.insert(field.name.clone());
+                            }
+                            Visibility::Protected => {
+                                protected_members.insert(field.name.clone());
+                            }
+                            Visibility::Public => {}
                         }
                     }
 
@@ -444,8 +453,14 @@ impl TypeChecker {
 
                         overloads.push(signature);
 
-                        if method.visibility == Visibility::Private {
-                            private_members.insert(method.name.clone());
+                        match method.visibility {
+                            Visibility::Private => {
+                                private_members.insert(method.name.clone());
+                            }
+                            Visibility::Protected => {
+                                protected_members.insert(method.name.clone());
+                            }
+                            Visibility::Public => {}
                         }
                     }
 
@@ -457,6 +472,7 @@ impl TypeChecker {
                             methods: method_map,
                             fields: field_map,
                             private_members,
+                            protected_members,
                             enum_variants: HashSet::new(),
                         },
                     );
@@ -523,6 +539,7 @@ impl TypeChecker {
                             methods: method_map,
                             fields: HashMap::new(),
                             private_members: HashSet::new(),
+                            protected_members: HashSet::new(),
                             enum_variants,
                         },
                     );
@@ -589,6 +606,7 @@ impl TypeChecker {
                             methods: method_map,
                             fields: HashMap::new(),
                             private_members: HashSet::new(),
+                            protected_members: HashSet::new(),
                             enum_variants: HashSet::new(),
                         },
                     );
@@ -2106,8 +2124,12 @@ impl TypeChecker {
     }
 
     /// Première classe de la hiérarchie de `class_name` qui déclare `member`
-    /// (champ ou méthode), avec sa visibilité (`true` = privé).
-    fn find_member_declaration(&self, class_name: &str, member: &str) -> Option<(String, bool)> {
+    /// (champ ou méthode), avec sa visibilité.
+    fn find_member_declaration(
+        &self,
+        class_name: &str,
+        member: &str,
+    ) -> Option<(String, Visibility)> {
         let mut pending = vec![class_name.to_string()];
         let mut visited = HashSet::new();
 
@@ -2118,7 +2140,15 @@ impl TypeChecker {
 
             if let Some(class) = self.classes.get(&name) {
                 if class.fields.contains_key(member) || class.methods.contains_key(member) {
-                    return Some((name, class.private_members.contains(member)));
+                    let visibility = if class.private_members.contains(member) {
+                        Visibility::Private
+                    } else if class.protected_members.contains(member) {
+                        Visibility::Protected
+                    } else {
+                        Visibility::Public
+                    };
+
+                    return Some((name, visibility));
                 }
 
                 pending.extend(class.bases.iter().cloned());
@@ -2128,15 +2158,55 @@ impl TypeChecker {
         None
     }
 
-    /// Refuse `objet.membre` si `membre` est privé et que le code courant
-    /// n'est pas dans le corps de la classe qui le déclare.
-    ///
-    /// Ne voit que les classes connues de ce fichier : pour une classe
-    /// importée (ou une valeur dynamique), c'est la VM qui contrôle.
+    /// `true` si `class_name` est la classe `ancestor` elle-même ou une de
+    /// ses classes dérivées. La relation suit uniquement l'héritage de
+    /// classes ; les interfaces n'autorisent pas l'accès à un membre protégé.
+    fn is_same_or_derived(&self, class_name: &str, ancestor: &str) -> bool {
+        let mut pending = vec![class_name.to_string()];
+        let mut visited = HashSet::new();
+
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+
+            if name == ancestor {
+                return true;
+            }
+
+            if let Some(class) = self.classes.get(&name) {
+                for base in &class.bases {
+                    if self.classes.contains_key(base) {
+                        pending.push(base.clone());
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Contrôle de visibilité statique. `private` est limité à la classe qui
+    /// déclare le membre ; `protected` est accessible dans toute la
+    /// hiérarchie descendante.
     fn check_member_visibility(&self, class_name: &str, member: &str) -> Result<(), CompileError> {
         match self.find_member_declaration(class_name, member) {
-            Some((owner, true)) if self.current_class.as_deref() != Some(owner.as_str()) => {
+            Some((owner, Visibility::Private))
+                if self.current_class.as_deref() != Some(owner.as_str()) =>
+            {
                 Err(CompileError::PrivateMemberAccess {
+                    class_name: owner,
+                    member: member.to_string(),
+                })
+            }
+
+            Some((owner, Visibility::Protected))
+                if !self
+                    .current_class
+                    .as_deref()
+                    .is_some_and(|current| self.is_same_or_derived(current, &owner)) =>
+            {
+                Err(CompileError::ProtectedMemberAccess {
                     class_name: owner,
                     member: member.to_string(),
                 })
@@ -2622,6 +2692,55 @@ class A {
 "#,
         );
         assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn protected_members_are_accessible_from_derived_classes() {
+        let result = check(
+            r#"
+class Base {
+    protected let value: int = 41;
+    protected func read() -> int { return this.value; }
+}
+
+class Derived: Base {
+    func readBase() -> int {
+        return this.value + this.read();
+    }
+}
+
+let d = new Derived();
+let n: int = d.readBase();
+"#,
+        );
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn protected_members_are_forbidden_outside_the_hierarchy() {
+        let result = check(
+            r#"
+class Base {
+    protected let value: int = 41;
+}
+
+class Derived: Base {
+    func ok() -> int { return this.value; }
+}
+
+let d = new Derived();
+let a = d.value;
+"#,
+        );
+
+        let mut cursor = match result {
+            Ok(()) => panic!("les accès protected externes doivent être refusés"),
+            Err(error) => error,
+        };
+        while let CompileError::WithLocation { source, .. } = cursor {
+            cursor = *source;
+        }
+        assert!(matches!(&cursor, CompileError::ProtectedMemberAccess { .. }), "{:?}", cursor);
     }
 
     #[test]

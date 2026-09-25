@@ -415,14 +415,14 @@ impl VirtualMachine {
                 let method_count = self.read_byte()? as usize;
                 let static_method_count = self.read_byte()? as usize;
                 let static_field_count = self.read_byte()? as usize;
-                let private_count = self.read_byte()? as usize;
+                let restricted_count = self.read_byte()? as usize;
 
                 self.op_class(
                     base_count,
                     method_count,
                     static_method_count,
                     static_field_count,
-                    private_count,
+                    restricted_count,
                 )?;
                 Ok(false)
             }

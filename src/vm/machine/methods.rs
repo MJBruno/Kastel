@@ -204,15 +204,35 @@ impl VirtualMachine {
         owner
     }
 
-    /// `new C(...)` : refuse si le constructeur retenu (`initialize`, hérité
-    /// ou non) est `private` et que le code appelant n'est pas une méthode de
-    /// la classe qui le déclare. Sans constructeur déclaré (constructeur par
-    /// défaut implicite), aucun contrôle.
+    /// `true` si `class` est la classe `ancestor` elle-même ou une de ses
+    /// classes dérivées. Utilisé par `protected` et limité à l'héritage de
+    /// classes, pas aux interfaces.
+    fn is_same_or_subclass(
+        mut class: Option<Gc<Object>>,
+        ancestor: &Gc<Object>,
+    ) -> bool {
+        while let Some(current) = class {
+            if Gc::ptr_eq(&current, ancestor) {
+                return true;
+            }
+
+            class = match &*current.borrow() {
+                Object::Class { superclass, .. } => superclass.clone(),
+                _ => None,
+            };
+        }
+
+        false
+    }
+
+    /// `new C(...)` : contrôle la visibilité du constructeur. `private` est
+    /// réservé à sa classe ; `protected` est autorisé depuis une classe
+    /// dérivée.
     pub(crate) fn ensure_constructor_access(&self, class: &Gc<Object>) -> Result<(), RuntimeError> {
         let mut current = Some(class.clone());
 
         while let Some(candidate) = current {
-            let (declares, is_private, class_name, superclass) = {
+            let (declares, is_private, is_protected, class_name, superclass) = {
                 let object = candidate.borrow();
 
                 match &*object {
@@ -220,11 +240,13 @@ impl VirtualMachine {
                         name,
                         methods,
                         private_members,
+                        protected_members,
                         superclass,
                         ..
                     } => (
                         methods.contains_key(CONSTRUCTOR_NAME),
                         private_members.contains(CONSTRUCTOR_NAME),
+                        protected_members.contains(CONSTRUCTOR_NAME),
                         name.clone(),
                         superclass.clone(),
                     ),
@@ -234,16 +256,24 @@ impl VirtualMachine {
             };
 
             if declares {
-                if !is_private {
+                let caller = self.caller_owner_class();
+                let allowed = if is_private {
+                    caller.as_ref().is_some_and(|owner| Gc::ptr_eq(owner, &candidate))
+                } else if is_protected {
+                    Self::is_same_or_subclass(caller, &candidate)
+                } else {
+                    true
+                };
+
+                if allowed {
                     return Ok(());
                 }
 
-                let allowed = self
-                    .caller_owner_class()
-                    .is_some_and(|owner| Gc::ptr_eq(&owner, &candidate));
-
-                return if allowed {
-                    Ok(())
+                return if is_protected {
+                    Err(RuntimeError::ProtectedMemberAccess {
+                        class_name,
+                        member: CONSTRUCTOR_NAME.to_string(),
+                    })
                 } else {
                     Err(RuntimeError::PrivateMemberAccess {
                         class_name,
@@ -295,17 +325,19 @@ impl VirtualMachine {
         let mut current = Some(class);
 
         while let Some(candidate) = current {
-            let (is_private, class_name, superclass) = {
+            let (is_private, is_protected, class_name, superclass) = {
                 let object = candidate.borrow();
 
                 match &*object {
                     Object::Class {
                         name: class_name,
                         private_members,
+                        protected_members,
                         superclass,
                         ..
                     } => (
                         private_members.contains(name),
+                        protected_members.contains(name),
                         class_name.clone(),
                         superclass.clone(),
                     ),
@@ -314,19 +346,29 @@ impl VirtualMachine {
                 }
             };
 
-            if is_private {
-                let allowed = self
-                    .caller_owner_class()
-                    .is_some_and(|owner| Gc::ptr_eq(&owner, &candidate));
+            if is_private || is_protected {
+                let caller = self.caller_owner_class();
+                let allowed = if is_private {
+                    caller.as_ref().is_some_and(|owner| Gc::ptr_eq(owner, &candidate))
+                } else {
+                    Self::is_same_or_subclass(caller, &candidate)
+                };
 
                 if allowed {
                     return Ok(());
                 }
 
-                return Err(RuntimeError::PrivateMemberAccess {
-                    class_name,
-                    member: name.to_string(),
-                });
+                return if is_protected {
+                    Err(RuntimeError::ProtectedMemberAccess {
+                        class_name,
+                        member: name.to_string(),
+                    })
+                } else {
+                    Err(RuntimeError::PrivateMemberAccess {
+                        class_name,
+                        member: name.to_string(),
+                    })
+                };
             }
 
             current = superclass;
@@ -343,36 +385,51 @@ impl VirtualMachine {
         class: &Gc<Object>,
         name: &str,
     ) -> Result<(), RuntimeError> {
-        let (is_private, class_name) = {
+        let (is_private, is_protected, class_name) = {
             let object = class.borrow();
 
             match &*object {
                 Object::Class {
                     name: class_name,
                     private_members,
+                    protected_members,
                     ..
-                } => (private_members.contains(name), class_name.clone()),
+                } => (
+                    private_members.contains(name),
+                    protected_members.contains(name),
+                    class_name.clone(),
+                ),
 
                 _ => return Ok(()),
             }
         };
 
-        if !is_private {
+        if !is_private && !is_protected {
             return Ok(());
         }
 
-        let allowed = self
-            .caller_owner_class()
-            .is_some_and(|owner| Gc::ptr_eq(&owner, class));
+        let caller = self.caller_owner_class();
+        let allowed = if is_private {
+            caller.as_ref().is_some_and(|owner| Gc::ptr_eq(owner, class))
+        } else {
+            Self::is_same_or_subclass(caller, class)
+        };
 
         if allowed {
             return Ok(());
         }
 
-        Err(RuntimeError::PrivateMemberAccess {
-            class_name,
-            member: name.to_string(),
-        })
+        if is_protected {
+            Err(RuntimeError::ProtectedMemberAccess {
+                class_name,
+                member: name.to_string(),
+            })
+        } else {
+            Err(RuntimeError::PrivateMemberAccess {
+                class_name,
+                member: name.to_string(),
+            })
+        }
     }
 
     // ============================================================

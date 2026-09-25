@@ -171,6 +171,7 @@ impl Value {
         static_methods: HashMap<String, Vec<Value>>,
         statics: HashMap<String, Value>,
         private_members: HashSet<String>,
+        protected_members: HashSet<String>,
     ) -> Self {
         Self::new_heap_object(Object::Class {
             name,
@@ -180,6 +181,7 @@ impl Value {
             static_methods,
             statics,
             private_members,
+            protected_members,
         })
     }
 
