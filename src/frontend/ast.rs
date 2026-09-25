@@ -1,4 +1,9 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenericParam {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeExpr {
     /// Nom simple : `int`, `Personne`, `Dict`, ...
     Named(String),
@@ -138,6 +143,7 @@ pub struct ClassField {
 #[derive(Debug, Clone)]
 pub struct FunctionMethod {
     pub name: String,
+    pub generic_params: Vec<GenericParam>,
     pub visibility: Visibility,
     /// `static func creer(...) { ... }` : appelée sur la CLASSE
     /// (`NomClasse.creer(...)`), SANS `this` implicite — contrairement à
@@ -157,6 +163,7 @@ pub struct FunctionMethod {
 #[derive(Debug, Clone)]
 pub struct InterfaceMethod {
     pub name: String,
+    pub generic_params: Vec<GenericParam>,
     pub arity: usize,
     pub params: Vec<String>,
     pub param_types: Vec<Option<TypeExpr>>,
@@ -244,6 +251,7 @@ pub enum Statement {
 
     Function {
         name: String,
+        generic_params: Vec<GenericParam>,
         params: Vec<String>,
         /// Voir `FunctionMethod::param_types`.
         param_types: Vec<Option<TypeExpr>>,
@@ -272,12 +280,14 @@ pub enum Statement {
     /// uniquement, sans effet à l'exécution).
     TypeAlias {
         name: String,
+        generic_params: Vec<GenericParam>,
         type_expr: TypeExpr,
     },
 
     Class {
         name: String,
-        bases: Vec<String>,
+        generic_params: Vec<GenericParam>,
+        bases: Vec<TypeExpr>,
         fields: Vec<ClassField>,
         methods: Vec<FunctionMethod>,
     },
@@ -286,13 +296,15 @@ pub enum Statement {
     /// Les variants sont accessibles uniquement sous la forme `Color.Red`.
     Enum {
         name: String,
+        generic_params: Vec<GenericParam>,
         variants: Vec<String>,
         methods: Vec<FunctionMethod>,
     },
 
     Interface {
         name: String,
-        bases: Vec<String>,
+        generic_params: Vec<GenericParam>,
+        bases: Vec<TypeExpr>,
         methods: Vec<InterfaceMethod>,
     },
     Break,
@@ -343,6 +355,7 @@ pub enum Expression {
 
     Call {
         callee: Box<Expression>,
+        generic_args: Vec<TypeExpr>,
         arguments: Vec<Expression>,
         /// Position du `(` d'appel — utilisée pour les diagnostics runtime
         /// (arité incorrecte, valeur non appelable...) : à défaut de
@@ -372,6 +385,7 @@ pub enum Expression {
     },
     New {
         class_name: String,
+        generic_args: Vec<TypeExpr>,
         arguments: Vec<Expression>,
         /// Position du nom de la classe instanciée.
         line: usize,

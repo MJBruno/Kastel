@@ -144,7 +144,7 @@ impl Parser {
     /// Le lexer réserve `>>` à l'opérateur de décalage. Dans un type
     /// imbriqué (`Dict<str, Array<int>>`), on le traite donc comme deux
     /// fermetures `>` sans modifier la grammaire des expressions.
-    fn consume_type_greater(&mut self) -> Result<(), ParserError> {
+    pub(super) fn consume_type_greater(&mut self) -> Result<(), ParserError> {
         if self.match_token(TokenKind::Greater) {
             return Ok(());
         }
@@ -180,6 +180,51 @@ impl Parser {
             line: self.peek().line,
             column: self.peek().column,
         })
+    }
+
+    /// Parse les paramètres génériques d'une déclaration : `<T, U>`.
+    /// Les contraintes seront ajoutées plus tard sans changer la forme
+    /// générale de la déclaration.
+    pub(super) fn parse_generic_parameters(&mut self) -> Result<Vec<GenericParam>, ParserError> {
+        if !self.match_token(TokenKind::Less) {
+            return Ok(Vec::new());
+        }
+
+        let mut parameters = Vec::new();
+
+        loop {
+            let parameter = self.consume(
+                TokenKind::Identifier,
+                "Nom de paramètre générique attendu",
+            )?;
+
+            if parameters.iter().any(|existing: &GenericParam| existing.name == parameter.lexeme) {
+                return Err(ParserError {
+                    message: format!("Le paramètre générique '{}' est déjà déclaré", parameter.lexeme),
+                    line: parameter.line,
+                    column: parameter.column,
+                });
+            }
+
+            parameters.push(GenericParam {
+                name: parameter.lexeme,
+            });
+
+            if !self.match_token(TokenKind::Comma) {
+                break;
+            }
+
+            if self.check(TokenKind::Greater) || self.check(TokenKind::RightShift) {
+                return Err(ParserError {
+                    message: "Paramètre générique attendu après ','".to_string(),
+                    line: self.peek().line,
+                    column: self.peek().column,
+                });
+            }
+        }
+
+        self.consume_type_greater()?;
+        Ok(parameters)
     }
 
     // ============================================================

@@ -22,13 +22,7 @@ impl Parser {
         // `type Person = ...;` : `type` reste un identifiant ordinaire (la
         // fonction `type(x)` existe) ; c'est un alias seulement suivi d'un
         // nom puis de `=`.
-        let is_type_alias = self.check(TokenKind::Identifier)
-            && self.peek().lexeme == "type"
-            && self.check_next(TokenKind::Identifier)
-            && self
-                .tokens
-                .get(self.current + 2)
-                .is_some_and(|token| token.kind == TokenKind::Equal);
+        let is_type_alias = self.looks_like_type_alias();
 
         let statements = if is_type_alias {
             vec![self.parse_type_alias_statement()?]
@@ -88,11 +82,73 @@ impl Parser {
         Ok(positioned)
     }
 
+    /// Reconnaît un alias de type avant de laisser le parseur d'expressions
+    /// interpréter `type` comme un simple identifiant.
+    ///
+    /// La forme générique `type Pair<A, B> = ...;` doit être détectée ici :
+    /// l'ancien test regardait uniquement `token[current + 2] == '='`, ce qui
+    /// échouait dès qu'un `<...>` était présent après le nom de l'alias.
+    fn looks_like_type_alias(&self) -> bool {
+        if !self.check(TokenKind::Identifier)
+            || self.peek().lexeme != "type"
+            || !self.check_next(TokenKind::Identifier)
+        {
+            return false;
+        }
+
+        let mut index = self.current + 2;
+
+        if self
+            .tokens
+            .get(index)
+            .is_some_and(|token| token.kind == TokenKind::Equal)
+        {
+            return true;
+        }
+
+        if !self
+            .tokens
+            .get(index)
+            .is_some_and(|token| token.kind == TokenKind::Less)
+        {
+            return false;
+        }
+
+        index += 1;
+
+        // Les paramètres génériques d'une déclaration sont de simples noms:
+        // `<A>`, `<A, B>`, etc. Ils ne contiennent pas de types imbriqués.
+        loop {
+            if !self
+                .tokens
+                .get(index)
+                .is_some_and(|token| token.kind == TokenKind::Identifier)
+            {
+                return false;
+            }
+            index += 1;
+
+            match self.tokens.get(index).map(|token| &token.kind) {
+                Some(TokenKind::Comma) => index += 1,
+                Some(TokenKind::Greater) => {
+                    index += 1;
+                    break;
+                }
+                _ => return false,
+            }
+        }
+
+        self.tokens
+            .get(index)
+            .is_some_and(|token| token.kind == TokenKind::Equal)
+    }
+
     /// `type Person = { name: str, age: int };`
     pub(super) fn parse_type_alias_statement(&mut self) -> Result<Statement, ParserError> {
         self.advance(); // `type`
 
         let name = self.consume(TokenKind::Identifier, "Nom d'alias de type attendu")?;
+        let generic_params = self.parse_generic_parameters()?;
 
         self.consume(TokenKind::Equal, "'=' attendu après le nom de l'alias")?;
 
@@ -100,6 +156,7 @@ impl Parser {
 
         Ok(Statement::TypeAlias {
             name: name.lexeme,
+            generic_params,
             type_expr,
         })
     }

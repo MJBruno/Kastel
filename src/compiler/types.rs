@@ -40,6 +40,8 @@ pub enum Type {
     Range,
     Function(FunctionType),
     Named(String),
+    /// Paramètre de type d'une déclaration générique (`T`, `U`, ...).
+    TypeParam(String),
     Generic {
         name: String,
         arguments: Vec<Type>,
@@ -52,6 +54,7 @@ pub enum Type {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionType {
+    pub generic_params: Vec<String>,
     pub params: Vec<Type>,
     pub return_type: Box<Type>,
 }
@@ -267,6 +270,10 @@ impl Type {
                 })
             }
 
+            (Type::TypeParam(actual), Type::TypeParam(expected)) => actual == expected,
+
+            (Type::TypeParam(_), _) | (_, Type::TypeParam(_)) => false,
+
             (Type::Named(actual), Type::Named(expected)) => {
                 Self::is_named_subtype(actual, expected, parents)
             }
@@ -303,7 +310,8 @@ impl Type {
             (Type::Tuple(_), Type::TupleDynamic) => true,
 
             (Type::Function(actual), Type::Function(expected)) => {
-                actual.params.len() == expected.params.len()
+                actual.generic_params == expected.generic_params
+                    && actual.params.len() == expected.params.len()
                     && actual
                         .params
                         .iter()
@@ -480,6 +488,7 @@ impl Type {
 
         let method = |params: Vec<Type>, result: Type| {
             Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
                 params,
                 return_type: Box::new(result),
             }))
@@ -568,6 +577,7 @@ impl Type {
 
         let method = |params: Vec<Type>, result: Type| {
             Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
                 params,
                 return_type: Box::new(result),
             }))
@@ -608,6 +618,7 @@ impl Type {
 
         let method = |params: Vec<Type>, result: Type| {
             Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
                 params,
                 return_type: Box::new(result),
             }))
@@ -706,6 +717,7 @@ impl fmt::Display for Type {
                 write!(f, ") -> {}", function.return_type)
             }
             Type::Named(name) => write!(f, "{name}"),
+            Type::TypeParam(name) => write!(f, "{name}"),
             Type::Generic { name, arguments } => {
                 write!(f, "{name}<")?;
                 for (index, argument) in arguments.iter().enumerate() {

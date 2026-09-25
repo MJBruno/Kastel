@@ -12,6 +12,7 @@ impl Parser {
 
     pub(super) fn parse_function_statement(&mut self) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom de fonction attendu")?;
+        let generic_params = self.parse_generic_parameters()?;
 
         self.consume(TokenKind::LeftParen, "'(' attendu après le nom de fonction")?;
 
@@ -45,6 +46,7 @@ impl Parser {
 
         Ok(Statement::Function {
             name: name.lexeme,
+            generic_params,
             params,
             param_types,
             return_type,

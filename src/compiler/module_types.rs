@@ -15,7 +15,7 @@ use crate::{
 };
 
 use super::{
-    type_checker::{ClassInfo, TypeCheckContext, TypeChecker},
+    type_checker::{ClassInfo, TypeAliasInfo, TypeCheckContext, TypeChecker},
     types::Type,
 };
 
@@ -30,11 +30,12 @@ pub struct ModuleTypeInterface {
 
     /// Alias de type EXPORTÉS (`export type Person = { ... };`), déjà
     /// résolus (sans référence aux noms locaux du module qui les déclare).
-    pub(crate) type_aliases: HashMap<String, Type>,
+    pub(crate) type_aliases: HashMap<String, TypeAliasInfo>,
 }
 
 #[derive(Debug, Clone)]
-pub enum ImportedType {
+#[allow(dead_code)]
+pub(crate) enum ImportedType {
     Module(PathBuf),
 
     /// Un export du module `interface`, sous le nom `name` (que le binding
@@ -48,7 +49,7 @@ pub enum ImportedType {
     /// Un alias de type exporté (`export type Person = { ... };`) : aucune
     /// valeur à l'exécution, seulement un type déjà résolu.
     TypeAlias {
-        resolved: Type,
+        resolved: TypeAliasInfo,
     },
 }
 
@@ -151,6 +152,7 @@ impl ModuleTypeLoader {
             })
     }
 
+    #[allow(private_interfaces)]
     pub fn resolve_import(
         &self,
         current_file: &Path,

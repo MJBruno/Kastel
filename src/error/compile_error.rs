@@ -191,6 +191,17 @@ pub enum CompileError {
         name: String,
         arity: usize,
     },
+
+    InvalidGenericArity {
+        name: String,
+        expected: usize,
+        found: usize,
+    },
+
+    CannotInferGenericType {
+        parameter: String,
+        function: String,
+    },
 }
 
 impl std::fmt::Display for CompileError {
@@ -424,6 +435,20 @@ impl std::fmt::Display for CompileError {
                 )
             }
 
+            CompileError::InvalidGenericArity { name, expected, found } => {
+                write!(
+                    f,
+                    "Le type générique '{name}' attend {expected} argument(s) de type, mais {found} ont été fournis"
+                )
+            }
+
+            CompileError::CannotInferGenericType { parameter, function } => {
+                write!(
+                    f,
+                    "Impossible d'inférer le paramètre générique '{parameter}' lors de l'appel à '{function}'"
+                )
+            }
+
             CompileError::ExpressionTooDeep { limit } => {
                 write!(
                     f,
@@ -586,6 +611,21 @@ impl CompileError {
             .with_help(
                 "une fonction peut être surchargée, mais seulement avec un NOMBRE de paramètres différent.",
             ),
+
+            CompileError::InvalidGenericArity { name, expected, found } => Diagnostic::new(
+                format!("nombre de paramètres génériques incorrect pour '{name}'"),
+                0,
+                0,
+            )
+            .with_expected(format!("{expected} paramètre(s) de type"))
+            .with_found(format!("{found} paramètre(s) de type")),
+
+            CompileError::CannotInferGenericType { parameter, function } => Diagnostic::new(
+                format!("impossible d'inférer le type générique '{parameter}'"),
+                0,
+                0,
+            )
+            .with_help(format!("précisez-le explicitement : `{function}<Type>(...)`")),
 
             CompileError::ExpressionTooDeep { limit } => Diagnostic::new(
                 format!("expression trop profondément imbriquée (limite : {limit})"),

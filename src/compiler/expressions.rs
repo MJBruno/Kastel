@@ -119,6 +119,7 @@ impl Compiler {
                 arguments,
                 line,
                 column,
+                ..
             } => {
                 if let Expression::Member { object, name, .. } = callee.as_ref() {
                     if matches!(object.as_ref(), Expression::Base) {
@@ -249,6 +250,7 @@ impl Compiler {
                 arguments,
                 line,
                 column,
+                ..
             } => {
                 if arguments.len() > u8::MAX as usize {
                     return Err(CompileError::TooManyArguments);

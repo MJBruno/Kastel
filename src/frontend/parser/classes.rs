@@ -12,16 +12,13 @@ impl Parser {
 
     pub(super) fn parse_class_statement(&mut self) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom de classe attendu après 'class'")?;
+        let generic_params = self.parse_generic_parameters()?;
         let mut bases = Vec::new();
 
         if self.match_token(TokenKind::Colon) {
             loop {
-                let base = self.consume(
-                    TokenKind::Identifier,
-                    "Nom de classe ou d'interface attendu après ':'",
-                )?;
-
-                bases.push(base.lexeme);
+                let base = self.parse_type_expression()?;
+                bases.push(base);
 
                 if !self.match_token(TokenKind::Comma) {
                     break;
@@ -63,6 +60,7 @@ impl Parser {
             )?;
 
             let method_name = self.consume(TokenKind::Identifier, "Nom de méthode attendu")?;
+            let method_generic_params = self.parse_generic_parameters()?;
 
             // L'ancien constructeur `init` n'est plus reconnu : plutôt que de
             // le traiter silencieusement comme une méthode ordinaire (et de
@@ -130,6 +128,7 @@ impl Parser {
 
             methods.push(FunctionMethod {
                 name: method_name.lexeme,
+                generic_params: method_generic_params,
                 visibility,
                 is_static,
                 params,
@@ -185,6 +184,7 @@ impl Parser {
 
         Ok(Statement::Class {
             name: class_name,
+            generic_params,
             bases,
             fields,
             methods,
@@ -332,6 +332,7 @@ impl Parser {
 
         methods.push(FunctionMethod {
             name: format!("{FIELD_INITIALIZER_PREFIX}{class_name}"),
+            generic_params: Vec::new(),
             visibility: Visibility::Private,
             is_static: false,
             params: Vec::new(),
@@ -346,17 +347,14 @@ impl Parser {
             TokenKind::Identifier,
             "Nom d'interface attendu après 'interface'",
         )?;
+        let generic_params = self.parse_generic_parameters()?;
 
         let mut bases = Vec::new();
 
         if self.match_token(TokenKind::Colon) {
             loop {
-                let base = self.consume(
-                    TokenKind::Identifier,
-                    "Nom d'interface parent attendu après ':'",
-                )?;
-
-                bases.push(base.lexeme);
+                let base = self.parse_type_expression()?;
+                bases.push(base);
 
                 if !self.match_token(TokenKind::Comma) {
                     break;
@@ -378,6 +376,7 @@ impl Parser {
                 TokenKind::Identifier,
                 "Nom de méthode attendu dans l'interface",
             )?;
+            let method_generic_params = self.parse_generic_parameters()?;
 
             self.consume(TokenKind::LeftParen, "'(' attendu après le nom de méthode")?;
 
@@ -419,6 +418,7 @@ impl Parser {
 
             methods.push(InterfaceMethod {
                 name: method_name.lexeme,
+                generic_params: method_generic_params,
                 arity: params.len(),
                 params,
                 param_types,
@@ -433,6 +433,7 @@ impl Parser {
 
         Ok(Statement::Interface {
             name: name.lexeme,
+            generic_params,
             bases,
             methods,
         })
@@ -461,6 +462,7 @@ impl Parser {
     /// paramètres, surcharge et `this` que les méthodes de classe.
     pub(super) fn parse_enum_statement(&mut self) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom d'enum attendu après 'enum'")?;
+        let generic_params = self.parse_generic_parameters()?;
         self.consume(
             TokenKind::LeftBrace,
             "'{' attendu après le nom de l'enum",
@@ -474,6 +476,7 @@ impl Parser {
             if self.match_token(TokenKind::Function) {
                 methods_started = true;
                 let method_name = self.consume(TokenKind::Identifier, "Nom de méthode attendu")?;
+                let method_generic_params = self.parse_generic_parameters()?;
 
                 self.consume(TokenKind::LeftParen, "'(' attendu après le nom de méthode")?;
 
@@ -513,6 +516,7 @@ impl Parser {
 
                 methods.push(FunctionMethod {
                     name: method_name.lexeme,
+                    generic_params: method_generic_params,
                     visibility: Visibility::Public,
                     is_static: false,
                     params,
@@ -601,6 +605,7 @@ impl Parser {
 
         Ok(Statement::Enum {
             name: name.lexeme,
+            generic_params,
             variants,
             methods,
         })

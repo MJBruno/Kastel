@@ -290,6 +290,7 @@ impl Compiler {
                 bases,
                 fields,
                 methods,
+                ..
             } => {
                 self.compile_class(name, bases, fields, methods)?;
             }
@@ -298,6 +299,7 @@ impl Compiler {
                 name,
                 bases,
                 methods,
+                ..
             } => {
                 self.compile_interface(name, bases, methods)?;
             }
@@ -306,6 +308,7 @@ impl Compiler {
                 name,
                 variants,
                 methods,
+                ..
             } => {
                 self.compile_enum(name, variants, methods)?;
             }
@@ -355,7 +358,7 @@ impl Compiler {
     pub(crate) fn compile_class(
         &mut self,
         name: &str,
-        bases: &[String],
+        bases: &[TypeExpr],
         fields: &[ClassField],
         methods: &[FunctionMethod],
     ) -> Result<(), CompileError> {
@@ -424,7 +427,12 @@ impl Compiler {
         }
 
         for base in bases {
-            self.compile_variable_get(base)?;
+            let base_name = Self::type_expr_name(base).ok_or_else(|| {
+                CompileError::InternalCompilerError(
+                    "Une base d'héritage générique doit désigner un type nommé".to_string(),
+                )
+            })?;
+            self.compile_variable_get(&base_name)?;
         }
 
         let class_name_constant = self.identifier_constant(name)?;
@@ -543,6 +551,14 @@ impl Compiler {
     // ENUM
     // ============================================================
 
+    fn type_expr_name(type_expr: &TypeExpr) -> Option<String> {
+        match type_expr {
+            TypeExpr::Named(name) => Some(name.clone()),
+            TypeExpr::Generic { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn compile_enum(
         &mut self,
         name: &str,
@@ -629,7 +645,7 @@ impl Compiler {
     pub(crate) fn compile_interface(
         &mut self,
         name: &str,
-        bases: &[String],
+        bases: &[TypeExpr],
         methods: &[InterfaceMethod],
     ) -> Result<(), CompileError> {
         if bases.len() > u8::MAX as usize {
@@ -650,7 +666,12 @@ impl Compiler {
         }
 
         for base in bases {
-            self.compile_variable_get(base)?;
+            let base_name = Self::type_expr_name(base).ok_or_else(|| {
+                CompileError::InternalCompilerError(
+                    "Une base d'interface générique doit désigner un type nommé".to_string(),
+                )
+            })?;
+            self.compile_variable_get(&base_name)?;
         }
 
         let name_constant = self.identifier_constant(name)?;

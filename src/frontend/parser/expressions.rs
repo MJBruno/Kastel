@@ -429,14 +429,89 @@ impl Parser {
     // CALL / INDEX
     // ============================================================
 
+    fn try_parse_generic_arguments(&mut self) -> Result<Option<Vec<TypeExpr>>, ParserError> {
+        if !self.check(TokenKind::Less) {
+            return Ok(None);
+        }
+
+        // L'ambiguïté fondamentale de Kastel est `f<T>(...)` vs `a < b`.
+        // On tente donc le parse générique de manière transactionnelle : si
+        // ce n'est pas réellement un appel générique, TOUS les tokens sont
+        // restaurés, y compris une éventuelle découpe de `>>` ou `>=`.
+        let saved_current = self.current;
+        let saved_tokens = self.tokens.clone();
+        self.advance();
+
+        // Un argument de type commence actuellement par un identifiant,
+        // `None`, ou un type record `{ ... }`. Tout autre token indique
+        // immédiatement une comparaison, pas un appel générique.
+        if !matches!(
+            self.peek().kind,
+            TokenKind::Identifier | TokenKind::None | TokenKind::LeftBrace
+        ) {
+            self.current = saved_current;
+            return Ok(None);
+        }
+
+        let mut arguments = Vec::new();
+
+        let result = (|| -> Result<Option<Vec<TypeExpr>>, ParserError> {
+            loop {
+                arguments.push(self.parse_type_expression()?);
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+
+                if !matches!(
+                    self.peek().kind,
+                    TokenKind::Identifier | TokenKind::None | TokenKind::LeftBrace
+                ) {
+                    return Ok(None);
+                }
+            }
+
+            self.consume_type_greater()?;
+
+            if !self.check(TokenKind::LeftParen) {
+                return Ok(None);
+            }
+
+            Ok(Some(arguments))
+        })();
+
+        match result {
+            Ok(Some(arguments)) => Ok(Some(arguments)),
+            Ok(None) | Err(_) => {
+                self.tokens = saved_tokens;
+                self.current = saved_current;
+                Ok(None)
+            }
+        }
+    }
+
     fn call(&mut self) -> Result<Expression, ParserError> {
         let mut expression = self.primary()?;
 
         loop {
+            let generic_args = self.try_parse_generic_arguments()?;
+
             if self.match_token(TokenKind::LeftParen) {
                 let (line, column) = (self.previous().line, self.previous().column);
-                expression = self.parse_call(expression, line, column)?;
+                expression = self.parse_call(
+                    expression,
+                    generic_args.unwrap_or_default(),
+                    line,
+                    column,
+                )?;
                 continue;
+            }
+
+            if generic_args.is_some() {
+                return Err(ParserError {
+                    message: "Un appel générique doit être suivi de '('".to_string(),
+                    line: self.peek().line,
+                    column: self.peek().column,
+                });
             }
 
             if self.match_token(TokenKind::LeftBracket) {
@@ -478,6 +553,7 @@ impl Parser {
     fn parse_call(
         &mut self,
         callee: Expression,
+        generic_args: Vec<TypeExpr>,
         line: usize,
         column: usize,
     ) -> Result<Expression, ParserError> {
@@ -497,6 +573,7 @@ impl Parser {
 
         Ok(Expression::Call {
             callee: Box::new(callee),
+            generic_args,
             arguments,
             line,
             column,
@@ -627,6 +704,7 @@ impl Parser {
                     // Désucrage : `{1, 2}` == `Set(1, 2)`.
                     return Ok(Expression::Call {
                         callee: Box::new(Expression::Variable("Set".to_string())),
+                        generic_args: Vec::new(),
                         arguments: elements,
                         line: token.line,
                         column: token.column,
@@ -715,9 +793,27 @@ impl Parser {
             }),
         }
     }
+    fn parse_generic_type_arguments(&mut self) -> Result<Vec<TypeExpr>, ParserError> {
+        if !self.match_token(TokenKind::Less) {
+            return Ok(Vec::new());
+        }
+
+        let mut arguments = Vec::new();
+        loop {
+            arguments.push(self.parse_type_expression()?);
+            if !self.match_token(TokenKind::Comma) {
+                break;
+            }
+        }
+
+        self.consume_type_greater()?;
+        Ok(arguments)
+    }
+
     fn parse_new_expression(&mut self) -> Result<Expression, ParserError> {
         let class_name =
             self.consume(TokenKind::Identifier, "Nom de classe attendu après 'new'")?;
+        let generic_args = self.parse_generic_type_arguments()?;
 
         self.consume(TokenKind::LeftParen, "'(' attendu après le nom de classe")?;
 
@@ -740,6 +836,7 @@ impl Parser {
 
         Ok(Expression::New {
             class_name: class_name.lexeme,
+            generic_args,
             arguments,
             line: class_name.line,
             column: class_name.column,
