@@ -55,6 +55,9 @@ pub enum Type {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionType {
     pub generic_params: Vec<String>,
+    /// Contraintes des paramètres génériques, indexées par nom.
+    /// Exemple : `T: Add` -> `("T", ["Add"])`.
+    pub generic_bounds: Vec<(String, Vec<String>)>,
     pub params: Vec<Type>,
     pub return_type: Box<Type>,
 }
@@ -311,6 +314,7 @@ impl Type {
 
             (Type::Function(actual), Type::Function(expected)) => {
                 actual.generic_params == expected.generic_params
+                    && actual.generic_bounds == expected.generic_bounds
                     && actual.params.len() == expected.params.len()
                     && actual
                         .params
@@ -489,6 +493,7 @@ impl Type {
         let method = |params: Vec<Type>, result: Type| {
             Some(Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                generic_bounds: Vec::new(),
                 params,
                 return_type: Box::new(result),
             }))
@@ -578,6 +583,7 @@ impl Type {
         let method = |params: Vec<Type>, result: Type| {
             Some(Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                generic_bounds: Vec::new(),
                 params,
                 return_type: Box::new(result),
             }))
@@ -619,6 +625,7 @@ impl Type {
         let method = |params: Vec<Type>, result: Type| {
             Some(Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                generic_bounds: Vec::new(),
                 params,
                 return_type: Box::new(result),
             }))

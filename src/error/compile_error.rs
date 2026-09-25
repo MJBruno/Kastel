@@ -202,6 +202,18 @@ pub enum CompileError {
         parameter: String,
         function: String,
     },
+
+    GenericConstraintNotSatisfied {
+        parameter: String,
+        constraint: String,
+        found: String,
+        function: String,
+    },
+
+    InvalidGenericConstraint {
+        parameter: String,
+        constraint: String,
+    },
 }
 
 impl std::fmt::Display for CompileError {
@@ -449,6 +461,25 @@ impl std::fmt::Display for CompileError {
                 )
             }
 
+            CompileError::GenericConstraintNotSatisfied {
+                parameter,
+                constraint,
+                found,
+                function,
+            } => {
+                write!(
+                    f,
+                    "Le type '{found}' ne satisfait pas la contrainte '{parameter}: {constraint}' lors de l'appel à '{function}'"
+                )
+            }
+
+            CompileError::InvalidGenericConstraint { parameter, constraint } => {
+                write!(
+                    f,
+                    "La contrainte générique '{parameter}: {constraint}' n'est pas valide : une capability nommée est attendue"
+                )
+            }
+
             CompileError::ExpressionTooDeep { limit } => {
                 write!(
                     f,
@@ -626,6 +657,25 @@ impl CompileError {
                 0,
             )
             .with_help(format!("précisez-le explicitement : `{function}<Type>(...)`")),
+
+            CompileError::GenericConstraintNotSatisfied {
+                parameter,
+                constraint,
+                found,
+                function,
+            } => Diagnostic::new(
+                format!("le type '{found}' ne satisfait pas '{parameter}: {constraint}'"),
+                0,
+                0,
+            )
+            .with_help(format!("la fonction '{function}' exige cette capability")),
+
+            CompileError::InvalidGenericConstraint { parameter, constraint } => Diagnostic::new(
+                format!("contrainte générique invalide : '{parameter}: {constraint}'"),
+                0,
+                0,
+            )
+            .with_help("utilisez une capability nommée, par exemple `T: Add`"),
 
             CompileError::ExpressionTooDeep { limit } => Diagnostic::new(
                 format!("expression trop profondément imbriquée (limite : {limit})"),

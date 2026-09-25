@@ -1,9 +1,7 @@
-// Passage explicite par dynamic.
-func identity<T>(value: T) -> T {
-    return value;
+func  add<T:Add>(a:T, b:T)->T {
+    return a+b
 }
 
-let dynamic_value: dynamic = 123;
-let result: dynamic = identity(dynamic_value);
+let a: int = add(5,6)
 
-println(result);
+println(a)

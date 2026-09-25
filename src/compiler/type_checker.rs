@@ -114,6 +114,9 @@ pub struct TypeChecker {
     /// Paramètres génériques actifs pendant le contrôle d'un corps.
     generic_params: Vec<String>,
 
+    /// Contraintes/capabilities des paramètres génériques actifs.
+    generic_bounds: HashMap<String, Vec<String>>,
+
     /// Signatures de chaque fonction GLOBALE, par nom : plusieurs entrées =
     /// surcharge par arité. Les appels directs (`add(1, 2)`) choisissent la
     /// signature comme pour les méthodes ; le nom lui-même, pris comme valeur,
@@ -248,6 +251,7 @@ impl TypeChecker {
             imported_type_aliases: HashMap::new(),
             class_aliases: HashMap::new(),
             generic_params: Vec::new(),
+            generic_bounds: HashMap::new(),
             function_overloads: HashMap::new(),
             local_functions: vec![HashMap::new()],
             context: None,
@@ -487,6 +491,7 @@ impl TypeChecker {
             ),
             Type::Function(function) => Type::Function(FunctionType {
                 generic_params: function.generic_params.clone(),
+                generic_bounds: function.generic_bounds.clone(),
                 params: function
                     .params
                     .iter()
@@ -503,6 +508,7 @@ impl TypeChecker {
                     .map(|signature| {
                         FunctionType {
                             generic_params: signature.generic_params.clone(),
+                            generic_bounds: signature.generic_bounds.clone(),
                             params: signature
                                 .params
                                 .iter()
@@ -547,6 +553,107 @@ impl TypeChecker {
             names.push(parameter.name.clone());
         }
         Ok(names)
+    }
+
+    fn generic_bounds(
+        params: &[GenericParam],
+    ) -> Result<Vec<(String, Vec<String>)>, CompileError> {
+        let mut result = Vec::new();
+
+        for parameter in params {
+            let mut bounds = Vec::new();
+            for bound in &parameter.bounds {
+                let TypeExpr::Named(name) = bound else {
+                    return Err(CompileError::InvalidGenericConstraint {
+                        parameter: parameter.name.clone(),
+                        constraint: format!("{bound:?}"),
+                    });
+                };
+                bounds.push(name.clone());
+            }
+            result.push((parameter.name.clone(), bounds));
+        }
+
+        Ok(result)
+    }
+
+    fn generic_bounds_map(
+        params: &[GenericParam],
+    ) -> Result<HashMap<String, Vec<String>>, CompileError> {
+        Ok(Self::generic_bounds(params)?.into_iter().collect())
+    }
+
+    fn operator_capability(operator: &BinaryOp) -> Option<&'static str> {
+        match operator {
+            BinaryOp::Add => Some("Add"),
+            BinaryOp::Subtract => Some("Sub"),
+            BinaryOp::Multiply => Some("Mul"),
+            BinaryOp::Divide => Some("Div"),
+            BinaryOp::Modulo => Some("Mod"),
+            BinaryOp::Equal | BinaryOp::NotEqual | BinaryOp::Is => Some("Eq"),
+            BinaryOp::Less
+            | BinaryOp::LessEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterEqual => Some("Ord"),
+            BinaryOp::BitAnd => Some("BitAnd"),
+            BinaryOp::BitOr => Some("BitOr"),
+            BinaryOp::BitXor => Some("BitXor"),
+            BinaryOp::And | BinaryOp::Or | BinaryOp::ShiftLeft | BinaryOp::ShiftRight => None,
+        }
+    }
+
+    fn concrete_type_supports_capability(ty: &Type, capability: &str) -> bool {
+        if ty.is_dynamic() {
+            return true;
+        }
+
+        match capability {
+            "Add" => matches!(ty, Type::Int | Type::Float | Type::Str),
+            "Sub" | "Mul" | "Div" | "Mod" => matches!(ty, Type::Int | Type::Float),
+            "Eq" => true,
+            "Ord" => matches!(ty, Type::Int | Type::Float),
+            "BitAnd" | "BitOr" | "BitXor" => matches!(ty, Type::Int),
+            _ => false,
+        }
+    }
+
+    fn type_supports_capability(&self, ty: &Type, capability: &str) -> bool {
+        match ty {
+            Type::TypeParam(name) => self
+                .generic_bounds
+                .get(name)
+                .is_some_and(|bounds| bounds.iter().any(|bound| bound == capability)),
+            Type::Union(members) => members
+                .iter()
+                .all(|member| self.type_supports_capability(member, capability)),
+            _ => Self::concrete_type_supports_capability(ty, capability),
+        }
+    }
+
+    fn validate_generic_constraints(
+        &self,
+        signature: &FunctionType,
+        substitutions: &HashMap<String, Type>,
+        function_name: &str,
+    ) -> Result<(), CompileError> {
+        for (parameter, bounds) in &signature.generic_bounds {
+            let Some(actual) = substitutions.get(parameter) else {
+                continue;
+            };
+
+            for bound in bounds {
+                if !self.type_supports_capability(actual, bound) {
+                    return Err(CompileError::GenericConstraintNotSatisfied {
+                        parameter: parameter.clone(),
+                        constraint: bound.clone(),
+                        found: actual.to_string(),
+                        function: function_name.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn validate_nested_generic_declaration(
@@ -602,6 +709,7 @@ impl TypeChecker {
 
                     let signature = FunctionType {
                         generic_params: generic_names,
+                        generic_bounds: Self::generic_bounds(generic_params)?,
                         params: parameters,
                         return_type: Box::new(return_type),
                     };
@@ -717,6 +825,7 @@ impl TypeChecker {
 
                         let signature = FunctionType {
                             generic_params: method_generic_names,
+                            generic_bounds: Self::generic_bounds(&method.generic_params)?,
                             params,
                             return_type: Box::new(return_type),
                         };
@@ -820,6 +929,7 @@ impl TypeChecker {
 
                         let signature = FunctionType {
                             generic_params: method_generic_names,
+                            generic_bounds: Self::generic_bounds(&method.generic_params)?,
                             params,
                             return_type: Box::new(return_type),
                         };
@@ -912,6 +1022,7 @@ impl TypeChecker {
 
                         let signature = FunctionType {
                             generic_params: method_generic_names,
+                            generic_bounds: Self::generic_bounds(&method.generic_params)?,
                             params,
                             return_type: Box::new(return_type),
                         };
@@ -1474,9 +1585,14 @@ impl TypeChecker {
             &mut self.generic_params,
             generic_params.iter().map(|p| p.name.clone()).collect(),
         );
+        let previous_bounds = std::mem::replace(
+            &mut self.generic_bounds,
+            Self::generic_bounds_map(generic_params)?,
+        );
 
         let declared_signature = FunctionType {
             generic_params: generic_params.iter().map(|p| p.name.clone()).collect(),
+            generic_bounds: Self::generic_bounds(generic_params)?,
             params: params
                 .iter()
                 .enumerate()
@@ -1563,6 +1679,7 @@ impl TypeChecker {
                 self.current_return_type = previous_return;
                 self.return_types = previous_returns;
                 self.generic_params = previous_generics;
+                self.generic_bounds = previous_bounds;
 
                 return Err(CompileError::TypeMismatch {
                     expected: expected.to_string(),
@@ -1609,6 +1726,7 @@ impl TypeChecker {
         self.current_return_type = previous_return;
         self.return_types = previous_returns;
         self.generic_params = previous_generics;
+        self.generic_bounds = previous_bounds;
 
         Ok(())
     }
@@ -1644,6 +1762,10 @@ impl TypeChecker {
         let mut active_generics = class_generics;
         active_generics.extend(method.generic_params.iter().map(|p| p.name.clone()));
         let previous_generics = std::mem::replace(&mut self.generic_params, active_generics);
+        let previous_bounds = std::mem::replace(
+            &mut self.generic_bounds,
+            Self::generic_bounds_map(&method.generic_params)?,
+        );
 
         self.push_scope();
 
@@ -1712,6 +1834,7 @@ impl TypeChecker {
                 self.current_return_type = previous_return;
                 self.return_types = previous_returns;
                 self.generic_params = previous_generics;
+                self.generic_bounds = previous_bounds;
 
                 return Err(CompileError::TypeMismatch {
                     expected: expected.to_string(),
@@ -1736,6 +1859,7 @@ impl TypeChecker {
         self.current_return_type = previous_return;
         self.return_types = previous_returns;
         self.generic_params = previous_generics;
+        self.generic_bounds = previous_bounds;
 
         Ok(())
     }
@@ -1925,6 +2049,7 @@ impl TypeChecker {
 
                 Ok(Type::Function(FunctionType {
                     generic_params: Vec::new(),
+                    generic_bounds: Vec::new(),
                     params: vec![Type::Dynamic; params.len()],
                     return_type: Box::new(return_type),
                 }))
@@ -2314,6 +2439,44 @@ impl TypeChecker {
             }
 
             return Ok(Type::union_of(results));
+        }
+
+        if let Some(capability) = Self::operator_capability(operator) {
+            let left_is_generic = matches!(left_type, Type::TypeParam(_));
+            let right_is_generic = matches!(right_type, Type::TypeParam(_));
+
+            if left_is_generic || right_is_generic {
+                let same_generic = matches!((&left_type, &right_type), (Type::TypeParam(left), Type::TypeParam(right)) if left == right);
+
+                if !same_generic
+                    || !self.type_supports_capability(&left_type, capability)
+                    || !self.type_supports_capability(&right_type, capability)
+                {
+                    return Err(CompileError::InvalidBinaryOperation {
+                        operator: binary_symbol(operator).to_string(),
+                        left: left_type.to_string(),
+                        right: right_type.to_string(),
+                    });
+                }
+
+                return Ok(match operator {
+                    BinaryOp::Add
+                    | BinaryOp::Subtract
+                    | BinaryOp::Multiply
+                    | BinaryOp::Modulo => left_type,
+                    BinaryOp::Divide => Type::Float,
+                    BinaryOp::Equal
+                    | BinaryOp::NotEqual
+                    | BinaryOp::Is
+                    | BinaryOp::Less
+                    | BinaryOp::LessEqual
+                    | BinaryOp::Greater
+                    | BinaryOp::GreaterEqual => Type::Bool,
+                    BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor => left_type,
+                    BinaryOp::ShiftLeft | BinaryOp::ShiftRight => Type::Int,
+                    BinaryOp::And | BinaryOp::Or => unreachable!(),
+                });
+            }
         }
 
         match operator {
@@ -2848,6 +3011,7 @@ impl TypeChecker {
     ) -> FunctionType {
         FunctionType {
             generic_params: signature.generic_params.clone(),
+            generic_bounds: signature.generic_bounds.clone(),
             params: signature
                 .params
                 .iter()
@@ -2964,6 +3128,8 @@ impl TypeChecker {
                 found: generic_args.len(),
             });
         }
+
+        self.validate_generic_constraints(signature, &substitutions, function_name)?;
 
         let instantiated = Self::substitute_function_signature(signature, &substitutions);
 
@@ -4066,6 +4232,55 @@ let comparison: bool = left < right;
         assert!(check("func identity<T>(value: T) -> T { return value; } let x = identity<int, str>(1);").is_err());
         assert!(check("func identity<T>(value: T) -> T { return value; } let x: int = identity(1.5);").is_err());
         assert!(check("func identity<T>(value: T) -> T { return value; } let d: dynamic = 1; let x: dynamic = identity(d);").is_ok());
+    }
+
+    #[test]
+    fn generic_operator_constraints_use_capabilities() {
+        let ok = check(
+            r#"
+func add<T: Add>(a: T, b: T) -> T {
+    return a + b;
+}
+
+func same<T: Eq>(a: T, b: T) -> bool {
+    return a == b;
+}
+
+func less<T: Ord>(a: T, b: T) -> bool {
+    return a < b;
+}
+
+func mask<T: BitAnd>(a: T, b: T) -> T {
+    return a & b;
+}
+
+let a: int = add(45, 6);
+let b: str = add<str>("foo", "bar");
+let c: bool = same(1, 1);
+let d: bool = less(1, 2);
+let e: int = mask(7, 3);
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        assert!(check(
+            r#"
+func add<T: Add>(a: T, b: T) -> T {
+    return a + b;
+}
+let x: int = add(true, false);
+"#,
+        )
+        .is_err());
+
+        assert!(check(
+            r#"
+func add<T>(a: T, b: T) -> T {
+    return a + b;
+}
+"#,
+        )
+        .is_err());
     }
 
     #[test]
