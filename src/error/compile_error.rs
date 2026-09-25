@@ -214,6 +214,13 @@ pub enum CompileError {
         parameter: String,
         constraint: String,
     },
+
+    MissingInterfaceMethod {
+        class_name: String,
+        interface: String,
+        method: String,
+        arity: usize,
+    },
 }
 
 impl std::fmt::Display for CompileError {
@@ -476,7 +483,19 @@ impl std::fmt::Display for CompileError {
             CompileError::InvalidGenericConstraint { parameter, constraint } => {
                 write!(
                     f,
-                    "La contrainte générique '{parameter}: {constraint}' n'est pas valide : une capability nommée est attendue"
+                    "La contrainte générique '{parameter}: {constraint}' n'est pas valide : utilisez une capability ou une interface"
+                )
+            }
+
+            CompileError::MissingInterfaceMethod {
+                class_name,
+                interface,
+                method,
+                arity,
+            } => {
+                write!(
+                    f,
+                    "La classe '{class_name}' n'implémente pas '{interface}.{method}' avec {arity} argument(s)"
                 )
             }
 
@@ -675,7 +694,21 @@ impl CompileError {
                 0,
                 0,
             )
-            .with_help("utilisez une capability nommée, par exemple `T: Add`"),
+            .with_help("utilisez une capability ou une interface, par exemple `T: Add` ou `T: Printable`"),
+
+            CompileError::MissingInterfaceMethod {
+                class_name,
+                interface,
+                method,
+                arity,
+            } => Diagnostic::new(
+                format!(
+                    "'{class_name}' n'implémente pas '{interface}.{method}' avec {arity} argument(s)"
+                ),
+                0,
+                0,
+            )
+            .with_help("ajoutez la méthode requise à la classe ou retirez l'interface de sa liste de bases"),
 
             CompileError::ExpressionTooDeep { limit } => Diagnostic::new(
                 format!("expression trop profondément imbriquée (limite : {limit})"),

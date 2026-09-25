@@ -1,7 +1,27 @@
-func  add<T:Add>(a:T, b:T)->T {
-    return a+b
+interface Printable {
+    func render() -> str;
 }
 
-let a: int = add(5,6)
+class Document: Printable {
 
-println(a)
+    func initialize() {
+        
+    }
+    
+    func render() -> str {
+        return "Hello depuis render document"
+    }
+}
+
+
+func render<T: Printable>(value: T) -> str {
+    return value.render();
+}
+
+
+
+let document = new Document()
+
+let r: str = render(document)
+
+println(r)

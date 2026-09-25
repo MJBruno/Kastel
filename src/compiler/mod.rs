@@ -1,3 +1,4 @@
+pub mod capability;
 #[allow(clippy::module_inception)]
 pub mod compiler;
 

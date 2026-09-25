@@ -183,7 +183,7 @@ impl Parser {
     }
 
     /// Parse les paramètres génériques d'une déclaration : `<T, U>`.
-    /// Une contrainte de capability est optionnelle : `<T: Add, U: Eq>`.
+    /// Une ou plusieurs contraintes sont possibles : `<T: Add + Eq>` ou `<T: Comparable>`.
     pub(super) fn parse_generic_parameters(&mut self) -> Result<Vec<GenericParam>, ParserError> {
         if !self.match_token(TokenKind::Less) {
             return Ok(Vec::new());
@@ -207,7 +207,13 @@ impl Parser {
 
             let mut bounds = Vec::new();
             if self.match_token(TokenKind::Colon) {
-                bounds.push(self.parse_type_expression()?);
+                loop {
+                    bounds.push(self.parse_type_expression()?);
+
+                    if !self.match_token(TokenKind::Plus) {
+                        break;
+                    }
+                }
             }
 
             parameters.push(GenericParam {
