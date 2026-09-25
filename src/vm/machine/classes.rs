@@ -17,17 +17,33 @@ impl VirtualMachine {
         &mut self,
         base_count: usize,
         method_count: usize,
+        static_method_count: usize,
+        static_field_count: usize,
         private_count: usize,
     ) -> Result<(), RuntimeError> {
         let method_values = method_count
             .checked_mul(2)
             .ok_or(RuntimeError::InvalidFunction)?;
 
+        let static_method_values = static_method_count
+            .checked_mul(2)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let static_field_values = static_field_count
+            .checked_mul(2)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
         // Disposition sur la pile :
-        //   [bases...] nom [nom_méthode closure]* [nom_membre_privé]*
+        //   [bases...] nom
+        //   [nom_méthode closure]*              (instance)
+        //   [nom_méthode_statique closure]*      (static)
+        //   [nom_champ_statique valeur]*         (static)
+        //   [nom_membre_privé]*
         let total = base_count
             .checked_add(1)
             .and_then(|value| value.checked_add(method_values))
+            .and_then(|value| value.checked_add(static_method_values))
+            .and_then(|value| value.checked_add(static_field_values))
             .and_then(|value| value.checked_add(private_count))
             .ok_or(RuntimeError::InvalidFunction)?;
 
@@ -130,7 +146,82 @@ impl VirtualMachine {
             overloads.push(method);
         }
 
-        let private_start = methods_start + method_values;
+        // Méthodes statiques : mêmes règles de surcharge par arité que les
+        // méthodes d'instance, mais SANS `this` (arité = celle de la
+        // closure directement, pas `- 1`).
+        let static_methods_start = methods_start + method_values;
+        let mut static_methods = HashMap::<String, Vec<Value>>::with_capacity(static_method_count);
+
+        for index in 0..static_method_count {
+            let base = static_methods_start + index * 2;
+
+            let method_name = self
+                .stack
+                .get(base)
+                .and_then(Value::as_string_value)
+                .ok_or(RuntimeError::TypeError)?;
+
+            let method = self
+                .stack
+                .get(base + 1)
+                .cloned()
+                .ok_or(RuntimeError::StackUnderflow)?;
+
+            let arity = match &method {
+                Value::Object(handle) => {
+                    let object = handle.borrow();
+                    match &*object {
+                        Object::Closure(closure) => closure.function.arity,
+                        _ => return Err(RuntimeError::NotCallable),
+                    }
+                }
+                _ => return Err(RuntimeError::NotCallable),
+            };
+
+            let overloads = static_methods.entry(method_name.clone()).or_default();
+
+            if overloads.iter().any(|existing| match existing {
+                Value::Object(handle) => {
+                    let object = handle.borrow();
+                    matches!(
+                        &*object,
+                        Object::Closure(closure) if closure.function.arity == arity
+                    )
+                }
+                _ => false,
+            }) {
+                return Err(RuntimeError::DuplicateMethod {
+                    name: method_name,
+                    arity,
+                });
+            }
+
+            overloads.push(method);
+        }
+
+        // Champs statiques : nom + valeur déjà évaluée par le compilateur.
+        let static_fields_start = static_methods_start + static_method_values;
+        let mut statics = HashMap::<String, Value>::with_capacity(static_field_count);
+
+        for index in 0..static_field_count {
+            let base = static_fields_start + index * 2;
+
+            let field_name = self
+                .stack
+                .get(base)
+                .and_then(Value::as_string_value)
+                .ok_or(RuntimeError::TypeError)?;
+
+            let value = self
+                .stack
+                .get(base + 1)
+                .cloned()
+                .ok_or(RuntimeError::StackUnderflow)?;
+
+            statics.insert(field_name, value);
+        }
+
+        let private_start = static_fields_start + static_field_values;
         let mut private_members = HashSet::<String>::with_capacity(private_count);
 
         for index in 0..private_count {
@@ -145,8 +236,15 @@ impl VirtualMachine {
 
         self.stack.truncate(start);
 
-        let class_value =
-            Value::new_class(class_name, superclass, interfaces, methods, private_members);
+        let class_value = Value::new_class(
+            class_name,
+            superclass,
+            interfaces,
+            methods,
+            static_methods,
+            statics,
+            private_members,
+        );
 
         let class_handle = match &class_value {
             Value::Object(handle) => handle.clone(),
@@ -156,11 +254,16 @@ impl VirtualMachine {
         {
             let mut class_object = class_handle.borrow_mut();
 
-            let Object::Class { methods, .. } = &mut *class_object else {
+            let Object::Class {
+                methods,
+                static_methods,
+                ..
+            } = &mut *class_object
+            else {
                 return Err(RuntimeError::InvalidFunction);
             };
 
-            for overloads in methods.values() {
+            for overloads in methods.values().chain(static_methods.values()) {
                 for method in overloads {
                     if let Value::Object(handle) = method {
                         let mut object = handle.borrow_mut();

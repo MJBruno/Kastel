@@ -363,13 +363,30 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        if methods.len() > u8::MAX as usize {
+        // Méthodes D'INSTANCE (appelées sur une instance, avec `this`) et
+        // méthodes STATIQUES (appelées sur la classe elle-même, sans
+        // receveur) sont stockées séparément par la VM : voir `op_class`.
+        let instance_methods: Vec<&FunctionMethod> =
+            methods.iter().filter(|method| !method.is_static).collect();
+        let static_methods: Vec<&FunctionMethod> =
+            methods.iter().filter(|method| method.is_static).collect();
+
+        // Champs D'INSTANCE (une valeur par instance, initialisée via
+        // `__fields_<Classe>`, voir `desugar_field_initializers`) et champs
+        // STATIQUES (une seule valeur, portée par la classe).
+        let static_fields: Vec<&ClassField> =
+            fields.iter().filter(|field| field.is_static).collect();
+
+        if instance_methods.len() > u8::MAX as usize
+            || static_methods.len() > u8::MAX as usize
+            || static_fields.len() > u8::MAX as usize
+        {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        // Membres privés (champs ET méthodes), sans doublon. La VM les
-        // enregistre dans la classe et refuse tout accès depuis l'extérieur
-        // du corps de cette classe.
+        // Membres privés (champs ET méthodes, statiques ou non), sans
+        // doublon. La VM les enregistre dans la classe et refuse tout accès
+        // depuis l'extérieur du corps de cette classe.
         let mut private_members: Vec<&str> = Vec::new();
 
         let declared = fields
@@ -412,7 +429,7 @@ impl Compiler {
 
         self.emit_constant_op(OpCode::Constant, class_name_constant);
 
-        for method in methods {
+        for method in &instance_methods {
             let method_name_constant = self.identifier_constant(&method.name)?;
 
             self.emit_constant_op(OpCode::Constant, method_name_constant);
@@ -425,7 +442,36 @@ impl Compiler {
             self.emit_closure(function_constant, &function.upvalues);
         }
 
-        // Noms des membres privés, empilés après les méthodes.
+        for method in &static_methods {
+            let method_name_constant = self.identifier_constant(&method.name)?;
+
+            self.emit_constant_op(OpCode::Constant, method_name_constant);
+
+            let function =
+                self.compile_static_method(&method.name, &method.params, &method.body)?;
+
+            let function_constant =
+                self.make_constant(Value::new_function(std::rc::Rc::new(function.clone())))?;
+
+            self.emit_closure(function_constant, &function.upvalues);
+        }
+
+        // Champs statiques : nom, puis valeur initiale (expression évaluée
+        // UNE SEULE FOIS, ici, à la déclaration de la classe — pas de `this`
+        // puisqu'il n'y a pas d'instance). Sans initialiseur, la valeur est
+        // `None`, comme une variable dynamique jamais assignée.
+        for field in &static_fields {
+            let field_name_constant = self.identifier_constant(&field.name)?;
+
+            self.emit_constant_op(OpCode::Constant, field_name_constant);
+
+            match &field.initializer {
+                Some(initializer) => self.compile_expression(initializer)?,
+                None => self.emit_opcode(OpCode::None),
+            }
+        }
+
+        // Noms des membres privés, empilés en dernier.
         for member in &private_members {
             let member_constant = self.identifier_constant(member)?;
 
@@ -434,7 +480,9 @@ impl Compiler {
 
         self.emit_byte(OpCode::Class.into());
         self.emit_byte(bases.len() as u8);
-        self.emit_byte(methods.len() as u8);
+        self.emit_byte(instance_methods.len() as u8);
+        self.emit_byte(static_methods.len() as u8);
+        self.emit_byte(static_fields.len() as u8);
         self.emit_byte(private_members.len() as u8);
 
         if !self.in_function && self.scope_depth == 0 {
@@ -495,8 +543,7 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name)
-        {
+        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name) {
             if let Some(global) = self.globals.borrow().get(name) {
                 if !global.native {
                     return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
@@ -552,11 +599,11 @@ impl Compiler {
 
             self.emit_constant_op(OpCode::DefineGlobal, name_constant);
         } else {
-            let slot =
-                self.context
-                    .borrow_mut()
-                    .locals
-                    .declare_local(name, self.scope_depth, true)?;
+            let slot = self
+                .context
+                .borrow_mut()
+                .locals
+                .declare_local(name, self.scope_depth, true)?;
 
             self.context
                 .borrow_mut()

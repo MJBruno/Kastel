@@ -382,6 +382,8 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
             superclass,
             interfaces,
             methods,
+            static_methods,
+            statics,
             ..
         } => {
             if let Some(superclass) = superclass {
@@ -396,6 +398,16 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
                 for value in overloads {
                     mark_value(value, state);
                 }
+            }
+
+            for overloads in static_methods.values() {
+                for value in overloads {
+                    mark_value(value, state);
+                }
+            }
+
+            for value in statics.values() {
+                mark_value(value, state);
             }
         }
 

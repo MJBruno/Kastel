@@ -70,9 +70,18 @@ pub enum Object {
         /// Surcharges par arité : pour un nom donné, une closure par
         /// nombre d'arguments (hors `this`).
         methods: HashMap<String, Vec<Value>>,
-        /// Noms des membres (champs et méthodes) déclarés `private` dans
-        /// CETTE classe. L'accès n'est permis que depuis le corps de la
-        /// classe (voir `VirtualMachine::ensure_member_access`).
+        /// Méthodes `static` : surcharges par arité, comme `methods`, mais
+        /// SANS `this` (une closure de moins par arité). Appelées sur la
+        /// classe elle-même (`NomClasse.methode(...)`), jamais héritées.
+        static_methods: HashMap<String, Vec<Value>>,
+        /// Champs `static` : une seule valeur par nom, portée par la classe
+        /// (et non par chaque instance). Mutable via `NomClasse.champ = v`.
+        /// Jamais hérité : une classe dérivée n'a pas accès aux statiques de
+        /// sa base sous son propre nom.
+        statics: HashMap<String, Value>,
+        /// Noms des membres (champs et méthodes, statiques ou non) déclarés
+        /// `private` dans CETTE classe. L'accès n'est permis que depuis le
+        /// corps de la classe (voir `VirtualMachine::ensure_member_access`).
         private_members: HashSet<String>,
     },
 
@@ -199,6 +208,8 @@ impl Object {
                 superclass,
                 interfaces,
                 methods,
+                static_methods,
+                statics,
                 ..
             } => {
                 /*
@@ -207,6 +218,8 @@ impl Object {
                 *superclass = None;
                 interfaces.clear();
                 methods.clear();
+                static_methods.clear();
+                statics.clear();
             }
 
             Object::Interface { bases, methods, .. } => {

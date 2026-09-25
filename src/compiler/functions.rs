@@ -255,4 +255,20 @@ impl Compiler {
 
         self.compile_function(name, &method_params, body)
     }
+
+    // ============================================================
+    // STATIC METHOD
+    // ============================================================
+
+    /// Comme `compile_method`, mais SANS `this` implicite : une méthode
+    /// `static` n'est pas appelée sur une instance (`NomClasse.methode(...)`),
+    /// donc son corps ne reçoit aucun receveur.
+    pub(crate) fn compile_static_method(
+        &mut self,
+        name: &str,
+        params: &[String],
+        body: &[Statement],
+    ) -> Result<Function, CompileError> {
+        self.compile_function(name, params, body)
+    }
 }

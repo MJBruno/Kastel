@@ -1,19 +1,14 @@
-// examples/shapes.ks
-//
-// Bibliothèque utilisée par examples/type_aliases_across_modules.ks.
+export class Compteur {
+    static let total: int = 12;
+    private static let secret: int = 42;
 
-export type Point = { x: int, y: int };
-export type Number = int | float;
+    static func creer() -> Compteur {
+        Compteur.total += 1;
+        return new Compteur();
+    }
 
-export func origin() -> Point {
-    return { x: 0, y: 0 };
+    func incrementer() {
+        Compteur.total = Compteur.total + 1;
+    }
 }
 
-// Union en paramètre de fonction, EXPORTÉE : `Number` est déclaré plus loin
-// dans ce même fichier (référence en avant) — couvre le même chemin de
-// résolution qu'un usage depuis un autre module.
-export type ScaledPoint = { x: Number, y: Number };
-
-export func scale(p: Point, factor: Number) -> ScaledPoint {
-    return { x: p.x * factor, y: p.y * factor };
-}

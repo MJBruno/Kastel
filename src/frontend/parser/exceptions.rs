@@ -4,6 +4,7 @@ use crate::frontend::lexer::token::TokenKind;
 
 use super::Parser;
 
+#[allow(dead_code)]
 impl Parser {
     // ============================================================
     // THROW

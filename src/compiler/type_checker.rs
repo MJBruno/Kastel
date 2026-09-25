@@ -380,7 +380,14 @@ impl TypeChecker {
                     let mut field_map: HashMap<String, Type> = HashMap::new();
                     let mut private_members: HashSet<String> = HashSet::new();
 
-                    for field in fields {
+                    // Les membres `static` sont volontairement ABSENTS de
+                    // `ClassInfo` : un accès `NomClasse.membre` est donc
+                    // toujours vu comme dynamique par ce vérificateur (jamais
+                    // bloqué, jamais analysé finement), et c'est la VM qui
+                    // contrôle réellement l'existence, l'arité et la
+                    // visibilité à l'exécution — cohérent avec la philosophie
+                    // « Dynamic ne bloque jamais » du reste du vérificateur.
+                    for field in fields.iter().filter(|field| !field.is_static) {
                         field_map.insert(
                             field.name.clone(),
                             field
@@ -395,7 +402,7 @@ impl TypeChecker {
                         }
                     }
 
-                    for method in methods {
+                    for method in methods.iter().filter(|method| !method.is_static) {
                         let params = method
                             .params
                             .iter()
@@ -1254,14 +1261,21 @@ impl TypeChecker {
 
         self.push_scope();
 
-        self.declare(
-            "this",
-            Binding {
-                ty: Type::Named(class_name.to_string()),
-                _mutable: true,
-                native: false,
-            },
-        )?;
+        // Une méthode `static` n'a pas de `this` (elle n'est pas appelée sur
+        // une instance) : on ne le déclare donc pas dans la portée vérifiée.
+        // Une utilisation de `this` dans son corps échouera alors comme une
+        // variable non déclarée — cohérent avec le vrai comportement du
+        // compilateur (`compile_static_method` ne réserve pas ce slot).
+        if !method.is_static {
+            self.declare(
+                "this",
+                Binding {
+                    ty: Type::Named(class_name.to_string()),
+                    _mutable: true,
+                    native: false,
+                },
+            )?;
+        }
 
         for (index, parameter) in method.params.iter().enumerate() {
             let ty = method

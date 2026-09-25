@@ -119,11 +119,17 @@ pub enum Visibility {
 pub struct ClassField {
     pub name: String,
     pub visibility: Visibility,
+    /// `static let compteur: int = 0;` : porté par la CLASSE elle-même
+    /// (une seule valeur partagée, accessible via `NomClasse.compteur`),
+    /// et non par chaque instance. Voir `FunctionMethod::is_static`.
+    pub is_static: bool,
     /// Annotation de type (`: int`), `None` = champ dynamique.
     pub type_annotation: Option<TypeExpr>,
-    /// Valeur initiale. Le parser la transforme en méthode cachée
-    /// `__fields_<Classe>`, exécutée par la VM à chaque `new`, avant le
-    /// constructeur (voir `FIELD_INITIALIZER_PREFIX`).
+    /// Valeur initiale. Pour un champ d'INSTANCE, le parser la transforme
+    /// en méthode cachée `__fields_<Classe>`, exécutée par la VM à chaque
+    /// `new`, avant le constructeur (voir `FIELD_INITIALIZER_PREFIX`).
+    /// Pour un champ STATIQUE, elle est évaluée une seule fois, à la
+    /// déclaration de la classe (voir `compile_class`).
     pub initializer: Option<Expression>,
     pub line: usize,
     pub column: usize,
@@ -133,6 +139,11 @@ pub struct ClassField {
 pub struct FunctionMethod {
     pub name: String,
     pub visibility: Visibility,
+    /// `static func creer(...) { ... }` : appelée sur la CLASSE
+    /// (`NomClasse.creer(...)`), SANS `this` implicite — contrairement à
+    /// une méthode normale, elle ne reçoit pas d'instance. Une méthode
+    /// statique ne peut donc pas utiliser `this` ni `base`.
+    pub is_static: bool,
     pub params: Vec<String>,
     /// Annotations de type des paramètres, un slot par entrée de
     /// `params` (même longueur, même ordre). `None` = paramètre non

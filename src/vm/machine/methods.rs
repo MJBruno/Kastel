@@ -273,6 +273,13 @@ impl VirtualMachine {
             return Ok(());
         };
 
+        // `NomClasse.membre` : accès STATIQUE, directement sur la classe
+        // (jamais hérité, donc pas de remontée de hiérarchie ici — voir
+        // `ensure_static_member_access`).
+        if matches!(&*handle.borrow(), Object::Class { .. }) {
+            return self.ensure_static_member_access(handle, name);
+        }
+
         let class = {
             let object = handle.borrow();
 
@@ -326,6 +333,46 @@ impl VirtualMachine {
         }
 
         Ok(())
+    }
+
+    /// Comme `ensure_member_access`, pour un accès STATIQUE
+    /// (`NomClasse.membre`) : les membres statiques ne sont pas hérités, donc
+    /// seule la classe désignée elle-même est consultée (pas sa hiérarchie).
+    fn ensure_static_member_access(
+        &self,
+        class: &Gc<Object>,
+        name: &str,
+    ) -> Result<(), RuntimeError> {
+        let (is_private, class_name) = {
+            let object = class.borrow();
+
+            match &*object {
+                Object::Class {
+                    name: class_name,
+                    private_members,
+                    ..
+                } => (private_members.contains(name), class_name.clone()),
+
+                _ => return Ok(()),
+            }
+        };
+
+        if !is_private {
+            return Ok(());
+        }
+
+        let allowed = self
+            .caller_owner_class()
+            .is_some_and(|owner| Gc::ptr_eq(&owner, class));
+
+        if allowed {
+            return Ok(());
+        }
+
+        Err(RuntimeError::PrivateMemberAccess {
+            class_name,
+            member: name.to_string(),
+        })
     }
 
     // ============================================================
@@ -417,6 +464,7 @@ impl VirtualMachine {
                         Object::Set(_) => 8,
                         Object::Record(_) => 9,
                         Object::EnumVariant { .. } => 10,
+                        Object::Class { .. } => 11,
                         _ => 5,
                     }
                 };
@@ -697,6 +745,116 @@ impl VirtualMachine {
                         }
 
                         self.execute_call(arg_count + 1)?;
+
+                        return Ok(());
+                    }
+
+                    11 => {
+                        // `NomClasse.methode(a, b)` : méthode STATIQUE,
+                        // jamais héritée. Contrairement à une méthode
+                        // d'instance, il n'y a pas de `this` à pousser avant
+                        // les arguments.
+                        self.ensure_member_access(&receiver, &method_name)?;
+
+                        let (method, declared_arity) = {
+                            let object = handle.borrow();
+
+                            match &*object {
+                                Object::Class { static_methods, .. } => {
+                                    let overloads = static_methods.get(&method_name);
+
+                                    let method = overloads.and_then(|overloads| {
+                                        overloads.iter().find(|value| {
+                                            matches!(
+                                                value,
+                                                Value::Object(method_handle)
+                                                    if matches!(
+                                                        &*method_handle.borrow(),
+                                                        Object::Closure(closure)
+                                                            if closure.function.arity == arg_count
+                                                    )
+                                            )
+                                        })
+                                    }).cloned();
+
+                                    let declared_arity = overloads.and_then(|overloads| {
+                                        overloads.first().and_then(|value| match value {
+                                            Value::Object(method_handle) => {
+                                                match &*method_handle.borrow() {
+                                                    Object::Closure(closure) => {
+                                                        Some(closure.function.arity)
+                                                    }
+                                                    _ => None,
+                                                }
+                                            }
+                                            _ => None,
+                                        })
+                                    });
+
+                                    (method, declared_arity)
+                                }
+
+                                _ => return Err(RuntimeError::TypeError),
+                            }
+                        };
+
+                        let method_handle = match method {
+                            Some(Value::Object(method_handle))
+                                if matches!(&*method_handle.borrow(), Object::Closure(_)) =>
+                            {
+                                method_handle
+                            }
+
+                            _ => {
+                                // Pas de méthode statique de cette arité : soit
+                                // elle existe sous une autre arité (erreur
+                                // d'arité), soit un CHAMP statique porte ce
+                                // nom et se trouve être appelable (comme un
+                                // champ de Record), soit le nom est inconnu.
+                                if let Some(expected) = declared_arity {
+                                    return Err(RuntimeError::WrongArgumentCount {
+                                        expected,
+                                        found: arg_count,
+                                    });
+                                }
+
+                                let field = {
+                                    let object = handle.borrow();
+
+                                    match &*object {
+                                        Object::Class { statics, .. } => {
+                                            statics.get(&method_name).cloned()
+                                        }
+                                        _ => None,
+                                    }
+                                };
+
+                                let Some(callable) = field else {
+                                    return Err(RuntimeError::ObjectFieldNotFound {
+                                        name: method_name,
+                                        suggestion: None,
+                                    });
+                                };
+
+                                self.push(callable);
+
+                                for argument in args.iter().skip(1) {
+                                    self.push(argument.clone());
+                                }
+
+                                self.execute_call(arg_count)?;
+
+                                return Ok(());
+                            }
+                        };
+
+                        self.push(Value::Object(method_handle));
+
+                        for argument in args.iter().skip(1) {
+                            self.push(argument.clone());
+                        }
+
+                        self.execute_call(arg_count)?;
 
                         return Ok(());
                     }

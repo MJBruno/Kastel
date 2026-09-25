@@ -168,6 +168,8 @@ impl Value {
         superclass: Option<Gc<Object>>,
         interfaces: Vec<Gc<Object>>,
         methods: HashMap<String, Vec<Value>>,
+        static_methods: HashMap<String, Vec<Value>>,
+        statics: HashMap<String, Value>,
         private_members: HashSet<String>,
     ) -> Self {
         Self::new_heap_object(Object::Class {
@@ -175,6 +177,8 @@ impl Value {
             superclass,
             interfaces,
             methods,
+            static_methods,
+            statics,
             private_members,
         })
     }
@@ -863,6 +867,35 @@ impl Value {
                     })
                 }
 
+                // `NomClasse.champ` (champ statique) / `NomClasse.methode`
+                // (méthode statique, sans appel : la valeur EST la closure,
+                // il n'y a pas de receveur à lier contrairement à une
+                // méthode d'instance). Ni l'un ni l'autre n'est hérité.
+                Object::Class {
+                    statics,
+                    static_methods,
+                    ..
+                } => {
+                    if let Some(value) = statics.get(name) {
+                        return Ok(value.clone());
+                    }
+
+                    if let Some(overloads) = static_methods.get(name) {
+                        if overloads.len() == 1 {
+                            return Ok(overloads[0].clone());
+                        }
+
+                        return Err(RuntimeError::AmbiguousMethod {
+                            name: name.to_string(),
+                        });
+                    }
+
+                    Err(RuntimeError::ObjectFieldNotFound {
+                        name: name.to_string(),
+                        suggestion: None,
+                    })
+                }
+
                 Object::EnumVariant { methods, .. } => {
                     if let Some(overloads) = methods.get(name) {
                         if overloads.len() == 1 {
@@ -957,6 +990,27 @@ impl Value {
                         fields.insert(name.to_string(), value);
                         Ok(())
                     }
+
+                    // `NomClasse.champ = valeur` : champ statique, partagé
+                    // par la classe (dynamique comme un champ d'instance —
+                    // on peut aussi en ajouter un nouveau, non déclaré).
+                    // On refuse en revanche d'écraser une méthode statique.
+                    Object::Class {
+                        statics,
+                        static_methods,
+                        ..
+                    } => {
+                        if static_methods.contains_key(name) {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: name.to_string(),
+                                suggestion: None,
+                            });
+                        }
+
+                        statics.insert(name.to_string(), value);
+                        Ok(())
+                    }
+
                     _ => Err(RuntimeError::NotObject),
                 }
             }

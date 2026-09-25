@@ -1,8 +1,5 @@
-enum Color {
-    Red,
-    Green,
-    Blue
-}
+from shapes import Compteur
 
-let c = Color.Blue
-println(c);
+let c = Compteur.creer();
+c.incrementer();
+print(Compteur.total);   // 2

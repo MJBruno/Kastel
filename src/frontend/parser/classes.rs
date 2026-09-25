@@ -34,12 +34,13 @@ impl Parser {
         let mut methods = Vec::new();
 
         while !self.check(TokenKind::RightBrace) && !self.is_at_end() {
-            // Modificateur optionnel : `public` / `private`.
-            let visibility = self.parse_member_visibility();
+            // Modificateurs optionnels : `public`/`private` (visibilité) et
+            // `static` (portée), dans n'importe quel ordre.
+            let (visibility, is_static) = self.parse_member_modifiers();
 
-            // `private let age: int = 0;`
+            // `private let age: int = 0;` / `static let compteur: int = 0;`
             if self.check(TokenKind::Let) {
-                let field = self.parse_class_field(visibility)?;
+                let field = self.parse_class_field(visibility, is_static)?;
 
                 if fields.iter().any(|existing| existing.name == field.name) {
                     return Err(ParserError {
@@ -73,6 +74,17 @@ impl Parser {
                         "Le constructeur s'appelle désormais '{CONSTRUCTOR_NAME}' : \
                          renommez 'func {LEGACY_CONSTRUCTOR_NAME}(...)' en \
                          'func {CONSTRUCTOR_NAME}(...)'"
+                    ),
+                    line: method_name.line,
+                    column: method_name.column,
+                });
+            }
+
+            // Un constructeur n'a pas de sens sans instance à construire.
+            if is_static && method_name.lexeme == CONSTRUCTOR_NAME {
+                return Err(ParserError {
+                    message: format!(
+                        "Le constructeur '{CONSTRUCTOR_NAME}' ne peut pas être 'static'"
                     ),
                     line: method_name.line,
                     column: method_name.column,
@@ -119,6 +131,7 @@ impl Parser {
             methods.push(FunctionMethod {
                 name: method_name.lexeme,
                 visibility,
+                is_static,
                 params,
                 param_types,
                 return_type,
@@ -131,9 +144,10 @@ impl Parser {
             "'}' attendu après le corps de la classe",
         )?;
 
-        // La visibilité est portée par le NOM de la méthode (comme la VM la
-        // stocke) : toutes les surcharges d'un même nom doivent donc être
-        // aussi publiques, ou toutes privées.
+        // La visibilité (et le caractère `static`) sont portés par le NOM de
+        // la méthode (comme la VM les stocke) : toutes les surcharges d'un
+        // même nom doivent donc partager la même visibilité et la même
+        // portée.
         for (index, method) in methods.iter().enumerate() {
             if methods[..index]
                 .iter()
@@ -142,6 +156,21 @@ impl Parser {
                 return Err(ParserError {
                     message: format!(
                         "Les surcharges de la méthode '{}' doivent avoir la même visibilité",
+                        method.name
+                    ),
+                    line: name.line,
+                    column: name.column,
+                });
+            }
+
+            if methods[..index]
+                .iter()
+                .any(|other| other.name == method.name && other.is_static != method.is_static)
+            {
+                return Err(ParserError {
+                    message: format!(
+                        "Les surcharges de la méthode '{}' doivent être toutes 'static', ou \
+                         toutes non-'static'",
                         method.name
                     ),
                     line: name.line,
@@ -166,32 +195,69 @@ impl Parser {
     // MEMBRES DE CLASSE : VISIBILITÉ ET CHAMPS
     // ============================================================
 
-    /// Lit un modificateur `public` / `private` s'il est suivi de `let` ou de
-    /// `func`. Ce sont des mots-clés CONTEXTUELS : hors du corps d'une classe
-    /// (ou sans `let`/`func` derrière), `public` et `private` restent de
-    /// simples identifiants et aucun programme existant ne casse.
-    fn parse_member_visibility(&mut self) -> Visibility {
-        let is_modifier = self.check(TokenKind::Identifier)
-            && matches!(self.peek().lexeme.as_str(), "public" | "private")
-            && (self.check_next(TokenKind::Let) || self.check_next(TokenKind::Function));
+    /// Lit les modificateurs `public`/`private` (visibilité) et `static`
+    /// (portée) d'un membre, dans n'importe quel ordre, chacun facultatif.
+    /// Ce sont des mots-clés CONTEXTUELS, comme `public`/`private` déjà :
+    /// hors du corps d'une classe (ou sans `let`/`func` au bout de la
+    /// séquence de modificateurs), ils restent de simples identifiants et
+    /// aucun programme existant ne casse.
+    fn parse_member_modifiers(&mut self) -> (Visibility, bool) {
+        let mut visibility = Visibility::Public;
+        let mut is_static = false;
 
-        if !is_modifier {
-            return Visibility::Public;
+        // Au plus deux modificateurs ont un sens ("public static" /
+        // "static private" / ...) : un troisième serait forcément une
+        // répétition, donc plus un modificateur valide.
+        for _ in 0..2 {
+            if !self.check(TokenKind::Identifier) {
+                break;
+            }
+
+            let lexeme = self.peek().lexeme.clone();
+
+            if !matches!(lexeme.as_str(), "public" | "private" | "static") {
+                break;
+            }
+
+            // Ce mot n'est un modificateur que s'il est directement suivi de
+            // 'let'/'func', ou d'un second modificateur lui-même suivi de
+            // 'let'/'func'.
+            let followed_by_member_start = self.check_next(TokenKind::Let)
+                || self.check_next(TokenKind::Function)
+                || (self.current + 2 < self.tokens.len()
+                    && self.tokens[self.current + 1].kind == TokenKind::Identifier
+                    && matches!(
+                        self.tokens[self.current + 1].lexeme.as_str(),
+                        "public" | "private" | "static"
+                    )
+                    && matches!(
+                        self.tokens[self.current + 2].kind,
+                        TokenKind::Let | TokenKind::Function
+                    ));
+
+            if !followed_by_member_start {
+                break;
+            }
+
+            match lexeme.as_str() {
+                "static" => is_static = true,
+                "private" => visibility = Visibility::Private,
+                "public" => visibility = Visibility::Public,
+                _ => unreachable!(),
+            }
+
+            self.advance();
         }
 
-        let visibility = if self.peek().lexeme == "private" {
-            Visibility::Private
-        } else {
-            Visibility::Public
-        };
-
-        self.advance();
-
-        visibility
+        (visibility, is_static)
     }
 
     /// `let nom: type = valeur;` (annotation et valeur optionnelles).
-    fn parse_class_field(&mut self, visibility: Visibility) -> Result<ClassField, ParserError> {
+    fn parse_class_field(
+        &mut self,
+        visibility: Visibility,
+        is_static: bool,
+    ) -> Result<ClassField, ParserError> {
         self.consume(TokenKind::Let, "'let' attendu")?;
 
         let name = self.consume(TokenKind::Identifier, "Nom de champ attendu après 'let'")?;
@@ -208,6 +274,7 @@ impl Parser {
         Ok(ClassField {
             name: name.lexeme,
             visibility,
+            is_static,
             type_annotation,
             initializer,
             line: name.line,
@@ -215,7 +282,8 @@ impl Parser {
         })
     }
 
-    /// Transforme les valeurs initiales des champs en méthode cachée :
+    /// Transforme les valeurs initiales des champs D'INSTANCE en méthode
+    /// cachée :
     ///
     /// ```text
     /// private let age: int = 0;
@@ -228,6 +296,10 @@ impl Parser {
     /// déclare un `initialize`, en hérite, ou utilise le constructeur par
     /// défaut implicite. Le nom contient celui de la classe pour qu'une
     /// classe dérivée ne masque pas les initialiseurs de sa base.
+    ///
+    /// Les champs `static` n'ont PAS de `this` : leur valeur initiale est
+    /// évaluée directement par `compile_class`, une seule fois, à la
+    /// déclaration de la classe (voir `compiler::statements::compile_class`).
     fn desugar_field_initializers(
         class_name: &str,
         fields: &[ClassField],
@@ -235,6 +307,7 @@ impl Parser {
     ) {
         let initializers: Vec<Statement> = fields
             .iter()
+            .filter(|field| !field.is_static)
             .filter_map(|field| {
                 let value = field.initializer.clone()?;
 
@@ -259,6 +332,7 @@ impl Parser {
         methods.push(FunctionMethod {
             name: format!("{FIELD_INITIALIZER_PREFIX}{class_name}"),
             visibility: Visibility::Private,
+            is_static: false,
             params: Vec::new(),
             param_types: Vec::new(),
             return_type: None,
@@ -439,6 +513,7 @@ impl Parser {
                 methods.push(FunctionMethod {
                     name: method_name.lexeme,
                     visibility: Visibility::Public,
+                    is_static: false,
                     params,
                     param_types,
                     return_type,
