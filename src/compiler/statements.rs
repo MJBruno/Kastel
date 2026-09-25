@@ -495,7 +495,8 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name) {
+        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name)
+        {
             if let Some(global) = self.globals.borrow().get(name) {
                 if !global.native {
                     return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
@@ -551,11 +552,11 @@ impl Compiler {
 
             self.emit_constant_op(OpCode::DefineGlobal, name_constant);
         } else {
-            let slot = self
-                .context
-                .borrow_mut()
-                .locals
-                .declare_local(name, self.scope_depth, true)?;
+            let slot =
+                self.context
+                    .borrow_mut()
+                    .locals
+                    .declare_local(name, self.scope_depth, true)?;
 
             self.context
                 .borrow_mut()
