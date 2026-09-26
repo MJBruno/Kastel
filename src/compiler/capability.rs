@@ -61,6 +61,36 @@ impl Capability {
         }
     }
 
+    /// Nom de la méthode d'instance qu'une CLASSE (pas un `TypeParam`) peut
+    /// définir pour surcharger l'opérateur correspondant (`class Money {
+    /// func add(other: Money) -> Money { ... } }` rend `a + b` valide entre
+    /// deux `Money`). `None` pour `Eq`/`Ord` : l'égalité structurelle est
+    /// déjà universelle, et l'ordre (`<`, `<=`, `>`, `>=`) demande une
+    /// convention d'appel différente (une seule méthode pour quatre
+    /// opérateurs), hors du périmètre de cette surcharge un-opérateur/une-
+    /// méthode.
+    ///
+    /// Implémenter une interface portant le même nom que la capability
+    /// (ex. `interface Add { func add(other: Money) -> Money; }`) est une
+    /// pure convention de lisibilité pour l'utilisateur Kastel : seule la
+    /// présence de la méthode compte pour la résolution de l'opérateur, pas
+    /// le nom de l'interface.
+    pub fn operator_method_name(self) -> Option<&'static str> {
+        match self {
+            Self::Add => Some("add"),
+            Self::Sub => Some("sub"),
+            Self::Mul => Some("mul"),
+            Self::Div => Some("div"),
+            Self::Mod => Some("mod"),
+            Self::BitAnd => Some("bitand"),
+            Self::BitOr => Some("bitor"),
+            Self::BitXor => Some("bitxor"),
+            Self::ShiftLeft => Some("shl"),
+            Self::ShiftRight => Some("shr"),
+            Self::Eq | Self::Ord => None,
+        }
+    }
+
     pub fn from_operator(operator: &BinaryOp) -> Option<Self> {
         match operator {
             BinaryOp::Add => Some(Self::Add),

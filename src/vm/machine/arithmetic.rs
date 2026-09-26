@@ -1,13 +1,109 @@
 use super::VirtualMachine;
 
 use crate::error::runtime_error::RuntimeError;
+use crate::runtime::object::Object;
 use crate::runtime::value::{ComparisonOp, NumericOp, Value};
 
 impl VirtualMachine {
+    /// Si `receiver` est une instance dont la classe définit une méthode
+    /// `method_name(other)` (surcharge d'opérateur — ex. `func add(other:
+    /// Money) -> Money` pour `+`), déclenche l'appel `receiver.method_name
+    /// (argument)` en poussant l'appel sur la pile et renvoie `Ok(true)` :
+    /// la boucle d'exécution principale continue naturellement dans le
+    /// nouveau frame, exactement comme pour un appel de méthode explicite
+    /// (`OP_INVOKE`) — cette fonction ne doit alors RIEN pousser d'autre.
+    /// Renvoie `Ok(false)` si `receiver` n'a pas de méthode correspondante :
+    /// l'appelant continue avec la sémantique numérique/native habituelle.
+    ///
+    /// Le vérificateur de types (`binary_type`) a déjà validé, à la
+    /// compilation, l'existence et la compatibilité de cette méthode pour
+    /// les DEUX opérandes concrets : cette fonction ne fait que reproduire
+    /// la même résolution au niveau de la VM, qui reste dynamiquement
+    /// typée et ignore tout des types statiques.
+    fn dispatch_operator_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        argument: Value,
+    ) -> Result<bool, RuntimeError> {
+        let Value::Object(handle) = receiver else {
+            return Ok(false);
+        };
+
+        // Deux représentations distinctes portent des méthodes en Kastel :
+        // une classe classique (`Object::Instance` + méthodes sur
+        // `Object::Class`, résolues via `find_class_method_from`) et un
+        // variant d'enum (`Object::EnumVariant`, méthodes stockées
+        // directement sur le variant — voir `op_invoke_method`, cas 10).
+        // Le vérificateur de types accepte les deux pour une surcharge
+        // d'opérateur (`find_methods_for_type` ne fait pas la différence),
+        // donc la VM doit aussi savoir résoudre les deux, sous peine de
+        // faire échouer à l'exécution un programme pourtant bien typé.
+        enum Resolved {
+            None,
+            Method(Value),
+        }
+
+        let resolved = {
+            let object = handle.borrow();
+
+            match &*object {
+                Object::Instance {
+                    class: Some(class), ..
+                } => match Self::find_class_method_from(class.clone(), method_name, 1) {
+                    Some(method) => Resolved::Method(method),
+                    None => Resolved::None,
+                },
+
+                Object::EnumVariant { methods, .. } => {
+                    let found = methods.get(method_name).and_then(|overloads| {
+                        overloads.iter().find(|value| {
+                            matches!(
+                                value,
+                                Value::Object(method_handle)
+                                    if matches!(
+                                        &*method_handle.borrow(),
+                                        Object::Closure(closure) if closure.function.arity == 2
+                                    )
+                            )
+                        })
+                    });
+
+                    match found {
+                        Some(method) => Resolved::Method(method.clone()),
+                        None => Resolved::None,
+                    }
+                }
+
+                _ => Resolved::None,
+            }
+        };
+
+        let method = match resolved {
+            Resolved::Method(method) if matches!(&method, Value::Object(handle) if matches!(&*handle.borrow(), Object::Closure(_))) => {
+                method
+            }
+            Resolved::Method(_) | Resolved::None => return Ok(false),
+        };
+
+        self.ensure_member_access(receiver, method_name)?;
+
+        self.push(method);
+        self.push(receiver.clone());
+        self.push(argument);
+        self.execute_call(2)?;
+
+        Ok(true)
+    }
+
     #[inline]
     pub(crate) fn add(&mut self) -> Result<(), RuntimeError> {
         let b = self.pop()?;
         let a = self.pop()?;
+
+        if self.dispatch_operator_method(&a, "add", b.clone())? {
+            return Ok(());
+        }
 
         let result = match (a.as_string_value(), b.as_string_value()) {
             (Some(a), Some(b)) => Value::new_string(format!("{a}{b}")),
@@ -25,6 +121,18 @@ impl VirtualMachine {
         let b = self.pop()?;
         let a = self.pop()?;
 
+        let method_name = match op {
+            NumericOp::Add => "add",
+            NumericOp::Subtract => "sub",
+            NumericOp::Multiply => "mul",
+            NumericOp::Divide => "div",
+            NumericOp::Modulo => "mod",
+        };
+
+        if self.dispatch_operator_method(&a, method_name, b.clone())? {
+            return Ok(());
+        }
+
         self.push(Value::binary_numeric_op(a, b, op)?);
 
         Ok(())
@@ -41,8 +149,22 @@ impl VirtualMachine {
 
     #[inline]
     pub(crate) fn bitwise_binary(&mut self, op: u8) -> Result<(), RuntimeError> {
-        let b = Self::to_bitwise_int(&self.pop()?)?;
-        let a = Self::to_bitwise_int(&self.pop()?)?;
+        let b = self.pop()?;
+        let a = self.pop()?;
+
+        let method_name = match op {
+            0 => "bitand",
+            1 => "bitor",
+            2 => "bitxor",
+            _ => return Err(RuntimeError::InvalidFunction),
+        };
+
+        if self.dispatch_operator_method(&a, method_name, b.clone())? {
+            return Ok(());
+        }
+
+        let a = Self::to_bitwise_int(&a)?;
+        let b = Self::to_bitwise_int(&b)?;
 
         let result = match op {
             0 => a & b,
@@ -69,8 +191,17 @@ impl VirtualMachine {
 
     #[inline]
     pub(crate) fn shift(&mut self, left: bool) -> Result<(), RuntimeError> {
-        let b = Self::to_bitwise_int(&self.pop()?)?;
-        let a = Self::to_bitwise_int(&self.pop()?)?;
+        let b = self.pop()?;
+        let a = self.pop()?;
+
+        let method_name = if left { "shl" } else { "shr" };
+
+        if self.dispatch_operator_method(&a, method_name, b.clone())? {
+            return Ok(());
+        }
+
+        let a = Self::to_bitwise_int(&a)?;
+        let b = Self::to_bitwise_int(&b)?;
 
         if !(0..64).contains(&b) {
             return Err(RuntimeError::InvalidShiftAmount);

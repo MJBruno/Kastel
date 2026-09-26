@@ -2791,9 +2791,22 @@ impl TypeChecker {
             let right_is_generic = matches!(right_type, Type::TypeParam(_));
 
             if left_is_generic || right_is_generic {
-                let same_generic = matches!((&left_type, &right_type), (Type::TypeParam(left), Type::TypeParam(right)) if left == right);
+                // Deux TypeParam ne sont compatibles que s'ils désignent le
+                // MÊME paramètre (`T` et `T`, jamais `T` et `U`, même si les
+                // deux supportent la capability : rien ne garantit qu'ils
+                // seront instanciés au même type concret). Un TypeParam
+                // associé à un type CONCRET est compatible dès lors que ce
+                // type concret supporte lui-même la capability : c'est
+                // exactement ce que `type_supports_capability` vérifie déjà
+                // ci-dessous, donc aucune contrainte d'identité n'est
+                // nécessaire dans ce cas (`value * 2` avec `value: T` et
+                // `T: Mul` est valide si `int` supporte `Mul`).
+                let compatible = match (&left_type, &right_type) {
+                    (Type::TypeParam(left), Type::TypeParam(right)) => left == right,
+                    _ => true,
+                };
 
-                if !same_generic
+                if !compatible
                     || !self.type_supports_capability(&left_type, capability)
                     || !self.type_supports_capability(&right_type, capability)
                 {
@@ -2804,11 +2817,16 @@ impl TypeChecker {
                     });
                 }
 
+                // Le résultat conserve le TypeParam (côté générique) plutôt
+                // que le type concret éventuel de l'autre opérande, pour
+                // que l'appelant continue de raisonner sur `T`.
+                let generic_result = if left_is_generic { left_type } else { right_type };
+
                 return Ok(match operator {
                     BinaryOp::Add
                     | BinaryOp::Subtract
                     | BinaryOp::Multiply
-                    | BinaryOp::Modulo => left_type,
+                    | BinaryOp::Modulo => generic_result,
                     BinaryOp::Divide => Type::Float,
                     BinaryOp::Equal
                     | BinaryOp::NotEqual
@@ -2821,9 +2839,46 @@ impl TypeChecker {
                     | BinaryOp::BitOr
                     | BinaryOp::BitXor
                     | BinaryOp::ShiftLeft
-                    | BinaryOp::ShiftRight => left_type,
+                    | BinaryOp::ShiftRight => generic_result,
                     BinaryOp::And | BinaryOp::Or => unreachable!(),
                 });
+            }
+
+            // Aucun opérande n'est un TypeParam ici (le bloc ci-dessus a
+            // déjà `return`né dans ce cas) : surcharge d'opérateur par une
+            // CLASSE utilisateur (`Money + Money` via `func add(other:
+            // Money) -> Money`). La capability ne sert ici qu'à retrouver
+            // le nom conventionnel de la méthode ; l'interface éventuelle
+            // (`Money : Add`) n'intervient pas dans cette résolution.
+            if let Some(method_name) = capability.operator_method_name()
+                && matches!(left_type, Type::Named(_) | Type::Generic { .. })
+            {
+                let candidates: Vec<_> = self
+                    .find_methods_for_type(&left_type, method_name)
+                    .into_iter()
+                    .filter(|signature| signature.params.len() == 1)
+                    .collect();
+
+                if !candidates.is_empty()
+                    && let Some(class_name) = Self::type_name(&left_type)
+                {
+                    self.check_member_visibility(&class_name, method_name)?;
+                }
+
+                if let Some(signature) = candidates
+                    .iter()
+                    .find(|signature| self.are_assignable(&right_type, &signature.params[0]))
+                {
+                    return Ok(signature.return_type.as_ref().clone());
+                }
+
+                if !candidates.is_empty() {
+                    return Err(CompileError::InvalidBinaryOperation {
+                        operator: binary_symbol(operator).to_string(),
+                        left: left_type.to_string(),
+                        right: right_type.to_string(),
+                    });
+                }
             }
         }
 
@@ -3047,7 +3102,7 @@ impl TypeChecker {
                     }
                 }
 
-                let _ = candidate
+                return candidate
                     .map(Type::Function)
                     .ok_or_else(|| CompileError::InvalidMemberAccess {
                         name: name.to_string(),
@@ -4776,6 +4831,56 @@ func identity<T: NotAnInterface>(value: T) -> T {
         .is_err());
     }
 
+    /// Régression : `member_type` jetait le résultat du membre trouvé pour
+    /// un `T` contraint par une interface (`let _ = candidate...`) et
+    /// retombait toujours sur `Ok(Type::Dynamic)`. Conséquence : un appel de
+    /// méthode INEXISTANTE sur l'interface n'était jamais rejeté, et un
+    /// appel valide perdait toute vérification d'arité/type ainsi que son
+    /// type de retour réel.
+    #[test]
+    fn generic_interface_constraint_rejects_unknown_member_and_checks_arity() {
+        // Méthode absente de l'interface : doit être une erreur certaine,
+        // pas un `Dynamic` permissif.
+        assert!(check(
+            r#"
+interface Printable {
+    func render() -> str;
+}
+
+func show<T: Printable>(value: T) -> str {
+    return value.oops();
+}
+"#,
+        )
+        .is_err());
+
+        // Appel valide mais avec une arité incorrecte : doit être rejeté
+        // comme pour n'importe quelle autre méthode typée.
+        assert!(check(
+            r#"
+interface Printable {
+    func render() -> str;
+}
+
+func show<T: Printable>(value: T) -> str {
+    return value.render("extra");
+}
+"#,
+        )
+        .is_err());
+
+        // Sans aucune contrainte, le compilateur ne connaît aucun membre de
+        // `T` : l'accès doit être rejeté plutôt que silencieusement permis.
+        assert!(check(
+            r#"
+func show<T>(value: T) -> str {
+    return value.render();
+}
+"#,
+        )
+        .is_err());
+    }
+
     #[test]
     fn generic_operator_constraints_use_capabilities() {
         let ok = check(
@@ -4820,6 +4925,144 @@ let x: int = add(true, false);
 func add<T>(a: T, b: T) -> T {
     return a + b;
 }
+"#,
+        )
+        .is_err());
+    }
+
+    /// Régression : `T op <concret>` (par ex. `value * 2` avec
+    /// `value: T` et `T: Mul`) était rejeté d'office car le vérificateur
+    /// exigeait que les DEUX opérandes soient le même TypeParam nommé,
+    /// alors que `type_supports_capability` vérifie déjà que le type
+    /// concret supporte la capability. Seuls deux TypeParam DIFFÉRENTS
+    /// (`T` et `U`) doivent rester rejetés, faute de garantie qu'ils
+    /// partagent le même type concret à l'instanciation.
+    #[test]
+    fn generic_capability_constraint_allows_concrete_operand() {
+        let ok = check(
+            r#"
+func double<T: Mul>(value: T) -> T {
+    return value * 2;
+}
+
+let a = 1;
+let b = 2;
+let smaller: bool = a < b;
+let value: int = double<int>(123);
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        // Le type concret ne supporte pas la capability : toujours rejeté.
+        assert!(check(
+            r#"
+func mask<T: BitAnd>(value: T) -> T {
+    return value & true;
+}
+"#,
+        )
+        .is_err());
+
+        // Deux TypeParam DIFFÉRENTS restent incompatibles même si les
+        // deux supportent la capability.
+        assert!(check(
+            r#"
+func combine<T: Add, U: Add>(a: T, b: U) -> T {
+    return a + b;
+}
+"#,
+        )
+        .is_err());
+    }
+
+    /// Régression : `binary_type` ne connaissait AUCUNE forme de surcharge
+    /// d'opérateur pour les classes utilisateur — `Money + Money` était
+    /// rejeté même quand `Money` définit `func add(other: Money) -> Money`,
+    /// puisque `Capability::Add` ne concernait jusqu'ici que les
+    /// primitifs et les `TypeParam`. Le nom de l'interface éventuellement
+    /// implémentée (`Money : Add`) ne doit jouer AUCUN rôle : seule la
+    /// méthode `add` compte.
+    #[test]
+    fn class_operator_method_overloads_binary_operator() {
+        let ok = check(
+            r#"
+interface Add {
+    func add(other: Money) -> Money;
+}
+
+class Money : Add {
+    let amount: int;
+
+    func initialize(amount: int) {
+        this.amount = amount;
+    }
+
+    func add(other: Money) -> Money {
+        return new Money(this.amount + other.amount);
+    }
+}
+
+let a = new Money(100);
+let b = new Money(50);
+
+let total: Money = a + b;
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        // La méthode marche sans même passer par une interface nommée
+        // "Add" : seule sa présence/signature compte.
+        let ok_without_interface = check(
+            r#"
+class Money {
+    let amount: int;
+
+    func initialize(amount: int) {
+        this.amount = amount;
+    }
+
+    func add(other: Money) -> Money {
+        return new Money(this.amount + other.amount);
+    }
+}
+
+let total: Money = new Money(100) + new Money(50);
+"#,
+        );
+        assert!(ok_without_interface.is_ok(), "{:?}", ok_without_interface.err());
+
+        // Pas de méthode `add` du tout : toujours rejeté.
+        assert!(check(
+            r#"
+class Point {
+    let x: int;
+
+    func initialize(x: int) {
+        this.x = x;
+    }
+}
+
+let total = new Point(1) + new Point(2);
+"#,
+        )
+        .is_err());
+
+        // Méthode `add` présente mais argument incompatible : rejeté.
+        assert!(check(
+            r#"
+class Money {
+    let amount: int;
+
+    func initialize(amount: int) {
+        this.amount = amount;
+    }
+
+    func add(other: Money) -> Money {
+        return new Money(this.amount + other.amount);
+    }
+}
+
+let total = new Money(100) + "50";
 "#,
         )
         .is_err());

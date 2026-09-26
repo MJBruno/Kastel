@@ -13,6 +13,7 @@ class Money : Add {
         return this.amount + other.amount;
     }
 
+    
 }
 
 
