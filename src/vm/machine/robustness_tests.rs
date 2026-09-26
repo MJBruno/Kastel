@@ -1330,3 +1330,95 @@ let sum = a + b;
     assert_eq!(value.1, "one");
     assert_eq!(value.2, "other");
 }
+
+
+#[test]
+fn user_iterator_implements_runtime_iterator_behaviour() {
+    let (vm, result) = run_script(
+        r#"
+class Counter: Iterator<int> {
+    let current: int;
+    let stop: int;
+
+    func initialize(stop: int) {
+        this.current = 0;
+        this.stop = stop;
+    }
+
+    func next() -> int {
+        let value = this.current;
+        this.current = this.current + 1;
+        return value;
+    }
+
+    func has_next() -> bool {
+        return this.current < this.stop;
+    }
+}
+
+let iterator = new Counter(5);
+let sum = 0;
+for value in iterator {
+    sum = sum + value;
+}
+
+let values = new Counter(5)
+    .map(func(value) { return value * 2; })
+    .filter(func(value) { return value >= 4; })
+    .take(2)
+    .collect();
+
+let abstract_iterator: Iterator<int> = new Counter(3);
+let abstract_values = abstract_iterator
+    .take(2)
+    .collect();
+
+let count = values.size();
+let first = values[0];
+let second = values[1];
+let abstract_count = abstract_values.size();
+let abstract_first = abstract_values[0];
+"#,
+    );
+
+    result.unwrap();
+
+    assert_eq!(integer(global(&vm, "sum")), 10);
+    assert_eq!(integer(global(&vm, "count")), 2);
+    assert_eq!(integer(global(&vm, "first")), 4);
+    assert_eq!(integer(global(&vm, "second")), 6);
+    assert_eq!(integer(global(&vm, "abstract_count")), 2);
+    assert_eq!(integer(global(&vm, "abstract_first")), 0);
+}
+
+#[test]
+fn user_iterable_can_delegate_to_an_existing_iterator() {
+    let (vm, result) = run_script(
+        r#"
+class Bag: Iterable<int> {
+    let values: List<int>;
+
+    func initialize() {
+        this.values = [1, 2, 3];
+    }
+
+    func iter() -> Iterator<int> {
+        return this.values.iter();
+    }
+}
+
+let iterable: Iterable<int> = new Bag();
+let iterator = iterable.iter();
+let mapped = iterator.map(func(value) { return value * 2; }).collect();
+let mapped_first = mapped[0];
+let sum = 0;
+for value in iterable {
+    sum = sum + value;
+}
+"#,
+    );
+
+    result.unwrap();
+    assert_eq!(integer(global(&vm, "sum")), 6);
+    assert_eq!(integer(global(&vm, "mapped_first")), 2);
+}

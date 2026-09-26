@@ -94,6 +94,10 @@ pub enum CompileError {
         name: String,
     },
 
+    InvalidIterable {
+        found: String,
+    },
+
     /// Incohérence interne du compilateur (ex. pile de boucles
     /// désynchronisée) — ne devrait jamais se produire si le compilateur
     /// est correct, mais on préfère un message d'erreur clair à un panic
@@ -336,6 +340,10 @@ impl std::fmt::Display for CompileError {
 
             CompileError::InvalidMemberAccess { name } => {
                 write!(f, "Accès de membre invalide : '{name}'")
+            }
+
+            CompileError::InvalidIterable { found } => {
+                write!(f, "La valeur de type '{found}' n'est pas itérable")
             }
 
             CompileError::InternalCompilerError(message) => {
@@ -762,6 +770,14 @@ impl CompileError {
                 Diagnostic::new(format!("accès de membre invalide : '{name}'"), 0, 0)
                     .with_len(name.len())
             }
+
+            CompileError::InvalidIterable { found } => Diagnostic::new(
+                "valeur non itérable",
+                0,
+                0,
+            )
+            .with_found(found.as_str())
+            .with_help("implémentez `Iterator<T>` ou `Iterable<T>`"),
 
             CompileError::BreakOutsideLoop => {
                 Diagnostic::new("'break' en dehors d'une boucle", 0, 0)

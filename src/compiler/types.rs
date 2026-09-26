@@ -444,6 +444,27 @@ impl Type {
         }
     }
 
+    /// Type réellement produit par le protocole d'itération.
+    /// Il diffère de `element_type()` pour les dictionnaires (les clés sont
+    /// parcourues) et pour les ranges (la VM produit des entiers).
+    pub fn iterator_element_type(&self) -> Type {
+        match self {
+            Type::Array(element) | Type::Set(element) => (**element).clone(),
+            Type::ArrayDynamic | Type::SetDynamic => Type::Dynamic,
+            Type::Tuple(elements) => elements
+                .iter()
+                .cloned()
+                .reduce(|left, right| left.merge(&right))
+                .unwrap_or(Type::Dynamic),
+            Type::TupleDynamic => Type::Dynamic,
+            Type::Dict(key, _) => (**key).clone(),
+            Type::DictDynamic => Type::Dynamic,
+            Type::Str => Type::Str,
+            Type::Range => Type::Int,
+            _ => Type::Dynamic,
+        }
+    }
+
     /// Nom de remplacement si `name` est une méthode SUPPRIMÉE de l'API
     /// standard des collections, pour un récepteur de ce type.
     pub fn renamed_member(&self, name: &str) -> Option<&'static str> {
@@ -478,7 +499,7 @@ impl Type {
         }
     }
 
-    fn is_standard_collection(&self) -> bool {
+    pub(crate) fn is_standard_collection(&self) -> bool {
         matches!(
             self,
             Type::Array(_)
@@ -521,7 +542,15 @@ impl Type {
             "size" => return method(vec![], Type::Int),
             "is_empty" => return method(vec![], Type::Bool),
             "to_string" => return method(vec![], Type::Str),
-            "iter" => return method(vec![], Type::Dynamic),
+            "iter" => {
+                return method(
+                    vec![],
+                    Type::Generic {
+                        name: "Iterator".to_string(),
+                        arguments: vec![self.iterator_element_type()],
+                    },
+                );
+            }
             _ => {}
         }
 

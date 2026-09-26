@@ -13,7 +13,20 @@ impl VirtualMachine {
     pub(crate) fn op_get_iterator(&mut self) -> Result<(), RuntimeError> {
         let value = self.pop()?;
 
-        self.push(value.to_iterator()?);
+        match value.to_iterator() {
+            Ok(iterator) => self.push(iterator),
+
+            Err(RuntimeError::NotIterable)
+                if crate::runtime::iterator::value_implements_interface(&value, "Iterable") =>
+            {
+                self.ensure_member_access(&value, "iter")?;
+                let iter_method = value.get_property("iter")?;
+                let iterator = self.invoke_sync(iter_method, &[])?;
+                self.push(iterator.to_iterator()?);
+            }
+
+            Err(error) => return Err(error),
+        }
 
         Ok(())
     }
@@ -51,6 +64,16 @@ impl VirtualMachine {
     // ============================================================
 
     fn iterator_has_next_value(&mut self, iterator: &Value) -> Result<bool, RuntimeError> {
+        if self.get_iterator_cache(iterator)?.is_some() {
+            return Ok(true);
+        }
+
+        if let Some(source) = self.external_iterator_source(iterator)? {
+            let method = source.get_property("has_next")?;
+            let result = self.invoke_sync(method, &[])?;
+            return Ok(result.is_truthy());
+        }
+
         match self.iterator_peek_value(iterator) {
             Ok(_) => Ok(true),
 
@@ -94,6 +117,25 @@ impl VirtualMachine {
     // ============================================================
     //                   NEXT WITHOUT CACHE
     // ============================================================
+
+    fn external_iterator_source(
+        &self,
+        iterator: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Value::Object(handle) = iterator else {
+            return Ok(None);
+        };
+
+        let object = handle.borrow();
+        let Object::Iterator(state) = &*object else {
+            return Ok(None);
+        };
+
+        match &state.kind {
+            IteratorKind::External { source } => Ok(Some((**source).clone())),
+            _ => Ok(None),
+        }
+    }
 
     fn iterator_next_uncached(&mut self, iterator: &Value) -> Result<Value, RuntimeError> {
         let Value::Object(handle) = iterator else {
@@ -239,6 +281,14 @@ impl VirtualMachine {
 
                 self.iterator_next_value(&source)
             }
+            // ====================================================
+            // EXTERNAL KASTEL ITERATOR
+            // ====================================================
+            IteratorKind::External { source } => {
+                let method = source.get_property("next")?;
+                self.invoke_sync(method, &[])
+            }
+
             // ====================================================
             // STRING
             // ====================================================

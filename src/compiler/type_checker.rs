@@ -283,7 +283,10 @@ impl TypeChecker {
             current_interface: false,
             expression_depth: 0,
             aliases: HashMap::new(),
-            known_interfaces: HashSet::new(),
+            known_interfaces: HashSet::from([
+                "Iterator".to_string(),
+                "Iterable".to_string(),
+            ]),
             imported_type_aliases: HashMap::new(),
             class_aliases: HashMap::new(),
             generic_params: Vec::new(),
@@ -720,8 +723,198 @@ impl TypeChecker {
         };
 
         Capability::from_name(name).is_some()
+            || matches!(name.as_str(), "Iterator" | "Iterable")
             || self.known_interfaces.contains(name)
             || self.classes.get(name).is_some_and(|info| info.is_interface)
+    }
+
+    fn builtin_iterator_interface_requirements(
+        interface_type: &Type,
+    ) -> Option<Vec<(String, FunctionType)>> {
+        let (name, arguments): (&str, &[Type]) = match interface_type {
+            Type::Generic { name, arguments } => (name.as_str(), arguments.as_slice()),
+            Type::Named(name) if name == "Iterator" || name == "Iterable" => {
+                (name.as_str(), &[])
+            }
+            _ => return None,
+        };
+
+        let element = arguments.first().cloned().unwrap_or(Type::Dynamic);
+
+        match name {
+            "Iterator" if arguments.len() <= 1 => Some(vec![
+                (
+                    "next".to_string(),
+                    FunctionType {
+                        generic_params: Vec::new(),
+                        generic_constraints: Vec::new(),
+                        params: Vec::new(),
+                        return_type: Box::new(element.clone()),
+                    },
+                ),
+                (
+                    "has_next".to_string(),
+                    FunctionType {
+                        generic_params: Vec::new(),
+                        generic_constraints: Vec::new(),
+                        params: Vec::new(),
+                        return_type: Box::new(Type::Bool),
+                    },
+                ),
+            ]),
+            "Iterable" if arguments.len() <= 1 => Some(vec![
+                (
+                    "iter".to_string(),
+                    FunctionType {
+                        generic_params: Vec::new(),
+                        generic_constraints: Vec::new(),
+                        params: Vec::new(),
+                        return_type: Box::new(Type::Generic {
+                            name: "Iterator".to_string(),
+                            arguments: vec![element.clone()],
+                        }),
+                    },
+                ),
+            ]),
+            _ => None,
+        }
+    }
+
+    fn interface_instance_for(
+        &self,
+        object_type: &Type,
+        target_name: &str,
+    ) -> Option<Type> {
+        let mut visited = HashSet::new();
+        self.interface_instance_for_inner(object_type, target_name, &mut visited)
+    }
+
+    fn interface_instance_for_inner(
+        &self,
+        object_type: &Type,
+        target_name: &str,
+        visited: &mut HashSet<String>,
+    ) -> Option<Type> {
+        let key = object_type.to_string();
+        if !visited.insert(key) {
+            return None;
+        }
+
+        let Some(name) = Self::type_name(object_type) else {
+            if let Type::TypeParam(parameter) = object_type
+                && let Some(constraints) = self.generic_constraints.get(parameter)
+            {
+                for constraint in constraints {
+                    let GenericConstraint::Interface(interface) = constraint;
+                    if let Some(found) = self.interface_instance_for_inner(
+                        interface,
+                        target_name,
+                        visited,
+                    ) {
+                        return Some(found);
+                    }
+                }
+            }
+            return None;
+        };
+
+        if name == target_name {
+            return Some(object_type.clone());
+        }
+
+        let Some(info) = self.classes.get(&name) else {
+            return None;
+        };
+
+        let substitutions = info
+            .generic_params
+            .iter()
+            .cloned()
+            .zip(Self::type_arguments(object_type))
+            .collect::<HashMap<_, _>>();
+
+        for interface in &info.interface_types {
+            let instantiated = Self::substitute_type(interface, &substitutions);
+            if let Some(found) = self.interface_instance_for_inner(
+                &instantiated,
+                target_name,
+                visited,
+            ) {
+                return Some(found);
+            }
+        }
+
+        None
+    }
+
+    fn interface_element_type(&self, object_type: &Type, interface_name: &str) -> Option<Type> {
+        let interface = self.interface_instance_for(object_type, interface_name)?;
+
+        let Type::Generic { arguments, .. } = interface else {
+            return None;
+        };
+
+        (arguments.len() == 1).then(|| arguments[0].clone())
+    }
+
+    fn iterator_element_type(&self, object_type: &Type) -> Option<Type> {
+        self.interface_element_type(object_type, "Iterator")
+    }
+
+    fn iterable_element_type(&self, object_type: &Type) -> Option<Type> {
+        self.interface_element_type(object_type, "Iterable")
+    }
+
+    fn iterator_member_type(&self, element: &Type, name: &str) -> Option<Type> {
+        let method = |params: Vec<Type>, result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                generic_constraints: Vec::new(),
+                params,
+                return_type: Box::new(result),
+            })
+        };
+
+        let iterator_type = || Type::Generic {
+            name: "Iterator".to_string(),
+            arguments: vec![element.clone()],
+        };
+
+        match name {
+            "next" | "peek" => Some(method(Vec::new(), element.clone())),
+            "has_next" => Some(method(Vec::new(), Type::Bool)),
+            "iter" => Some(method(Vec::new(), iterator_type())),
+            "take" | "skip" => Some(method(vec![Type::Int], iterator_type())),
+            "collect" | "to_list" => {
+                Some(method(Vec::new(), Type::Array(Box::new(element.clone()))))
+            }
+            "count" => Some(method(Vec::new(), Type::Int)),
+            "any" | "all" => Some(method(vec![Type::Dynamic], Type::Bool)),
+            "map" | "filter" => Some(method(vec![Type::Dynamic], iterator_type())),
+            _ => None,
+        }
+    }
+
+    fn iteration_element_type(&self, iterable_type: &Type) -> Result<Type, CompileError> {
+        if iterable_type.is_dynamic() {
+            return Ok(Type::Dynamic);
+        }
+
+        if iterable_type.is_standard_collection() {
+            return Ok(iterable_type.iterator_element_type());
+        }
+
+        if let Some(element) = self.iterator_element_type(iterable_type) {
+            return Ok(element);
+        }
+
+        if let Some(element) = self.iterable_element_type(iterable_type) {
+            return Ok(element);
+        }
+
+        Err(CompileError::InvalidIterable {
+            found: iterable_type.to_string(),
+        })
     }
 
     fn generic_constraints_map(
@@ -1095,6 +1288,16 @@ impl TypeChecker {
             };
             let key = current.to_string();
             if !visited.insert(key) {
+                continue;
+            }
+
+            if let Some(builtin) = Self::builtin_iterator_interface_requirements(&current) {
+                for (method_name, signature) in builtin {
+                    let key = format!("{method_name}/{}", signature.params.len());
+                    if seen_methods.insert(key) {
+                        result.push((method_name, signature));
+                    }
+                }
                 continue;
             }
 
@@ -1793,7 +1996,7 @@ impl TypeChecker {
                 body,
             } => {
                 let iterable_type = self.check_expression(iterable)?;
-                let element_type = iterable_type.element_type();
+                let element_type = self.iteration_element_type(&iterable_type)?;
 
                 self.push_scope();
                 self.declare(
@@ -3210,6 +3413,14 @@ impl TypeChecker {
                     return Ok(Type::Dynamic);
                 }
 
+                // Les méthodes par défaut (`map`, `filter`, `take`, ...)
+                // appartiennent au protocole Iterator, pas à Iterable.
+                if let Some(element) = self.iterator_element_type(object_type)
+                    && let Some(signature) = self.iterator_member_type(&element, name)
+                {
+                    return Ok(signature);
+                }
+
                 // Variant d'enum : `Color.Red` retourne le type instancié de
                 // l'enum, par exemple `Result<int, str>`.
                 if let Some(info) = self.classes.get(class_name)
@@ -3261,7 +3472,9 @@ impl TypeChecker {
                 let mut candidate: Option<FunctionType> = None;
 
                 for constraint in constraints {
-                    let GenericConstraint::Interface(interface) = constraint;
+                    let interface = match constraint {
+                        GenericConstraint::Interface(interface) => interface,
+                    };
 
                     let signatures = self.find_methods_for_type(interface, name);
                     if signatures.len() > 1 {
@@ -3277,6 +3490,14 @@ impl TypeChecker {
                         }
                         candidate = Some(signature);
                     }
+                }
+
+                // Les méthodes par défaut (`map`, `filter`, `take`, ...)
+                // appartiennent au protocole Iterator, pas à Iterable.
+                if let Some(element) = self.iterator_element_type(object_type)
+                    && let Some(signature) = self.iterator_member_type(&element, name)
+                {
+                    return Ok(signature);
                 }
 
                 return candidate.map(Type::Function).ok_or_else(|| {
@@ -3506,6 +3727,14 @@ impl TypeChecker {
                     .collect();
             }
             return Vec::new();
+        }
+
+        if let Some(builtin) = Self::builtin_iterator_interface_requirements(object_type) {
+            return builtin
+                .into_iter()
+                .filter(|(name, _)| name == method_name)
+                .map(|(_, signature)| signature)
+                .collect();
         }
 
         let Some(class) = self.classes.get(&name) else {
@@ -5675,4 +5904,156 @@ let other: Result<float, str> = Result.Ok;
 
         assert!(check("interface Comparable<T> { func compare(other: T) -> int; } class Number: Comparable<int> { func compare(other: int) -> int { return 0; } } let bad: Comparable<str> = new Number();").is_err());
     }
+
+    #[test]
+    fn iterator_interface_is_implementable_and_provides_default_methods() {
+        let ok = check(
+            r#"
+class Counter: Iterator<int> {
+    let current: int;
+    let stop: int;
+
+    func initialize(stop: int) {
+        this.current = 0;
+        this.stop = stop;
+    }
+
+    func next() -> int {
+        let value = this.current;
+        this.current = this.current + 1;
+        return value;
+    }
+
+    func has_next() -> bool {
+        return this.current < this.stop;
+    }
+}
+
+let iterator = new Counter(4);
+let first: int = iterator.next();
+let ready: bool = iterator.has_next();
+let peeked: int = iterator.peek();
+let mapped: Iterator<int> = iterator.map(func(value) { return value * 2; });
+let filtered: Iterator<int> = mapped.filter(func(value) { return value > 1; });
+let limited: Iterator<int> = filtered.take(2);
+let values: List<int> = limited.collect();
+
+func consume<T: Iterator<int>>(source: T) -> int {
+    let total = 0;
+    for value in source {
+        total = total + value;
+    }
+    return total;
+}
+
+let total: int = consume(new Counter(4));
+"#,
+        );
+
+        assert!(ok.is_ok(), "{:?}", ok.err());
+    }
+
+    #[test]
+    fn iterable_interface_can_produce_a_custom_iterator() {
+        let ok = check(
+            r#"
+class Bag: Iterable<int> {
+    let values: List<int>;
+
+    func initialize() {
+        this.values = [1, 2, 3];
+    }
+
+    func iter() -> Iterator<int> {
+        return this.values.iter();
+    }
+}
+
+let bag = new Bag();
+let sum = 0;
+for value in bag {
+    sum = sum + value;
+}
+let doubled: List<int> = bag.iter().map(func(value) { return value * 2; }).collect();
+"#,
+        );
+
+        assert!(ok.is_ok(), "{:?}", ok.err());
+    }
+
+    #[test]
+    fn iterable_does_not_implicitly_expose_iterator_adapters() {
+        let result = check(
+            r#"
+class Bag: Iterable<int> {
+    func initialize() {
+    }
+
+    func iter() -> Iterator<int> {
+        return [1, 2, 3].iter();
+    }
+}
+
+let bag = new Bag();
+let iterator = bag.iter();
+let mapped: Iterator<int> = iterator.map(func(value) { return value * 2; });
+"#,
+        );
+
+        assert!(result.is_ok(), "{result:?}");
+
+        let direct = check(
+            r#"
+class Bag: Iterable<int> {
+}
+
+let bag = new Bag();
+let mapped = bag.map(func(value) { return value; });
+"#,
+        );
+
+        assert!(direct.is_err(), "Iterable ne doit pas être un Iterator");
+    }
+
+    #[test]
+    fn standard_iterator_types_match_runtime_elements() {
+        let ok = check(
+            r#"
+let numbers: Iterator<int> = range(0, 3).iter();
+let keys: Iterator<str> = {"a": 1, "b": 2}.iter();
+let list_values: Iterator<int> = [1, 2, 3].iter();
+"#,
+        );
+
+        assert!(ok.is_ok(), "{ok:?}");
+    }
+
+    fn is_invalid_iterable(result: &Result<(), CompileError>) -> bool {
+        let mut error = match result {
+            Err(error) => error,
+            Ok(()) => return false,
+        };
+
+        while let CompileError::WithLocation { source, .. } = error {
+            error = &**source;
+        }
+
+        matches!(error, CompileError::InvalidIterable { .. })
+    }
+
+    #[test]
+    fn for_rejects_a_known_non_iterable_class() {
+        let result = check(
+            r#"
+class NotIterable {
+}
+
+for value in new NotIterable() {
+}
+"#,
+        );
+
+        assert!(is_invalid_iterable(&result), "{result:?}");
+    }
+
 }

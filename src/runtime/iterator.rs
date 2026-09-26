@@ -68,6 +68,11 @@ pub enum IteratorKind {
         source: Box<Value>,
         remaining: usize,
     },
+
+    /// Adaptateur vers un objet Kastel qui implémente `Iterator<T>`.
+    External {
+        source: Box<Value>,
+    },
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct IteratorState {
@@ -136,8 +141,75 @@ impl IteratorState {
             IteratorKind::Skip { source, .. } => {
                 visit(source);
             }
+
+            IteratorKind::External { source } => {
+                visit(source);
+            }
         }
     }
+}
+
+/// Vérifie qu'une instance implémente nominalement une interface runtime.
+/// Les interfaces parentes sont parcourues récursivement.
+pub(crate) fn value_implements_interface(value: &Value, target_name: &str) -> bool {
+    let Value::Object(handle) = value else {
+        return false;
+    };
+
+    let class = {
+        let object = handle.borrow();
+        match &*object {
+            Object::Instance { class: Some(class), .. } => class.clone(),
+            _ => return false,
+        }
+    };
+
+    class_implements_interface(&class, target_name, &mut std::collections::HashSet::new())
+}
+
+fn class_implements_interface(
+    class: &Gc<Object>,
+    target_name: &str,
+    visited: &mut std::collections::HashSet<usize>,
+) -> bool {
+    if !visited.insert(class.as_id()) {
+        return false;
+    }
+
+    let interfaces = {
+        let object = class.borrow();
+        match &*object {
+            Object::Class { interfaces, .. } => interfaces.clone(),
+            _ => return false,
+        }
+    };
+
+    interfaces
+        .into_iter()
+        .any(|interface| interface_extends_named(&interface, target_name, visited))
+}
+
+fn interface_extends_named(
+    interface: &Gc<Object>,
+    target_name: &str,
+    visited: &mut std::collections::HashSet<usize>,
+) -> bool {
+    if !visited.insert(interface.as_id()) {
+        return false;
+    }
+
+    let (name, bases) = {
+        let object = interface.borrow();
+        match &*object {
+            Object::Interface { name, bases, .. } => (name.clone(), bases.clone()),
+            _ => return false,
+        }
+    };
+
+    name == target_name
+        || bases
+            .into_iter()
+            .any(|base| interface_extends_named(&base, target_name, visited))
 }
 
 impl Value {
@@ -251,6 +323,14 @@ impl Value {
                     // -----------------------------------------------
                     Object::String(_) => Ok(Value::new_string_iterator(handle.clone())),
 
+                    Object::Instance { .. }
+                        if value_implements_interface(self, "Iterator") =>
+                    {
+                        Ok(Self::new_iterator(IteratorState::new(IteratorKind::External {
+                            source: Box::new(self.clone()),
+                        })))
+                    }
+
                     _ => Err(RuntimeError::NotIterable),
                 }
             }
@@ -340,7 +420,8 @@ impl Value {
             IteratorKind::Map { .. }
             | IteratorKind::Filter { .. }
             | IteratorKind::Take { .. }
-            | IteratorKind::Skip { .. } => Err(RuntimeError::TypeError),
+            | IteratorKind::Skip { .. }
+            | IteratorKind::External { .. } => Err(RuntimeError::TypeError),
         }
     }
     // pub fn is_iterable(value: &Value) -> bool {
@@ -474,7 +555,8 @@ impl Value {
             IteratorKind::Map { .. }
             | IteratorKind::Filter { .. }
             | IteratorKind::Take { .. }
-            | IteratorKind::Skip { .. } => Err(RuntimeError::TypeError),
+            | IteratorKind::Skip { .. }
+            | IteratorKind::External { .. } => Err(RuntimeError::TypeError),
         }
     }
 }
