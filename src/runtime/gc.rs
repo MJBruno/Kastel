@@ -379,17 +379,12 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
         }
 
         Object::Class {
-            superclass,
             interfaces,
             methods,
             static_methods,
             statics,
             ..
         } => {
-            if let Some(superclass) = superclass {
-                mark_object(superclass, state);
-            }
-
             for interface in interfaces {
                 mark_object(interface, state);
             }

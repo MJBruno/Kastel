@@ -122,10 +122,6 @@ impl Compiler {
                 ..
             } => {
                 if let Expression::Member { object, name, .. } = callee.as_ref() {
-                    if matches!(object.as_ref(), Expression::Base) {
-                        return self.compile_base_method_call(name, arguments, *line, *column);
-                    }
-
                     return self.compile_method_call(object, name, arguments, *line, *column);
                 }
 
@@ -236,11 +232,6 @@ impl Compiler {
 
                 self.patch_jump(end_jump)?;
             }
-            Expression::Base => {
-                return Err(CompileError::InternalCompilerError(
-                    "'base' doit être utilisé pour appeler une méthode".to_string(),
-                ));
-            }
             Expression::This => {
                 self.compile_variable_get("this")?;
             }
@@ -268,34 +259,6 @@ impl Compiler {
                 self.emit_bytes(OpCode::NewInstance, arguments.len() as u8);
             }
         }
-
-        Ok(())
-    }
-    pub(crate) fn compile_base_method_call(
-        &mut self,
-        name: &str,
-        arguments: &[Expression],
-        line: usize,
-        column: usize,
-    ) -> Result<(), CompileError> {
-        if arguments.len() > u8::MAX as usize {
-            return Err(CompileError::TooManyArguments);
-        }
-
-        let method_constant = self.identifier_constant(name)?;
-
-        // base.method(...) utilise la même instance que la méthode courante.
-        self.compile_expression(&Expression::This)?;
-
-        for argument in arguments {
-            self.compile_expression(argument)?;
-        }
-
-        self.current_line = line;
-        self.current_column = column;
-
-        self.emit_constant_op(OpCode::InvokeBaseMethod, method_constant);
-        self.emit_byte(arguments.len() as u8);
 
         Ok(())
     }

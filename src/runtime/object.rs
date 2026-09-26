@@ -65,7 +65,6 @@ pub enum Object {
 
     Class {
         name: String,
-        superclass: Option<Gc<Object>>,
         interfaces: Vec<Gc<Object>>,
         /// Surcharges par arité : pour un nom donné, une closure par
         /// nombre d'arguments (hors `this`).
@@ -76,8 +75,7 @@ pub enum Object {
         static_methods: HashMap<String, Vec<Value>>,
         /// Champs `static` : une seule valeur par nom, portée par la classe
         /// (et non par chaque instance). Mutable via `NomClasse.champ = v`.
-        /// Jamais hérité : une classe dérivée n'a pas accès aux statiques de
-        /// sa base sous son propre nom.
+        /// Les membres statiques sont propres à la classe qui les déclare.
         statics: HashMap<String, Value>,
         /// Noms des membres déclarés `private` dans CETTE classe.
         private_members: HashSet<String>,
@@ -205,7 +203,6 @@ impl Object {
             }
 
             Object::Class {
-                superclass,
                 interfaces,
                 methods,
                 static_methods,
@@ -215,7 +212,6 @@ impl Object {
                 /*
                  * Le nom n'introduit pas de cycle.
                  */
-                *superclass = None;
                 interfaces.clear();
                 methods.clear();
                 static_methods.clear();

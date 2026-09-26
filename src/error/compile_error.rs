@@ -215,6 +215,11 @@ pub enum CompileError {
         constraint: String,
     },
 
+    InvalidInheritanceTarget {
+        owner: String,
+        target: String,
+    },
+
     MissingInterfaceMethod {
         class_name: String,
         interface: String,
@@ -439,7 +444,7 @@ impl std::fmt::Display for CompileError {
             CompileError::ProtectedMemberAccess { class_name, member } => {
                 write!(
                     f,
-                    "Le membre '{class_name}.{member}' est protégé : accès réservé à la classe et à ses classes dérivées"
+                    "Le membre '{class_name}.{member}' est protégé : accès réservé à la classe qui déclare le membre"
                 )
             }
 
@@ -483,7 +488,14 @@ impl std::fmt::Display for CompileError {
             CompileError::InvalidGenericConstraint { parameter, constraint } => {
                 write!(
                     f,
-                    "La contrainte générique '{parameter}: {constraint}' n'est pas valide : utilisez une capability ou une interface"
+                    "La contrainte générique '{parameter}: {constraint}' n'est pas une interface valide"
+                )
+            }
+
+            CompileError::InvalidInheritanceTarget { owner, target } => {
+                write!(
+                    f,
+                    "'{owner}' ne peut pas hériter de '{target}' : seules les interfaces peuvent être implémentées"
                 )
             }
 
@@ -687,14 +699,23 @@ impl CompileError {
                 0,
                 0,
             )
-            .with_help(format!("la fonction '{function}' exige cette capability")),
+            .with_help(format!("la fonction '{function}' exige cette interface")),
 
             CompileError::InvalidGenericConstraint { parameter, constraint } => Diagnostic::new(
                 format!("contrainte générique invalide : '{parameter}: {constraint}'"),
                 0,
                 0,
             )
-            .with_help("utilisez une capability ou une interface, par exemple `T: Add` ou `T: Printable`"),
+            .with_help("utilisez une interface, par exemple `T: Add` ou `T: Printable`"),
+
+            CompileError::InvalidInheritanceTarget { owner, target } => Diagnostic::new(
+                format!(
+                    "'{owner}' ne peut pas hériter de '{target}'"
+                ),
+                0,
+                0,
+            )
+            .with_help("une classe ne peut implémenter que des interfaces"),
 
             CompileError::MissingInterfaceMethod {
                 class_name,
@@ -724,7 +745,7 @@ impl CompileError {
             )
             .with_len(member.len())
             .with_help(
-                "utilisez ce membre depuis la classe qui le déclare ou depuis une classe dérivée.",
+                "utilisez ce membre depuis la classe qui le déclare.",
             ),
 
             CompileError::RenamedMember { name, replacement } => Diagnostic::new(

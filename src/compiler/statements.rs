@@ -426,10 +426,19 @@ impl Compiler {
             }
         }
 
-        for base in bases {
+        let runtime_bases: Vec<&TypeExpr> = bases
+            .iter()
+            .filter(|base| {
+                Self::type_expr_name(base)
+                    .and_then(|name| crate::compiler::capability::Capability::from_name(&name))
+                    .is_none()
+            })
+            .collect();
+
+        for base in &runtime_bases {
             let base_name = Self::type_expr_name(base).ok_or_else(|| {
                 CompileError::InternalCompilerError(
-                    "Une base d'héritage générique doit désigner un type nommé".to_string(),
+                    "Une interface générique doit désigner un type nommé".to_string(),
                 )
             })?;
             self.compile_variable_get(&base_name)?;
@@ -497,7 +506,7 @@ impl Compiler {
         }
 
         self.emit_byte(OpCode::Class.into());
-        self.emit_byte(bases.len() as u8);
+        self.emit_byte(runtime_bases.len() as u8);
         self.emit_byte(instance_methods.len() as u8);
         self.emit_byte(static_methods.len() as u8);
         self.emit_byte(static_fields.len() as u8);
@@ -665,7 +674,16 @@ impl Compiler {
             }
         }
 
-        for base in bases {
+        let runtime_bases: Vec<&TypeExpr> = bases
+            .iter()
+            .filter(|base| {
+                Self::type_expr_name(base)
+                    .and_then(|name| crate::compiler::capability::Capability::from_name(&name))
+                    .is_none()
+            })
+            .collect();
+
+        for base in &runtime_bases {
             let base_name = Self::type_expr_name(base).ok_or_else(|| {
                 CompileError::InternalCompilerError(
                     "Une base d'interface générique doit désigner un type nommé".to_string(),
@@ -689,7 +707,7 @@ impl Compiler {
         }
 
         self.emit_byte(OpCode::Interface.into());
-        self.emit_byte(bases.len() as u8);
+        self.emit_byte(runtime_bases.len() as u8);
         self.emit_byte(methods.len() as u8);
 
         if !self.in_function && self.scope_depth == 0 {

@@ -9,7 +9,6 @@ use std::fmt;
 
 use crate::frontend::ast::TypeExpr;
 
-use super::capability::Capability;
 
 /// Type sémantique utilisé par le vérificateur statique.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +43,8 @@ pub enum Type {
     Named(String),
     /// Paramètre de type d'une déclaration générique (`T`, `U`, ...).
     TypeParam(String),
+    /// Type du contrat implémentant une interface.
+    SelfType,
     Generic {
         name: String,
         arguments: Vec<Type>,
@@ -56,14 +57,12 @@ pub enum Type {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GenericConstraint {
-    Capability(Capability),
     Interface(Box<Type>),
 }
 
 impl GenericConstraint {
     pub fn name(&self) -> String {
         match self {
-            Self::Capability(capability) => capability.to_string(),
             Self::Interface(interface) => interface.to_string(),
         }
     }
@@ -743,6 +742,7 @@ impl fmt::Display for Type {
             }
             Type::Named(name) => write!(f, "{name}"),
             Type::TypeParam(name) => write!(f, "{name}"),
+            Type::SelfType => write!(f, "Self"),
             Type::Generic { name, arguments } => {
                 write!(f, "{name}<")?;
                 for (index, argument) in arguments.iter().enumerate() {

@@ -94,8 +94,8 @@ pub struct MatchArm {
 /// Nom de la méthode-constructeur : `func initialize(...)`.
 ///
 /// Elle peut être surchargée par arité. Si une classe n'en déclare aucune,
-/// un constructeur par défaut implicite (sans paramètre) est utilisé, et une
-/// classe dérivée hérite des constructeurs de sa classe de base.
+/// un constructeur par défaut implicite (sans paramètre) est utilisé. Les
+/// constructeurs ne sont jamais hérités.
 pub const CONSTRUCTOR_NAME: &str = "initialize";
 
 /// Ancien nom du constructeur, désormais refusé avec un message de migration.
@@ -103,15 +103,14 @@ pub const LEGACY_CONSTRUCTOR_NAME: &str = "init";
 
 /// Préfixe de la méthode cachée qui porte les valeurs initiales des champs
 /// d'une classe (`__fields_<Classe>`). La VM l'exécute à la création de
-/// chaque instance, AVANT le constructeur, en commençant par la classe de
-/// base.
+/// chaque instance, AVANT le constructeur de la classe concernée.
 pub const FIELD_INITIALIZER_PREFIX: &str = "__fields_";
 
 /// Visibilité d'un membre de classe (champ ou méthode).
 ///
-/// `Public` est la valeur par défaut. `Protected` autorise l'accès depuis
-/// la classe qui déclare le membre et depuis ses classes dérivées. `Private`
-/// limite l'accès à la classe qui déclare le membre.
+/// `Public` est la valeur par défaut. `Private` limite l'accès à la classe
+/// qui déclare le membre. `Protected` est conservé pour compatibilité
+/// syntaxique mais ne crée aucune relation d'héritage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visibility {
     Public,
@@ -149,7 +148,7 @@ pub struct FunctionMethod {
     /// `static func creer(...) { ... }` : appelée sur la CLASSE
     /// (`NomClasse.creer(...)`), SANS `this` implicite — contrairement à
     /// une méthode normale, elle ne reçoit pas d'instance. Une méthode
-    /// statique ne peut donc pas utiliser `this` ni `base`.
+    /// statique ne peut donc pas utiliser `this`.
     pub is_static: bool,
     pub params: Vec<String>,
     /// Annotations de type des paramètres, un slot par entrée de
@@ -394,7 +393,6 @@ pub enum Expression {
     },
 
     This,
-    Base,
     Array(Vec<Expression>),
 
     /// `(a, b, c)`, `(a,)` (tuple à un élément), `()` (tuple vide).

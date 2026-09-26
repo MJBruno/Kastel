@@ -18,118 +18,49 @@ impl VirtualMachine {
         name: &str,
         arg_count: usize,
     ) -> Option<Value> {
-        Self::find_method_in_hierarchy(Some(class), name, arg_count)
-    }
-
-    pub(crate) fn find_base_method(
-        class: Gc<Object>,
-        name: &str,
-        arg_count: usize,
-    ) -> Option<Value> {
-        let parent = {
-            let object = class.borrow();
-
-            match &*object {
-                Object::Class { superclass, .. } => superclass.clone(),
-                _ => None,
-            }
+        let object = class.borrow();
+        let Object::Class { methods, .. } = &*object else {
+            return None;
         };
 
-        Self::find_method_in_hierarchy(parent, name, arg_count)
-    }
+        let overloads = methods.get(name)?;
 
-    fn find_method_in_hierarchy(
-        mut current: Option<Gc<Object>>,
-        name: &str,
-        arg_count: usize,
-    ) -> Option<Value> {
-        while let Some(handle) = current {
+        overloads.iter().find_map(|method| {
+            let Value::Object(handle) = method else {
+                return None;
+            };
+
             let object = handle.borrow();
+            let Object::Closure(closure) = &*object else {
+                return None;
+            };
 
-            match &*object {
-                Object::Class {
-                    methods,
-                    superclass,
-                    ..
-                } => {
-                    if let Some(overloads) = methods.get(name) {
-                        for method in overloads {
-                            if let Value::Object(handle) = method {
-                                let object = handle.borrow();
-                                if let Object::Closure(closure) = &*object
-                                    && closure.function.arity.checked_sub(1) == Some(arg_count)
-                                {
-                                    return Some(method.clone());
-                                }
-                            }
-                        }
-                    }
-
-                    current = superclass.clone();
-                }
-
-                _ => return None,
-            }
-        }
-
-        None
+            (closure.function.arity.checked_sub(1) == Some(arg_count))
+                .then(|| method.clone())
+        })
     }
 
-    /// Arités (hors `this`) sous lesquelles `name` est déclarée dans la
-    /// hiérarchie de `class` : triées, sans doublon. Sert uniquement à
-    /// produire une erreur d'arité précise quand aucune surcharge ne
-    /// correspond au nombre d'arguments passés.
     pub(crate) fn class_method_arities(class: Gc<Object>, name: &str) -> Vec<usize> {
-        Self::method_arities_in_hierarchy(Some(class), name)
-    }
-
-    /// Comme `class_method_arities`, mais à partir de la classe parente
-    /// (appel `base.methode(...)`).
-    pub(crate) fn base_method_arities(class: Gc<Object>, name: &str) -> Vec<usize> {
-        let parent = {
-            let object = class.borrow();
-
-            match &*object {
-                Object::Class { superclass, .. } => superclass.clone(),
-                _ => None,
-            }
+        let object = class.borrow();
+        let Object::Class { methods, .. } = &*object else {
+            return Vec::new();
         };
 
-        Self::method_arities_in_hierarchy(parent, name)
-    }
-
-    fn method_arities_in_hierarchy(mut current: Option<Gc<Object>>, name: &str) -> Vec<usize> {
-        let mut arities = Vec::new();
-
-        while let Some(handle) = current {
-            let object = handle.borrow();
-
-            match &*object {
-                Object::Class {
-                    methods,
-                    superclass,
-                    ..
-                } => {
-                    if let Some(overloads) = methods.get(name) {
-                        for method in overloads {
-                            if let Value::Object(method_handle) = method {
-                                let method_object = method_handle.borrow();
-
-                                if let Object::Closure(closure) = &*method_object
-                                    && let Some(arity) = closure.function.arity.checked_sub(1)
-                                {
-                                    arities.push(arity);
-                                }
-                            }
-                        }
+        let mut arities = methods
+            .get(name)
+            .into_iter()
+            .flat_map(|overloads| overloads.iter())
+            .filter_map(|method| match method {
+                Value::Object(handle) => {
+                    let object = handle.borrow();
+                    match &*object {
+                        Object::Closure(closure) => closure.function.arity.checked_sub(1),
+                        _ => None,
                     }
-
-                    current = superclass.clone();
                 }
-
-                _ => break,
-            }
-        }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
 
         arities.sort_unstable();
         arities.dedup();
@@ -193,10 +124,8 @@ impl VirtualMachine {
     // ============================================================
 
     /// Classe du code en cours d'exécution (`None` hors d'une méthode).
-    ///
-    /// Les closures créées DANS une méthode héritent de sa classe (voir
-    /// `op_closure`) : un rappel écrit dans une méthode peut donc accéder
-    /// aux membres privés de cette classe.
+    /// Les closures créées dans une méthode héritent de son propriétaire
+    /// de classe afin de conserver les règles de visibilité.
     pub(crate) fn caller_owner_class(&self) -> Option<Gc<Object>> {
         let frame = self.frames.last()?;
         let owner = frame_closure(&frame.closure).owner_class.clone();
@@ -204,88 +133,65 @@ impl VirtualMachine {
         owner
     }
 
-    /// `true` si `class` est la classe `ancestor` elle-même ou une de ses
-    /// classes dérivées. Utilisé par `protected` et limité à l'héritage de
-    /// classes, pas aux interfaces.
-    fn is_same_or_subclass(
-        mut class: Option<Gc<Object>>,
-        ancestor: &Gc<Object>,
+    /// Il n'existe plus de sous-classes en Kastel. Le mot-clé `protected`,
+    /// conservé pour compatibilité, est donc limité à la classe déclarante.
+    fn is_same_class(
+        caller: Option<Gc<Object>>,
+        owner: &Gc<Object>,
     ) -> bool {
-        while let Some(current) = class {
-            if Gc::ptr_eq(&current, ancestor) {
-                return true;
-            }
-
-            class = match &*current.borrow() {
-                Object::Class { superclass, .. } => superclass.clone(),
-                _ => None,
-            };
-        }
-
-        false
+        caller.as_ref().is_some_and(|current| Gc::ptr_eq(current, owner))
     }
 
-    /// `new C(...)` : contrôle la visibilité du constructeur. `private` est
-    /// réservé à sa classe ; `protected` est autorisé depuis une classe
-    /// dérivée.
+    /// `new C(...)` : le constructeur est toujours celui de `C`. Il n'existe
+    /// aucun constructeur hérité.
     pub(crate) fn ensure_constructor_access(&self, class: &Gc<Object>) -> Result<(), RuntimeError> {
-        let mut current = Some(class.clone());
+        let (declares, is_private, is_protected, class_name) = {
+            let object = class.borrow();
 
-        while let Some(candidate) = current {
-            let (declares, is_private, is_protected, class_name, superclass) = {
-                let object = candidate.borrow();
+            match &*object {
+                Object::Class {
+                    name,
+                    methods,
+                    private_members,
+                    protected_members,
+                    ..
+                } => (
+                    methods.contains_key(CONSTRUCTOR_NAME),
+                    private_members.contains(CONSTRUCTOR_NAME),
+                    protected_members.contains(CONSTRUCTOR_NAME),
+                    name.clone(),
+                ),
 
-                match &*object {
-                    Object::Class {
-                        name,
-                        methods,
-                        private_members,
-                        protected_members,
-                        superclass,
-                        ..
-                    } => (
-                        methods.contains_key(CONSTRUCTOR_NAME),
-                        private_members.contains(CONSTRUCTOR_NAME),
-                        protected_members.contains(CONSTRUCTOR_NAME),
-                        name.clone(),
-                        superclass.clone(),
-                    ),
-
-                    _ => return Ok(()),
-                }
-            };
-
-            if declares {
-                let caller = self.caller_owner_class();
-                let allowed = if is_private {
-                    caller.as_ref().is_some_and(|owner| Gc::ptr_eq(owner, &candidate))
-                } else if is_protected {
-                    Self::is_same_or_subclass(caller, &candidate)
-                } else {
-                    true
-                };
-
-                if allowed {
-                    return Ok(());
-                }
-
-                return if is_protected {
-                    Err(RuntimeError::ProtectedMemberAccess {
-                        class_name,
-                        member: CONSTRUCTOR_NAME.to_string(),
-                    })
-                } else {
-                    Err(RuntimeError::PrivateMemberAccess {
-                        class_name,
-                        member: CONSTRUCTOR_NAME.to_string(),
-                    })
-                };
+                _ => return Ok(()),
             }
+        };
 
-            current = superclass;
+        if !declares {
+            return Ok(());
         }
 
-        Ok(())
+        let caller = self.caller_owner_class();
+        let allowed = if is_private || is_protected {
+            Self::is_same_class(caller, class)
+        } else {
+            true
+        };
+
+        if allowed {
+            return Ok(());
+        }
+
+        if is_protected {
+            Err(RuntimeError::ProtectedMemberAccess {
+                class_name,
+                member: CONSTRUCTOR_NAME.to_string(),
+            })
+        } else {
+            Err(RuntimeError::PrivateMemberAccess {
+                class_name,
+                member: CONSTRUCTOR_NAME.to_string(),
+            })
+        }
     }
 
     /// Refuse l'accès à `receiver.name` si `name` est un membre `private`
@@ -322,59 +228,47 @@ impl VirtualMachine {
             }
         };
 
-        let mut current = Some(class);
+        let (is_private, is_protected, class_name) = {
+            let object = class.borrow();
 
-        while let Some(candidate) = current {
-            let (is_private, is_protected, class_name, superclass) = {
-                let object = candidate.borrow();
+            match &*object {
+                Object::Class {
+                    name: class_name,
+                    private_members,
+                    protected_members,
+                    ..
+                } => (
+                    private_members.contains(name),
+                    protected_members.contains(name),
+                    class_name.clone(),
+                ),
 
-                match &*object {
-                    Object::Class {
-                        name: class_name,
-                        private_members,
-                        protected_members,
-                        superclass,
-                        ..
-                    } => (
-                        private_members.contains(name),
-                        protected_members.contains(name),
-                        class_name.clone(),
-                        superclass.clone(),
-                    ),
-
-                    _ => return Ok(()),
-                }
-            };
-
-            if is_private || is_protected {
-                let caller = self.caller_owner_class();
-                let allowed = if is_private {
-                    caller.as_ref().is_some_and(|owner| Gc::ptr_eq(owner, &candidate))
-                } else {
-                    Self::is_same_or_subclass(caller, &candidate)
-                };
-
-                if allowed {
-                    return Ok(());
-                }
-
-                return if is_protected {
-                    Err(RuntimeError::ProtectedMemberAccess {
-                        class_name,
-                        member: name.to_string(),
-                    })
-                } else {
-                    Err(RuntimeError::PrivateMemberAccess {
-                        class_name,
-                        member: name.to_string(),
-                    })
-                };
+                _ => return Ok(()),
             }
+        };
 
-            current = superclass;
+        if !is_private && !is_protected {
+            return Ok(());
         }
 
-        Ok(())
+        let caller = self.caller_owner_class();
+        let allowed = Self::is_same_class(caller, &class);
+
+        if allowed {
+            return Ok(());
+        }
+
+        if is_protected {
+            return Err(RuntimeError::ProtectedMemberAccess {
+                class_name,
+                member: name.to_string(),
+            });
+        }
+
+        Err(RuntimeError::PrivateMemberAccess {
+            class_name,
+            member: name.to_string(),
+        })
     }
 
     /// Comme `ensure_member_access`, pour un accès STATIQUE
@@ -409,11 +303,7 @@ impl VirtualMachine {
         }
 
         let caller = self.caller_owner_class();
-        let allowed = if is_private {
-            caller.as_ref().is_some_and(|owner| Gc::ptr_eq(owner, class))
-        } else {
-            Self::is_same_or_subclass(caller, class)
-        };
+        let allowed = Self::is_same_class(caller, class);
 
         if allowed {
             return Ok(());
@@ -929,97 +819,6 @@ impl VirtualMachine {
         };
 
         self.push(result);
-        Ok(())
-    }
-
-    // ============================================================
-    //                     BASE METHOD
-    // ============================================================
-
-    pub(crate) fn op_invoke_base_method(
-        &mut self,
-        method_constant: usize,
-        arg_count: usize,
-    ) -> Result<(), RuntimeError> {
-        let method_constant =
-            u16::try_from(method_constant).map_err(|_| RuntimeError::InvalidFunction)?;
-
-        let method_value = self.read_constant(method_constant)?;
-
-        let method_name = method_value
-            .as_string_value()
-            .ok_or(RuntimeError::TypeError)?;
-
-        /*
-         * compile_base_method_call pousse `this` (via Expression::This)
-         * puis les `arg_count` arguments réels avant d'émettre
-         * InvokeBaseMethod : la pile contient donc, du bas vers le
-         * haut, [this, arg0, ..., arg(n-1)] — exactement comme pour un
-         * appel de méthode normal (op_invoke_method) où le receveur est
-         * suivi de ses arguments.
-         *
-         * L'ancienne implémentation relisait `this` via
-         * frame.slot_start (en ignorant la valeur poussée par le
-         * compilateur) et ne retirait donc jamais ce `this` de la
-         * pile : chaque appel `base.methode(...)` laissait une valeur
-         * fantôme, décalant de un tous les emplacements de variables
-         * locales compilés après cet appel dans la même fonction.
-         */
-        let required = arg_count
-            .checked_add(1)
-            .ok_or(RuntimeError::InvalidFunction)?;
-
-        if self.stack.len() < required {
-            return Err(RuntimeError::StackUnderflow);
-        }
-
-        let this_index = self.stack.len() - required;
-        let this_value = self.stack[this_index].clone();
-        let args = self.stack[this_index..].to_vec();
-
-        self.stack.truncate(this_index);
-
-        let frame = self
-            .frames
-            .last()
-            .cloned()
-            .ok_or(RuntimeError::InvalidFunction)?;
-
-        let owner_class = {
-            let closure = frame_closure(&frame.closure);
-
-            closure.owner_class.clone().ok_or(RuntimeError::TypeError)?
-        };
-
-        let method = match Self::find_base_method(owner_class.clone(), &method_name, arg_count) {
-            Some(method) => method,
-
-            None => {
-                let declared = Self::base_method_arities(owner_class, &method_name);
-
-                if let Some(expected) = declared.first() {
-                    return Err(RuntimeError::WrongArgumentCount {
-                        expected: *expected,
-                        found: arg_count,
-                    });
-                }
-
-                return Err(RuntimeError::ObjectFieldNotFound {
-                    name: method_name,
-                    suggestion: None,
-                });
-            }
-        };
-
-        self.push(method);
-        self.push(this_value);
-
-        for argument in args.into_iter().skip(1) {
-            self.push(argument);
-        }
-
-        self.execute_call(arg_count + 1)?;
-
         Ok(())
     }
 

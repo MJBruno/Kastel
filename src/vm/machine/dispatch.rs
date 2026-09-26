@@ -52,10 +52,7 @@ impl VirtualMachine {
             // COMPARISON / LOGICAL
             // ========================================================
             OpCode::Equal => {
-                let b = self.pop()?;
-                let a = self.pop()?;
-
-                self.push(Value::Boolean(Value::equals(a, b)));
+                self.equal()?;
                 Ok(false)
             }
 
@@ -399,13 +396,9 @@ impl VirtualMachine {
                 Ok(false)
             }
 
-            OpCode::InvokeBaseMethod => {
-                let method_constant = self.read_constant_operand(false)? as usize;
-                let arg_count = self.read_byte()? as usize;
-
-                self.op_invoke_base_method(method_constant, arg_count)?;
-                Ok(false)
-            }
+            // Legacy opcode retained only for bytecode discriminant stability.
+            // Class inheritance/base calls are no longer part of Kastel.
+            OpCode::InvokeBaseMethod => Err(RuntimeError::TypeError),
 
             // ========================================================
             // CLASSES / INTERFACES
@@ -553,13 +546,6 @@ impl VirtualMachine {
                 let arg_count = self.read_byte()? as usize;
 
                 self.op_invoke_method(method_constant, arg_count)?;
-            }
-
-            OpCode::InvokeBaseMethod => {
-                let method_constant = self.read_constant_operand(true)? as usize;
-                let arg_count = self.read_byte()? as usize;
-
-                self.op_invoke_base_method(method_constant, arg_count)?;
             }
 
             _ => return Err(RuntimeError::InvalidOpcode(instruction)),

@@ -64,8 +64,8 @@ impl VirtualMachine {
         let closure = Object::new_closure(Rc::clone(&function), pending_upvalues, global_env);
 
         // Une fonction anonyme écrite DANS une méthode appartient à la même
-        // classe : elle peut accéder aux membres privés (et à `base`). Pour
-        // les méthodes elles-mêmes, `op_class` remplace ensuite cette valeur
+        // classe : elle peut accéder aux membres privés. Pour les méthodes
+        // elles-mêmes, `op_class` remplace ensuite cette valeur
         // par la classe qui les déclare.
         if let Some(owner) = enclosing_owner
             && let Object::Closure(created) = &mut *closure.borrow_mut()

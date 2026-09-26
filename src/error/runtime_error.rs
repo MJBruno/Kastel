@@ -298,7 +298,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::ProtectedMemberAccess { class_name, member } => {
                 write!(
                     f,
-                    "Le membre '{member}' de la classe '{class_name}' est protégé : accès réservé à la classe et à ses classes dérivées."
+                    "Le membre '{member}' de la classe '{class_name}' est protégé : accès réservé à la classe qui déclare le membre."
                 )
             }
 
@@ -545,7 +545,7 @@ impl RuntimeError {
                 0,
             )
             .with_help(
-                "utilisez ce membre depuis la classe qui le déclare ou depuis une classe dérivée.",
+                "utilisez ce membre depuis la classe qui le déclare.",
             ),
 
             // Variantes sans donnée exploitable pour expected/found/help :

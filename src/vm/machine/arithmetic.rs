@@ -96,6 +96,60 @@ impl VirtualMachine {
         Ok(true)
     }
 
+    fn dispatch_operator_method_sync(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        argument: Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Value::Object(handle) = receiver else {
+            return Ok(None);
+        };
+
+        let method = {
+            let object = handle.borrow();
+            match &*object {
+                Object::Instance { class: Some(class), .. } => {
+                    Self::find_class_method_from(class.clone(), method_name, 1)
+                }
+                Object::EnumVariant { methods, .. } => methods.get(method_name).and_then(|overloads| {
+                    overloads.iter().find(|value| {
+                        matches!(
+                            value,
+                            Value::Object(method_handle)
+                                if matches!(
+                                    &*method_handle.borrow(),
+                                    Object::Closure(closure) if closure.function.arity == 2
+                                )
+                        )
+                    }).cloned()
+                }),
+                _ => None,
+            }
+        };
+
+        let Some(method) = method else {
+            return Ok(None);
+        };
+
+        if !matches!(
+            &method,
+            Value::Object(method_handle)
+                if matches!(&*method_handle.borrow(), Object::Closure(_))
+        ) {
+            return Ok(None);
+        }
+
+        self.ensure_member_access(receiver, method_name)?;
+
+        let result = self.invoke_sync(
+            method,
+            &[receiver.clone(), argument],
+        )?;
+
+        Ok(Some(result))
+    }
+
     #[inline]
     pub(crate) fn add(&mut self) -> Result<(), RuntimeError> {
         let b = self.pop()?;
@@ -213,9 +267,41 @@ impl VirtualMachine {
     }
 
     #[inline]
+    pub(crate) fn equal(&mut self) -> Result<(), RuntimeError> {
+        let b = self.pop()?;
+        let a = self.pop()?;
+
+        if let Some(result) = self.dispatch_operator_method_sync(&a, "equals", b.clone())? {
+            if !matches!(result, Value::Boolean(_)) {
+                return Err(RuntimeError::TypeError);
+            }
+            self.push(result);
+            return Ok(());
+        }
+
+        self.push(Value::Boolean(Value::equals(a, b)));
+        Ok(())
+    }
+
+    #[inline]
     pub(crate) fn compare(&mut self, op: ComparisonOp) -> Result<(), RuntimeError> {
         let b = self.pop()?;
         let a = self.pop()?;
+
+        if let Some(result) = self.dispatch_operator_method_sync(&a, "compare", b.clone())? {
+            let Value::Integer(ordering) = result else {
+                return Err(RuntimeError::TypeError);
+            };
+
+            let value = match op {
+                ComparisonOp::Equal => ordering == 0,
+                ComparisonOp::Greater => ordering > 0,
+                ComparisonOp::Less => ordering < 0,
+            };
+
+            self.push(Value::Boolean(value));
+            return Ok(());
+        }
 
         self.push(Value::compare_numeric(a, b, op)?);
 

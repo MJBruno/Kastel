@@ -292,11 +292,10 @@ impl Parser {
     /// private func __fields_Personne() { this.age = 0; }
     /// ```
     ///
-    /// La VM l'exécute à chaque `new`, AVANT le constructeur et en commençant
-    /// par la classe de base : les champs sont donc initialisés que la classe
-    /// déclare un `initialize`, en hérite, ou utilise le constructeur par
-    /// défaut implicite. Le nom contient celui de la classe pour qu'une
-    /// classe dérivée ne masque pas les initialiseurs de sa base.
+    /// La VM l'exécute à chaque `new`, AVANT le constructeur de la classe
+    /// concernée. Les initialiseurs ne sont jamais hérités. Le nom contient
+    /// celui de la classe pour conserver un namespace stable pour la méthode
+    /// cachée.
     ///
     /// Les champs `static` n'ont PAS de `this` : leur valeur initiale est
     /// évaluée directement par `compile_class`, une seule fois, à la

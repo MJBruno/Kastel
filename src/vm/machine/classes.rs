@@ -57,7 +57,6 @@ impl VirtualMachine {
 
         let start = self.stack.len() - total;
 
-        let mut superclass = None;
         let mut interfaces = Vec::with_capacity(base_count);
 
         for index in 0..base_count {
@@ -74,11 +73,7 @@ impl VirtualMachine {
 
             match &*handle.borrow() {
                 Object::Class { .. } => {
-                    if superclass.is_some() {
-                        return Err(RuntimeError::TypeError);
-                    }
-
-                    superclass = Some(handle.clone());
+                    return Err(RuntimeError::TypeError);
                 }
 
                 Object::Interface { .. } => {
@@ -258,7 +253,6 @@ impl VirtualMachine {
 
         let class_value = Value::new_class(
             class_name,
-            superclass,
             interfaces,
             methods,
             static_methods,
@@ -548,8 +542,8 @@ impl VirtualMachine {
         // 0. Constructeur `private` : `new` réservé au corps de la classe.
         self.ensure_constructor_access(&class_handle)?;
 
-        // 1. Choix du constructeur, par arité (surcharge). Les constructeurs
-        //    de la classe de base sont hérités.
+        // 1. Choix du constructeur, par arité (surcharge).
+        //    Les constructeurs ne sont pas hérités.
         let constructor =
             Self::find_class_method_from(class_handle.clone(), CONSTRUCTOR_NAME, arg_count);
 
@@ -571,12 +565,10 @@ impl VirtualMachine {
             }
         }
 
-        // 2. Valeurs initiales des champs, de la classe de base vers la
-        //    classe dérivée, AVANT le constructeur.
-        for class in Self::class_chain(class_handle.clone()) {
-            if let Some(initializer) = Self::find_field_initializer(&class) {
-                self.invoke_sync(initializer, std::slice::from_ref(&instance))?;
-            }
+        // 2. Valeurs initiales des champs de CETTE classe, AVANT le
+        //    constructeur.
+        if let Some(initializer) = Self::find_field_initializer(&class_handle) {
+            self.invoke_sync(initializer, std::slice::from_ref(&instance))?;
         }
 
         // 3. Constructeur explicite, s'il y en a un.
@@ -593,26 +585,6 @@ impl VirtualMachine {
         self.push(instance);
 
         Ok(())
-    }
-
-    /// Classes de la hiérarchie de `class`, de la plus ancienne (racine) à
-    /// la plus dérivée (`class` elle-même en dernier).
-    fn class_chain(class: Gc<Object>) -> Vec<Gc<Object>> {
-        let mut chain = Vec::new();
-        let mut current = Some(class);
-
-        while let Some(handle) = current {
-            let superclass = match &*handle.borrow() {
-                Object::Class { superclass, .. } => superclass.clone(),
-                _ => None,
-            };
-
-            chain.push(handle);
-            current = superclass;
-        }
-
-        chain.reverse();
-        chain
     }
 
     /// Méthode cachée `__fields_<Classe>` qui porte les valeurs initiales
@@ -670,27 +642,7 @@ impl VirtualMachine {
         };
 
         match target_kind {
-            0 => {
-                let mut current = Some(value_class);
-
-                while let Some(class_handle) = current {
-                    if Gc::ptr_eq(&class_handle, target_handle) {
-                        return Ok(true);
-                    }
-
-                    current = {
-                        let object = class_handle.borrow();
-
-                        match &*object {
-                            Object::Class { superclass, .. } => superclass.clone(),
-
-                            _ => None,
-                        }
-                    };
-                }
-
-                Ok(false)
-            }
+            0 => Ok(Gc::ptr_eq(&value_class, target_handle)),
 
             1 => Self::class_implements_interface(value_class, target_handle.clone()),
 
@@ -702,30 +654,19 @@ impl VirtualMachine {
         class: Gc<Object>,
         target: Gc<Object>,
     ) -> Result<bool, RuntimeError> {
-        let mut current_class = Some(class);
+        let interfaces = {
+            let object = class.borrow();
 
-        while let Some(class_handle) = current_class {
-            let (interfaces, superclass) = {
-                let object = class_handle.borrow();
-
-                match &*object {
-                    Object::Class {
-                        interfaces,
-                        superclass,
-                        ..
-                    } => (interfaces.clone(), superclass.clone()),
-
-                    _ => return Ok(false),
-                }
-            };
-
-            for interface in interfaces {
-                if Self::interface_extends_or_is(interface, &target)? {
-                    return Ok(true);
-                }
+            match &*object {
+                Object::Class { interfaces, .. } => interfaces.clone(),
+                _ => return Ok(false),
             }
+        };
 
-            current_class = superclass;
+        for interface in interfaces {
+            if Self::interface_extends_or_is(interface, &target)? {
+                return Ok(true);
+            }
         }
 
         Ok(false)

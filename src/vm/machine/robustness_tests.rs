@@ -1076,25 +1076,28 @@ let s = new Solo();
 
     assert!(refused);
 
-    // Une classe dérivée qui déclare son propre constructeur public peut
-    // déléguer au constructeur privé de sa base (`base.initialize()`).
-    let value = value_of(
-        r#"
-class Base {
-    private func initialize() { this.v = 7; }
-}
+    // L'héritage de classes et `base` ont été retirés : la compilation
+    // d'une classe utilisant l'ancienne syntaxe d'héritage doit être rejetée.
+    let rejected = on_big_stack(|| {
+        let tokens = Lexer::new(
+            r#"
+class Base {}
+class Derived: Base {}
+"#
+            .to_string(),
+        )
+        .scan_token()
+        .unwrap();
+        let statements = Parser::new(tokens).parse().unwrap();
 
-class Derived: Base {
-    func initialize() { base.initialize(); }
-}
+        let mut compiler = Compiler::new();
+        execute_native(&mut compiler);
 
-let d = new Derived();
-let v = d.v;
-"#,
-        "v",
-    );
+        compiler.compile(&statements).is_err()
+    });
 
-    assert_eq!(value, 7);
+    assert!(rejected);
+
 }
 
 #[test]
@@ -1129,22 +1132,19 @@ let j = json_encode(s);
 }
 
 #[test]
-fn protected_members_work_through_class_inheritance() {
+fn protected_members_work_inside_the_declaring_class() {
     let value = value_of(
         r#"
 class Base {
     protected let value: int = 7;
     protected func getValue() -> int { return this.value; }
-}
 
-class Derived: Base {
     func read() -> int {
         return this.value + this.getValue();
     }
 }
 
-let d = new Derived();
-let result = d.read();
+let result = new Base().read();
 "#,
         "result",
     );
@@ -1171,22 +1171,19 @@ read(b);
 }
 
 #[test]
-fn protected_static_members_work_from_derived_class() {
+fn protected_static_members_work_inside_the_declaring_class() {
     let value = value_of(
         r#"
 class Base {
     protected static let answer: int = 42;
     protected static func getAnswer() -> int { return Base.answer; }
-}
 
-class Derived: Base {
     func read() -> int {
         return Base.answer + Base.getAnswer();
     }
 }
 
-let d = new Derived();
-let result = d.read();
+let result = new Base().read();
 "#,
         "result",
     );

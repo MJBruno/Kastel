@@ -62,6 +62,8 @@ pub enum OpCode {
     SetProperty,
 
     InvokeMethod,
+    /// Opcode réservé pour préserver les anciens discriminants de bytecode.
+    /// Le compilateur Kastel n'émet plus cet opcode et la VM ne l'exécute plus.
     InvokeBaseMethod,
     Class,
     NewInstance,
@@ -91,7 +93,7 @@ pub enum OpCode {
     /// limite de 256 à 65 536 constantes par fragment. Seules les
     /// instructions à opérande constante sont concernées : `Constant`,
     /// `DefineGlobal`, `SetGlobal`, `GetGlobal`, `GetProperty`,
-    /// `SetProperty`, `InvokeMethod`, `InvokeBaseMethod`, `Closure`,
+    /// `SetProperty`, `InvokeMethod`, `Closure`,
     /// `Import` et `ImportAll`. Les autres opérandes (nombre d'arguments,
     /// paires d'upvalues...) restent sur un octet.
     ///

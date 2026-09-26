@@ -165,7 +165,6 @@ impl Value {
     }
     pub fn new_class(
         name: String,
-        superclass: Option<Gc<Object>>,
         interfaces: Vec<Gc<Object>>,
         methods: HashMap<String, Vec<Value>>,
         static_methods: HashMap<String, Vec<Value>>,
@@ -175,7 +174,6 @@ impl Value {
     ) -> Self {
         Self::new_heap_object(Object::Class {
             name,
-            superclass,
             interfaces,
             methods,
             static_methods,
@@ -814,46 +812,31 @@ impl Value {
                         return Ok(value.clone());
                     }
 
-                    let mut current = class.clone();
+                    let class_handle = class
+                        .clone()
+                        .ok_or(RuntimeError::TypeError)?;
 
-                    while let Some(class_handle) = current {
-                        let next_superclass = {
-                            let class_object = class_handle.borrow();
+                    let class_object = class_handle.borrow();
+                    let Object::Class { methods, .. } = &*class_object else {
+                        return Err(RuntimeError::TypeError);
+                    };
 
-                            match &*class_object {
-                                Object::Class {
-                                    methods,
-                                    superclass,
-                                    ..
-                                } => {
-                                    if let Some(overloads) = methods.get(name) {
-                                        if overloads.len() == 1 {
-                                            let method_handle = match &overloads[0] {
-                                                Value::Object(handle) => handle.clone(),
-                                                _ => return Err(RuntimeError::TypeError),
-                                            };
+                    if let Some(overloads) = methods.get(name) {
+                        if overloads.len() == 1 {
+                            let method_handle = match &overloads[0] {
+                                Value::Object(handle) => handle.clone(),
+                                _ => return Err(RuntimeError::TypeError),
+                            };
 
-                                            return Ok(Value::new_bound_method(
-                                                method_handle,
-                                                self.clone(),
-                                            ));
-                                        }
+                            return Ok(Value::new_bound_method(
+                                method_handle,
+                                self.clone(),
+                            ));
+                        }
 
-                                        return Err(RuntimeError::AmbiguousMethod {
-                                            name: name.to_string(),
-                                        });
-                                    }
-
-                                    superclass.clone()
-                                }
-
-                                _ => {
-                                    return Err(RuntimeError::TypeError);
-                                }
-                            }
-                        };
-
-                        current = next_superclass;
+                        return Err(RuntimeError::AmbiguousMethod {
+                            name: name.to_string(),
+                        });
                     }
 
                     Err(RuntimeError::ObjectFieldNotFound {
