@@ -205,6 +205,10 @@ impl Chunk {
 
             OpCode::Try => self.simple_instruction("OP_TRY", offset),
 
+            OpCode::Spawn => self.byte_instruction("OP_SPAWN", offset),
+
+            OpCode::Yield => self.simple_instruction("OP_YIELD", offset),
+
             // =====================================================
             // RETURN / HALT
             // =====================================================

@@ -7,6 +7,14 @@ impl VirtualMachine {
     pub fn collect_garbage(&mut self) -> usize {
         let globals = self.globals.borrow();
         let modules = self.module_loader.loaded_modules();
+        let mut scheduler_values = Vec::new();
+        let mut scheduler_upvalues = Vec::new();
+
+        if let Some(scheduler) = self.scheduler.upgrade() {
+            scheduler
+                .borrow()
+                .append_gc_roots(&mut scheduler_values, &mut scheduler_upvalues);
+        }
 
         gc::collect(gc::GcRoots {
             temp: &self.temp_roots,
@@ -16,6 +24,8 @@ impl VirtualMachine {
             frames: &self.frames,
             open_upvalues: &self.open_upvalues,
             pending_exception: &self.pending_exception,
+            extra_values: &scheduler_values,
+            extra_upvalues: &scheduler_upvalues,
         })
     }
 

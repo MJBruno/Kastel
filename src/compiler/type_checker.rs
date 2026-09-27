@@ -2974,6 +2974,54 @@ impl TypeChecker {
                 arguments,
                 ..
             } => {
+                if let Expression::Variable(name) = callee.as_ref()
+                    && name == "yield"
+                {
+                    if !arguments.is_empty() {
+                        return Err(CompileError::WrongArgumentCount {
+                            expected: 0,
+                            found: arguments.len(),
+                        });
+                    }
+                    return Ok(Type::None);
+                }
+
+                if let Expression::Variable(name) = callee.as_ref()
+                    && name == "spawn"
+                {
+                    if arguments.is_empty() {
+                        return Err(CompileError::WrongArgumentCount {
+                            expected: 1,
+                            found: 0,
+                        });
+                    }
+
+                    let callee_type = self.check_expression(&arguments[0])?;
+                    for argument in arguments.iter().skip(1) {
+                        self.check_expression(argument)?;
+                    }
+
+                    let result_type = match callee_type {
+                        Type::Function(signature) => *signature.return_type,
+                        Type::Overloads(signatures) => signatures
+                            .into_iter()
+                            .map(|signature| *signature.return_type)
+                            .reduce(|left, right| left.merge(&right))
+                            .unwrap_or(Type::Dynamic),
+                        Type::Dynamic => Type::Dynamic,
+                        other => {
+                            return Err(CompileError::NotCallable {
+                                found: other.to_string(),
+                            });
+                        }
+                    };
+
+                    return Ok(Type::Generic {
+                        name: "Task".into(),
+                        arguments: vec![result_type],
+                    });
+                }
+
                 // Fonction globale SURCHARGÉE (`add(1)`, `add(1, 2)`) : la
                 // signature est choisie par arité et par type, comme pour une
                 // méthode.
@@ -3615,6 +3663,10 @@ impl TypeChecker {
     }
 
     fn member_type(&self, object_type: &Type, name: &str) -> Result<Type, CompileError> {
+        if let Some(signature) = object_type.task_member_type(name) {
+            return Ok(signature);
+        }
+
         if let Some(signature) = object_type.option_result_member_type(name) {
             return Ok(signature);
         }

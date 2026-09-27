@@ -1192,6 +1192,7 @@ impl std::fmt::Display for Value {
                     Object::Result { ok: true, value } => write!(f, "Ok({value})"),
                     Object::Result { ok: false, value } => write!(f, "Err({value})"),
                     Object::Error { kind, message } => write!(f, "Err<{kind}>({message})"),
+                    Object::Task(task) => write!(f, "Task({})", task.id),
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1345,6 +1346,7 @@ impl Value {
                 Object::Option(_) => "Option",
                 Object::Result { .. } => "Result",
                 Object::Error { .. } => "Err",
+                Object::Task(_) => "Task",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",

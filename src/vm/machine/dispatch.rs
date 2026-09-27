@@ -471,6 +471,21 @@ impl VirtualMachine {
                 Ok(false)
             }
 
+            OpCode::Spawn => {
+                let arg_count = self.read_byte()? as usize;
+                self.spawn_task(arg_count)?;
+                Ok(false)
+            }
+
+            OpCode::Yield => {
+                if self.scheduler_owner.is_some() {
+                    return Err(crate::error::runtime_error::RuntimeError::YieldOutsideTask);
+                }
+
+                self.yield_requested = true;
+                Ok(false)
+            }
+
             // ========================================================
             // RETURN / HALT
             // ========================================================

@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use crate::vm::machine::scheduler::TaskHandle;
+
 use crate::module::module::ModuleInstance;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
@@ -35,6 +37,9 @@ pub enum Object {
         kind: String,
         message: String,
     },
+
+    /// Handle d'une tâche coopérative.
+    Task(Rc<TaskHandle>),
 
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
@@ -167,6 +172,8 @@ impl Object {
             }
 
             Object::Error { .. } => {}
+
+            Object::Task(_) => {}
 
             Object::Tuple(elements) => {
                 elements.clear();

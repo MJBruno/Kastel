@@ -828,6 +828,7 @@ impl VirtualMachine {
                         Object::Option(_) => 12,
                         Object::Result { .. } => 13,
                         Object::Error { .. } => 14,
+                        Object::Task(_) => 15,
                         _ => 5,
                     }
                 };
@@ -849,6 +850,47 @@ impl VirtualMachine {
                         "kind" => Value::new_string(kind.clone()),
                         "message" => Value::new_string(message.clone()),
                         "to_string" => Value::new_string(format!("Err<{kind}>({message})")),
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    };
+
+                    self.push(result);
+                    return Ok(());
+                }
+
+                if object_kind == 15 {
+                    if arg_count != 0 {
+                        return Err(RuntimeError::WrongArgumentCount {
+                            expected: 0,
+                            found: arg_count,
+                        });
+                    }
+
+                    let task = {
+                        let object = handle.borrow();
+                        match &*object {
+                            Object::Task(task) => task.clone(),
+                            _ => return Err(RuntimeError::TypeError),
+                        }
+                    };
+
+                    let scheduler = task
+                        .scheduler
+                        .upgrade()
+                        .ok_or(RuntimeError::TaskNotFound)?;
+
+                    let result = match method_name.as_str() {
+                        "join" => super::scheduler::Scheduler::join(&scheduler, task.id)?,
+                        "status" => Value::new_string(
+                            super::scheduler::Scheduler::status(&scheduler, task.id)?.to_string(),
+                        ),
+                        "is_done" => Value::Boolean(
+                            super::scheduler::Scheduler::is_done(&scheduler, task.id)?,
+                        ),
                         _ => {
                             return Err(RuntimeError::ObjectFieldNotFound {
                                 name: method_name,

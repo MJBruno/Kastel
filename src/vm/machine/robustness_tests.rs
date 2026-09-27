@@ -226,6 +226,8 @@ fn marking_a_very_deep_structure_does_not_overflow_the_stack() {
             frames: &[],
             open_upvalues: &[],
             pending_exception: &None,
+            extra_values: &[],
+            extra_upvalues: &[],
         });
 
         // Le destructeur d'Rc est récursif : on évite de le déclencher ici.

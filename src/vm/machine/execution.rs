@@ -8,18 +8,46 @@ use crate::runtime::value::Value;
 
 impl VirtualMachine {
     pub fn run(&mut self) -> Result<(), RuntimeError> {
-        self.run_internal(true)
+        loop {
+            match self.run_internal(true, None)? {
+                super::RunStatus::Completed => return Ok(()),
+                super::RunStatus::Yielded => continue,
+            }
+        }
     }
 
     #[allow(dead_code)]
     pub(crate) fn run_without_gc(&mut self) -> Result<(), RuntimeError> {
-        self.run_internal(false)
+        loop {
+            match self.run_internal(false, None)? {
+                super::RunStatus::Completed => return Ok(()),
+                super::RunStatus::Yielded => continue,
+            }
+        }
     }
 
-    fn run_internal(&mut self, allow_gc: bool) -> Result<(), RuntimeError> {
+    pub(crate) fn run_quantum(
+        &mut self,
+        instruction_budget: usize,
+    ) -> Result<super::RunStatus, RuntimeError> {
+        self.run_internal(true, Some(instruction_budget.max(1)))
+    }
+
+    fn run_internal(
+        &mut self,
+        allow_gc: bool,
+        instruction_budget: Option<usize>,
+    ) -> Result<super::RunStatus, RuntimeError> {
         let mut gc_check_counter = 0usize;
+        let mut instructions = 0usize;
 
         loop {
+            if let Some(budget) = instruction_budget {
+                if instructions >= budget {
+                    return Ok(super::RunStatus::Yielded);
+                }
+            }
+            instructions += 1;
             if cfg!(feature = "debug_trace") {
                 self.debug_machine()?;
             }
@@ -97,7 +125,7 @@ impl VirtualMachine {
             match result {
                 Ok(true) => {
                     self.print_profile();
-                    return Ok(());
+                    return Ok(super::RunStatus::Completed);
                 }
 
                 Ok(false) => {}
@@ -113,6 +141,11 @@ impl VirtualMachine {
                         return Err(error);
                     }
                 }
+            }
+
+            if self.yield_requested {
+                self.yield_requested = false;
+                return Ok(super::RunStatus::Yielded);
             }
         }
     }
@@ -187,6 +220,13 @@ impl VirtualMachine {
             | RuntimeError::InvalidShiftAmount
             | RuntimeError::NumericTypeError { .. }
             | RuntimeError::TryOperandType { .. } => {
+                Ok(Value::new_error(error.kind_name(), error.to_string()))
+            }
+
+            RuntimeError::TaskCaptureNotAllowed
+            | RuntimeError::TaskNotFound
+            | RuntimeError::TaskDeadlock
+            | RuntimeError::YieldOutsideTask => {
                 Ok(Value::new_error(error.kind_name(), error.to_string()))
             }
 

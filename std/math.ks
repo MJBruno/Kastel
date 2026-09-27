@@ -1,557 +1,216 @@
 // std/math.ks
 //
-// Bibliothèque mathématique de Kastel.
-//
-// Déjà disponibles PARTOUT sans import (fonctions natives globales,
-// voir src/stdlib/math.rs) : abs, floor, ceil, round, sqrt, pow, min,
-// max, sin, cos, tan, asin, acos, atan, atan2, log, log10, exp, rand,
-// rand_int, rand_range, idiv, wrapping_add, wrapping_sub, wrapping_mul.
-// Ce module ne les redéfinit pas — il ajoute
-// tout ce que ces primitives ne couvrent pas : constantes, angles,
-// hyperboliques, arrondi, interpolation, théorie des nombres,
-// combinatoire, statistiques et aléatoire de plus haut niveau.
-//
-// Usage :
-//     import std.math;                      // math.sqrt(2.0), math.gcd(48, 18)
-//     import std.math.Complexe;             // new Complexe(3, 4)
-//     from std.math import PI, clamp, gcd;  // PI, clamp(...), gcd(...)
+// Les fonctions natives (sqrt, log, pow, ...) ne renvoient jamais
+// d'erreur Kastel à proprement parler : hors domaine, elles renvoient
+// silencieusement NaN/Inf (sqrt, log, asin, acos) ou lèvent une
+// exception native (pow en cas de débordement entier). Ce module les
+// enveloppe en Result<T, str> pour un usage idiomatique avec `match`,
+// et ajoute des utilitaires génériques appuyés sur les capabilities
+// Ord/Add des types primitifs (int, float, str).
 
 // ------------------------------------------------------------------
-// Constantes
+// Variantes sûres des fonctions à domaine restreint
 // ------------------------------------------------------------------
 
-export const PI = 3.141592653589793;
-export const E = 2.718281828459045;
-export const TAU = 6.283185307179586; // 2 * PI
-
-// ------------------------------------------------------------------
-// Ré-export des natives globales
-//
-// abs/sqrt/pow/sin/... sont des fonctions natives GLOBALES (voir
-// src/stdlib/math.rs) : elles sont déjà appelables partout sans
-// import, comme `sqrt(2.0)`. Ces lignes les ré-exportent aussi SOUS
-// LE MÊME NOM depuis ce module, pour permettre l'accès qualifié
-// `math.sqrt(2.0)` après `import std.math;` — les deux styles
-// cohabitent, au choix de l'appelant.
-//
-// Pourquoi `const x = x;` et pas `func sqrt(x) { return sqrt(x); }` :
-// une fonction top-level de ce module serait "pré-déclarée" (hissée)
-// avant la compilation de son propre corps — donc `sqrt` à
-// l'intérieur de `func sqrt(...)` référencerait la fonction
-// elle-même, pas la native (récursion infinie). Un `const`, lui,
-// n'est pas hissé : `sqrt` à droite du `=` désigne encore la native
-// au moment où cette ligne s'exécute.
-// ------------------------------------------------------------------
-
-export const abs = abs;
-export const floor = floor;
-export const ceil = ceil;
-export const round = round;
-export const sqrt = sqrt;
-export const pow = pow;
-export const min = min;
-export const max = max;
-export const sin = sin;
-export const cos = cos;
-export const tan = tan;
-export const asin = asin;
-export const acos = acos;
-export const atan = atan;
-export const atan2 = atan2;
-export const log = log;
-export const log10 = log10;
-export const exp = exp;
-export const rand = rand;
-
-// Entiers : 64 bits signés. `+`, `-` et `*` LÈVENT une erreur quand le
-// résultat n'y tient pas (jamais de « bouclage » silencieux).
-//
-// idiv(a, b) : division entière exacte, arrondie vers -infini
-// (idiv(7, 2) = 3, idiv(-7, 2) = -4). `a / b` passe, lui, par un flottant.
-export const idiv = idiv;
-
-// wrapping_add / wrapping_sub / wrapping_mul (a, b) : arithmétique
-// VOLONTAIREMENT cyclique modulo 2^64 (hachage, générateurs pseudo-aléatoires).
-export const wrapping_add = wrapping_add;
-export const wrapping_sub = wrapping_sub;
-export const wrapping_mul = wrapping_mul;
-
-// rand_int(x) renvoie un entier aléatoire dans [0, x), donc rand_int(5) peut
-// renvoyer 0, 1, 2, 3 ou 4.
-export const rand_int = rand_int;
-
-// rand_range(low, high) renvoie un ENTIER aléatoire dans [low, high) ; les
-// deux bornes doivent être entières (pour un flottant, voir random_range()
-// plus bas).
-export const rand_range = rand_range;
-
-// ------------------------------------------------------------------
-// Angles
-// ------------------------------------------------------------------
-
-export func to_radians(degrees) {
-    return degrees * PI / 180;
-}
-
-export func to_degrees(radians) {
-    return radians * 180 / PI;
-}
-
-// ------------------------------------------------------------------
-// Fonctions hyperboliques
-//
-// Pas de native dédiée : dérivées de exp(), qui est déjà exacte et
-// disponible globalement.
-// ------------------------------------------------------------------
-
-export func sinh(x) {
-    return (exp(x) - exp(-x)) / 2;
-}
-
-export func cosh(x) {
-    return (exp(x) + exp(-x)) / 2;
-}
-
-export func tanh(x) {
-    return sinh(x) / cosh(x);
-}
-
-// ------------------------------------------------------------------
-// Racines et distances
-// ------------------------------------------------------------------
-
-// Racine cubique, y compris pour les nombres négatifs (cbrt(-8) = -2)
-// — pow(x, 1/3) seul échoue sur un x négatif (exposant fractionnaire).
-export func cbrt(x) {
-    if x < 0 {
-        return -pow(-x, 1 / 3);
+export func safe_sqrt(value: float) -> Result<float, str> {
+    if value < 0.0 {
+        return Err("safe_sqrt: argument negatif (" + str(value) + ")");
     }
-
-    return pow(x, 1 / 3);
+    return Ok(sqrt(value));
 }
 
-export func hypot(x, y) {
-    return sqrt(x * x + y * y);
+export func safe_log(value: float) -> Result<float, str> {
+    if value <= 0.0 {
+        return Err("safe_log: argument non positif (" + str(value) + ")");
+    }
+    return Ok(log(value));
+}
+
+export func safe_log10(value: float) -> Result<float, str> {
+    if value <= 0.0 {
+        return Err("safe_log10: argument non positif (" + str(value) + ")");
+    }
+    return Ok(log10(value));
+}
+
+export func safe_asin(value: float) -> Result<float, str> {
+    if value < -1.0 || value > 1.0 {
+        return Err("safe_asin: argument hors de [-1, 1] (" + str(value) + ")");
+    }
+    return Ok(asin(value));
+}
+
+export func safe_acos(value: float) -> Result<float, str> {
+    if value < -1.0 || value > 1.0 {
+        return Err("safe_acos: argument hors de [-1, 1] (" + str(value) + ")");
+    }
+    return Ok(acos(value));
+}
+
+export func safe_div(a: float, b: float) -> Result<float, str> {
+    if b == 0.0 {
+        return Err("safe_div: division par zero");
+    }
+    return Ok(a / b);
+}
+
+export func safe_idiv(a: int, b: int) -> Result<int, str> {
+    if b == 0 {
+        return Err("safe_idiv: division par zero");
+    }
+    return Ok(idiv(a, b));
+}
+
+// pow() natif lève une exception native (débordement i64) plutôt que
+// de renvoyer un Result : on la capture ici pour rester dans le monde
+// Result plutôt que de forcer l'appelant à faire un try/catch.
+export func safe_pow(base: int, exponent: int) -> Result<int, str> {
+    try {
+        return Ok(pow(base, exponent));
+    } catch (error) {
+        return Err(error);
+    }
 }
 
 // ------------------------------------------------------------------
-// Arrondi et signe
+// Utilitaires génériques (Ord / Add)
 // ------------------------------------------------------------------
 
-export func sign(x) {
-    if x > 0 {
-        return 1;
-    }
-
-    if x < 0 {
-        return -1;
-    }
-
-    return 0;
-}
-
-// Contrairement à floor(), tronque vers zéro : trunc(-1.5) = -1,
-// alors que floor(-1.5) = -2.
-export func trunc(x) {
-    if x < 0 {
-        return ceil(x);
-    }
-
-    return floor(x);
-}
-
-export func clamp(value, low, high) {
+export func clamp<T: Ord>(value: T, low: T, high: T) -> T {
     if value < low {
         return low;
     }
-
     if value > high {
         return high;
     }
-
     return value;
 }
 
-// ------------------------------------------------------------------
-// Interpolation
-// ------------------------------------------------------------------
-
-export func lerp(start, stop, t) {
-    return start + (stop - start) * t;
+export func min_of<T: Ord>(a: T, b: T) -> T {
+    if a < b {
+        return a;
+    }
+    return b;
 }
 
-// Opération inverse de lerp() : pour quel `t` obtient-on `value`
-// entre `start` et `stop` ?
-export func inverse_lerp(start, stop, value) {
-    return (value - start) / (stop - start);
+export func max_of<T: Ord>(a: T, b: T) -> T {
+    if a > b {
+        return a;
+    }
+    return b;
 }
 
-// Reprojette `value` de l'intervalle [in_min, in_max] vers
-// [out_min, out_max].
-export func map_range(value, in_min, in_max, out_min, out_max) {
-    let t = inverse_lerp(in_min, in_max, value);
+export func min_list<T: Ord>(values: List<T>) -> Option<T> {
+    if values.is_empty() {
+        return None;
+    }
 
-    return lerp(out_min, out_max, t);
+    let smallest = values.first();
+    for value in values {
+        if value < smallest {
+            smallest = value;
+        }
+    }
+    return Some(smallest);
+}
+
+export func max_list<T: Ord>(values: List<T>) -> Option<T> {
+    if values.is_empty() {
+        return None;
+    }
+
+    let largest = values.first();
+    for value in values {
+        if value > largest {
+            largest = value;
+        }
+    }
+    return Some(largest);
+}
+
+// `zero` est l'élément neutre fourni par l'appelant (0, 0.0, "") : Add
+// ne garantit pas d'élément neutre générique, donc pas de somme d'une
+// liste vide sans lui.
+export func sum<T: Add>(values: List<T>, zero: T) -> T {
+    let total = zero;
+    for value in values {
+        total = total + value;
+    }
+    return total;
+}
+
+export func average(values: List<float>) -> Option<float> {
+    if values.is_empty() {
+        return None;
+    }
+    return Some(sum(values, 0.0) / values.size());
 }
 
 // ------------------------------------------------------------------
-// Théorie des nombres
+// Arithmétique entière
 // ------------------------------------------------------------------
 
-export func gcd(a, b) {
+export func gcd(a: int, b: int) -> int {
     let x = abs(a);
     let y = abs(b);
-
     while y != 0 {
         let remainder = x % y;
         x = y;
         y = remainder;
     }
-
     return x;
 }
 
-export func lcm(a, b) {
+export func lcm(a: int, b: int) -> int {
     if a == 0 || b == 0 {
         return 0;
     }
-
-    // Division entière EXACTE (`/` passerait par un flottant), effectuée
-    // AVANT la multiplication : abs(a) / pgcd * abs(b) ne déborde que si le
-    // résultat lui-même dépasse 64 bits (contrairement à abs(a * b) / pgcd).
-    return idiv(abs(a), gcd(a, b)) * abs(b);
+    return abs(idiv(a * b, gcd(a, b)));
 }
 
-export func is_prime(n) {
+export func is_prime(n: int) -> bool {
     if n < 2 {
         return false;
     }
-
-    if n == 2 {
+    if n < 4 {
         return true;
     }
-
     if n % 2 == 0 {
         return false;
     }
 
     let i = 3;
-
     while i * i <= n {
         if n % i == 0 {
             return false;
         }
-
         i = i + 2;
     }
-
     return true;
 }
 
-export func factorial(n) {
-    if n < 0 {
-        throw "factorial: n doit être positif ou nul";
-    }
-
-    let result = 1;
-    let i = 2;
-
-    while i <= n {
-        result = result * i;
-        i = i + 1;
-    }
-
-    return result;
+export func lerp(a: float, b: float, t: float) -> float {
+    return a + (b - a) * t;
 }
 
-// n-ième terme de Fibonacci, 0-indexé (fibonacci(0) = 0,
-// fibonacci(1) = 1). Exact jusqu'à fibonacci(92) ; fibonacci(93) dépasse
-// 64 bits et lève une erreur de dépassement d'entier.
-export func fibonacci(n) {
-    if n < 0 {
-        throw "fibonacci: n doit être positif ou nul";
-    }
-
-    if n == 0 {
-        return 0;
-    }
-
-    // a = F(i - 1), b = F(i) : on ne calcule JAMAIS F(n + 1), qui pourrait
-    // déborder alors que F(n) tient encore.
-    let a = 0;
-    let b = 1;
-    let i = 1;
-
-    while i < n {
-        let next = a + b;
-        a = b;
-        b = next;
-        i = i + 1;
-    }
-
-    return b;
+export func to_degrees(radians: float) -> float {
+    return radians * (180.0 / 3.141592653589793);
 }
 
-// ------------------------------------------------------------------
-// Combinatoire
-//
-// Note : entiers 64 bits, pas de grands nombres arbitraires. Au-delà de
-// n = 20, factorial() ne tient plus sur 64 bits (`factorial(21)` lève une
-// erreur de dépassement d'entier, il ne renvoie plus un nombre faux) ;
-// même limite pour permutations() et combinations() dont le résultat
-// dépasse 64 bits. Pour des ordres de grandeur, passez par des flottants.
-// ------------------------------------------------------------------
-
-// Arrangements de r éléments parmi n, ordre compté : n! / (n - r)!
-export func permutations(n, r) {
-    if r < 0 || r > n {
-        return 0;
-    }
-
-    let result = 1;
-    let i = 0;
-
-    while i < r {
-        result = result * (n - i);
-        i = i + 1;
-    }
-
-    return result;
+export func to_radians(degrees: float) -> float {
+    return degrees * (3.141592653589793 / 180.0);
 }
 
-// Combinaisons de r éléments parmi n, ordre non compté :
-// n! / (r! * (n - r)!).
-export func combinations(n, r) {
-    if r < 0 || r > n {
-        return 0;
-    }
-
-    if r > n - r {
-        r = n - r;
-    }
-
-    let result = 1;
-    let i = 0;
-
-    while i < r {
-        // Division entière exacte : le résultat intermédiaire est toujours un
-        // multiple de (i + 1), et `/` (flottant) perdrait de la précision
-        // au-delà de 2^53.
-        result = idiv(result * (n - i), i + 1);
-        i = i + 1;
-    }
-
-    return result;
-}
-
-// ------------------------------------------------------------------
-// Agrégats sur des tableaux de nombres
-// ------------------------------------------------------------------
-
-export func sum(items) {
-    let total = 0;
-
-    for item in items {
-        total = total + item;
-    }
-
-    return total;
-}
-
-export func average(items) {
-    if items.size() == 0 {
-        return 0;
-    }
-
-    return sum(items) / items.size();
-}
-
-export func median(items) {
-    if items.size() == 0 {
-        throw "median: le tableau ne doit pas être vide";
-    }
-
-    let sorted = items.copy();
-    sorted.sort();
-
-    let length = sorted.size();
-    let middle = floor(length / 2);
-
-    if length % 2 == 0 {
-        return (sorted.get(middle - 1) + sorted.get(middle)) / 2;
-    }
-
-    return sorted.get(middle);
-}
-
-// Variance de population (divise par n, pas n - 1).
-export func variance(items) {
-    let n = items.size();
-
-    if n == 0 {
-        return 0;
-    }
-
-    let mean = average(items);
-    let total = 0;
-
-    for item in items {
-        let diff = item - mean;
-        total = total + diff * diff;
-    }
-
-    return total / n;
-}
-
-export func std_dev(items) {
-    return sqrt(variance(items));
-}
-
-// Valeur la plus fréquente (la première rencontrée en cas d'égalité).
-export func mode(items) {
-    if items.size() == 0 {
-        throw "mode: le tableau ne doit pas être vide";
-    }
-
-    let values = [];
-    let counts = [];
-
-    for item in items {
-        let index = values.index_of(item);
-
-        if index < 0 {
-            values.add(item);
-            counts.add(1);
-        } else {
-            counts.set(index, counts.get(index) + 1);
+// Exemple d'usage combinant Result et `match`, comme demandé : voir
+// aussi std/collections.ks et std/fs.ks pour la même idée appliquée à
+// d'autres domaines.
+export func describe_sqrt(value: float) -> str {
+    match safe_sqrt(value) {
+        Ok(root) => {
+            return "sqrt(" + str(value) + ") = " + str(root);
+        }
+        Err(message) => {
+            return "erreur: " + message;
         }
     }
-
-    let best_index = 0;
-    let i = 1;
-
-    while i < counts.size() {
-        if counts.get(i) > counts.get(best_index) {
-            best_index = i;
-        }
-
-        i = i + 1;
-    }
-
-    return values.get(best_index);
 }
-
-export func min_of(items) {
-    let result = items.get(0);
-
-    for item in items {
-        result = min(result, item);
-    }
-
-    return result;
-}
-
-export func max_of(items) {
-    let result = items.get(0);
-
-    for item in items {
-        result = max(result, item);
-    }
-
-    return result;
-}
-
-// ------------------------------------------------------------------
-// Aléatoire de plus haut niveau
-//
-// Construit sur rand()/rand_int() (natifs).
-// ------------------------------------------------------------------
-
-// Flottant uniforme dans [low, high).
-export func random_range(low, high) {
-    return low + rand() * (high - low);
-}
-
-export func choice(items) {
-    if items.size() == 0 {
-        throw "choice: le tableau ne doit pas être vide";
-    }
-
-    let index = rand_int(items.size());
-
-    return items.get(index);
-}
-
-// Mélange de Fisher-Yates. Ne modifie pas `items` : renvoie une copie
-// mélangée.
-export func shuffle(items) {
-    let result = items.copy();
-    let i = result.size() - 1;
-
-    while i > 0 {
-        // j dans [0, i] INCLUS : avec rand_int(i), l'élément i ne pourrait
-        // jamais rester en place (algorithme de Sattolo : uniquement des
-        // permutations cycliques, donc un mélange biaisé).
-        let j = rand_int(i + 1);
-
-        let temp = result.get(i);
-        result.set(i, result.get(j));
-        result.set(j, temp);
-
-        i = i - 1;
-    }
-
-    return result;
-}
-
-// ------------------------------------------------------------------
-// Nombres complexes
-//
-// Démontre l'autre moitié de la convention d'import : une CLASSE
-// vit dans un module comme std.math au même titre qu'une fonction,
-// mais s'importe SANS qualifier par le nom du module :
-//
-//     import std.math.Complexe;
-//     let z = new Complexe(3, 4);   // pas new math.Complexe(3, 4)
-// ------------------------------------------------------------------
-
-export class Complexe {
-    func initialize(real, imaginaire) {
-        self.real = real;
-        self.imaginaire = imaginaire;
-    }
-
-    func add(other) {
-        return new Complexe(self.real + other.real, self.imaginaire + other.imaginaire);
-    }
-
-    func subtract(other) {
-        return new Complexe(self.real - other.real, self.imaginaire - other.imaginaire);
-    }
-
-    func multiply(other) {
-        let real = self.real * other.real - self.imaginaire * other.imaginaire;
-        let imaginaire = self.real * other.imaginaire + self.imaginaire * other.real;
-
-        return new Complexe(real, imaginaire);
-    }
-
-    func conjugate() {
-        return new Complexe(self.real, - self.imaginaire);
-    }
-
-    func magnitude() {
-        return hypot(self.real, self.imaginaire);
-    }
-
-    // "3+4i" ou "3-4i" : le signe de la partie imaginaire négative est
-    // déjà porté par le nombre lui-même.
-    func to_string() {
-        if self.imaginaire < 0 {
-            return format("{}{}i", self.real, self.imaginaire);
-        }
-
-        return format("{}+{}i", self.real, self.imaginaire);
-    }
-}
-

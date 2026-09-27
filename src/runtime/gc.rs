@@ -110,6 +110,8 @@ pub struct GcRoots<'a> {
     pub open_upvalues: &'a [Rc<RefCell<ObjUpvalue>>],
 
     pub(crate) pending_exception: &'a Option<PendingException>,
+    pub(crate) extra_values: &'a [Value],
+    pub(crate) extra_upvalues: &'a [Rc<RefCell<ObjUpvalue>>],
 }
 
 #[derive(Default)]
@@ -186,6 +188,13 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
     // Exception suspendue pendant finally
     if let Some(exception) = roots.pending_exception {
         mark_value(&exception.value, &mut state);
+    }
+
+    for value in roots.extra_values {
+        mark_value(value, &mut state);
+    }
+    for upvalue in roots.extra_upvalues {
+        mark_upvalue(upvalue, &mut state);
     }
 
     // Parcours (itératif) de tout ce qui est atteignable depuis les racines.
@@ -318,6 +327,8 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
         }
 
         Object::Error { .. } => {}
+
+        Object::Task(_) => {}
 
         Object::Tuple(elements) => {
             for value in elements {

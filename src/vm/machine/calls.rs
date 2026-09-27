@@ -339,6 +339,8 @@ impl VirtualMachine {
 
         if !self.frames.is_empty() {
             self.push(result);
+        } else {
+            self.last_result = Some(result);
         }
 
         Ok(())

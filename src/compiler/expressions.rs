@@ -125,6 +125,45 @@ impl Compiler {
                     return self.compile_method_call(object, name, arguments, *line, *column);
                 }
 
+                if let Expression::Variable(name) = callee.as_ref() {
+                    if name == "spawn" {
+                        if arguments.is_empty() {
+                            return Err(CompileError::WrongArgumentCount {
+                                expected: 1,
+                                found: 0,
+                            });
+                        }
+
+                        if arguments.len() > u8::MAX as usize {
+                            return Err(CompileError::TooManyArguments);
+                        }
+
+                        for argument in arguments {
+                            self.compile_expression(argument)?;
+                        }
+
+                        self.current_line = *line;
+                        self.current_column = *column;
+                        self.emit_bytes(OpCode::Spawn, (arguments.len() - 1) as u8);
+                        return Ok(());
+                    }
+
+                    if name == "yield" {
+                        if !arguments.is_empty() {
+                            return Err(CompileError::WrongArgumentCount {
+                                expected: 0,
+                                found: arguments.len(),
+                            });
+                        }
+
+                        self.current_line = *line;
+                        self.current_column = *column;
+                        self.emit_opcode(OpCode::Yield);
+                        self.emit_opcode(OpCode::None);
+                        return Ok(());
+                    }
+                }
+
                 self.compile_call(callee, arguments, *line, *column)?;
             }
 

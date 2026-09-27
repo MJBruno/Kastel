@@ -52,6 +52,10 @@ pub fn all() -> HashMap<String, Type> {
     // `Set<T>` du résultat à partir des arguments (voir `Expression::Call`).
     types.insert("Set".into(), Dynamic);
 
+    // Concurrence : contrats statiques des intrinsèques gérés par le bytecode.
+    types.insert("spawn".into(), Dynamic);
+    types.insert("yield".into(), function(&[], None));
+
     // Option / Result
     types.insert(
         "Some".into(),

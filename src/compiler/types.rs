@@ -622,6 +622,31 @@ impl Type {
         }
     }
 
+    /// Signatures statiques de `Task<T>`.
+    pub fn task_member_type(&self, name: &str) -> Option<Type> {
+        let result_type = match self {
+            Type::Generic { name, arguments }
+                if name.eq_ignore_ascii_case("Task") && arguments.len() == 1 => {
+                    arguments[0].clone()
+                }
+            _ => return None,
+        };
+
+        let function = |result: Type| Type::Function(FunctionType {
+            generic_params: Vec::new(),
+            generic_constraints: Vec::new(),
+            params: Vec::new(),
+            return_type: Box::new(result),
+        });
+
+        match name {
+            "join" => Some(function(result_type)),
+            "status" => Some(function(Type::Str)),
+            "is_done" => Some(function(Type::Bool)),
+            _ => None,
+        }
+    }
+
     /// Signatures statiques des opérations fondamentales de `Option<T>` et `Result<T,E>`.
     pub fn option_result_member_type(&self, name: &str) -> Option<Type> {
         let function = |generic_params: &[&str], params: Vec<Type>, result: Type| {

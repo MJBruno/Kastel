@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
@@ -20,6 +20,8 @@ mod pattern_matching_tests;
 mod exception_tests;
 #[cfg(test)]
 mod robustness_tests;
+#[cfg(test)]
+mod concurrency_tests;
 
 pub mod arithmetic;
 pub mod arrays;
@@ -43,6 +45,7 @@ pub mod properties;
 pub mod stack;
 pub mod tuples;
 pub mod variables;
+pub mod scheduler;
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) enum HotLoopCache {
@@ -139,6 +142,12 @@ pub(crate) const MAX_CALL_DEPTH: usize = 100_000;
 /// consomme de la pile Rust : cette limite protège contre son débordement.
 pub(crate) const MAX_NATIVE_DEPTH: usize = 500;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunStatus {
+    Completed,
+    Yielded,
+}
+
 // ============================================================
 // VIRTUAL MACHINE
 // ============================================================
@@ -177,6 +186,11 @@ pub struct VirtualMachine {
      * `MAX_NATIVE_DEPTH`).
      */
     pub(crate) native_depth: usize,
+
+    pub(crate) yield_requested: bool,
+    pub(crate) last_result: Option<Value>,
+    pub(crate) scheduler: Weak<RefCell<scheduler::Scheduler>>,
+    pub(crate) scheduler_owner: Option<Rc<RefCell<scheduler::Scheduler>>>,
 
     pub(crate) natives: HashMap<String, Value>,
 
@@ -224,6 +238,9 @@ impl VirtualMachine {
         let globals = Rc::new(RefCell::new(HashMap::new()));
         let closure = Object::new_closure(function, Vec::new(), Rc::downgrade(&globals));
 
+        let scheduler_owner = Rc::new(RefCell::new(scheduler::Scheduler::new()));
+        let scheduler = Rc::downgrade(&scheduler_owner);
+
         let vm = Self {
             stack: vec![Value::None],
 
@@ -243,6 +260,10 @@ impl VirtualMachine {
             open_upvalues: Vec::new(),
             temp_roots: Vec::new(),
             native_depth: 0,
+            yield_requested: false,
+            last_result: None,
+            scheduler,
+            scheduler_owner: Some(scheduler_owner),
             natives: HashMap::new(),
 
             module_loader,
@@ -273,6 +294,9 @@ impl VirtualMachine {
         let local_count = function.local_count as usize;
         let closure = Object::new_closure(function, Vec::new(), Rc::downgrade(&globals));
 
+        let scheduler_owner = Rc::new(RefCell::new(scheduler::Scheduler::new()));
+        let scheduler = Rc::downgrade(&scheduler_owner);
+
         let vm = Self {
             stack: vec![Value::None],
             globals,
@@ -289,6 +313,10 @@ impl VirtualMachine {
             open_upvalues: Vec::new(),
             temp_roots: Vec::new(),
             native_depth: 0,
+            yield_requested: false,
+            last_result: None,
+            scheduler,
+            scheduler_owner: Some(scheduler_owner),
             natives: HashMap::new(),
             module_loader,
             module_path,
@@ -303,6 +331,170 @@ impl VirtualMachine {
         register_natives(&mut vm.globals.borrow_mut());
 
         vm
+    }
+
+    pub(crate) fn new_task(
+        closure: Gc<Object>,
+        arguments: Vec<Value>,
+        globals: Rc<RefCell<HashMap<String, Value>>>,
+        module_loader: ModuleLoader,
+        module_path: Option<PathBuf>,
+        scheduler: Weak<RefCell<scheduler::Scheduler>>,
+    ) -> Result<Self, RuntimeError> {
+        let (arity, local_count, chunk, upvalue_count) = {
+            let closure_ref = crate::vm::machine::bytecode::frame_closure(&closure);
+            (
+                closure_ref.function.arity,
+                closure_ref.function.local_count as usize,
+                Rc::clone(&closure_ref.function.chunk),
+                closure_ref.upvalues.len(),
+            )
+        };
+
+        if arguments.len() != arity {
+            return Err(RuntimeError::WrongArgumentCount {
+                expected: arity,
+                found: arguments.len(),
+            });
+        }
+
+        if upvalue_count != 0 {
+            return Err(RuntimeError::TaskCaptureNotAllowed);
+        }
+
+        let mut stack = Vec::with_capacity(arguments.len() + 1);
+        stack.push(Value::Object(closure.clone()));
+        stack.extend(arguments);
+
+        let vm = Self {
+            stack,
+            globals,
+            frames: vec![CallFrame {
+                closure,
+                chunk,
+                ip: 0,
+                slot_start: 0,
+                local_count,
+                hot_loop_cache: None,
+            }],
+            exception_handlers: Vec::new(),
+            pending_exception: None,
+            open_upvalues: Vec::new(),
+            temp_roots: Vec::new(),
+            native_depth: 0,
+            yield_requested: false,
+            last_result: None,
+            scheduler,
+            scheduler_owner: None,
+            natives: HashMap::new(),
+            module_loader,
+            module_path,
+            current_line: 0,
+            current_column: 0,
+            #[cfg(feature = "profile")]
+            profile_counts: [0; 256],
+            #[cfg(feature = "profile")]
+            profile_read_bytes: 0,
+        };
+
+        // Les tâches partagent les globales de la VM racine : les natives
+        // sont déjà enregistrées dans cette table et ne doivent pas être
+        // réenregistrées à chaque spawn.
+        Ok(vm)
+    }
+
+    pub(crate) fn spawn_task(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
+        let required = arg_count
+            .checked_add(1)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        if self.stack.len() < required {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let callee_index = self.stack.len() - required;
+        let callee = self
+            .stack
+            .get(callee_index)
+            .cloned()
+            .ok_or(RuntimeError::StackUnderflow)?;
+
+        let mut arguments = self
+            .stack
+            .get(callee_index + 1..)
+            .ok_or(RuntimeError::StackUnderflow)?
+            .to_vec();
+
+        let closure = match callee {
+            Value::Object(handle) => {
+                let object = handle.borrow();
+
+                match &*object {
+                    Object::Closure(_) => handle.clone(),
+
+                    Object::Overloads { functions, .. } => {
+                        let selected = functions
+                            .iter()
+                            .find(|function| Self::function_arity(function) == Some(arg_count))
+                            .cloned();
+
+                        match selected {
+                            Some(Value::Object(closure))
+                                if matches!(&*closure.borrow(), Object::Closure(_)) => closure,
+
+                            _ => {
+                                let expected = functions
+                                    .iter()
+                                    .filter_map(Self::function_arity)
+                                    .min()
+                                    .unwrap_or(0);
+
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected,
+                                    found: arg_count,
+                                });
+                            }
+                        }
+                    }
+
+                    Object::BoundMethod {
+                        method: Some(method),
+                        receiver,
+                    } => {
+                        arguments.insert(0, receiver.clone());
+                        method.clone()
+                    }
+
+                    _ => return Err(RuntimeError::NotCallable),
+                }
+            }
+
+            _ => return Err(RuntimeError::NotCallable),
+        };
+
+        let scheduler = self
+            .scheduler
+            .upgrade()
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let handle = scheduler::Scheduler::spawn(
+            &scheduler,
+            closure,
+            arguments,
+            Rc::clone(&self.globals),
+            self.module_loader.clone(),
+            self.module_path.clone(),
+        )?;
+
+        self.stack.truncate(callee_index);
+        let task_object = Gc::new(Object::Task(handle));
+        crate::runtime::gc::register_object(&task_object);
+        self.push(Value::Object(task_object));
+        Ok(())
+    }
+
+    pub(crate) fn last_result_value(&self) -> Value {
+        self.last_result.clone().unwrap_or(Value::None)
     }
 
     pub fn execute_repl(&mut self, function: Rc<Function>) -> Result<Option<Value>, RuntimeError> {
@@ -330,6 +522,8 @@ impl VirtualMachine {
         self.pending_exception = None;
         self.temp_roots.clear();
         self.native_depth = 0;
+        self.yield_requested = false;
+        self.last_result = None;
 
         // Les upvalues ont maintenant été fermées correctement.
         self.open_upvalues.clear();

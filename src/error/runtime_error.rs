@@ -144,6 +144,11 @@ pub enum RuntimeError {
     /// à parcourir entièrement, par exemple pour `json_encode`.
     CyclicStructure,
 
+    TaskCaptureNotAllowed,
+    TaskNotFound,
+    TaskDeadlock,
+    YieldOutsideTask,
+
     /// Résultat hors de l'intervalle des entiers 64 bits signés
     /// (`-9223372036854775808` à `9223372036854775807`). `operation` est
     /// l'opération fautive : « addition », « multiplication », « puissance »…
@@ -203,6 +208,22 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::IndexOutOfBounds => {
                 write!(f, "Array index out of bounds")
+            }
+
+            RuntimeError::TaskCaptureNotAllowed => {
+                write!(f, "spawn() requires a closure without captured local variables.")
+            }
+
+            RuntimeError::TaskNotFound => {
+                write!(f, "Task not found.")
+            }
+
+            RuntimeError::TaskDeadlock => {
+                write!(f, "Task scheduler deadlock detected.")
+            }
+
+            RuntimeError::YieldOutsideTask => {
+                write!(f, "yield() can only be used inside a spawned task.")
             }
 
             RuntimeError::ModuleError(message) => {
@@ -397,6 +418,10 @@ impl RuntimeError {
             RuntimeError::StackOverflow { .. } => "StackOverflow",
             RuntimeError::CyclicStructure => "CyclicStructure",
             RuntimeError::IntegerOverflow { .. } => "IntegerOverflow",
+            RuntimeError::TaskCaptureNotAllowed => "TaskCaptureNotAllowed",
+            RuntimeError::TaskNotFound => "TaskNotFound",
+            RuntimeError::TaskDeadlock => "TaskDeadlock",
+            RuntimeError::YieldOutsideTask => "YieldOutsideTask",
         }
     }
 

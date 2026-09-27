@@ -1,100 +1,141 @@
 // std/collections.ks
 //
-// Utilitaires de haut niveau sur les tableaux, écrits en Kastel
-// au-dessus des méthodes natives d'array (push, get, length, ...).
-//
-// Usage : from std.collections import enumerate, zip, flatten;
+// Plusieurs méthodes natives de List/Dict utilisent une sentinelle
+// plutôt qu'un Option pour signaler une absence : index_of() renvoie
+// -1, first()/last()/pop() renvoient le `None` brut (pas un
+// Object::Option) sur une liste vide. Ce module remonte tout ça vers
+// des Option<T>/Result<T, E> explicites, et ajoute quelques
+// combinateurs génériques construits avec `match`.
 
+// ------------------------------------------------------------------
+// List<T>
+// ------------------------------------------------------------------
 
-
-export func enumerate(items) {
-    let result = [];
-    let i = 0;
-
-    while i < items.size() {
-        result.add([i, items.get(i)]);
-        i = i + 1;
+export func first_opt<T>(values: List<T>) -> Option<T> {
+    if values.is_empty() {
+        return None;
     }
-
-    return result;
+    return Some(values.first());
 }
 
-export func zip(a, b) {
-    let result = [];
-    let length = a.size();
-
-    if b.size() < length {
-        length = b.size();
+export func last_opt<T>(values: List<T>) -> Option<T> {
+    if values.is_empty() {
+        return None;
     }
-
-    let i = 0;
-
-    while i < length {
-        result.add([a.get(i), b.get(i)]);
-        i = i + 1;
-    }
-
-    return result;
+    return Some(values.last());
 }
 
-// Aplatit un tableau de profondeur arbitraire en un tableau plat.
-export func flatten(items) {
-    let result = [];
+// Retire et renvoie le dernier élément, ou None si la liste est déjà
+// vide (au lieu du `None` brut ambigu de pop() natif).
+export func pop_opt<T>(values: List<T>) -> Option<T> {
+    if values.is_empty() {
+        return None;
+    }
+    return Some(values.pop());
+}
 
-    for item in items {
-        if type(item) == "list" {
-            for inner in flatten(item) {
-                result.add(inner);
+export func get_opt<T>(values: List<T>, index: int) -> Option<T> {
+    if index < 0 || index >= values.size() {
+        return None;
+    }
+    return Some(values[index]);
+}
+
+export func index_of_opt<T>(values: List<T>, target: T) -> Option<int> {
+    let index = values.index_of(target);
+    if index < 0 {
+        return None;
+    }
+    return Some(index);
+}
+
+export func find<T>(values: List<T>, predicate) -> Option<T> {
+    for value in values {
+        if predicate(value) {
+            return Some(value);
+        }
+    }
+    return None;
+}
+
+export func find_index<T>(values: List<T>, predicate) -> Option<int> {
+    let index = 0;
+    for value in values {
+        if predicate(value) {
+            return Some(index);
+        }
+        index = index + 1;
+    }
+    return None;
+}
+
+// Applique `transform` (T -> Result<U, E>) à chaque élément dans
+// l'ordre, s'arrête à la première Err rencontrée, sinon renvoie
+// Ok(liste complète des résultats).
+export func try_map<T, U, E>(values: List<T>, transform) -> Result<List<U>, E> {
+    let results = [];
+    for value in values {
+        match transform(value) {
+            Ok(mapped) => {
+                results.add(mapped);
             }
+            Err(error) => {
+                return Err(error);
+            }
+        }
+    }
+    return Ok(results);
+}
+
+// Sépare `values` en (éléments qui valident predicate, les autres).
+export func partition<T>(values: List<T>, predicate) {
+    let matched = [];
+    let rejected = [];
+    for value in values {
+        if predicate(value) {
+            matched.add(value);
         } else {
-            result.add(item);
+            rejected.add(value);
         }
     }
-
-    return result;
+    return (matched, rejected);
 }
 
-// Nouveau tableau sans doublons, dans l'ordre de première apparition.
-export func unique(items) {
-    let result = [];
-
-    for item in items {
-        if !result.contains(item) {
-            result.add(item);
+// Ne garde que les Some(...) d'une liste d'Option<T>, en ignorant les
+// None — l'équivalent de `filter_map(|x| x)` d'autres langages.
+export func flatten_options<T>(values: List<Option<T>>) -> List<T> {
+    let results = [];
+    for value in values {
+        match value {
+            Some(inner) => {
+                results.add(inner);
+            }
+            None => {
+                // ignoré volontairement
+            }
         }
     }
-
-    return result;
+    return results;
 }
 
-// Découpe `items` en sous-tableaux d'au plus `size` éléments.
-export func chunk(items, size) {
-    let result = [];
-    let current = [];
+// ------------------------------------------------------------------
+// Dict<K, V>
+// ------------------------------------------------------------------
 
-    for item in items {
-        current.add(item);
-
-        if current.size() == size {
-            result.add(current);
-            current = [];
-        }
+// dict.get(key) natif lève une exception sur une clé absente : cette
+// version passe par contains() d'abord et renvoie Option<V>.
+export func try_get<K, V>(entries: Dict<K, V>, key: K) -> Option<V> {
+    if entries.contains(key) {
+        return Some(entries.get(key));
     }
-
-    if current.size() > 0 {
-        result.add(current);
-    }
-
-    return result;
+    return None;
 }
 
-// Équivalent de `list(range(stop))` : un tableau [0, 1, ..., stop-1].
-export func range_array(stop) {
-    let result = [];
-
-    for i in range(stop) {
-        result.add(i);
+export func try_remove<K, V>(entries: Dict<K, V>, key: K) -> Option<V> {
+    if entries.contains(key) {
+        let value = entries.get(key);
+        entries.remove(key);
+        return Some(value);
     }
-
-    return result;
+    return None;
 }

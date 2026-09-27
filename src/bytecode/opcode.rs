@@ -122,11 +122,17 @@ pub enum OpCode {
     /// Propagation `?` pour `Option` / `Result`. Transforme le sommet de
     /// pile en `(payload, success)` pour permettre un branchement compilé.
     Try,
+
+    /// Crée une tâche coopérative à partir d'une closure et de ses arguments.
+    Spawn,
+
+    /// Suspend explicitement la tâche courante jusqu'au prochain tour.
+    Yield,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::Try as usize + 1;
+    pub const COUNT: usize = Self::Yield as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -207,7 +213,9 @@ mod tests {
         assert_eq!(OpCode::OverloadLocal as u8, 67);
         assert_eq!(OpCode::Enum as u8, 68);
         assert_eq!(OpCode::Try as u8, 69);
-        assert_eq!(OpCode::COUNT, 70);
+        assert_eq!(OpCode::Spawn as u8, 70);
+        assert_eq!(OpCode::Yield as u8, 71);
+        assert_eq!(OpCode::COUNT, 72);
     }
 
     #[test]

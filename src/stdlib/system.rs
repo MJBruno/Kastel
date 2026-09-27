@@ -121,20 +121,21 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
             Object::Set(_) => "set".to_string(),
             Object::Dict(_) => "dict".to_string(),
             Object::Record(_) => "record".to_string(),
+
             Object::Function(_) | Object::Closure(_) | Object::Overloads { .. } => {
                 "function".to_string()
             }
+
             Object::Iterator(_) => "iterator".to_string(),
+            Object::Task(_) => "Task".to_string(),
             Object::Module(_) => "module".to_string(),
 
             Object::BoundMethod { .. } => "function".to_string(),
 
             Object::Class { .. } => "class".to_string(),
-
             Object::Interface { .. } => "interface".to_string(),
 
             Object::Enum { name, .. } => name.clone(),
-
             Object::EnumVariant { enum_name, .. } => enum_name.clone(),
 
             Object::Instance { class, .. } => match class.as_ref() {
