@@ -438,6 +438,13 @@ pub enum Expression {
     /// fixe, accès par `p.name`.
     Record(Vec<(String, Expression)>),
 
+    /// Propagation operator `?` pour `Option` et `Result`.
+    ///
+    /// `Some(value)?` / `Ok(value)?` produit `value`.
+    /// `None?` / `Err(error)?` termine la fonction courante en
+    /// retournant respectivement `None` / `Err(error)`.
+    Try(Box<Expression>),
+
     Ternary {
         condition: Box<Expression>,
         then_expr: Box<Expression>,

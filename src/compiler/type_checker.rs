@@ -3338,6 +3338,151 @@ impl TypeChecker {
                 }
             }
 
+            Expression::Try(inner) => {
+                let operand_type = self.check_expression(inner)?;
+                let Some(expected_return) = self.current_return_type.clone() else {
+                    return Err(CompileError::TypeMismatch {
+                        expected: "Option<T> ou Result<T, E>".to_string(),
+                        found: "fonction sans type de retour".to_string(),
+                    });
+                };
+
+                if expected_return.is_dynamic() {
+                    return match operand_type {
+                        Type::None => Ok(Type::Dynamic),
+                        Type::Generic { name, arguments }
+                            if name.eq_ignore_ascii_case("Option") && arguments.len() == 1 =>
+                        {
+                            Ok(arguments[0].clone())
+                        }
+                        Type::Named(name) if name.eq_ignore_ascii_case("Option") => {
+                            Ok(Type::Dynamic)
+                        }
+                        Type::Generic { name, arguments }
+                            if name.eq_ignore_ascii_case("Result") && arguments.len() == 2 =>
+                        {
+                            Ok(arguments[0].clone())
+                        }
+                        Type::Named(name) if name.eq_ignore_ascii_case("Result") => {
+                            Ok(Type::Dynamic)
+                        }
+                        Type::Dynamic => Ok(Type::Dynamic),
+                        other => Err(CompileError::TypeMismatch {
+                            expected: "Option<T> ou Result<T, E>".to_string(),
+                            found: other.to_string(),
+                        }),
+                    };
+                }
+
+                match operand_type {
+                    Type::None => {
+                        if matches!(
+                            &expected_return,
+                            Type::Generic { name, .. } if name.eq_ignore_ascii_case("Option")
+                        ) || matches!(
+                            &expected_return,
+                            Type::Named(name) if name.eq_ignore_ascii_case("Option")
+                        ) {
+                            Ok(Type::Dynamic)
+                        } else {
+                            Err(CompileError::TypeMismatch {
+                                expected: "Option<T>".to_string(),
+                                found: expected_return.to_string(),
+                            })
+                        }
+                    }
+
+                    Type::Generic { name, arguments }
+                        if name.eq_ignore_ascii_case("Option") && arguments.len() == 1 => {
+                        let valid_return = matches!(
+                            &expected_return,
+                            Type::Generic { name, .. } if name.eq_ignore_ascii_case("Option")
+                        ) || matches!(
+                            &expected_return,
+                            Type::Named(name) if name.eq_ignore_ascii_case("Option")
+                        );
+
+                        if !valid_return {
+                            return Err(CompileError::TypeMismatch {
+                                expected: "Option<T>".to_string(),
+                                found: expected_return.to_string(),
+                            });
+                        }
+
+                        Ok(arguments[0].clone())
+                    }
+
+                    Type::Named(name) if name.eq_ignore_ascii_case("Option") => {
+                        let valid_return = matches!(
+                            &expected_return,
+                            Type::Generic { name, .. } if name.eq_ignore_ascii_case("Option")
+                        ) || matches!(
+                            &expected_return,
+                            Type::Named(name) if name.eq_ignore_ascii_case("Option")
+                        );
+
+                        if valid_return {
+                            Ok(Type::Dynamic)
+                        } else {
+                            Err(CompileError::TypeMismatch {
+                                expected: "Option<T>".to_string(),
+                                found: expected_return.to_string(),
+                            })
+                        }
+                    }
+
+                    Type::Generic { name, arguments }
+                        if name.eq_ignore_ascii_case("Result") && arguments.len() == 2 => {
+                        match &expected_return {
+                            Type::Generic { name, arguments: expected_arguments }
+                                if name.eq_ignore_ascii_case("Result")
+                                    && expected_arguments.len() == 2 =>
+                            {
+                                self.ensure_assignable(&arguments[1], &expected_arguments[1])?;
+                            }
+                            Type::Named(name) if name.eq_ignore_ascii_case("Result") => {}
+                            _ => {
+                                return Err(CompileError::TypeMismatch {
+                                    expected: "Result<T, E>".to_string(),
+                                    found: expected_return.to_string(),
+                                });
+                            }
+                        }
+
+                        Ok(arguments[0].clone())
+                    }
+
+                    Type::Named(name) if name.eq_ignore_ascii_case("Result") => {
+                        let valid_return = matches!(
+                            &expected_return,
+                            Type::Generic { name, .. } if name.eq_ignore_ascii_case("Result")
+                        ) || matches!(
+                            &expected_return,
+                            Type::Named(name) if name.eq_ignore_ascii_case("Result")
+                        );
+
+                        if valid_return {
+                            Ok(Type::Dynamic)
+                        } else {
+                            Err(CompileError::TypeMismatch {
+                                expected: "Result<T, E>".to_string(),
+                                found: expected_return.to_string(),
+                            })
+                        }
+                    }
+
+                    Type::Dynamic => Err(CompileError::TypeMismatch {
+                        expected: "Option<T> ou Result<T, E>".to_string(),
+                        found: "Dynamic".to_string(),
+                    }),
+
+                    other => Err(CompileError::TypeMismatch {
+                        expected: "Option<T> ou Result<T, E>".to_string(),
+                        found: other.to_string(),
+                    }),
+                }
+            }
+
             Expression::Ternary {
                 condition,
                 then_expr,

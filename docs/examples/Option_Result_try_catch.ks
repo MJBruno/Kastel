@@ -114,6 +114,6 @@ try {
     println(value);
 }
 catch (e: Err) {
-    println("Exception capturée:");
+    println("Exception capturee:");
     println(e.to_string());
 }

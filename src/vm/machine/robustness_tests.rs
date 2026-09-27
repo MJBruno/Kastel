@@ -904,7 +904,8 @@ fn enum_duplicate_variants_are_rejected() {
 fn enum_opcode_does_not_shift_existing_opcode_values() {
     assert_eq!(crate::bytecode::opcode::OpCode::OverloadLocal as u8, 67);
     assert_eq!(crate::bytecode::opcode::OpCode::Enum as u8, 68);
-    assert_eq!(crate::bytecode::opcode::OpCode::COUNT, 69);
+    assert_eq!(crate::bytecode::opcode::OpCode::Try as u8, 69);
+    assert_eq!(crate::bytecode::opcode::OpCode::COUNT, 70);
 }
 
 #[test]

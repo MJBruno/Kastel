@@ -1,6 +1,9 @@
 use super::VirtualMachine;
 
-use crate::error::runtime_error::RuntimeError;
+use crate::{
+    error::runtime_error::RuntimeError,
+    runtime::{object::Object, value::Value},
+};
 
 impl VirtualMachine {
     pub(crate) fn jump(&mut self) -> Result<(), RuntimeError> {
@@ -69,4 +72,41 @@ impl VirtualMachine {
 
         Ok(())
     }
+
+    /// Runtime de l'opérateur `?`.
+    ///
+    /// Transforme le sommet en `(payload, true)` pour `Some/Ok`, ou en
+    /// `(None/Err, false)` pour une propagation. Le compilateur transforme
+    /// ensuite `false` en retour de la fonction courante.
+    pub(crate) fn try_operator(&mut self) -> Result<(), RuntimeError> {
+        let value = self.pop()?;
+
+        let outcome = match &value {
+            Value::None => Some((Value::None, false)),
+
+            Value::Object(handle) => {
+                let object = handle.borrow();
+                match &*object {
+                    Object::Option(Some(inner)) => Some((inner.clone(), true)),
+                    Object::Option(None) => Some((Value::None, false)),
+                    Object::Result { ok: true, value } => Some((value.clone(), true)),
+                    Object::Result { ok: false, .. } => Some((value.clone(), false)),
+                    _ => None,
+                }
+            }
+
+            _ => None,
+        };
+
+        let Some((result, success)) = outcome else {
+            return Err(RuntimeError::TryOperandType {
+                found: value.type_name().to_string(),
+            });
+        };
+
+        self.push(result);
+        self.push(Value::Boolean(success));
+        Ok(())
+    }
+
 }

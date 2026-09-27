@@ -27,6 +27,11 @@ pub enum RuntimeError {
         expected: &'static str,
     },
 
+    /// L'opérateur `?` n'a reçu ni `Option` ni `Result`.
+    TryOperandType {
+        found: String,
+    },
+
     IndexOutOfBounds,
 
     ArrayIndexNotInteger,
@@ -183,6 +188,10 @@ impl std::fmt::Display for RuntimeError {
                 Some(message) => write!(f, "Result unwrap failed: {message}"),
                 None => write!(f, "Result unwrap failed: expected {expected}."),
             },
+
+            RuntimeError::TryOperandType { found } => {
+                write!(f, "Operator '?' requires Option or Result, found {found}.")
+            }
 
             RuntimeError::ArrayIndexNotInteger => {
                 write!(f, "Array index must be an integer.")
@@ -361,6 +370,7 @@ impl RuntimeError {
             RuntimeError::NativeError => "NativeError",
             RuntimeError::OptionUnwrap { .. } => "OptionUnwrap",
             RuntimeError::ResultUnwrap { .. } => "ResultUnwrap",
+            RuntimeError::TryOperandType { .. } => "TryOperandType",
             RuntimeError::IndexOutOfBounds => "IndexOutOfBounds",
             RuntimeError::ArrayIndexNotInteger => "ArrayIndexNotInteger",
             RuntimeError::ArrayIndexOutOfBounds { .. } => "ArrayIndexOutOfBounds",

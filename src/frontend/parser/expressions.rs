@@ -544,10 +544,79 @@ impl Parser {
                 continue;
             }
 
+            // `?` est ambigu avec l'opérateur ternaire déjà présent dans
+            // Kastel. Le postfixe est donc reconnu ici seulement lorsqu'aucun
+            // `:` n'apparaît au même niveau d'imbrication.
+            if self.check(TokenKind::Question) && !self.question_starts_ternary() {
+                self.advance();
+                expression = Expression::Try(Box::new(expression));
+                continue;
+            }
+
             break;
         }
 
         Ok(expression)
+    }
+
+    /// `true` si le `?` courant appartient à un ternaire (`cond ? a : b`).
+    /// Les `:` imbriqués dans `()`, `[]` ou `{}` sont ignorés.
+    fn question_starts_ternary(&self) -> bool {
+        debug_assert!(self.check(TokenKind::Question));
+
+        let mut index = self.current + 1;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+
+        while let Some(token) = self.tokens.get(index) {
+            match &token.kind {
+                TokenKind::LeftParen => paren_depth += 1,
+                TokenKind::RightParen => {
+                    if paren_depth > 0 {
+                        paren_depth -= 1;
+                    } else if bracket_depth == 0 && brace_depth == 0 {
+                        return false;
+                    }
+                }
+
+                TokenKind::LeftBracket => bracket_depth += 1,
+                TokenKind::RightBracket => {
+                    if bracket_depth > 0 {
+                        bracket_depth -= 1;
+                    } else if paren_depth == 0 && brace_depth == 0 {
+                        return false;
+                    }
+                }
+
+                TokenKind::LeftBrace => brace_depth += 1,
+                TokenKind::RightBrace => {
+                    if brace_depth > 0 {
+                        brace_depth -= 1;
+                    } else if paren_depth == 0 && bracket_depth == 0 {
+                        return false;
+                    }
+                }
+
+                TokenKind::Colon
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
+                    return true;
+                }
+
+                TokenKind::Comma | TokenKind::Semicolon | TokenKind::Eof
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
+                    return false;
+                }
+
+                _ => {}
+            }
+
+            index += 1;
+        }
+
+        false
     }
 
     fn parse_call(

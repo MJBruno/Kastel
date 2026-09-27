@@ -209,6 +209,32 @@ impl Compiler {
                 self.emit_constant_op(OpCode::GetProperty, name_constant);
             }
 
+            Expression::Try(expression) => {
+                if !self.in_function {
+                    return Err(CompileError::ReturnOutsidFunction);
+                }
+
+                self.compile_expression(expression)?;
+                self.emit_opcode(OpCode::Try);
+
+                // OP_TRY laisse [payload_ou_valeur_propagée, success].
+                // En cas d'échec, la valeur propagée reste sur la pile et
+                // les `finally` actifs sont exécutés avant `Return`.
+                let failure_jump = self.emit_jump(OpCode::JumpIfFalse);
+
+                // Succès : retirer le booléen, conserver le payload.
+                self.emit_opcode(OpCode::Pop);
+                let end_jump = self.emit_jump(OpCode::Jump);
+
+                // Échec : retirer le booléen, conserver None/Err(...).
+                self.patch_jump(failure_jump)?;
+                self.emit_opcode(OpCode::Pop);
+                self.compile_active_finally()?;
+                self.emit_opcode(OpCode::Return);
+
+                self.patch_jump(end_jump)?;
+            }
+
             Expression::Ternary {
                 condition,
                 then_expr,

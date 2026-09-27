@@ -209,3 +209,197 @@ fn option_and_result_types_are_checked_statically() {
     )
     .is_err());
 }
+
+#[test]
+fn question_mark_propagates_option() {
+    let source = r#"
+        func maybe_value(ok: bool) -> Option<int> {
+            if ok {
+                return Some(41);
+            }
+            return None;
+        }
+
+        func add_one(ok: bool) -> Option<int> {
+            let value = maybe_value(ok)?;
+            return Some(value + 1);
+        }
+
+        let success = add_one(true);
+        let failure = add_one(false);
+    "#;
+
+    let (vm, result) = run_script(source);
+    result.expect("Option ? doit propager None sans exception");
+
+    match global(&vm, "success") {
+        Value::Object(handle) => match &*handle.borrow() {
+            crate::runtime::object::Object::Option(Some(Value::Integer(value))) => {
+                assert_eq!(*value, 42);
+            }
+            other => panic!("success inattendu: {other:?}"),
+        },
+        other => panic!("success inattendu: {other:?}"),
+    }
+
+    assert!(matches!(global(&vm, "failure"), Value::None));
+}
+
+#[test]
+fn question_mark_propagates_result() {
+    let source = r#"
+        func parse(ok: bool) -> Result<int, str> {
+            if ok {
+                return Ok(40);
+            }
+            return Err("bad");
+        }
+
+        func add_two(ok: bool) -> Result<int, str> {
+            let value = parse(ok)?;
+            return Ok(value + 2);
+        }
+
+        let success = add_two(true);
+        let failure = add_two(false);
+    "#;
+
+    let (vm, result) = run_script(source);
+    result.expect("Result ? doit propager Err sans exception");
+
+    match global(&vm, "success") {
+        Value::Object(handle) => match &*handle.borrow() {
+            crate::runtime::object::Object::Result { ok: true, value } => {
+                assert!(matches!(value, Value::Integer(42)));
+            }
+            other => panic!("success inattendu: {other:?}"),
+        },
+        other => panic!("success inattendu: {other:?}"),
+    }
+
+    match global(&vm, "failure") {
+        Value::Object(handle) => match &*handle.borrow() {
+            crate::runtime::object::Object::Result { ok: false, value } => {
+                assert_eq!(value.as_string_value().as_deref(), Some("bad"));
+            }
+            other => panic!("failure inattendue: {other:?}"),
+        },
+        other => panic!("failure inattendue: {other:?}"),
+    }
+}
+
+#[test]
+fn question_mark_preserves_ternary_syntax() {
+    let source = r#"
+        func value() -> Option<int> {
+            let base = true ? 10 : 20;
+            let answer = Some(base)?;
+            return Some(answer);
+        }
+
+        let result = value();
+    "#;
+
+    let (vm, execution) = run_script(source);
+    execution.expect("ternaire + ? doivent être désambiguïsés");
+
+    match global(&vm, "result") {
+        Value::Object(handle) => match &*handle.borrow() {
+            crate::runtime::object::Object::Option(Some(Value::Integer(value))) => {
+                assert_eq!(*value, 10);
+            }
+            other => panic!("résultat inattendu: {other:?}"),
+        },
+        other => panic!("résultat inattendu: {other:?}"),
+    }
+}
+
+#[test]
+fn question_mark_runs_finally_before_propagation() {
+    let source = r#"
+        let count = 0;
+
+        func fail() -> Result<int, str> {
+            return Err("boom");
+        }
+
+        func run() -> Result<int, str> {
+            try {
+                let value = fail()?;
+                return Ok(value);
+            } finally {
+                count = count + 1;
+            }
+        }
+
+        let result = run();
+    "#;
+
+    let (vm, execution) = run_script(source);
+    execution.expect("? ne doit pas contourner finally");
+
+    assert_eq!(integer(&vm, "count"), 1);
+    match global(&vm, "result") {
+        Value::Object(handle) => match &*handle.borrow() {
+            crate::runtime::object::Object::Result { ok: false, value } => {
+                assert_eq!(value.as_string_value().as_deref(), Some("boom"));
+            }
+            other => panic!("résultat inattendu: {other:?}"),
+        },
+        other => panic!("résultat inattendu: {other:?}"),
+    }
+}
+
+#[test]
+fn question_mark_checks_return_family_and_result_error_type() {
+    assert!(compile_only(
+        r#"
+        func invalid() -> Result<int, str> {
+            let value = Some(42)?;
+            return Ok(value);
+        }
+        "#,
+    )
+    .is_err());
+
+    assert!(compile_only(
+        r#"
+        func source() -> Result<int, int> {
+            return Err(42);
+        }
+
+        func invalid() -> Result<int, str> {
+            let value = source()?;
+            return Ok(value);
+        }
+        "#,
+    )
+    .is_err());
+
+    assert!(compile_only(
+        r#"
+        func invalid() -> Result<int, str> {
+            let value = 42?;
+            return Ok(value);
+        }
+        "#,
+    )
+    .is_err());
+
+    assert!(compile_only("let value = Some(1)?;").is_err());
+}
+
+#[test]
+fn question_mark_runtime_checks_dynamic_values() {
+    let source = r#"
+        func invalid(value) -> Dynamic {
+            let unwrapped = value?;
+            return unwrapped;
+        }
+
+        invalid(42);
+    "#;
+
+    let (_, result) = run_script(source);
+    assert!(matches!(result, Err(RuntimeError::TryOperandType { .. })));
+}

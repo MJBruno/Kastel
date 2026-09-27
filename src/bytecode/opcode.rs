@@ -118,11 +118,15 @@ pub enum OpCode {
     /// nombre de variants puis nombre de méthodes. Ajouté en dernier pour
     /// préserver les discriminants des opcodes existants.
     Enum,
+
+    /// Propagation `?` pour `Option` / `Result`. Transforme le sommet de
+    /// pile en `(payload, success)` pour permettre un branchement compilé.
+    Try,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::Enum as usize + 1;
+    pub const COUNT: usize = Self::Try as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -202,7 +206,8 @@ mod tests {
         assert_eq!(OpCode::Overload as u8, 66);
         assert_eq!(OpCode::OverloadLocal as u8, 67);
         assert_eq!(OpCode::Enum as u8, 68);
-        assert_eq!(OpCode::COUNT, 69);
+        assert_eq!(OpCode::Try as u8, 69);
+        assert_eq!(OpCode::COUNT, 70);
     }
 
     #[test]

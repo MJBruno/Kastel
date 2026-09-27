@@ -203,6 +203,8 @@ impl Chunk {
 
             OpCode::FinallyEnd => self.simple_instruction("OP_FINALLY_END", offset),
 
+            OpCode::Try => self.simple_instruction("OP_TRY", offset),
+
             // =====================================================
             // RETURN / HALT
             // =====================================================
