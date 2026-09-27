@@ -21,9 +21,9 @@ class Counter: Iterator<int> {
 let iterator: Iterator<int> = new Counter(5);
 
 let values = iterator
-    .map(func(value) { return value * 2; })
-    .filter(func(value) { return value >= 4; })
+    .map((value) => value * 2)
+    .filter((value) => value >= 4)
     .take(2)
     .collect();
 
-println(values)
+    println(values)
