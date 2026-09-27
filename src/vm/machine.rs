@@ -15,6 +15,8 @@ use crate::stdlib::register_natives;
 #[cfg(test)]
 mod option_result_tests;
 #[cfg(test)]
+mod pattern_matching_tests;
+#[cfg(test)]
 mod robustness_tests;
 
 pub mod arithmetic;

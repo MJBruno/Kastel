@@ -2051,12 +2051,26 @@ impl TypeChecker {
             Statement::Match { value, arms } => {
                 let value_type = self.check_expression(value)?;
 
+                self.check_match_exhaustiveness(&value_type, arms)?;
+
                 for arm in arms {
                     self.push_scope();
-                    self.bind_pattern(&arm.pattern, &value_type)?;
+
+                    let bindings = self.check_pattern(&arm.pattern, &value_type)?;
+                    for (name, ty) in bindings {
+                        self.declare(
+                            &name,
+                            Binding {
+                                ty,
+                                _mutable: true,
+                                native: false,
+                            },
+                        )?;
+                    }
 
                     if let Some(guard) = &arm.guard {
-                        self.check_expression(guard)?;
+                        let guard_type = self.check_expression(guard)?;
+                        self.ensure_assignable(&guard_type, &Type::Bool)?;
                     }
 
                     self.check_statements(&arm.body)?;
@@ -4363,30 +4377,684 @@ impl TypeChecker {
         }
     }
 
-    fn bind_pattern(&mut self, pattern: &Pattern, matched_type: &Type) -> Result<(), CompileError> {
+    fn check_pattern(
+        &self,
+        pattern: &Pattern,
+        matched_type: &Type,
+    ) -> Result<HashMap<String, Type>, CompileError> {
         match pattern {
-            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => Ok(()),
-            Pattern::Binding(name) => self.declare(
-                name,
-                Binding {
-                    ty: matched_type.clone(),
-                    _mutable: true,
-                    native: false,
-                },
-            ),
+            Pattern::Wildcard => Ok(HashMap::new()),
+
+            Pattern::Binding(name) => {
+                let mut bindings = HashMap::new();
+                bindings.insert(name.clone(), matched_type.clone());
+                Ok(bindings)
+            }
+
+            Pattern::Literal(literal) => {
+                let literal_type = Self::pattern_literal_type(literal);
+                self.ensure_assignable(&literal_type, matched_type)?;
+                Ok(HashMap::new())
+            }
+
             Pattern::Or(patterns) => {
-                for pattern in patterns {
-                    self.bind_pattern(pattern, matched_type)?;
+                if patterns.is_empty() {
+                    return Err(CompileError::InvalidPattern(
+                        "un pattern OR ne peut pas être vide".to_string(),
+                    ));
                 }
-                Ok(())
-            }
-            Pattern::Array(patterns) => {
-                let element_type = matched_type.element_type();
-                for pattern in patterns {
-                    self.bind_pattern(pattern, &element_type)?;
+
+                let mut expected_bindings: Option<HashMap<String, Type>> = None;
+
+                for alternative in patterns {
+                    let bindings = self.check_pattern(alternative, matched_type)?;
+
+                    if let Some(expected) = &expected_bindings {
+                        if expected.keys().collect::<HashSet<_>>()
+                            != bindings.keys().collect::<HashSet<_>>()
+                        {
+                            return Err(CompileError::InvalidPattern(
+                                "toutes les alternatives d'un pattern `|` doivent définir les mêmes variables".to_string(),
+                            ));
+                        }
+
+                        for (name, expected_type) in expected {
+                            let actual_type = bindings
+                                .get(name)
+                                .expect("binding vérifié par l'ensemble des noms");
+                            if expected_type != actual_type {
+                                return Err(CompileError::InvalidPattern(format!(
+                                    "la variable '{name}' n'a pas le même type dans toutes les alternatives du `|`"
+                                )));
+                            }
+                        }
+                    } else {
+                        expected_bindings = Some(bindings);
+                    }
                 }
-                Ok(())
+
+                Ok(expected_bindings.unwrap_or_default())
             }
+
+            Pattern::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let start_literal = match start.as_ref() {
+                    Pattern::Literal(literal) => literal,
+                    _ => {
+                        return Err(CompileError::InvalidPattern(
+                            "le début d'un range doit être un littéral".to_string(),
+                        ));
+                    }
+                };
+
+                let end_literal = match end.as_ref() {
+                    Pattern::Literal(literal) => literal,
+                    _ => {
+                        return Err(CompileError::InvalidPattern(
+                            "la fin d'un range doit être un littéral".to_string(),
+                        ));
+                    }
+                };
+
+                let start_type = Self::pattern_literal_type(start_literal);
+                let end_type = Self::pattern_literal_type(end_literal);
+
+                if !matches!(start_type, Type::Int | Type::Float)
+                    || !matches!(end_type, Type::Int | Type::Float)
+                {
+                    return Err(CompileError::InvalidPattern(
+                        "un range ne peut utiliser que des littéraux numériques".to_string(),
+                    ));
+                }
+
+                self.ensure_assignable(&start_type, matched_type)?;
+                self.ensure_assignable(&end_type, matched_type)?;
+
+                if let Some(order) = Self::compare_numeric_literals(start_literal, end_literal) {
+                    if order > 0 || (!*inclusive && order == 0) {
+                        return Err(CompileError::InvalidPattern(
+                            "le range est vide ou inversé".to_string(),
+                        ));
+                    }
+                }
+
+                Ok(HashMap::new())
+            }
+
+            Pattern::Array(patterns) | Pattern::ArrayRest(patterns) => {
+                let element_type = self.pattern_list_element_type(matched_type)?;
+                let mut bindings = HashMap::new();
+
+                for child in patterns {
+                    Self::merge_pattern_bindings(
+                        &mut bindings,
+                        self.check_pattern(child, &element_type)?,
+                    )?;
+                }
+
+                Ok(bindings)
+            }
+
+            Pattern::Tuple(patterns) => {
+                let element_types = self.pattern_tuple_element_types(matched_type, patterns.len())?;
+                let mut bindings = HashMap::new();
+
+                for (pattern, element_type) in patterns.iter().zip(element_types.iter()) {
+                    Self::merge_pattern_bindings(
+                        &mut bindings,
+                        self.check_pattern(pattern, element_type)?,
+                    )?;
+                }
+
+                Ok(bindings)
+            }
+
+            Pattern::OptionSome(inner) => {
+                let inner_type = self.pattern_generic_constructor_argument(matched_type, "Option", 0)?;
+                self.check_pattern(inner, &inner_type)
+            }
+
+            Pattern::ResultOk(inner) => {
+                let inner_type = self.pattern_generic_constructor_argument(matched_type, "Result", 0)?;
+                self.check_pattern(inner, &inner_type)
+            }
+
+            Pattern::ResultErr(inner) => {
+                let inner_type = self.pattern_generic_constructor_argument(matched_type, "Result", 1)?;
+                self.check_pattern(inner, &inner_type)
+            }
+
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+            } => {
+                let canonical_name = self.canonical_class_name(enum_name);
+                let Some(class) = self.classes.get(&canonical_name) else {
+                    return Err(CompileError::InvalidPattern(format!(
+                        "enum '{enum_name}' introuvable"
+                    )));
+                };
+
+                if !class.enum_variants.contains(variant_name) {
+                    return Err(CompileError::InvalidPattern(format!(
+                        "'{enum_name}.{variant_name}' n'est pas un variant d'enum valide"
+                    )));
+                }
+
+                if !self.pattern_type_matches_name(matched_type, &canonical_name) {
+                    return Err(CompileError::InvalidPattern(format!(
+                        "le pattern '{enum_name}.{variant_name}' ne correspond pas au type '{matched_type}'"
+                    )));
+                }
+
+                Ok(HashMap::new())
+            }
+        }
+    }
+
+    fn pattern_literal_type(literal: &Literal) -> Type {
+        match literal {
+            Literal::Integer(_) => Type::Int,
+            Literal::Float(_) => Type::Float,
+            Literal::String(_) => Type::Str,
+            Literal::Bool(_) => Type::Bool,
+            Literal::None => Type::None,
+        }
+    }
+
+    fn compare_numeric_literals(start: &Literal, end: &Literal) -> Option<i8> {
+        let value = |literal: &Literal| -> Option<f64> {
+            match literal {
+                Literal::Integer(value) => Some(*value as f64),
+                Literal::Float(value) => Some(*value),
+                _ => None,
+            }
+        };
+
+        let start = value(start)?;
+        let end = value(end)?;
+
+        Some(if start < end {
+            -1
+        } else if start > end {
+            1
+        } else {
+            0
+        })
+    }
+
+    fn merge_pattern_bindings(
+        target: &mut HashMap<String, Type>,
+        additions: HashMap<String, Type>,
+    ) -> Result<(), CompileError> {
+        for (name, ty) in additions {
+            if target.contains_key(&name) {
+                return Err(CompileError::InvalidPattern(format!(
+                    "la variable '{name}' est liée plusieurs fois dans le même pattern"
+                )));
+            }
+            target.insert(name, ty);
+        }
+        Ok(())
+    }
+
+    fn pattern_list_element_type(&self, matched_type: &Type) -> Result<Type, CompileError> {
+        match matched_type {
+            Type::Array(element) => Ok((**element).clone()),
+            Type::ArrayDynamic | Type::Dynamic | Type::Union(_) => Ok(matched_type.element_type()),
+            _ => Err(CompileError::InvalidPattern(format!(
+                "un pattern de liste ne peut pas être appliqué au type '{matched_type}'"
+            ))),
+        }
+    }
+
+    fn pattern_tuple_element_types(
+        &self,
+        matched_type: &Type,
+        count: usize,
+    ) -> Result<Vec<Type>, CompileError> {
+        match matched_type {
+            Type::Tuple(elements) => {
+                if elements.len() != count {
+                    return Err(CompileError::InvalidPattern(format!(
+                        "le tuple contient {} élément(s), mais le pattern en attend {count}",
+                        elements.len()
+                    )));
+                }
+                Ok(elements.clone())
+            }
+            Type::TupleDynamic | Type::Dynamic | Type::Union(_) => {
+                Ok(vec![Type::Dynamic; count])
+            }
+            _ => Err(CompileError::InvalidPattern(format!(
+                "un pattern de tuple ne peut pas être appliqué au type '{matched_type}'"
+            ))),
+        }
+    }
+
+    fn pattern_generic_constructor_argument(
+        &self,
+        matched_type: &Type,
+        constructor: &str,
+        index: usize,
+    ) -> Result<Type, CompileError> {
+        match matched_type {
+            Type::Generic { name, arguments }
+                if name.eq_ignore_ascii_case(constructor) && arguments.len() > index =>
+            {
+                Ok(arguments[index].clone())
+            }
+
+            Type::Named(name) if name.eq_ignore_ascii_case(constructor) => Ok(Type::Dynamic),
+
+            Type::Union(members) => {
+                let mut result: Option<Type> = None;
+                for member in members {
+                    if let Ok(argument) =
+                        self.pattern_generic_constructor_argument(member, constructor, index)
+                    {
+                        result = Some(match result {
+                            None => argument,
+                            Some(current) => current.merge(&argument),
+                        });
+                    }
+                }
+
+                result.ok_or_else(|| {
+                    CompileError::InvalidPattern(format!(
+                        "le pattern '{constructor}' ne correspond pas au type '{matched_type}'"
+                    ))
+                })
+            }
+
+            Type::Dynamic => Ok(Type::Dynamic),
+
+            _ => Err(CompileError::InvalidPattern(format!(
+                "le pattern '{constructor}' ne correspond pas au type '{matched_type}'"
+            ))),
+        }
+    }
+
+    fn pattern_type_matches_name(&self, matched_type: &Type, name: &str) -> bool {
+        match matched_type {
+            Type::Named(current) | Type::Generic { name: current, .. } => current == name,
+            Type::Union(members) => members
+                .iter()
+                .any(|member| self.pattern_type_matches_name(member, name)),
+            Type::Dynamic => true,
+            _ => false,
+        }
+    }
+
+    fn check_match_exhaustiveness(
+        &self,
+        matched_type: &Type,
+        arms: &[MatchArm],
+    ) -> Result<(), CompileError> {
+        if !self.is_closed_match_type(matched_type) {
+            return Ok(());
+        }
+
+        let patterns = arms
+            .iter()
+            .filter(|arm| arm.guard.is_none())
+            .map(|arm| &arm.pattern)
+            .collect::<Vec<_>>();
+
+        if self.type_covered_by_patterns(matched_type, &patterns) {
+            return Ok(());
+        }
+
+        let missing = self
+            .missing_match_cases(matched_type, &patterns)
+            .join(", ");
+
+        Err(CompileError::NonExhaustiveMatch {
+            matched_type: matched_type.to_string(),
+            missing,
+        })
+    }
+
+    fn is_closed_match_type(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Bool | Type::None => true,
+            Type::Generic { name, .. } if name.eq_ignore_ascii_case("Option") => true,
+            Type::Generic { name, .. } if name.eq_ignore_ascii_case("Result") => true,
+            Type::Named(name) if name.eq_ignore_ascii_case("Option") => true,
+            Type::Named(name) if name.eq_ignore_ascii_case("Result") => true,
+            Type::Named(name) | Type::Generic { name, .. } => self
+                .classes
+                .get(name)
+                .is_some_and(|class| !class.enum_variants.is_empty()),
+            Type::Union(members) => members.iter().all(|member| self.is_closed_match_type(member)),
+            _ => false,
+        }
+    }
+
+    fn type_covered_by_patterns(&self, ty: &Type, patterns: &[&Pattern]) -> bool {
+        if patterns
+            .iter()
+            .any(|pattern| matches!(pattern, Pattern::Wildcard | Pattern::Binding(_)))
+        {
+            return true;
+        }
+
+        match ty {
+            Type::Bool => self.bool_case_covered(patterns, true) && self.bool_case_covered(patterns, false),
+            Type::None => patterns.iter().any(|pattern| Self::none_pattern_covered(pattern)),
+
+            Type::Generic { name, arguments } if name.eq_ignore_ascii_case("Option") => {
+                let inner = arguments.first().cloned().unwrap_or(Type::Dynamic);
+                let mut some_patterns = Vec::new();
+                let mut none_covered = false;
+                for pattern in patterns {
+                    self.collect_option_cases(pattern, &mut some_patterns, &mut none_covered);
+                }
+                none_covered && self.type_covered_by_patterns(&inner, &some_patterns.iter().collect::<Vec<_>>())
+            }
+
+            Type::Named(name) if name.eq_ignore_ascii_case("Option") => {
+                let mut some_patterns = Vec::new();
+                let mut none_covered = false;
+                for pattern in patterns {
+                    self.collect_option_cases(pattern, &mut some_patterns, &mut none_covered);
+                }
+                none_covered
+                    && !some_patterns.is_empty()
+                    && self.type_covered_by_patterns(
+                        &Type::Dynamic,
+                        &some_patterns.iter().collect::<Vec<_>>(),
+                    )
+            }
+
+            Type::Generic { name, arguments } if name.eq_ignore_ascii_case("Result") => {
+                let ok_type = arguments.first().cloned().unwrap_or(Type::Dynamic);
+                let err_type = arguments.get(1).cloned().unwrap_or(Type::Dynamic);
+                let mut ok_patterns = Vec::new();
+                let mut err_patterns = Vec::new();
+                for pattern in patterns {
+                    self.collect_result_cases(pattern, &mut ok_patterns, &mut err_patterns);
+                }
+                !ok_patterns.is_empty()
+                    && !err_patterns.is_empty()
+                    && self.type_covered_by_patterns(
+                        &ok_type,
+                        &ok_patterns.iter().collect::<Vec<_>>(),
+                    )
+                    && self.type_covered_by_patterns(
+                        &err_type,
+                        &err_patterns.iter().collect::<Vec<_>>(),
+                    )
+            }
+
+            Type::Named(name) if name.eq_ignore_ascii_case("Result") => {
+                let mut ok_patterns = Vec::new();
+                let mut err_patterns = Vec::new();
+                for pattern in patterns {
+                    self.collect_result_cases(pattern, &mut ok_patterns, &mut err_patterns);
+                }
+                !ok_patterns.is_empty()
+                    && !err_patterns.is_empty()
+                    && self.type_covered_by_patterns(
+                        &Type::Dynamic,
+                        &ok_patterns.iter().collect::<Vec<_>>(),
+                    )
+                    && self.type_covered_by_patterns(
+                        &Type::Dynamic,
+                        &err_patterns.iter().collect::<Vec<_>>(),
+                    )
+            }
+
+            Type::Named(name) | Type::Generic { name, .. } => {
+                let Some(class) = self.classes.get(name) else {
+                    return false;
+                };
+                if class.enum_variants.is_empty() {
+                    return false;
+                }
+
+                class
+                    .enum_variants
+                    .iter()
+                    .all(|variant| self.enum_variant_covered(patterns, name, variant))
+            }
+
+            Type::Union(members) => members
+                .iter()
+                .all(|member| self.type_covered_by_patterns(member, patterns)),
+
+            _ => false,
+        }
+    }
+
+    fn bool_case_covered(&self, patterns: &[&Pattern], value: bool) -> bool {
+        patterns.iter().any(|pattern| match pattern {
+            Pattern::Wildcard | Pattern::Binding(_) => true,
+            Pattern::Literal(Literal::Bool(actual)) => *actual == value,
+            Pattern::Or(alternatives) => alternatives.iter().any(|alternative| {
+                self.bool_case_covered(std::slice::from_ref(&alternative), value)
+            }),
+            _ => false,
+        })
+    }
+
+    fn none_pattern_covered(pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Wildcard | Pattern::Binding(_) => true,
+            Pattern::Literal(Literal::None) => true,
+            Pattern::Or(alternatives) => alternatives.iter().any(Self::none_pattern_covered),
+            _ => false,
+        }
+    }
+
+    fn catch_all_pattern(pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Wildcard | Pattern::Binding(_) => true,
+            Pattern::Or(alternatives) => alternatives.iter().any(Self::catch_all_pattern),
+            _ => false,
+        }
+    }
+
+    fn collect_option_cases(
+        &self,
+        pattern: &Pattern,
+        some_patterns: &mut Vec<Pattern>,
+        none_covered: &mut bool,
+    ) {
+        match pattern {
+            Pattern::Wildcard | Pattern::Binding(_) => {
+                some_patterns.push(Pattern::Wildcard);
+                *none_covered = true;
+            }
+            Pattern::OptionSome(inner) => some_patterns.push((**inner).clone()),
+            Pattern::Literal(Literal::None) => *none_covered = true,
+            Pattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.collect_option_cases(alternative, some_patterns, none_covered);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_result_cases(
+        &self,
+        pattern: &Pattern,
+        ok_patterns: &mut Vec<Pattern>,
+        err_patterns: &mut Vec<Pattern>,
+    ) {
+        match pattern {
+            Pattern::Wildcard | Pattern::Binding(_) => {
+                ok_patterns.push(Pattern::Wildcard);
+                err_patterns.push(Pattern::Wildcard);
+            }
+            Pattern::ResultOk(inner) => ok_patterns.push((**inner).clone()),
+            Pattern::ResultErr(inner) => err_patterns.push((**inner).clone()),
+            Pattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.collect_result_cases(alternative, ok_patterns, err_patterns);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn enum_variant_covered(
+        &self,
+        patterns: &[&Pattern],
+        enum_name: &str,
+        variant_name: &str,
+    ) -> bool {
+        patterns.iter().any(|pattern| match pattern {
+            Pattern::Wildcard | Pattern::Binding(_) => true,
+            Pattern::EnumVariant {
+                enum_name: current_enum,
+                variant_name: current_variant,
+            } => current_enum == enum_name && current_variant == variant_name,
+            Pattern::Or(alternatives) => self.enum_variant_covered(
+                &alternatives.iter().collect::<Vec<_>>(),
+                enum_name,
+                variant_name,
+            ),
+            _ => false,
+        })
+    }
+
+    fn missing_match_cases(&self, ty: &Type, patterns: &[&Pattern]) -> Vec<String> {
+        match ty {
+            Type::Bool => {
+                let mut missing = Vec::new();
+                if !self.bool_case_covered(patterns, true) {
+                    missing.push("true".to_string());
+                }
+                if !self.bool_case_covered(patterns, false) {
+                    missing.push("false".to_string());
+                }
+                missing
+            }
+            Type::None => {
+                if self.type_covered_by_patterns(ty, patterns) {
+                    Vec::new()
+                } else {
+                    vec!["None".to_string()]
+                }
+            }
+            Type::Generic { name, arguments } if name.eq_ignore_ascii_case("Option") => {
+                let inner = arguments.first().cloned().unwrap_or(Type::Dynamic);
+                let mut some_patterns = Vec::new();
+                let mut none_covered = false;
+                for pattern in patterns {
+                    self.collect_option_cases(pattern, &mut some_patterns, &mut none_covered);
+                }
+
+                let some_covered = !some_patterns.is_empty()
+                    && self.type_covered_by_patterns(
+                        &inner,
+                        &some_patterns.iter().collect::<Vec<_>>(),
+                    );
+
+                let mut missing = Vec::new();
+                if !some_covered {
+                    missing.push("Some(_)".to_string());
+                }
+                if !none_covered {
+                    missing.push("None".to_string());
+                }
+                missing
+            }
+            Type::Named(name) if name.eq_ignore_ascii_case("Option") => {
+                let mut some_patterns = Vec::new();
+                let mut none_covered = false;
+                for pattern in patterns {
+                    self.collect_option_cases(pattern, &mut some_patterns, &mut none_covered);
+                }
+                let some_covered = some_patterns
+                    .iter()
+                    .any(|pattern| Self::catch_all_pattern(pattern));
+                let mut missing = Vec::new();
+                if !some_covered {
+                    missing.push("Some(_)".to_string());
+                }
+                if !none_covered {
+                    missing.push("None".to_string());
+                }
+                missing
+            }
+            Type::Generic { name, arguments } if name.eq_ignore_ascii_case("Result") => {
+                let ok_type = arguments.first().cloned().unwrap_or(Type::Dynamic);
+                let err_type = arguments.get(1).cloned().unwrap_or(Type::Dynamic);
+                let mut ok_patterns = Vec::new();
+                let mut err_patterns = Vec::new();
+                for pattern in patterns {
+                    self.collect_result_cases(pattern, &mut ok_patterns, &mut err_patterns);
+                }
+                let ok_covered = !ok_patterns.is_empty()
+                    && self.type_covered_by_patterns(
+                        &ok_type,
+                        &ok_patterns.iter().collect::<Vec<_>>(),
+                    );
+                let err_covered = !err_patterns.is_empty()
+                    && self.type_covered_by_patterns(
+                        &err_type,
+                        &err_patterns.iter().collect::<Vec<_>>(),
+                    );
+
+                [(!ok_covered, "Ok(_)"), (!err_covered, "Err(_)")]
+                    .into_iter()
+                    .filter_map(|(missing, label)| missing.then(|| label.to_string()))
+                    .collect()
+            }
+            Type::Named(name) if name.eq_ignore_ascii_case("Result") => {
+                let mut ok_patterns = Vec::new();
+                let mut err_patterns = Vec::new();
+                for pattern in patterns {
+                    self.collect_result_cases(pattern, &mut ok_patterns, &mut err_patterns);
+                }
+
+                let ok_covered = !ok_patterns.is_empty()
+                    && self.type_covered_by_patterns(
+                        &Type::Dynamic,
+                        &ok_patterns.iter().collect::<Vec<_>>(),
+                    );
+                let err_covered = !err_patterns.is_empty()
+                    && self.type_covered_by_patterns(
+                        &Type::Dynamic,
+                        &err_patterns.iter().collect::<Vec<_>>(),
+                    );
+
+                [
+                    (!ok_covered, "Ok(_)"),
+                    (!err_covered, "Err(_)"),
+                ]
+                .into_iter()
+                .filter_map(|(missing, label)| missing.then(|| label.to_string()))
+                .collect()
+            }
+            Type::Named(name) | Type::Generic { name, .. } => {
+                let Some(class) = self.classes.get(name) else {
+                    return vec![ty.to_string()];
+                };
+                let mut missing = class
+                    .enum_variants
+                    .iter()
+                    .filter(|variant| !self.enum_variant_covered(patterns, name, variant))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                missing.sort();
+                missing
+            }
+            Type::Union(members) => members
+                .iter()
+                .flat_map(|member| {
+                    self.missing_match_cases(member, patterns)
+                        .into_iter()
+                        .map(move|missing| format!("{member}: {missing}"))
+                })
+                .collect(),
+            _ => vec![ty.to_string()],
         }
     }
 

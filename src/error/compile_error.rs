@@ -35,6 +35,13 @@ pub enum CompileError {
         found: String,
     },
 
+    InvalidPattern(String),
+
+    NonExhaustiveMatch {
+        matched_type: String,
+        missing: String,
+    },
+
     InvalidUnaryOperation {
         operator: String,
         found: String,
@@ -268,6 +275,17 @@ impl std::fmt::Display for CompileError {
                 write!(
                     f,
                     "Type incompatible : '{found}' ne peut pas être utilisé comme '{expected}'"
+                )
+            }
+
+            CompileError::InvalidPattern(message) => {
+                write!(f, "Pattern invalide : {message}")
+            }
+
+            CompileError::NonExhaustiveMatch { matched_type, missing } => {
+                write!(
+                    f,
+                    "Match non exhaustif pour '{matched_type}' : cas manquants : {missing}"
                 )
             }
 

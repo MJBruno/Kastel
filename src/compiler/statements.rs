@@ -928,11 +928,16 @@ impl Compiler {
         self.compile_local_var(&subject_name, Some(value), false)?;
 
         let subject_depth = self.scope_depth;
-
         let mut end_jumps = Vec::with_capacity(arms.len());
 
         for arm in arms {
             self.begin_scope();
+
+            // Les bindings d'un pattern sont réservés UNE FOIS au début de
+            // l'arm. Le code de test du pattern peut ensuite les affecter
+            // selon l'alternative effectivement prise (`x | y`, `Some(x) |
+            // Ok(x)`, patterns imbriqués, ...), sans redéclaration locale.
+            self.declare_pattern_bindings(&arm.pattern)?;
 
             let pattern_false_jump = self.compile_match_pattern(&subject_name, &arm.pattern)?;
 
@@ -952,21 +957,15 @@ impl Compiler {
                 self.emit_scope_cleanup(subject_depth);
 
                 let end_jump = self.emit_jump(OpCode::Jump);
-
                 end_jumps.push(end_jump);
 
                 self.patch_jump(guard_false_jump)?;
-
                 self.emit_opcode(OpCode::Pop);
-
                 self.emit_scope_cleanup(subject_depth);
-
                 let next_arm_jump = self.emit_jump(OpCode::Jump);
 
                 self.patch_jump(pattern_false_jump)?;
-
                 self.emit_opcode(OpCode::Pop);
-
                 self.patch_jump(next_arm_jump)?;
             } else {
                 for statement in &arm.body {
@@ -976,11 +975,9 @@ impl Compiler {
                 self.emit_scope_cleanup(subject_depth);
 
                 let end_jump = self.emit_jump(OpCode::Jump);
-
                 end_jumps.push(end_jump);
 
                 self.patch_jump(pattern_false_jump)?;
-
                 self.emit_opcode(OpCode::Pop);
             }
 
@@ -1006,28 +1003,62 @@ impl Compiler {
         pattern: &Pattern,
     ) -> Result<usize, CompileError> {
         let subject = Expression::Variable(subject_name.to_string());
+        self.compile_pattern_test_expression(&subject, pattern)
+    }
 
-        let test_false_jump = self.compile_pattern_test_expression(&subject, pattern)?;
+    fn declare_pattern_bindings(&mut self, pattern: &Pattern) -> Result<(), CompileError> {
+        let mut names = Vec::new();
+        Self::collect_pattern_binding_names(pattern, &mut names);
 
-        self.emit_opcode(OpCode::Pop);
+        for name in names {
+            // `None` n'est qu'une valeur temporaire dans le slot. Le pattern
+            // l'écrasera avant que le guard ou le corps de l'arm ne puisse
+            // lire la variable.
+            self.compile_local_var(&name, None, true)?;
+        }
 
-        self.compile_pattern_bindings(&subject, pattern)?;
+        Ok(())
+    }
 
-        self.emit_opcode(OpCode::True);
+    fn collect_pattern_binding_names(pattern: &Pattern, names: &mut Vec<String>) {
+        let mut push_name = |name: &str| {
+            if !names.iter().any(|existing| existing == name) {
+                names.push(name.to_string());
+            }
+        };
 
-        // `test_false_jump` doit être fusionné (patché) AVANT que l'on émette
-        // le `JumpIfFalse` final : sinon, le chemin "échec" saute par-dessus
-        // ce dernier (il atterrit après lui) et ce jump ne lit alors jamais la
-        // valeur `false` laissée par le test — il ne se déclenche donc jamais,
-        // quel que soit le pattern, et l'exécution retombe systématiquement
-        // dans le corps du bras courant (voir compile_range_pattern_expression
-        // / compile_array_pattern_expression pour l'ordre correct : patch
-        // d'abord, puis émission du JumpIfFalse qui lit la valeur fusionnée).
-        self.patch_jump(test_false_jump)?;
+        match pattern {
+            Pattern::Binding(name) => push_name(name),
 
-        let final_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+            Pattern::Wildcard
+            | Pattern::Literal(_)
+            | Pattern::EnumVariant { .. } => {}
 
-        Ok(final_false_jump)
+            Pattern::Or(patterns) => {
+                for pattern in patterns {
+                    Self::collect_pattern_binding_names(pattern, names);
+                }
+            }
+
+            Pattern::Range { start, end, .. } => {
+                Self::collect_pattern_binding_names(start, names);
+                Self::collect_pattern_binding_names(end, names);
+            }
+
+            Pattern::Array(patterns)
+            | Pattern::ArrayRest(patterns)
+            | Pattern::Tuple(patterns) => {
+                for pattern in patterns {
+                    Self::collect_pattern_binding_names(pattern, names);
+                }
+            }
+
+            Pattern::OptionSome(pattern)
+            | Pattern::ResultOk(pattern)
+            | Pattern::ResultErr(pattern) => {
+                Self::collect_pattern_binding_names(pattern, names);
+            }
+        }
     }
 
     // ============================================================
@@ -1042,13 +1073,15 @@ impl Compiler {
         match pattern {
             Pattern::Wildcard => {
                 self.emit_opcode(OpCode::True);
-
                 Ok(self.emit_jump(OpCode::JumpIfFalse))
             }
 
-            Pattern::Binding(_) => {
+            Pattern::Binding(name) => {
+                // Les bindings sont déjà déclarés par `declare_pattern_bindings`.
+                self.compile_expression(expression)?;
+                self.compile_variable_set(name)?;
+                self.emit_opcode(OpCode::Pop);
                 self.emit_opcode(OpCode::True);
-
                 Ok(self.emit_jump(OpCode::JumpIfFalse))
             }
 
@@ -1056,7 +1089,6 @@ impl Compiler {
                 self.compile_expression(expression)?;
                 self.compile_literal_pattern(literal)?;
                 self.emit_opcode(OpCode::Equal);
-
                 Ok(self.emit_jump(OpCode::JumpIfFalse))
             }
 
@@ -1068,7 +1100,110 @@ impl Compiler {
                 inclusive,
             } => self.compile_range_pattern_expression(expression, start, end, *inclusive),
 
-            Pattern::Array(patterns) => self.compile_array_pattern_expression(expression, patterns),
+            Pattern::Array(patterns) => {
+                self.compile_sequence_pattern_expression(expression, patterns, false)
+            }
+
+            Pattern::ArrayRest(patterns) => {
+                self.compile_sequence_pattern_expression(expression, patterns, true)
+            }
+
+            Pattern::Tuple(patterns) => self.compile_tuple_pattern_expression(expression, patterns),
+
+            Pattern::OptionSome(pattern) => {
+                self.compile_option_result_pattern(expression, "Option", "is_some", "unwrap", pattern)
+            }
+
+            Pattern::ResultOk(pattern) => {
+                self.compile_option_result_pattern(expression, "Result", "is_ok", "unwrap", pattern)
+            }
+
+            Pattern::ResultErr(pattern) => self.compile_option_result_pattern(
+                expression,
+                "Result",
+                "is_err",
+                "unwrap_err",
+                pattern,
+            ),
+
+            Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+            } => {
+                let variant = Expression::Member {
+                    object: Box::new(Expression::Variable(enum_name.clone())),
+                    name: variant_name.clone(),
+                    line: 0,
+                    column: 0,
+                };
+
+                self.compile_expression(expression)?;
+                self.compile_expression(&variant)?;
+                self.emit_opcode(OpCode::Equal);
+                Ok(self.emit_jump(OpCode::JumpIfFalse))
+            }
+        }
+    }
+
+    fn compile_option_result_pattern(
+        &mut self,
+        expression: &Expression,
+        type_name: &str,
+        discriminator: &str,
+        extractor: &str,
+        inner: &Pattern,
+    ) -> Result<usize, CompileError> {
+        let type_guard = self.type_guard_expression(expression, type_name);
+        self.compile_expression(&type_guard)?;
+        let type_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_opcode(OpCode::Pop);
+
+        self.compile_method_call(expression, discriminator, &[], 0, 0)?;
+        let discriminator_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_opcode(OpCode::Pop);
+
+        let extracted = self.pattern_method_expression(expression, extractor);
+        let inner_false_jump = self.compile_pattern_test_expression(&extracted, inner)?;
+
+        self.patch_jump(type_false_jump)?;
+        self.patch_jump(discriminator_false_jump)?;
+
+        // `inner_false_jump` doit également converger vers le même booléen
+        // final. Si le sous-pattern réussit, sa valeur `true` tombe ici sans
+        // être modifiée.
+        self.patch_jump(inner_false_jump)?;
+
+        Ok(self.emit_jump(OpCode::JumpIfFalse))
+    }
+
+    fn pattern_method_expression(&self, object: &Expression, name: &str) -> Expression {
+        Expression::Call {
+            callee: Box::new(Expression::Member {
+                object: Box::new(object.clone()),
+                name: name.to_string(),
+                line: 0,
+                column: 0,
+            }),
+            generic_args: Vec::new(),
+            arguments: Vec::new(),
+            line: 0,
+            column: 0,
+        }
+    }
+
+    fn type_guard_expression(&self, expression: &Expression, expected: &str) -> Expression {
+        Expression::Binary {
+            left: Box::new(Expression::Call {
+                callee: Box::new(Expression::Variable("type".to_string())),
+                generic_args: Vec::new(),
+                arguments: vec![expression.clone()],
+                line: 0,
+                column: 0,
+            }),
+            operator: BinaryOp::Equal,
+            right: Box::new(Expression::Literal(Literal::String(expected.to_string()))),
+            line: 0,
+            column: 0,
         }
     }
 
@@ -1080,33 +1215,22 @@ impl Compiler {
         match literal {
             Literal::Integer(value) => {
                 let constant = self.make_constant(Value::Integer(*value))?;
-
                 self.emit_constant_op(OpCode::Constant, constant);
             }
 
             Literal::Float(value) => {
                 let constant = self.make_constant(Value::Float(*value))?;
-
                 self.emit_constant_op(OpCode::Constant, constant);
             }
 
             Literal::String(value) => {
                 let constant = self.make_constant(Value::new_string(value.clone()))?;
-
                 self.emit_constant_op(OpCode::Constant, constant);
             }
 
-            Literal::Bool(true) => {
-                self.emit_opcode(OpCode::True);
-            }
-
-            Literal::Bool(false) => {
-                self.emit_opcode(OpCode::False);
-            }
-
-            Literal::None => {
-                self.emit_opcode(OpCode::None);
-            }
+            Literal::Bool(true) => self.emit_opcode(OpCode::True),
+            Literal::Bool(false) => self.emit_opcode(OpCode::False),
+            Literal::None => self.emit_opcode(OpCode::None),
         }
 
         Ok(())
@@ -1127,12 +1251,6 @@ impl Compiler {
             ));
         }
 
-        if patterns.iter().any(Self::pattern_contains_binding) {
-            return Err(CompileError::InternalCompilerError(
-                "Binding directement dans un pattern OR non supporte".to_string(),
-            ));
-        }
-
         let mut success_jumps = Vec::new();
 
         for pattern in patterns.iter().take(patterns.len() - 1) {
@@ -1142,18 +1260,17 @@ impl Compiler {
             self.emit_opcode(OpCode::True);
 
             let success_jump = self.emit_jump(OpCode::Jump);
-
             success_jumps.push(success_jump);
 
             self.patch_jump(false_jump)?;
-
             self.emit_opcode(OpCode::Pop);
         }
 
         let last_pattern = &patterns[patterns.len() - 1];
-
         let last_false_jump = self.compile_pattern_test_expression(expression, last_pattern)?;
 
+        // Les branches qui ont réussi arrivent ici avec `true`; la dernière
+        // alternative utilise son propre booléen et son propre saut d'échec.
         for success_jump in success_jumps {
             self.patch_jump(success_jump)?;
         }
@@ -1172,9 +1289,22 @@ impl Compiler {
         end: &Pattern,
         inclusive: bool,
     ) -> Result<usize, CompileError> {
+        // Un pattern de range doit rester sûr avec une expression dynamique :
+        // on refuse ainsi de transformer un simple non-match en TypeError.
+        let numeric_guard = Expression::Binary {
+            left: Box::new(self.type_guard_expression(expression, "int")),
+            operator: BinaryOp::Or,
+            right: Box::new(self.type_guard_expression(expression, "float")),
+            line: 0,
+            column: 0,
+        };
+
+        self.compile_expression(&numeric_guard)?;
+        let type_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_opcode(OpCode::Pop);
+
         let start_literal = match start {
             Pattern::Literal(literal) => literal,
-
             _ => {
                 return Err(CompileError::InternalCompilerError(
                     "Le debut du range doit etre un litteral".to_string(),
@@ -1184,7 +1314,6 @@ impl Compiler {
 
         let end_literal = match end {
             Pattern::Literal(literal) => literal,
-
             _ => {
                 return Err(CompileError::InternalCompilerError(
                     "La fin du range doit etre un litteral".to_string(),
@@ -1193,18 +1322,13 @@ impl Compiler {
         };
 
         self.compile_expression(expression)?;
-
         self.compile_literal_pattern(start_literal)?;
-
         self.emit_opcode(OpCode::Less);
         self.emit_opcode(OpCode::Not);
-
         let lower_false_jump = self.emit_jump(OpCode::JumpIfFalse);
-
         self.emit_opcode(OpCode::Pop);
 
         self.compile_expression(expression)?;
-
         self.compile_literal_pattern(end_literal)?;
 
         if inclusive {
@@ -1216,93 +1340,173 @@ impl Compiler {
 
         let upper_false_jump = self.emit_jump(OpCode::JumpIfFalse);
 
-        let result_jump = self.emit_jump(OpCode::Jump);
+        // Les chemins négatifs ont déjà laissé `false` sur la pile.
+        // Ils convergent vers un seul `JumpIfFalse`; le chemin succès garde
+        // `true` et saute ce test final.
+        let success_jump = self.emit_jump(OpCode::Jump);
 
+        self.patch_jump(type_false_jump)?;
         self.patch_jump(lower_false_jump)?;
-
-        let lower_result_jump = self.emit_jump(OpCode::Jump);
-
         self.patch_jump(upper_false_jump)?;
 
-        let upper_result_jump = self.emit_jump(OpCode::Jump);
+        let final_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.patch_jump(success_jump)?;
 
-        self.patch_jump(result_jump)?;
-        self.patch_jump(lower_result_jump)?;
-        self.patch_jump(upper_result_jump)?;
+        Ok(final_false_jump)
+    }
+
+    // ============================================================
+    // ARRAY / TUPLE
+    // ============================================================
+
+    fn compile_sequence_pattern_expression(
+        &mut self,
+        expression: &Expression,
+        patterns: &[Pattern],
+        rest: bool,
+    ) -> Result<usize, CompileError> {
+        let type_guard = self.type_guard_expression(expression, "list");
+        self.compile_expression(&type_guard)?;
+        let type_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_opcode(OpCode::Pop);
+
+        if rest && patterns.is_empty() {
+            // `[..]` accepte toute liste : après le guard de type, on n'a
+            // aucun élément à vérifier et la longueur ne nous intéresse pas.
+            self.compile_expression(expression)?;
+            self.emit_opcode(OpCode::ArrayLength);
+            self.emit_opcode(OpCode::Pop);
+            self.emit_opcode(OpCode::True);
+
+            let success_jump = self.emit_jump(OpCode::Jump);
+            self.patch_jump(type_false_jump)?;
+            self.emit_opcode(OpCode::Pop);
+            self.emit_opcode(OpCode::False);
+            self.patch_jump(success_jump)?;
+
+            return Ok(self.emit_jump(OpCode::JumpIfFalse));
+        }
+
+        self.compile_expression(expression)?;
+        self.emit_opcode(OpCode::ArrayLength);
+
+        if rest {
+            // length >= N  <=>  length > N - 1
+            let lower = self.make_constant(Value::Integer((patterns.len() - 1) as i64))?;
+            self.emit_constant_op(OpCode::Constant, lower);
+            self.emit_opcode(OpCode::Greater);
+        } else {
+            let count_constant = self.make_constant(Value::Integer(patterns.len() as i64))?;
+            self.emit_constant_op(OpCode::Constant, count_constant);
+            self.emit_opcode(OpCode::Equal);
+        }
+
+        let length_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_opcode(OpCode::Pop);
+
+
+            let mut element_false_jumps = Vec::with_capacity(patterns.len());
+
+            for (index, pattern) in patterns.iter().enumerate() {
+                let element_expression = Expression::Index {
+                    object: Box::new(expression.clone()),
+                    index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
+                    line: 0,
+                    column: 0,
+                };
+
+                let false_jump = self.compile_pattern_test_expression(&element_expression, pattern)?;
+                self.emit_opcode(OpCode::Pop);
+                element_false_jumps.push(false_jump);
+            }
+
+            self.emit_opcode(OpCode::True);
+            let success_jump = self.emit_jump(OpCode::Jump);
+
+            self.patch_jump(type_false_jump)?;
+            self.emit_opcode(OpCode::Pop);
+            self.emit_opcode(OpCode::False);
+            let mut result_jumps = vec![self.emit_jump(OpCode::Jump)];
+
+            self.patch_jump(length_false_jump)?;
+            self.emit_opcode(OpCode::Pop);
+            self.emit_opcode(OpCode::False);
+            result_jumps.push(self.emit_jump(OpCode::Jump));
+
+            for false_jump in element_false_jumps {
+                self.patch_jump(false_jump)?;
+                self.emit_opcode(OpCode::Pop);
+                self.emit_opcode(OpCode::False);
+                result_jumps.push(self.emit_jump(OpCode::Jump));
+            }
+
+        self.patch_jump(success_jump)?;
+
+        for jump in result_jumps {
+            self.patch_jump(jump)?;
+        }
 
         Ok(self.emit_jump(OpCode::JumpIfFalse))
     }
 
-    // ============================================================
-    // ARRAY PATTERN
-    // ============================================================
-
-    fn compile_array_pattern_expression(
+    fn compile_tuple_pattern_expression(
         &mut self,
         expression: &Expression,
         patterns: &[Pattern],
     ) -> Result<usize, CompileError> {
-        self.compile_expression(expression)?;
-
-        self.emit_opcode(OpCode::ArrayLength);
-
-        let length_constant = self.make_constant(Value::Integer(patterns.len() as i64))?;
-
-        self.emit_constant_op(OpCode::Constant, length_constant);
-
-        self.emit_opcode(OpCode::Equal);
-
-        let length_false_jump = self.emit_jump(OpCode::JumpIfFalse);
-
+        let type_guard = self.type_guard_expression(expression, "tuple");
+        self.compile_expression(&type_guard)?;
+        let type_false_jump = self.emit_jump(OpCode::JumpIfFalse);
         self.emit_opcode(OpCode::Pop);
 
-        let mut element_false_jumps = Vec::new();
+        self.compile_expression(expression)?;
+        self.emit_opcode(OpCode::ArrayLength);
+        let length_constant = self.make_constant(Value::Integer(patterns.len() as i64))?;
+        self.emit_constant_op(OpCode::Constant, length_constant);
+        self.emit_opcode(OpCode::Equal);
+        let length_false_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_opcode(OpCode::Pop);
+
+        let mut element_false_jumps = Vec::with_capacity(patterns.len());
 
         for (index, pattern) in patterns.iter().enumerate() {
             let element_expression = Expression::Index {
                 object: Box::new(expression.clone()),
                 index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
-                // Expression synthétisée par le compilateur (pas de position
-                // source réelle) : aucune valeur pertinente à fournir ici.
                 line: 0,
                 column: 0,
             };
 
             let false_jump = self.compile_pattern_test_expression(&element_expression, pattern)?;
-
             self.emit_opcode(OpCode::Pop);
-
             element_false_jumps.push(false_jump);
         }
 
         self.emit_opcode(OpCode::True);
-
         let success_jump = self.emit_jump(OpCode::Jump);
 
-        self.patch_jump(length_false_jump)?;
+        let mut result_jumps = Vec::new();
 
+        self.patch_jump(type_false_jump)?;
         self.emit_opcode(OpCode::Pop);
         self.emit_opcode(OpCode::False);
+        result_jumps.push(self.emit_jump(OpCode::Jump));
 
-        let length_result_jump = self.emit_jump(OpCode::Jump);
-
-        let mut element_result_jumps = Vec::new();
+        self.patch_jump(length_false_jump)?;
+        self.emit_opcode(OpCode::Pop);
+        self.emit_opcode(OpCode::False);
+        result_jumps.push(self.emit_jump(OpCode::Jump));
 
         for false_jump in element_false_jumps {
             self.patch_jump(false_jump)?;
-
             self.emit_opcode(OpCode::Pop);
             self.emit_opcode(OpCode::False);
-
-            let result_jump = self.emit_jump(OpCode::Jump);
-
-            element_result_jumps.push(result_jump);
+            result_jumps.push(self.emit_jump(OpCode::Jump));
         }
 
         self.patch_jump(success_jump)?;
-        self.patch_jump(length_result_jump)?;
 
-        for jump in element_result_jumps {
+        for jump in result_jumps {
             self.patch_jump(jump)?;
         }
 
@@ -1310,69 +1514,8 @@ impl Compiler {
     }
 
     // ============================================================
-    // PATTERN BINDINGS
-    // ============================================================
-
-    fn compile_pattern_bindings(
-        &mut self,
-        expression: &Expression,
-        pattern: &Pattern,
-    ) -> Result<(), CompileError> {
-        match pattern {
-            Pattern::Wildcard | Pattern::Literal(_) | Pattern::Range { .. } => Ok(()),
-
-            Pattern::Binding(name) => {
-                self.compile_local_var(name, Some(expression), true)?;
-
-                Ok(())
-            }
-
-            Pattern::Or(patterns) => {
-                if patterns.iter().any(Self::pattern_contains_binding) {
-                    return Err(CompileError::InternalCompilerError(
-                        "Binding directement dans un pattern OR non supporte".to_string(),
-                    ));
-                }
-
-                Ok(())
-            }
-
-            Pattern::Array(patterns) => {
-                for (index, child) in patterns.iter().enumerate() {
-                    let element_expression = Expression::Index {
-                        object: Box::new(expression.clone()),
-                        index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
-                        line: 0,
-                        column: 0,
-                    };
-
-                    self.compile_pattern_bindings(&element_expression, child)?;
-                }
-
-                Ok(())
-            }
-        }
-    }
-
-    // ============================================================
     // HELPERS
     // ============================================================
-
-    fn pattern_contains_binding(pattern: &Pattern) -> bool {
-        match pattern {
-            Pattern::Binding(_) => true,
-
-            Pattern::Wildcard | Pattern::Literal(_) => false,
-
-            Pattern::Or(patterns) => patterns.iter().any(Self::pattern_contains_binding),
-
-            Pattern::Range { start, end, .. } => {
-                Self::pattern_contains_binding(start) || Self::pattern_contains_binding(end)
-            }
-
-            Pattern::Array(patterns) => patterns.iter().any(Self::pattern_contains_binding),
-        }
-    }
 
     // ============================================================
     // IMPORT

@@ -82,6 +82,31 @@ pub enum Pattern {
 
     /// `[x, y, _]`
     Array(Vec<Pattern>),
+
+    /// `[x, y, ..]` — correspond à une liste dont les premiers éléments
+    /// correspondent exactement aux patterns donnés ; le reste est ignoré.
+    /// Cette forme volontairement simple couvre le cas le plus utile de
+    /// slice-pattern Rust sans introduire immédiatement `@`/patterns rest
+    /// liés à une sous-liste.
+    ArrayRest(Vec<Pattern>),
+
+    /// `(a, b, c)`
+    Tuple(Vec<Pattern>),
+
+    /// `Some(value)` — forme de pattern dédiée à `Option<T>`.
+    OptionSome(Box<Pattern>),
+
+    /// `Ok(value)` — forme de pattern dédiée à `Result<T, E>`.
+    ResultOk(Box<Pattern>),
+
+    /// `Err(error)` — forme de pattern dédiée à `Result<T, E>`.
+    ResultErr(Box<Pattern>),
+
+    /// `Color.Red` — variant d'enum singleton.
+    EnumVariant {
+        enum_name: String,
+        variant_name: String,
+    },
 }
 
 #[derive(Debug, Clone)]
