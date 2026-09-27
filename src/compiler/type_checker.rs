@@ -2088,6 +2088,7 @@ impl TypeChecker {
             Statement::Try {
                 try_body,
                 catch_name,
+                catch_type,
                 catch_body,
                 finally_body,
             } => {
@@ -2096,6 +2097,23 @@ impl TypeChecker {
                 self.pop_scope();
 
                 if let Some(catch_body) = catch_body {
+                    if let Some(catch_type) = catch_type {
+                        match catch_type {
+                            TypeExpr::Named(name) if name.eq_ignore_ascii_case("Err") => {}
+                            TypeExpr::Named(name) => {
+                                return Err(CompileError::InvalidPattern(format!(
+                                    "Type de catch inconnu ou non supporté: '{name}'. Utilisez `Err`."
+                                )));
+                            }
+                            _ => {
+                                return Err(CompileError::InvalidPattern(
+                                    "Le type d'un catch doit être un type nommé, par exemple `Err`."
+                                        .to_string(),
+                                ));
+                            }
+                        }
+                    }
+
                     self.push_scope();
                     if let Some(name) = catch_name {
                         self.declare(
@@ -5051,7 +5069,7 @@ impl TypeChecker {
                 .flat_map(|member| {
                     self.missing_match_cases(member, patterns)
                         .into_iter()
-                        .map(move|missing| format!("{member}: {missing}"))
+                        .map(move |missing| format!("{member}: {missing}"))
                 })
                 .collect(),
             _ => vec![ty.to_string()],

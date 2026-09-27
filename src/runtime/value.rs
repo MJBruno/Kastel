@@ -175,6 +175,14 @@ impl Value {
     pub fn new_err(value: Value) -> Self {
         Self::new_heap_object(Object::Result { ok: false, value })
     }
+
+    pub fn new_error(kind: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new_heap_object(Object::Error {
+            kind: kind.into(),
+            message: message.into(),
+        })
+    }
+
     pub fn new_bound_method(method: Gc<Object>, receiver: Value) -> Self {
         Self::new_heap_object(Object::BoundMethod {
             method: Some(method),
@@ -937,6 +945,15 @@ impl Value {
                         suggestion: None,
                     }),
 
+                Object::Error { kind, message } => match name {
+                    "kind" => Ok(Value::new_string(kind.clone())),
+                    "message" => Ok(Value::new_string(message.clone())),
+                    _ => Err(RuntimeError::ObjectFieldNotFound {
+                        name: name.to_string(),
+                        suggestion: None,
+                    }),
+                },
+
                 // `x.length` (propriété) a été remplacé par `x.size()`.
                 Object::Array(_) | Object::Tuple(_) | Object::Set(_) | Object::String(_)
                     if name == "length" =>
@@ -1149,6 +1166,7 @@ impl std::fmt::Display for Value {
                     Object::Array(_)
                         | Object::Option(_)
                         | Object::Result { .. }
+                        | Object::Error { .. }
                         | Object::Tuple(_)
                         | Object::Set(_)
                         | Object::Dict(_)
@@ -1173,6 +1191,7 @@ impl std::fmt::Display for Value {
                     Object::Option(None) => write!(f, "None"),
                     Object::Result { ok: true, value } => write!(f, "Ok({value})"),
                     Object::Result { ok: false, value } => write!(f, "Err({value})"),
+                    Object::Error { kind, message } => write!(f, "Err<{kind}>({message})"),
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1325,6 +1344,7 @@ impl Value {
                 Object::Array(_) => "list",
                 Object::Option(_) => "Option",
                 Object::Result { .. } => "Result",
+                Object::Error { .. } => "Err",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",

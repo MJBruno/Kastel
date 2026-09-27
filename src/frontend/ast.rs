@@ -270,6 +270,11 @@ pub enum Statement {
     Try {
         try_body: Vec<Statement>,
         catch_name: Option<String>,
+        /// Type optionnel du catch : `catch(e: Err)`.
+        /// L'annotation sert à filtrer l'exception au runtime ;
+        /// le binding reste dynamique côté vérificateur pour conserver
+        /// le caractère graduel de Kastel.
+        catch_type: Option<TypeExpr>,
         catch_body: Option<Vec<Statement>>,
         finally_body: Option<Vec<Statement>>,
     },

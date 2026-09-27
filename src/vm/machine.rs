@@ -17,6 +17,8 @@ mod option_result_tests;
 #[cfg(test)]
 mod pattern_matching_tests;
 #[cfg(test)]
+mod exception_tests;
+#[cfg(test)]
 mod robustness_tests;
 
 pub mod arithmetic;
@@ -94,6 +96,12 @@ pub(crate) struct ExceptionHandler {
      * Hauteur de stack au moment du PushExceptionHandler.
      */
     pub(crate) stack_height: usize,
+
+    /*
+     * Type optionnel du catch (`Err` pour les erreurs runtime).
+     * `None` = catch général.
+     */
+    pub(crate) catch_type: Option<String>,
 }
 
 // ============================================================
@@ -470,6 +478,7 @@ impl VirtualMachine {
         &mut self,
         catch_ip: Option<usize>,
         finally_ip: Option<usize>,
+        catch_type: Option<String>,
     ) -> Result<(), RuntimeError> {
         let frame_index = self
             .frames
@@ -482,6 +491,7 @@ impl VirtualMachine {
             catch_ip,
             finally_ip,
             stack_height: self.stack.len(),
+            catch_type,
         });
 
         Ok(())

@@ -6,6 +6,7 @@ impl VirtualMachine {
     pub(crate) fn op_push_exception_handler(&mut self) -> Result<(), RuntimeError> {
         let catch_raw = self.read_short()?;
         let finally_raw = self.read_short()?;
+        let catch_type_raw = self.read_short()?;
 
         let catch_ip = if catch_raw == u16::MAX {
             None
@@ -19,7 +20,18 @@ impl VirtualMachine {
             Some(finally_raw as usize)
         };
 
-        self.register_exception_handler(catch_ip, finally_ip)
+        let catch_type = if catch_type_raw == u16::MAX {
+            None
+        } else {
+            let value = self.read_constant(catch_type_raw)?;
+            Some(
+                value
+                    .as_string_value()
+                    .ok_or(RuntimeError::TypeError)?,
+            )
+        };
+
+        self.register_exception_handler(catch_ip, finally_ip, catch_type)
     }
 
     pub(crate) fn op_pop_exception_handler(&mut self) -> Result<(), RuntimeError> {

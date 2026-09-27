@@ -1,11 +1,6 @@
-func f(value) -> int {
-    match value {
-        Some(x) => { return x; }
-        None => { return 0; }
-    }
+try {
+    let x: int = 12
+} catch (e: Err) {
+    println(e.kind);
+    println(e.message);
 }
-
-
-let i = f(Some(45))
-
-println(i)

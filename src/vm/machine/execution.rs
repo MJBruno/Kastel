@@ -3,6 +3,7 @@ use super::VirtualMachine;
 use crate::bytecode::chunk::OpCode;
 use crate::error::runtime_error::RuntimeError;
 use crate::runtime::gc;
+use crate::runtime::object::Object;
 use crate::runtime::value::Value;
 
 impl VirtualMachine {
@@ -183,9 +184,10 @@ impl VirtualMachine {
             | RuntimeError::ObjectFieldNotFound { .. }
             | RuntimeError::NotIterable
             | RuntimeError::IteratorExhausted
-            | RuntimeError::InvalidShiftAmount => Ok(Value::new_string(error.to_string())),
-
-            RuntimeError::NumericTypeError { .. } => Ok(Value::new_string(error.to_string())),
+            | RuntimeError::InvalidShiftAmount
+            | RuntimeError::NumericTypeError { .. } => {
+                Ok(Value::new_error(error.kind_name(), error.to_string()))
+            }
 
             RuntimeError::Thrown(value) => Ok(value.clone()),
 
@@ -195,6 +197,31 @@ impl VirtualMachine {
             | RuntimeError::InvalidOpcode(_)
             | RuntimeError::InvalidFunction
             | RuntimeError::ImmutableValue(_) => Err(error.clone()),
+        }
+    }
+
+    fn exception_matches_catch_type(catch_type: Option<&str>, value: &Value) -> bool {
+        let Some(expected) = catch_type else {
+            return true;
+        };
+
+        match value {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Error { kind, .. } => {
+                    expected.eq_ignore_ascii_case("Err") || expected.eq_ignore_ascii_case(kind)
+                }
+
+                Object::Instance { class, .. } => {
+                    class.as_ref().is_some_and(|class| match &*class.borrow() {
+                        Object::Class { name, .. } => name.eq_ignore_ascii_case(expected),
+                        _ => false,
+                    })
+                }
+
+                _ => value.type_name().eq_ignore_ascii_case(expected),
+            },
+
+            _ => value.type_name().eq_ignore_ascii_case(expected),
         }
     }
 
@@ -231,22 +258,48 @@ impl VirtualMachine {
                 return Ok(false);
             }
 
+            let matches = Self::exception_matches_catch_type(
+                self.exception_handlers[handler_index].catch_type.as_deref(),
+                &value,
+            );
             let catch_ip = self.exception_handlers[handler_index].catch_ip;
             let finally_ip = self.exception_handlers[handler_index].finally_ip;
             let stack_height = self.exception_handlers[handler_index].stack_height;
 
             self.restore_exception_stack(stack_height)?;
 
-            if let Some(catch_ip) = catch_ip {
-                self.exception_handlers[handler_index].catch_ip = None;
+            if matches {
+                if let Some(catch_ip) = catch_ip {
+                    self.exception_handlers[handler_index].catch_ip = None;
 
-                self.push(value);
+                    self.push(value);
 
-                self.current_frame_mut()?.ip = catch_ip;
+                    self.current_frame_mut()?.ip = catch_ip;
 
-                return Ok(true);
+                    return Ok(true);
+                }
+
+                self.exception_handlers.remove(handler_index);
+
+                if let Some(finally_ip) = finally_ip {
+                    self.pending_exception = Some(super::PendingException {
+                        value,
+                        rethrow: true,
+                    });
+
+                    self.current_frame_mut()?.ip = finally_ip;
+
+                    return Ok(true);
+                }
+
+                self.close_current_frame_for_exception()?;
+                continue;
             }
 
+            // Le type du catch ne correspond pas. Le handler ne doit pas
+            // bloquer la propagation : on le retire et on cherche un handler
+            // extérieur. Son `finally`, s'il existe, doit toutefois toujours
+            // être exécuté avant de poursuivre la propagation.
             self.exception_handlers.remove(handler_index);
 
             if let Some(finally_ip) = finally_ip {
@@ -260,7 +313,9 @@ impl VirtualMachine {
                 return Ok(true);
             }
 
-            self.close_current_frame_for_exception()?;
+            // Pas de finally : chercher le prochain handler dans ce frame ou
+            // dans un frame appelant.
+            continue;
         }
     }
 }

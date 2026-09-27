@@ -192,7 +192,7 @@ impl Chunk {
             // EXCEPTIONS
             // =====================================================
             OpCode::PushExceptionHandler => {
-                self.simple_instruction("OP_PUSH_EXCEPTION_HANDLER", offset)
+                self.exception_handler_instruction("OP_PUSH_EXCEPTION_HANDLER", offset)
             }
 
             OpCode::PopExceptionHandler => {
@@ -273,6 +273,19 @@ impl Chunk {
         );
 
         offset + 6
+    }
+
+    fn exception_handler_instruction(&self, name: &str, offset: usize) -> usize {
+        if offset + 6 >= self.code.len() {
+            println!("{name:<24} <missing operands>");
+            return self.code.len();
+        }
+
+        let a = u16::from_be_bytes([self.code[offset + 1], self.code[offset + 2]]);
+        let b = u16::from_be_bytes([self.code[offset + 3], self.code[offset + 4]]);
+        let c = u16::from_be_bytes([self.code[offset + 5], self.code[offset + 6]]);
+        println!("{name:<24} {a:04X} {b:04X} {c:04X}");
+        offset + 7
     }
 
     fn two_byte_instruction(&self, name: &str, offset: usize) -> usize {

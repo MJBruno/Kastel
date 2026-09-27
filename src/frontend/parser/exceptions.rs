@@ -47,6 +47,7 @@ impl Parser {
          * }
          */
         let mut catch_name = None;
+        let mut catch_type = None;
         let mut catch_body = None;
 
         if self.match_token(TokenKind::Catch) {
@@ -56,6 +57,10 @@ impl Parser {
                 TokenKind::Identifier,
                 "Nom de variable attendu dans 'catch'",
             )?;
+
+            if self.match_token(TokenKind::Colon) {
+                catch_type = Some(self.parse_type_expression()?);
+            }
 
             self.consume(
                 TokenKind::RightParen,
@@ -105,6 +110,7 @@ impl Parser {
         Ok(Statement::Try {
             try_body,
             catch_name,
+            catch_type,
             catch_body,
             finally_body,
         })

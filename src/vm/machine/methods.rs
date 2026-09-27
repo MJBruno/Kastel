@@ -827,9 +827,39 @@ impl VirtualMachine {
                         Object::Class { .. } => 11,
                         Object::Option(_) => 12,
                         Object::Result { .. } => 13,
+                        Object::Error { .. } => 14,
                         _ => 5,
                     }
                 };
+
+                if object_kind == 14 {
+                    if arg_count != 0 {
+                        return Err(RuntimeError::WrongArgumentCount {
+                            expected: 0,
+                            found: arg_count,
+                        });
+                    }
+
+                    let error = handle.borrow();
+                    let Object::Error { kind, message } = &*error else {
+                        return Err(RuntimeError::TypeError);
+                    };
+
+                    let result = match method_name.as_str() {
+                        "kind" => Value::new_string(kind.clone()),
+                        "message" => Value::new_string(message.clone()),
+                        "to_string" => Value::new_string(format!("Err<{kind}>({message})")),
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    };
+
+                    self.push(result);
+                    return Ok(());
+                }
 
                 match object_kind {
                     0 => {

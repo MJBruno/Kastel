@@ -317,6 +317,8 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
             mark_value(value, state);
         }
 
+        Object::Error { .. } => {}
+
         Object::Tuple(elements) => {
             for value in elements {
                 mark_value(value, state);

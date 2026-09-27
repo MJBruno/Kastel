@@ -348,6 +348,48 @@ impl std::fmt::Display for RuntimeError {
 }
 
 impl RuntimeError {
+    /// Nom stable de la famille d'erreur exposée au langage.
+    /// `catch(e: Err)` filtre sur la valeur structurée produite à partir de
+    /// ce nom ; le constructeur `Err(...)` de `Result` reste indépendant.
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            RuntimeError::TypeError => "TypeError",
+            RuntimeError::DivisionByZero => "DivisionByZero",
+            RuntimeError::WrongArgumentCount { .. } => "WrongArgumentCount",
+            RuntimeError::NotCallable => "NotCallable",
+            RuntimeError::InvalidFunction => "InvalidFunction",
+            RuntimeError::NativeError => "NativeError",
+            RuntimeError::OptionUnwrap { .. } => "OptionUnwrap",
+            RuntimeError::ResultUnwrap { .. } => "ResultUnwrap",
+            RuntimeError::IndexOutOfBounds => "IndexOutOfBounds",
+            RuntimeError::ArrayIndexNotInteger => "ArrayIndexNotInteger",
+            RuntimeError::ArrayIndexOutOfBounds { .. } => "ArrayIndexOutOfBounds",
+            RuntimeError::NotIndexable => "NotIndexable",
+            RuntimeError::NotObject => "NotObject",
+            RuntimeError::ImmutableValue(_) => "ImmutableValue",
+            RuntimeError::ModuleError(_) => "ModuleError",
+            RuntimeError::FormatError(_) => "FormatError",
+            RuntimeError::ObjectFieldNotFound { .. } => "ObjectFieldNotFound",
+            RuntimeError::NotIterable => "NotIterable",
+            RuntimeError::IteratorExhausted => "IteratorExhausted",
+            RuntimeError::InvalidShiftAmount => "InvalidShiftAmount",
+            RuntimeError::NumericTypeError { .. } => "NumericTypeError",
+            RuntimeError::WithLocation { source, .. } => source.kind_name(),
+            RuntimeError::StackUnderflow => "StackUnderflow",
+            RuntimeError::InvalidOpcode(_) => "InvalidOpcode",
+            RuntimeError::Thrown(_) => "Thrown",
+            RuntimeError::InterfaceMethodMissing { .. } => "InterfaceMethodMissing",
+            RuntimeError::InterfaceMethodArityMismatch { .. } => "InterfaceMethodArityMismatch",
+            RuntimeError::DuplicateMethod { .. } => "DuplicateMethod",
+            RuntimeError::AmbiguousMethod { .. } => "AmbiguousMethod",
+            RuntimeError::PrivateMemberAccess { .. } => "PrivateMemberAccess",
+            RuntimeError::ProtectedMemberAccess { .. } => "ProtectedMemberAccess",
+            RuntimeError::StackOverflow { .. } => "StackOverflow",
+            RuntimeError::CyclicStructure => "CyclicStructure",
+            RuntimeError::IntegerOverflow { .. } => "IntegerOverflow",
+        }
+    }
+
     /// Construit le `Diagnostic` (position + titre + éventuels
     /// expected/found/help) à afficher pour cette erreur.
     ///

@@ -28,6 +28,14 @@ pub enum Object {
         value: Value,
     },
 
+    /// Erreur runtime catchable par `catch(e: Err)`.
+    /// `kind` identifie la famille d'erreur (`TypeError`, `DivisionByZero`, ...).
+    /// `message` contient son message utilisateur.
+    Error {
+        kind: String,
+        message: String,
+    },
+
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
     /// le GC), mais aucune méthode de mutation ne l'expose : voir
@@ -157,6 +165,8 @@ impl Object {
             Object::Result { value, .. } => {
                 *value = Value::None;
             }
+
+            Object::Error { .. } => {}
 
             Object::Tuple(elements) => {
                 elements.clear();
