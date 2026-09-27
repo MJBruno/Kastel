@@ -25,6 +25,18 @@ fn binary(left: Type, right: Type, result: Type) -> Type {
     function(&[left, right], result)
 }
 
+fn generic_function(params: &[Type], return_type: Type, generic_params: &[&str]) -> Type {
+    Type::Function(FunctionType {
+        generic_params: generic_params
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect(),
+        generic_constraints: Vec::new(),
+        params: params.to_vec(),
+        return_type: Box::new(return_type),
+    })
+}
+
 pub fn all() -> HashMap<String, Type> {
     use Type::*;
 
@@ -39,6 +51,41 @@ pub fn all() -> HashMap<String, Type> {
     // `Set(a, b, c)` : arité variable. Le TypeChecker déduit lui-même le type
     // `Set<T>` du résultat à partir des arguments (voir `Expression::Call`).
     types.insert("Set".into(), Dynamic);
+
+    // Option / Result
+    types.insert(
+        "Some".into(),
+        generic_function(
+            &[Type::TypeParam("T".into())],
+            Type::Generic {
+                name: "Option".into(),
+                arguments: vec![Type::TypeParam("T".into())],
+            },
+            &["T"],
+        ),
+    );
+    types.insert(
+        "Ok".into(),
+        generic_function(
+            &[Type::TypeParam("T".into())],
+            Type::Generic {
+                name: "Result".into(),
+                arguments: vec![Type::TypeParam("T".into()), Type::Dynamic],
+            },
+            &["T"],
+        ),
+    );
+    types.insert(
+        "Err".into(),
+        generic_function(
+            &[Type::TypeParam("E".into())],
+            Type::Generic {
+                name: "Result".into(),
+                arguments: vec![Type::Dynamic, Type::TypeParam("E".into())],
+            },
+            &["E"],
+        ),
+    );
 
     // Conversion / système
     types.insert("int".into(), unary(Dynamic, Int));

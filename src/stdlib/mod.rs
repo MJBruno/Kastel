@@ -52,8 +52,10 @@ pub mod io;
 pub mod iterator;
 pub mod json;
 pub mod math;
+pub mod option;
 pub mod os;
 pub mod path;
+pub mod result;
 pub mod record;
 pub mod set;
 pub mod string;
@@ -77,6 +79,8 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     file::register(globals);
     path::register(globals);
     os::register(globals);
+    option::register(globals);
+    result::register(globals);
 }
 
 /// Enregistre les natives connues du compilateur.
@@ -96,6 +100,8 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     file::register_compiler(compiler);
     path::register_compiler(compiler);
     os::register_compiler(compiler);
+    option::register_compiler(compiler);
+    result::register_compiler(compiler);
 }
 
 /// Compatibilité avec l'ancien appel.

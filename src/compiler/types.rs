@@ -248,6 +248,14 @@ impl Type {
             return true;
         }
 
+        if matches!(
+            (self, expected),
+            (Type::None, Type::Generic { name, arguments })
+                if name.eq_ignore_ascii_case("Option") && arguments.len() == 1
+        ) {
+            return true;
+        }
+
         // Union attendue : la valeur doit convenir à AU MOINS un membre ;
         // une union fournie doit voir CHACUN de ses membres convenir.
         if let Type::Union(members) = expected {
@@ -612,6 +620,206 @@ impl Type {
 
             _ => None,
         }
+    }
+
+    /// Signatures statiques des opérations fondamentales de `Option<T>` et `Result<T,E>`.
+    pub fn option_result_member_type(&self, name: &str) -> Option<Type> {
+        let function = |generic_params: &[&str], params: Vec<Type>, result: Type| {
+            Type::Function(FunctionType {
+                generic_params: generic_params.iter().map(|name| (*name).to_string()).collect(),
+                generic_constraints: Vec::new(),
+                params,
+                return_type: Box::new(result),
+            })
+        };
+
+        let option_element = match self {
+            Type::Generic { name, arguments }
+                if name.eq_ignore_ascii_case("Option") && arguments.len() == 1 =>
+            {
+                Some(arguments[0].clone())
+            }
+            Type::None => Some(Type::Dynamic),
+            _ => None,
+        };
+
+        if let Some(element) = option_element {
+            let signature = match name {
+                "is_some" | "is_none" => function(&[], vec![], Type::Bool),
+
+                "unwrap" => function(&[], vec![], element.clone()),
+
+                "expect" => function(&[], vec![Type::Str], element.clone()),
+
+                "unwrap_or" => function(&[], vec![element.clone()], element.clone()),
+
+                "map" => {
+                    let mapped = Type::TypeParam("U".into());
+                    let callback = Type::Function(FunctionType {
+                        generic_params: Vec::new(),
+                        generic_constraints: Vec::new(),
+                        params: vec![element.clone()],
+                        return_type: Box::new(mapped.clone()),
+                    });
+
+                    function(
+                        &["U"],
+                        vec![callback],
+                        Type::Generic {
+                            name: "Option".into(),
+                            arguments: vec![mapped],
+                        },
+                    )
+                }
+
+                "and_then" => {
+                    let mapped = Type::TypeParam("U".into());
+                    let callback = Type::Function(FunctionType {
+                        generic_params: Vec::new(),
+                        generic_constraints: Vec::new(),
+                        params: vec![element.clone()],
+                        return_type: Box::new(Type::Generic {
+                            name: "Option".into(),
+                            arguments: vec![mapped.clone()],
+                        }),
+                    });
+
+                    function(
+                        &["U"],
+                        vec![callback],
+                        Type::Generic {
+                            name: "Option".into(),
+                            arguments: vec![mapped],
+                        },
+                    )
+                }
+
+                "ok_or" => {
+                    let error = Type::TypeParam("E".into());
+                    function(
+                        &["E"],
+                        vec![error.clone()],
+                        Type::Generic {
+                            name: "Result".into(),
+                            arguments: vec![element.clone(), error],
+                        },
+                    )
+                }
+
+                "to_string" => function(&[], vec![], Type::Str),
+
+                _ => return None,
+            };
+
+            return Some(signature);
+        }
+
+        let (ok_type, err_type) = match self {
+            Type::Generic { name, arguments }
+                if name.eq_ignore_ascii_case("Result") && arguments.len() == 2 =>
+            {
+                (arguments[0].clone(), arguments[1].clone())
+            }
+            _ => return None,
+        };
+
+        let signature = match name {
+            "is_ok" | "is_err" => function(&[], vec![], Type::Bool),
+
+            "unwrap" => function(&[], vec![], ok_type.clone()),
+
+            "expect" => function(&[], vec![Type::Str], ok_type.clone()),
+
+            "unwrap_err" => function(&[], vec![], err_type.clone()),
+
+            "expect_err" => function(&[], vec![Type::Str], err_type.clone()),
+
+            "unwrap_or" => function(&[], vec![ok_type.clone()], ok_type.clone()),
+
+            "map" => {
+                let mapped = Type::TypeParam("U".into());
+                let callback = Type::Function(FunctionType {
+                    generic_params: Vec::new(),
+                    generic_constraints: Vec::new(),
+                    params: vec![ok_type.clone()],
+                    return_type: Box::new(mapped.clone()),
+                });
+
+                function(
+                    &["U"],
+                    vec![callback],
+                    Type::Generic {
+                        name: "Result".into(),
+                        arguments: vec![mapped, err_type.clone()],
+                    },
+                )
+            }
+
+            "map_err" => {
+                let mapped = Type::TypeParam("U".into());
+                let callback = Type::Function(FunctionType {
+                    generic_params: Vec::new(),
+                    generic_constraints: Vec::new(),
+                    params: vec![err_type.clone()],
+                    return_type: Box::new(mapped.clone()),
+                });
+
+                function(
+                    &["U"],
+                    vec![callback],
+                    Type::Generic {
+                        name: "Result".into(),
+                        arguments: vec![ok_type.clone(), mapped],
+                    },
+                )
+            }
+
+            "and_then" => {
+                let mapped = Type::TypeParam("U".into());
+                let callback = Type::Function(FunctionType {
+                    generic_params: Vec::new(),
+                    generic_constraints: Vec::new(),
+                    params: vec![ok_type.clone()],
+                    return_type: Box::new(Type::Generic {
+                        name: "Result".into(),
+                        arguments: vec![mapped.clone(), err_type.clone()],
+                    }),
+                });
+
+                function(
+                    &["U"],
+                    vec![callback],
+                    Type::Generic {
+                        name: "Result".into(),
+                        arguments: vec![mapped, err_type.clone()],
+                    },
+                )
+            }
+
+            "ok" => function(
+                &[],
+                vec![],
+                Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![ok_type.clone()],
+                },
+            ),
+
+            "err" => function(
+                &[],
+                vec![],
+                Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![err_type.clone()],
+                },
+            ),
+
+            "to_string" => function(&[], vec![], Type::Str),
+
+            _ => return None,
+        };
+
+        Some(signature)
     }
 
     /// Type des méthodes d'introspection d'un record (`p.keys()`, `p.copy()`),

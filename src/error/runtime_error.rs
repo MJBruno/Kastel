@@ -18,6 +18,15 @@ pub enum RuntimeError {
     InvalidFunction,
     NativeError,
 
+    OptionUnwrap {
+        message: Option<String>,
+    },
+
+    ResultUnwrap {
+        message: Option<String>,
+        expected: &'static str,
+    },
+
     IndexOutOfBounds,
 
     ArrayIndexNotInteger,
@@ -164,6 +173,16 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::NativeError => {
                 write!(f, "Native function error.")
             }
+
+            RuntimeError::OptionUnwrap { message } => match message {
+                Some(message) => write!(f, "Option unwrap failed: {message}"),
+                None => write!(f, "Option unwrap failed: value is None."),
+            },
+
+            RuntimeError::ResultUnwrap { message, expected } => match message {
+                Some(message) => write!(f, "Result unwrap failed: {message}"),
+                None => write!(f, "Result unwrap failed: expected {expected}."),
+            },
 
             RuntimeError::ArrayIndexNotInteger => {
                 write!(f, "Array index must be an integer.")
@@ -439,6 +458,26 @@ impl RuntimeError {
                     .with_expected("function")
                     .with_help("vérifiez que vous appelez bien une fonction, une closure ou une méthode.")
             }
+
+            RuntimeError::OptionUnwrap { message } => Diagnostic::new(
+                message
+                    .as_deref()
+                    .unwrap_or("Option.unwrap() appelé sur None"),
+                0,
+                0,
+            ),
+
+            RuntimeError::ResultUnwrap { message, expected } => Diagnostic::new(
+                message
+                    .as_deref()
+                    .unwrap_or(match *expected {
+                        "Ok" => "Result.unwrap() appelé sur Err",
+                        "Err" => "Result.unwrap_err() appelé sur Ok",
+                        _ => "Result unwrap failed",
+                    }),
+                0,
+                0,
+            ),
 
             RuntimeError::NotIterable => Diagnostic::new(
                 "cette valeur n'est pas itérable (utilisable dans un 'for..in')",

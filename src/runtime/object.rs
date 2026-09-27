@@ -17,6 +17,17 @@ pub enum Object {
 
     Array(Vec<Value>),
 
+    /// Valeur optionnelle : `Some(value)` ou `None`.
+    /// `None` existe aussi comme valeur primitive Kastel ; la VM traite les
+    /// deux représentations comme la même absence sémantique.
+    Option(Option<Value>),
+
+    /// Résultat : `Ok(value)` ou `Err(error)`.
+    Result {
+        ok: bool,
+        value: Value,
+    },
+
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
     /// le GC), mais aucune méthode de mutation ne l'expose : voir
@@ -137,6 +148,14 @@ impl Object {
 
             Object::Array(elements) => {
                 elements.clear();
+            }
+
+            Object::Option(value) => {
+                *value = None;
+            }
+
+            Object::Result { value, .. } => {
+                *value = Value::None;
             }
 
             Object::Tuple(elements) => {

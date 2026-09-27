@@ -162,6 +162,8 @@ impl VirtualMachine {
             | RuntimeError::WrongArgumentCount { .. }
             | RuntimeError::NotCallable
             | RuntimeError::NativeError
+            | RuntimeError::OptionUnwrap { .. }
+            | RuntimeError::ResultUnwrap { .. }
             | RuntimeError::IndexOutOfBounds
             | RuntimeError::InterfaceMethodMissing { .. }
             | RuntimeError::InterfaceMethodArityMismatch { .. }

@@ -326,6 +326,417 @@ impl VirtualMachine {
     //                     INVOKE METHOD
     // ============================================================
 
+    // ============================================================
+    //                    OPTION / RESULT
+    // ============================================================
+
+    fn invoke_option_method(
+        &mut self,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value, RuntimeError> {
+        self.with_temp_roots(args, |vm| vm.invoke_option_method_inner(method, args))
+    }
+
+    fn invoke_option_method_inner(
+        &mut self,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value, RuntimeError> {
+        let value = match &args[0] {
+            Value::None => None,
+            Value::Object(handle) => {
+                let object = handle.borrow();
+                match &*object {
+                    Object::Option(value) => value.clone(),
+                    _ => {
+                        return Err(RuntimeError::ObjectFieldNotFound {
+                            name: method.to_string(),
+                            suggestion: None,
+                        });
+                    }
+                }
+            }
+            _ => {
+                return Err(RuntimeError::ObjectFieldNotFound {
+                    name: method.to_string(),
+                    suggestion: None,
+                });
+            }
+        };
+
+        match method {
+            "is_some" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 0,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(Value::Boolean(value.is_some()))
+            }
+
+            "is_none" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 0,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(Value::Boolean(value.is_none()))
+            }
+
+            "unwrap" | "expect" => {
+                let message = if method == "expect" {
+                    if args.len() != 2 {
+                        return Err(RuntimeError::WrongArgumentCount {
+                            expected: 1,
+                            found: args.len() - 1,
+                        });
+                    }
+                    Some(
+                        args[1]
+                            .as_string_value()
+                            .ok_or(RuntimeError::TypeError)?,
+                    )
+                } else {
+                    if args.len() != 1 {
+                        return Err(RuntimeError::WrongArgumentCount {
+                            expected: 0,
+                            found: args.len() - 1,
+                        });
+                    }
+                    None
+                };
+
+                value.ok_or(RuntimeError::OptionUnwrap { message })
+            }
+
+            "unwrap_or" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 1,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(value.unwrap_or_else(|| args[1].clone()))
+            }
+
+            "map" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 1,
+                        found: args.len() - 1,
+                    });
+                }
+
+                match value {
+                    Some(inner) => Ok(Value::new_some(self.invoke_sync(
+                        args[1].clone(),
+                        &[inner],
+                    )?)),
+                    None => Ok(Value::None),
+                }
+            }
+
+            "and_then" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 1,
+                        found: args.len() - 1,
+                    });
+                }
+
+                match value {
+                    Some(inner) => {
+                        let result = self.invoke_sync(args[1].clone(), &[inner])?;
+                        if matches!(result, Value::None)
+                            || matches!(
+                                &result,
+                                Value::Object(handle)
+                                    if matches!(&*handle.borrow(), Object::Option(_))
+                            )
+                        {
+                            Ok(result)
+                        } else {
+                            Err(RuntimeError::TypeError)
+                        }
+                    }
+                    None => Ok(Value::None),
+                }
+            }
+
+            "ok_or" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 1,
+                        found: args.len() - 1,
+                    });
+                }
+
+                match value {
+                    Some(inner) => Ok(Value::new_ok(inner)),
+                    None => Ok(Value::new_err(args[1].clone())),
+                }
+            }
+
+            "to_string" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 0,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(Value::new_string(match value {
+                    Some(value) => format!("Some({value})"),
+                    None => "None".to_string(),
+                }))
+            }
+
+            _ => Err(RuntimeError::ObjectFieldNotFound {
+                name: method.to_string(),
+                suggestion: None,
+            }),
+        }
+    }
+
+    fn invoke_result_method(
+        &mut self,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value, RuntimeError> {
+        self.with_temp_roots(args, |vm| vm.invoke_result_method_inner(method, args))
+    }
+
+    fn invoke_result_method_inner(
+        &mut self,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value, RuntimeError> {
+        let (ok, value) = match &args[0] {
+            Value::Object(handle) => {
+                let object = handle.borrow();
+                match &*object {
+                    Object::Result { ok, value } => (*ok, value.clone()),
+                    _ => {
+                        return Err(RuntimeError::ObjectFieldNotFound {
+                            name: method.to_string(),
+                            suggestion: None,
+                        });
+                    }
+                }
+            }
+            _ => {
+                return Err(RuntimeError::ObjectFieldNotFound {
+                    name: method.to_string(),
+                    suggestion: None,
+                });
+            }
+        };
+
+        match method {
+            "is_ok" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 0,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(Value::Boolean(ok))
+            }
+
+            "is_err" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 0,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(Value::Boolean(!ok))
+            }
+
+            "unwrap" | "expect" => {
+                let message = if method == "expect" {
+                    if args.len() != 2 {
+                        return Err(RuntimeError::WrongArgumentCount {
+                            expected: 1,
+                            found: args.len() - 1,
+                        });
+                    }
+                    Some(
+                        args[1]
+                            .as_string_value()
+                            .ok_or(RuntimeError::TypeError)?,
+                    )
+                } else {
+                    if args.len() != 1 {
+                        return Err(RuntimeError::WrongArgumentCount {
+                            expected: 0,
+                            found: args.len() - 1,
+                        });
+                    }
+                    None
+                };
+
+                if ok {
+                    Ok(value)
+                } else {
+                    Err(RuntimeError::ResultUnwrap {
+                        message,
+                        expected: "Ok",
+                    })
+                }
+            }
+
+            "unwrap_err" | "expect_err" => {
+                let message = if method == "expect_err" {
+                    if args.len() != 2 {
+                        return Err(RuntimeError::WrongArgumentCount {
+                            expected: 1,
+                            found: args.len() - 1,
+                        });
+                    }
+                    Some(
+                        args[1]
+                            .as_string_value()
+                            .ok_or(RuntimeError::TypeError)?,
+                    )
+                } else {
+                    if args.len() != 1 {
+                        return Err(RuntimeError::WrongArgumentCount {
+                            expected: 0,
+                            found: args.len() - 1,
+                        });
+                    }
+                    None
+                };
+
+                if ok {
+                    Err(RuntimeError::ResultUnwrap {
+                        message,
+                        expected: "Err",
+                    })
+                } else {
+                    Ok(value)
+                }
+            }
+
+            "unwrap_or" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 1,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(if ok { value } else { args[1].clone() })
+            }
+
+            "map" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 1,
+                        found: args.len() - 1,
+                    });
+                }
+                if ok {
+                    Ok(Value::new_ok(self.invoke_sync(
+                        args[1].clone(),
+                        &[value],
+                    )?))
+                } else {
+                    Ok(Value::new_err(value))
+                }
+            }
+
+            "map_err" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 1,
+                        found: args.len() - 1,
+                    });
+                }
+                if ok {
+                    Ok(Value::new_ok(value))
+                } else {
+                    Ok(Value::new_err(self.invoke_sync(
+                        args[1].clone(),
+                        &[value],
+                    )?))
+                }
+            }
+
+            "and_then" => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 1,
+                        found: args.len() - 1,
+                    });
+                }
+                if ok {
+                    let result = self.invoke_sync(args[1].clone(), &[value])?;
+                    if matches!(
+                        &result,
+                        Value::Object(handle)
+                            if matches!(&*handle.borrow(), Object::Result { .. })
+                    ) {
+                        Ok(result)
+                    } else {
+                        Err(RuntimeError::TypeError)
+                    }
+                } else {
+                    Ok(Value::new_err(value))
+                }
+            }
+
+            "ok" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 0,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(if ok {
+                    Value::new_some(value)
+                } else {
+                    Value::None
+                })
+            }
+
+            "err" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 0,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(if ok {
+                    Value::None
+                } else {
+                    Value::new_some(value)
+                })
+            }
+
+            "to_string" => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::WrongArgumentCount {
+                        expected: 0,
+                        found: args.len() - 1,
+                    });
+                }
+                Ok(Value::new_string(if ok {
+                    format!("Ok({value})")
+                } else {
+                    format!("Err({value})")
+                }))
+            }
+
+            _ => Err(RuntimeError::ObjectFieldNotFound {
+                name: method.to_string(),
+                suggestion: None,
+            }),
+        }
+    }
+
     pub(crate) fn op_invoke_method(
         &mut self,
         method_constant: usize,
@@ -377,6 +788,8 @@ impl VirtualMachine {
         }
 
         let result = match &receiver {
+            Value::None => self.invoke_option_method(&method_name, &args)?,
+
             Value::Range { start, stop, step } => {
                 // API standard : size(), is_empty(), start(), stop(), step(),
                 // to_string(). Le reste (map, filter, take...) passe par
@@ -412,6 +825,8 @@ impl VirtualMachine {
                         Object::Record(_) => 9,
                         Object::EnumVariant { .. } => 10,
                         Object::Class { .. } => 11,
+                        Object::Option(_) => 12,
+                        Object::Result { .. } => 13,
                         _ => 5,
                     }
                 };
@@ -733,6 +1148,10 @@ impl VirtualMachine {
 
                         return Ok(());
                     }
+
+                    12 => self.invoke_option_method(&method_name, &args)?,
+
+                    13 => self.invoke_result_method(&method_name, &args)?,
 
                     11 => {
                         // `NomClasse.methode(a, b)` : méthode STATIQUE,

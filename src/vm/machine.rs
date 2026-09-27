@@ -13,6 +13,8 @@ use crate::runtime::value::Value;
 use crate::stdlib::register_natives;
 
 #[cfg(test)]
+mod option_result_tests;
+#[cfg(test)]
 mod robustness_tests;
 
 pub mod arithmetic;

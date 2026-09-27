@@ -114,6 +114,8 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
         Value::Object(handle) => match &*handle.borrow() {
             Object::String(_) => "string".to_string(),
             Object::Array(_) => "list".to_string(),
+            Object::Option(_) => "Option".to_string(),
+            Object::Result { .. } => "Result".to_string(),
             Object::Tuple(_) => "tuple".to_string(),
             Object::Set(_) => "set".to_string(),
             Object::Dict(_) => "dict".to_string(),

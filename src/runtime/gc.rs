@@ -307,6 +307,16 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
             }
         }
 
+        Object::Option(value) => {
+            if let Some(value) = value {
+                mark_value(value, state);
+            }
+        }
+
+        Object::Result { value, .. } => {
+            mark_value(value, state);
+        }
+
         Object::Tuple(elements) => {
             for value in elements {
                 mark_value(value, state);

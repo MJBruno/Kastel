@@ -9,7 +9,6 @@
 | `Dict`    | mêmes possibilités d'affichage, alignement et largeur                                                                           |
 | `Tuple`   | mêmes possibilités d'affichage, alignement et largeur                                                                           |
 
-
 ```javaScript
 println("|{:10}|", "Kastel");
 println("|{:>10}|", "Kastel");

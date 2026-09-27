@@ -3014,6 +3014,17 @@ impl TypeChecker {
                         }
                     }
 
+                    if let Some(Type::Function(signature)) =
+                        object_type.option_result_member_type(name)
+                    {
+                        return self.check_call_signature(
+                            &signature,
+                            generic_args,
+                            arguments,
+                            name,
+                        );
+                    }
+
                     // Array, Dict, Tuple, String, Range : méthodes STANDARD
                     // typées pour un APPEL (`a.size()`, `d.get(k)`...), et
                     // erreur guidée pour les noms supprimés (`a.length`,
@@ -3427,6 +3438,10 @@ impl TypeChecker {
     }
 
     fn member_type(&self, object_type: &Type, name: &str) -> Result<Type, CompileError> {
+        if let Some(signature) = object_type.option_result_member_type(name) {
+            return Ok(signature);
+        }
+
         match object_type {
             Type::Named(class_name)
             | Type::Generic {

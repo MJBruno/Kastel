@@ -157,6 +157,24 @@ impl Value {
     pub fn new_array(elements: Vec<Value>) -> Self {
         Self::new_heap_object(Object::Array(elements))
     }
+
+    /// Construit une valeur `Option<T>` runtime. `None` reste représenté par
+    /// `Value::None` dans le langage ; `Some(...)` utilise cet objet GC.
+    pub fn new_option(value: Option<Value>) -> Self {
+        Self::new_heap_object(Object::Option(value))
+    }
+
+    pub fn new_some(value: Value) -> Self {
+        Self::new_option(Some(value))
+    }
+
+    pub fn new_ok(value: Value) -> Self {
+        Self::new_heap_object(Object::Result { ok: true, value })
+    }
+
+    pub fn new_err(value: Value) -> Self {
+        Self::new_heap_object(Object::Result { ok: false, value })
+    }
     pub fn new_bound_method(method: Gc<Object>, receiver: Value) -> Self {
         Self::new_heap_object(Object::BoundMethod {
             method: Some(method),
@@ -1129,6 +1147,8 @@ impl std::fmt::Display for Value {
                 let is_container = matches!(
                     &*handle.borrow(),
                     Object::Array(_)
+                        | Object::Option(_)
+                        | Object::Result { .. }
                         | Object::Tuple(_)
                         | Object::Set(_)
                         | Object::Dict(_)
@@ -1148,6 +1168,11 @@ impl std::fmt::Display for Value {
                     Object::String(value) => write!(f, "{value}"),
 
                     Object::Array(array) => Self::fmt_sequence(f, "[", "]", array),
+
+                    Object::Option(Some(value)) => write!(f, "Some({value})"),
+                    Object::Option(None) => write!(f, "None"),
+                    Object::Result { ok: true, value } => write!(f, "Ok({value})"),
+                    Object::Result { ok: false, value } => write!(f, "Err({value})"),
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1298,6 +1323,8 @@ impl Value {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::String(_) => "string",
                 Object::Array(_) => "list",
+                Object::Option(_) => "Option",
+                Object::Result { .. } => "Result",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",
@@ -1490,12 +1517,35 @@ impl Value {
             // pas comparés structurellement par `==` : ce n'est pas une
             // régression, c'est la même limite qu'avant, juste préservée).
             (Value::Object(a), Value::Object(b)) => {
-                if let (Object::String(a_str), Object::String(b_str)) = (&*a.borrow(), &*b.borrow())
-                {
-                    return a_str == b_str;
-                }
+                let a_ref = a.borrow();
+                let b_ref = b.borrow();
 
-                Gc::<Object>::ptr_eq(&a, &b)
+                match (&*a_ref, &*b_ref) {
+                    (Object::String(a_str), Object::String(b_str)) => a_str == b_str,
+
+                    (Object::Option(a_value), Object::Option(b_value)) => {
+                        match (a_value, b_value) {
+                            (None, None) => true,
+                            (Some(a_value), Some(b_value)) => {
+                                Value::equals(a_value.clone(), b_value.clone())
+                            }
+                            _ => false,
+                        }
+                    }
+
+                    (
+                        Object::Result {
+                            ok: a_ok,
+                            value: a_value,
+                        },
+                        Object::Result {
+                            ok: b_ok,
+                            value: b_value,
+                        },
+                    ) => a_ok == b_ok && Value::equals(a_value.clone(), b_value.clone()),
+
+                    _ => Gc::<Object>::ptr_eq(&a, &b),
+                }
             }
 
             (Value::None, Value::None) => true,
