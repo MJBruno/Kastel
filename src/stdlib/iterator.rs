@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
@@ -80,26 +80,9 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("range".to_string(), Value::NativeFunction(native_range));
 
     globals.insert("list".to_string(), Value::NativeFunction(native_list));
-
-    let mut iterator_methods = HashSet::new();
-    iterator_methods.insert(("next".to_string(), 0));
-    iterator_methods.insert(("has_next".to_string(), 0));
-    globals.insert(
-        "Iterator".to_string(),
-        Value::new_interface("Iterator".to_string(), Vec::new(), iterator_methods),
-    );
-
-    let mut iterable_methods = HashSet::new();
-    iterable_methods.insert(("iter".to_string(), 0));
-    globals.insert(
-        "Iterable".to_string(),
-        Value::new_interface("Iterable".to_string(), Vec::new(), iterable_methods),
-    );
 }
 
 pub fn register_compiler(compiler: &mut Compiler) {
     let _ = compiler.define_native("range");
     let _ = compiler.define_native("list");
-    let _ = compiler.define_native("Iterator");
-    let _ = compiler.define_native("Iterable");
 }

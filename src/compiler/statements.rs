@@ -429,9 +429,12 @@ impl Compiler {
         let runtime_bases: Vec<&TypeExpr> = bases
             .iter()
             .filter(|base| {
-                Self::type_expr_name(base)
-                    .and_then(|name| crate::compiler::capability::Capability::from_name(&name))
-                    .is_none()
+                let Some(name) = Self::type_expr_name(base) else {
+                    return false;
+                };
+
+                crate::compiler::capability::Capability::from_name(&name).is_none()
+                    && !matches!(name.as_str(), "Iterator" | "Iterable")
             })
             .collect();
 
@@ -677,9 +680,12 @@ impl Compiler {
         let runtime_bases: Vec<&TypeExpr> = bases
             .iter()
             .filter(|base| {
-                Self::type_expr_name(base)
-                    .and_then(|name| crate::compiler::capability::Capability::from_name(&name))
-                    .is_none()
+                let Some(name) = Self::type_expr_name(base) else {
+                    return false;
+                };
+
+                crate::compiler::capability::Capability::from_name(&name).is_none()
+                    && !matches!(name.as_str(), "Iterator" | "Iterable")
             })
             .collect();
 

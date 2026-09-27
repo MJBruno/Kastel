@@ -343,7 +343,7 @@ impl std::fmt::Display for CompileError {
             }
 
             CompileError::InvalidIterable { found } => {
-                write!(f, "La valeur de type '{found}' n'est pas itérable")
+                write!(f, "Le type '{found}' n'est pas itérable")
             }
 
             CompileError::InternalCompilerError(message) => {
@@ -771,13 +771,11 @@ impl CompileError {
                     .with_len(name.len())
             }
 
-            CompileError::InvalidIterable { found } => Diagnostic::new(
-                "valeur non itérable",
-                0,
-                0,
-            )
-            .with_found(found.as_str())
-            .with_help("implémentez `Iterator<T>` ou `Iterable<T>`"),
+            CompileError::InvalidIterable { found } => {
+                Diagnostic::new("valeur non itérable", 0, 0)
+                    .with_found(found.as_str())
+                    .with_help("utilisez un Iterator<T>, un Iterable<T> ou une collection standard.")
+            }
 
             CompileError::BreakOutsideLoop => {
                 Diagnostic::new("'break' en dehors d'une boucle", 0, 0)

@@ -289,7 +289,7 @@ impl Parser {
     /// ```text
     /// private let age: int = 0;
     ///
-    /// private func __fields_Personne() { this.age = 0; }
+    /// private func __fields_Personne() { self.age = 0; }
     /// ```
     ///
     /// La VM l'exécute à chaque `new`, AVANT le constructeur de la classe
@@ -297,7 +297,7 @@ impl Parser {
     /// celui de la classe pour conserver un namespace stable pour la méthode
     /// cachée.
     ///
-    /// Les champs `static` n'ont PAS de `this` : leur valeur initiale est
+    /// Les champs `static` n'ont PAS de `self` : leur valeur initiale est
     /// évaluée directement par `compile_class`, une seule fois, à la
     /// déclaration de la classe (voir `compiler::statements::compile_class`).
     fn desugar_field_initializers(
@@ -316,7 +316,7 @@ impl Parser {
                     column: field.column,
                     statement: Box::new(Statement::Assignment {
                         target: AssignmentTarget::Member {
-                            object: Box::new(Expression::This),
+                            object: Box::new(Expression::SelfValue),
                             name: field.name.clone(),
                         },
                         value,
@@ -458,7 +458,7 @@ impl Parser {
     ///
     /// Les variants sont toujours qualifiés (`Color.Red`) afin d'éviter les
     /// collisions entre enums. Les méthodes suivent les mêmes règles de
-    /// paramètres, surcharge et `this` que les méthodes de classe.
+    /// paramètres, surcharge et `self` que les méthodes de classe.
     pub(super) fn parse_enum_statement(&mut self) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom d'enum attendu après 'enum'")?;
         let generic_params = self.parse_generic_parameters()?;

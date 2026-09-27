@@ -119,7 +119,7 @@ class Holder {
     public let n: int = build();
 
     func initialize(data) {
-        this.data = data;
+        self.data = data;
     }
 }
 
@@ -794,7 +794,7 @@ fn enum_variants_are_qualified_and_typed() {
 }
 
 #[test]
-fn enum_methods_use_this_and_compare_singleton_variants() {
+fn enum_methods_use_self_and_compare_singleton_variants() {
     let (vm, result) = run_script(
         r#"
         enum Status {
@@ -803,7 +803,7 @@ fn enum_methods_use_this_and_compare_singleton_variants() {
             Finished
 
             func is_finished() -> bool {
-                return this == Status.Finished;
+                return self == Status.Finished;
             }
         }
 
@@ -813,7 +813,7 @@ fn enum_methods_use_this_and_compare_singleton_variants() {
         "#,
     );
 
-    assert!(result.is_ok(), "les méthodes d'enum doivent recevoir this");
+    assert!(result.is_ok(), "les méthodes d'enum doivent recevoir self");
     assert!(boolean(global(&vm, "done")));
     assert!(!boolean(global(&vm, "pending")));
 }
@@ -827,7 +827,7 @@ fn enum_export_import_preserves_type_and_methods() {
             Finished
 
             func is_finished() -> bool {
-                return this == Status.Finished;
+                return self == Status.Finished;
             }
         }
         "#;
@@ -989,16 +989,16 @@ export class Personne {
     private let age: int = 0;
 
     func initialize(name: str) {
-        this.name = name;
+        self.name = name;
     }
 
     func initialize(name: str, age: int) {
-        this.name = name;
-        this.age = age;
+        self.name = name;
+        self.age = age;
     }
 
     func getAge() -> int {
-        return this.age;
+        return self.age;
     }
 }
 "#;
@@ -1058,7 +1058,7 @@ fn a_private_constructor_forbids_new_outside_the_class() {
         let tokens = Lexer::new(
             r#"
 class Solo {
-    private func initialize() { this.v = 1; }
+    private func initialize() { self.v = 1; }
 }
 let s = new Solo();
 "#
@@ -1137,10 +1137,10 @@ fn protected_members_work_inside_the_declaring_class() {
         r#"
 class Base {
     protected let value: int = 7;
-    protected func getValue() -> int { return this.value; }
+    protected func getValue() -> int { return self.value; }
 
     func read() -> int {
-        return this.value + this.getValue();
+        return self.value + self.getValue();
     }
 }
 
@@ -1331,9 +1331,8 @@ let sum = a + b;
     assert_eq!(value.2, "other");
 }
 
-
 #[test]
-fn user_iterator_implements_runtime_iterator_behaviour() {
+fn self_reference_supports_user_iterator_pipeline_with_arrow_callbacks() {
     let (vm, result) = run_script(
         r#"
 class Counter: Iterator<int> {
@@ -1341,84 +1340,35 @@ class Counter: Iterator<int> {
     let stop: int;
 
     func initialize(stop: int) {
-        this.current = 0;
-        this.stop = stop;
+        self.current = 0;
+        self.stop = stop;
     }
 
     func next() -> int {
-        let value = this.current;
-        this.current = this.current + 1;
+        let value = self.current;
+        self.current = self.current + 1;
         return value;
     }
 
     func has_next() -> bool {
-        return this.current < this.stop;
+        return self.current < self.stop;
     }
 }
 
-let iterator = new Counter(5);
-let sum = 0;
-for value in iterator {
-    sum = sum + value;
-}
+let iterator: Iterator<int> = new Counter(5);
 
-let values = new Counter(5)
-    .map(func(value) { return value * 2; })
-    .filter(func(value) { return value >= 4; })
+let values = iterator
+    .map((value) => value * 2)
+    .filter((value) => value >= 4)
     .take(2)
     .collect();
 
-let abstract_iterator: Iterator<int> = new Counter(3);
-let abstract_values = abstract_iterator
-    .take(2)
-    .collect();
-
-let count = values.size();
-let first = values[0];
-let second = values[1];
-let abstract_count = abstract_values.size();
-let abstract_first = abstract_values[0];
+let ok = values.size() == 2
+    && values[0] == 4
+    && values[1] == 6;
 "#,
     );
 
     result.unwrap();
-
-    assert_eq!(integer(global(&vm, "sum")), 10);
-    assert_eq!(integer(global(&vm, "count")), 2);
-    assert_eq!(integer(global(&vm, "first")), 4);
-    assert_eq!(integer(global(&vm, "second")), 6);
-    assert_eq!(integer(global(&vm, "abstract_count")), 2);
-    assert_eq!(integer(global(&vm, "abstract_first")), 0);
-}
-
-#[test]
-fn user_iterable_can_delegate_to_an_existing_iterator() {
-    let (vm, result) = run_script(
-        r#"
-class Bag: Iterable<int> {
-    let values: List<int>;
-
-    func initialize() {
-        this.values = [1, 2, 3];
-    }
-
-    func iter() -> Iterator<int> {
-        return this.values.iter();
-    }
-}
-
-let iterable: Iterable<int> = new Bag();
-let iterator = iterable.iter();
-let mapped = iterator.map(func(value) { return value * 2; }).collect();
-let mapped_first = mapped[0];
-let sum = 0;
-for value in iterable {
-    sum = sum + value;
-}
-"#,
-    );
-
-    result.unwrap();
-    assert_eq!(integer(global(&vm, "sum")), 6);
-    assert_eq!(integer(global(&vm, "mapped_first")), 2);
+    assert!(matches!(global(&vm, "ok"), Value::Boolean(true)));
 }

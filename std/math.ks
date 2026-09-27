@@ -517,41 +517,41 @@ export func shuffle(items) {
 
 export class Complexe {
     func initialize(real, imaginaire) {
-        this.real = real;
-        this.imaginaire = imaginaire;
+        self.real = real;
+        self.imaginaire = imaginaire;
     }
 
     func add(other) {
-        return new Complexe(this.real + other.real, this.imaginaire + other.imaginaire);
+        return new Complexe(self.real + other.real, self.imaginaire + other.imaginaire);
     }
 
     func subtract(other) {
-        return new Complexe(this.real - other.real, this.imaginaire - other.imaginaire);
+        return new Complexe(self.real - other.real, self.imaginaire - other.imaginaire);
     }
 
     func multiply(other) {
-        let real = this.real * other.real - this.imaginaire * other.imaginaire;
-        let imaginaire = this.real * other.imaginaire + this.imaginaire * other.real;
+        let real = self.real * other.real - self.imaginaire * other.imaginaire;
+        let imaginaire = self.real * other.imaginaire + self.imaginaire * other.real;
 
         return new Complexe(real, imaginaire);
     }
 
     func conjugate() {
-        return new Complexe(this.real, - this.imaginaire);
+        return new Complexe(self.real, - self.imaginaire);
     }
 
     func magnitude() {
-        return hypot(this.real, this.imaginaire);
+        return hypot(self.real, self.imaginaire);
     }
 
     // "3+4i" ou "3-4i" : le signe de la partie imaginaire négative est
     // déjà porté par le nombre lui-même.
     func to_string() {
-        if this.imaginaire < 0 {
-            return format("{}{}i", this.real, this.imaginaire);
+        if self.imaginaire < 0 {
+            return format("{}{}i", self.real, self.imaginaire);
         }
 
-        return format("{}+{}i", this.real, this.imaginaire);
+        return format("{}+{}i", self.real, self.imaginaire);
     }
 }
 

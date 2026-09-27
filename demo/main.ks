@@ -1,20 +1,21 @@
 class Counter: Iterator<int> {
     let current: int;
     let stop: int;
+    static dist:int;
 
     func initialize(stop: int) {
-        this.current = 0;
-        this.stop = stop;
+        self.current = 0;
+        self.stop = stop;
     }
 
     func next() -> int {
-        let value = this.current;
-        this.current = this.current + 1;
+        let value = self.current;
+        self.current = self.current + 1;
         return value;
     }
 
     func has_next() -> bool {
-        return this.current < this.stop;
+        return self.current < self.stop;
     }
 }
 
@@ -26,4 +27,4 @@ let values = iterator
     .take(2)
     .collect();
 
-    println(values)
+println(values)

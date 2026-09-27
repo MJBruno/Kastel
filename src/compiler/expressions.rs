@@ -232,8 +232,8 @@ impl Compiler {
 
                 self.patch_jump(end_jump)?;
             }
-            Expression::This => {
-                self.compile_variable_get("this")?;
+            Expression::SelfValue => {
+                self.compile_variable_get("self")?;
             }
 
             Expression::New {

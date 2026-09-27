@@ -600,7 +600,7 @@ impl Parser {
 
             TokenKind::None => Ok(Expression::Literal(Literal::None)),
 
-            TokenKind::This => Ok(Expression::This),
+            TokenKind::SelfValue => Ok(Expression::SelfValue),
 
             TokenKind::New => self.parse_new_expression(),
 

@@ -4,12 +4,7 @@ use super::bytecode::frame_closure;
 use crate::{
     error::runtime_error::RuntimeError,
     frontend::ast::CONSTRUCTOR_NAME,
-    runtime::{
-        gc_handle::Gc,
-        iterator::value_implements_interface,
-        object::Object,
-        value::Value,
-    },
+    runtime::{gc_handle::Gc, object::Object, value::Value},
     stdlib::{array, dict},
 };
 
@@ -327,23 +322,6 @@ impl VirtualMachine {
         }
     }
 
-    fn is_iterator_default_method(name: &str) -> bool {
-        matches!(
-            name,
-            "peek"
-                | "map"
-                | "filter"
-                | "take"
-                | "skip"
-                | "collect"
-                | "count"
-                | "any"
-                | "all"
-                | "iter"
-                | "to_list"
-        )
-    }
-
     // ============================================================
     //                     INVOKE METHOD
     // ============================================================
@@ -464,9 +442,47 @@ impl VirtualMachine {
                             Some(method) => method,
 
                             None => {
-                                // Une méthode utilisateur du même nom, même
-                                // avec une autre arité, masque le fallback
-                                // par défaut de Iterator.
+                                // `Iterator<T>` fournit les adapters par défaut
+                                // (`map`, `filter`, `take`, `skip`, `collect`,
+                                // `any`, `all`, ...). Une classe qui implémente
+                                // le contrat ne doit pas recopier ces méthodes.
+                                //
+                                // Le TypeChecker garantit l'interface ; le
+                                // runtime transforme ici l'instance en
+                                // IteratorKind::User et réutilise le moteur
+                                // paresseux existant.
+                                if matches!(
+                                    method_name.as_str(),
+                                    "iter"
+                                        | "peek"
+                                        | "map"
+                                        | "filter"
+                                        | "take"
+                                        | "skip"
+                                        | "collect"
+                                        | "to_list"
+                                        | "count"
+                                        | "any"
+                                        | "all"
+                                        | "next"
+                                        | "has_next"
+                                ) {
+                                    let iterator = receiver.to_iterator()?;
+                                    let mut iterator_args = args.clone();
+                                    iterator_args[0] = iterator;
+
+                                    let result = self.invoke_iterator_method(
+                                        &method_name,
+                                        &iterator_args,
+                                    )?;
+
+                                    self.push(result);
+                                    return Ok(());
+                                }
+
+                                // La méthode existe-t-elle sous une autre
+                                // arité ? Alors c'est une erreur d'arité,
+                                // pas un champ introuvable.
                                 let declared =
                                     Self::class_method_arities(class_handle, &method_name);
 
@@ -475,24 +491,6 @@ impl VirtualMachine {
                                         expected: *expected,
                                         found: arg_count,
                                     });
-                                }
-
-                                // Les méthodes `Iterator<T>` fournies par le
-                                // runtime (`map`, `filter`, `take`, ... ) sont
-                                // des méthodes par défaut : une classe qui
-                                // implémente Iterator n'a pas à les recopier.
-                                if value_implements_interface(&receiver, "Iterator")
-                                    && Self::is_iterator_default_method(&method_name)
-                                {
-                                    let iterator = receiver.to_iterator()?;
-                                    let mut iterator_args = args.clone();
-                                    iterator_args[0] = iterator;
-                                    let result = self.invoke_iterator_method(
-                                        &method_name,
-                                        &iterator_args,
-                                    )?;
-                                    self.push(result);
-                                    return Ok(());
                                 }
 
                                 return Err(RuntimeError::ObjectFieldNotFound {

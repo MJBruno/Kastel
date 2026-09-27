@@ -34,7 +34,7 @@ pub enum TokenKind {
     // ============================================================
     Class,
     New,
-    This,
+    SelfValue,
     Interface,
     Enum,
     // ============================================================
@@ -165,7 +165,7 @@ impl Token {
             // ========================================================
             "class" => Some(TokenKind::Class),
             "new" => Some(TokenKind::New),
-            "this" => Some(TokenKind::This),
+            "self" => Some(TokenKind::SelfValue),
             "interface" => Some(TokenKind::Interface),
             "enum" => Some(TokenKind::Enum),
             // ========================================================

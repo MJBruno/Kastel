@@ -147,10 +147,8 @@ impl Capability {
     ///
     /// Cette fonction est utilisée pour les contraintes génériques :
     ///
-    /// ```text
-    /// T: Eq<T>
-    /// T: Ord<T>
-    /// ```
+    /// - `T: Eq<T>`
+    /// - `T: Ord<T>`
     ///
     /// `Dynamic` reste permissif dans le modèle de typage gradué de Kastel.
     pub fn is_satisfied_by(self, ty: &Type) -> bool {

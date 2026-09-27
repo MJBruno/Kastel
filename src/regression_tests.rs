@@ -426,11 +426,11 @@ mod classes {
 
                 initialize() {}
                 initialize(x: int, y: int) {
-                    this.x = x;
-                    this.y = y;
+                    self.x = x;
+                    self.y = y;
                 }
 
-                func sum() -> int { return this.x + this.y; }
+                func sum() -> int { return self.x + self.y; }
             }
 
             let a = Point();

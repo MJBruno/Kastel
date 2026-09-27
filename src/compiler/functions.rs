@@ -250,7 +250,7 @@ impl Compiler {
     ) -> Result<Function, CompileError> {
         let mut method_params = Vec::with_capacity(params.len() + 1);
 
-        method_params.push("this".to_string());
+        method_params.push("self".to_string());
         method_params.extend(params.iter().cloned());
 
         self.compile_function(name, &method_params, body)
@@ -260,7 +260,7 @@ impl Compiler {
     // STATIC METHOD
     // ============================================================
 
-    /// Comme `compile_method`, mais SANS `this` implicite : une méthode
+    /// Comme `compile_method`, mais SANS `self` implicite : une méthode
     /// `static` n'est pas appelée sur une instance (`NomClasse.methode(...)`),
     /// donc son corps ne reçoit aucun receveur.
     pub(crate) fn compile_static_method(

@@ -444,19 +444,22 @@ impl Type {
         }
     }
 
-    /// Type réellement produit par le protocole d'itération.
-    /// Il diffère de `element_type()` pour les dictionnaires (les clés sont
-    /// parcourues) et pour les ranges (la VM produit des entiers).
-    pub fn iterator_element_type(&self) -> Type {
+    /// Type produit par l'itération runtime de la collection.
+    ///
+    /// Contrairement à `element_type()`, un dictionnaire produit ses clés
+    /// et non ses valeurs, et `Range` produit des entiers.
+    pub(crate) fn iterator_element_type(&self) -> Type {
         match self {
-            Type::Array(element) | Type::Set(element) => (**element).clone(),
-            Type::ArrayDynamic | Type::SetDynamic => Type::Dynamic,
+            Type::Array(element) => (**element).clone(),
+            Type::ArrayDynamic => Type::Dynamic,
             Type::Tuple(elements) => elements
                 .iter()
                 .cloned()
-                .reduce(|left, right| left.merge(&right))
+                .reduce(|a, b| a.merge(&b))
                 .unwrap_or(Type::Dynamic),
             Type::TupleDynamic => Type::Dynamic,
+            Type::Set(element) => (**element).clone(),
+            Type::SetDynamic => Type::Dynamic,
             Type::Dict(key, _) => (**key).clone(),
             Type::DictDynamic => Type::Dynamic,
             Type::Str => Type::Str,
@@ -542,15 +545,7 @@ impl Type {
             "size" => return method(vec![], Type::Int),
             "is_empty" => return method(vec![], Type::Bool),
             "to_string" => return method(vec![], Type::Str),
-            "iter" => {
-                return method(
-                    vec![],
-                    Type::Generic {
-                        name: "Iterator".to_string(),
-                        arguments: vec![self.iterator_element_type()],
-                    },
-                );
-            }
+            "iter" => return method(vec![], Type::Dynamic),
             _ => {}
         }
 

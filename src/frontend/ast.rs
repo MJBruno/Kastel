@@ -146,9 +146,9 @@ pub struct FunctionMethod {
     pub generic_params: Vec<GenericParam>,
     pub visibility: Visibility,
     /// `static func creer(...) { ... }` : appelée sur la CLASSE
-    /// (`NomClasse.creer(...)`), SANS `this` implicite — contrairement à
+    /// (`NomClasse.creer(...)`), SANS `self` implicite — contrairement à
     /// une méthode normale, elle ne reçoit pas d'instance. Une méthode
-    /// statique ne peut donc pas utiliser `this`.
+    /// statique ne peut donc pas utiliser `self`.
     pub is_static: bool,
     pub params: Vec<String>,
     /// Annotations de type des paramètres, un slot par entrée de
@@ -392,7 +392,7 @@ pub enum Expression {
         column: usize,
     },
 
-    This,
+    SelfValue,
     Array(Vec<Expression>),
 
     /// `(a, b, c)`, `(a,)` (tuple à un élément), `()` (tuple vide).
