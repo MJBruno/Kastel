@@ -1065,11 +1065,64 @@ impl Compiler {
     // PATTERN TEST
     // ============================================================
 
+    /// Vrai si `expression` est déjà bon marché à relire plusieurs fois
+    /// (simple variable ou littéral) : pas besoin de la mettre en cache.
+    fn expression_is_cheap_to_reevaluate(expression: &Expression) -> bool {
+        matches!(expression, Expression::Variable(_) | Expression::Literal(_))
+    }
+
+    /// Vrai si le test de ce pattern relit `expression` plus d'une fois.
+    /// Tenu à jour manuellement : toute nouvelle variante de `Pattern` qui
+    /// réutilise `expression` plusieurs fois dans son test doit être ajoutée
+    /// ici, sous peine de retrouver le même piège de recompilation
+    /// exponentielle qui a motivé cette fonction.
+    fn pattern_reevaluates_subject(pattern: &Pattern) -> bool {
+        !matches!(
+            pattern,
+            Pattern::Wildcard | Pattern::Binding(_) | Pattern::Literal(_) | Pattern::EnumVariant { .. }
+        )
+    }
+
+    /// Si nécessaire, évalue `expression` une seule fois dans une variable
+    /// locale cachée et retourne une référence à cette variable ; sinon
+    /// retourne `expression` tel quel (déjà bon marché, ou pattern qui ne le
+    /// relit qu'une fois). Voir la note dans `compile_pattern_test_expression`.
+    fn cache_pattern_subject(
+        &mut self,
+        expression: &Expression,
+        pattern: &Pattern,
+    ) -> Result<Expression, CompileError> {
+        if Self::expression_is_cheap_to_reevaluate(expression)
+            || !Self::pattern_reevaluates_subject(pattern)
+        {
+            return Ok(expression.clone());
+        }
+
+        let name = format!("__pattern_tmp_{}", self.context.borrow().locals.len());
+        self.compile_local_var(&name, Some(expression), false)?;
+        Ok(Expression::Variable(name))
+    }
+
     fn compile_pattern_test_expression(
         &mut self,
         expression: &Expression,
         pattern: &Pattern,
     ) -> Result<usize, CompileError> {
+        // `OptionSome`/`ResultOk`/`ResultErr`/`Array`/`ArrayRest`/`Tuple`/`Range`/`Or`
+        // re-embed `expression` plusieurs fois (garde de type, discriminant,
+        // extraction, bornes, ...). Si `expression` n'est pas déjà une simple
+        // lecture de variable, chaque réemploi RE-EXÉCUTE le calcul complet.
+        // Pour un pattern imbriqué (ex. `Ok(Some(Some(x)))`), l'extraction
+        // d'un niveau devient l'`expression` du niveau suivant : sans mise en
+        // cache, le nombre d'appels (et la taille du bytecode généré) croît
+        // EXPONENTIELLEMENT avec la profondeur d'imbrication au lieu de
+        // linéairement. On met donc en cache le résultat dans une variable
+        // locale cachée dès qu'un pattern va relire `expression` plus d'une
+        // fois, et tout le reste de la fonction ne référence plus que cette
+        // lecture de variable (bon marché, sans effet de bord répété).
+        let cached_expression = self.cache_pattern_subject(expression, pattern)?;
+        let expression = &cached_expression;
+
         match pattern {
             Pattern::Wildcard => {
                 self.emit_opcode(OpCode::True);
