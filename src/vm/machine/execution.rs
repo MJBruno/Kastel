@@ -12,6 +12,9 @@ impl VirtualMachine {
             match self.run_internal(true, None)? {
                 super::RunStatus::Completed => return Ok(()),
                 super::RunStatus::Yielded => continue,
+                super::RunStatus::Waiting => {
+                    return Err(RuntimeError::ChannelRecvOutsideTask);
+                }
             }
         }
     }
@@ -22,6 +25,9 @@ impl VirtualMachine {
             match self.run_internal(false, None)? {
                 super::RunStatus::Completed => return Ok(()),
                 super::RunStatus::Yielded => continue,
+                super::RunStatus::Waiting => {
+                    return Err(RuntimeError::ChannelRecvOutsideTask);
+                }
             }
         }
     }
@@ -143,6 +149,11 @@ impl VirtualMachine {
                 }
             }
 
+            if self.waiting_requested {
+                self.waiting_requested = false;
+                return Ok(super::RunStatus::Waiting);
+            }
+
             if self.yield_requested {
                 self.yield_requested = false;
                 return Ok(super::RunStatus::Yielded);
@@ -226,7 +237,8 @@ impl VirtualMachine {
             RuntimeError::TaskCaptureNotAllowed
             | RuntimeError::TaskNotFound
             | RuntimeError::TaskDeadlock
-            | RuntimeError::YieldOutsideTask => {
+            | RuntimeError::YieldOutsideTask
+            | RuntimeError::ChannelRecvOutsideTask => {
                 Ok(Value::new_error(error.kind_name(), error.to_string()))
             }
 

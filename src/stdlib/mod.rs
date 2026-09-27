@@ -45,6 +45,7 @@ pub(crate) fn to_string_method(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 pub mod array;
+pub mod channel;
 pub mod debug;
 pub mod dict;
 pub mod file;
@@ -68,6 +69,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     math::register(globals);
     string::register(globals);
     array::register(globals);
+    channel::register(globals);
     tuple::register(globals);
     set::register(globals);
     dict::register(globals);
@@ -89,6 +91,7 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     math::register_compiler(compiler);
     string::register_compiler(compiler);
     array::register_compiler(compiler);
+    channel::register_compiler(compiler);
     tuple::register_compiler(compiler);
     set::register_compiler(compiler);
     dict::register_compiler(compiler);

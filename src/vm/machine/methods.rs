@@ -829,6 +829,7 @@ impl VirtualMachine {
                         Object::Result { .. } => 13,
                         Object::Error { .. } => 14,
                         Object::Task(_) => 15,
+                        Object::Channel(_) => 16,
                         _ => 5,
                     }
                 };
@@ -900,6 +901,127 @@ impl VirtualMachine {
                     };
 
                     self.push(result);
+                    return Ok(());
+                }
+
+                if object_kind == 16 {
+                    match method_name.as_str() {
+                        "send" => {
+                            if arg_count != 1 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 1,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let value = args[1].clone();
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            if !super::scheduler::Scheduler::wake_one_channel(&scheduler, &channel, value.clone())? {
+                                channel.borrow_mut().send(value);
+                            }
+                            self.push(Value::None);
+                        }
+
+                        "recv" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            if let Some(value) = channel.borrow_mut().try_recv() {
+                                self.push(value);
+                            } else {
+                                self.wait_on_channel(channel, Value::Object(handle.clone()))?;
+                            }
+                        }
+
+                        "try_recv" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let value = channel.borrow_mut().try_recv();
+                            self.push(match value {
+                                Some(value) => Value::new_some(value),
+                                None => Value::None,
+                            });
+                        }
+
+                        "size" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Integer(channel.borrow().size() as i64));
+                        }
+
+                        "is_empty" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Boolean(channel.borrow().is_empty()));
+                        }
+
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    }
+
                     return Ok(());
                 }
 

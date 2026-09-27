@@ -330,6 +330,12 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
 
         Object::Task(_) => {}
 
+        Object::Channel(channel) => {
+            for value in &channel.borrow().queue {
+                mark_value(value, state);
+            }
+        }
+
         Object::Tuple(elements) => {
             for value in elements {
                 mark_value(value, state);

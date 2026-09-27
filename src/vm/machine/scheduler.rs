@@ -1,9 +1,10 @@
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::{Rc, Weak};
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
+use crate::runtime::channel::ChannelState;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
 use crate::runtime::value::Value;
@@ -15,6 +16,7 @@ pub(crate) const DEFAULT_TASK_QUANTUM: usize = 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskStateStatus {
     Ready,
+    Waiting,
     Completed,
     Failed,
 }
@@ -27,7 +29,7 @@ pub(crate) struct TaskState {
 }
 
 #[derive(Debug)]
-pub(crate) struct TaskHandle {
+pub struct TaskHandle {
     pub(crate) id: usize,
     pub(crate) scheduler: Weak<RefCell<Scheduler>>,
 }
@@ -46,6 +48,7 @@ pub(crate) struct Scheduler {
     pub(crate) running: Vec<usize>,
     pub(crate) next_id: usize,
     pub(crate) quantum: usize,
+    pub(crate) waiting_channels: HashMap<usize, VecDeque<usize>>,
 }
 
 impl Scheduler {
@@ -56,6 +59,7 @@ impl Scheduler {
             running: Vec::new(),
             next_id: 0,
             quantum: DEFAULT_TASK_QUANTUM,
+            waiting_channels: HashMap::new(),
         }
     }
 
@@ -85,6 +89,7 @@ impl Scheduler {
             module_loader,
             module_path,
             weak.clone(),
+            id,
         )?;
 
         let state = TaskState {
@@ -101,7 +106,10 @@ impl Scheduler {
         scheduler.tasks.push(Some(state));
         scheduler.ready.push_back(id);
 
-        Ok(Rc::new(TaskHandle { id, scheduler: weak }))
+        Ok(Rc::new(TaskHandle {
+            id,
+            scheduler: weak,
+        }))
     }
 
     pub(crate) fn poll(shared: &Rc<RefCell<Self>>) -> Result<bool, RuntimeError> {
@@ -139,6 +147,9 @@ impl Scheduler {
                 task.status = TaskStateStatus::Ready;
                 scheduler.ready.push_back(id);
             }
+            Ok(RunStatus::Waiting) => {
+                task.status = TaskStateStatus::Waiting;
+            }
             Ok(RunStatus::Completed) => {
                 task.status = TaskStateStatus::Completed;
                 task.result = Some(task.vm.last_result_value());
@@ -151,6 +162,77 @@ impl Scheduler {
 
         scheduler.tasks[id] = Some(task);
         Ok(true)
+    }
+
+    fn channel_key(channel: &Rc<RefCell<ChannelState>>) -> usize {
+        Rc::as_ptr(channel) as usize
+    }
+
+    pub(crate) fn wait_on_channel(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        channel: Rc<RefCell<ChannelState>>,
+    ) -> Result<(), RuntimeError> {
+        let key = Self::channel_key(&channel);
+        let mut scheduler = shared.borrow_mut();
+
+        let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
+
+        // The running task is temporarily removed from `tasks` while its quantum
+        // executes, so registration is also valid for a currently running task.
+        if state.is_none() && !scheduler.running.contains(&task_id) {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let waiters = scheduler.waiting_channels.entry(key).or_default();
+        if !waiters.contains(&task_id) {
+            waiters.push_back(task_id);
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn wake_one_channel(
+        shared: &Rc<RefCell<Self>>,
+        channel: &Rc<RefCell<ChannelState>>,
+        value: Value,
+    ) -> Result<bool, RuntimeError> {
+        let key = Self::channel_key(channel);
+        let mut scheduler = shared.borrow_mut();
+
+        loop {
+            let task_id = match scheduler.waiting_channels.get_mut(&key) {
+                Some(waiters) => waiters.pop_front(),
+                None => None,
+            };
+
+            if scheduler
+                .waiting_channels
+                .get(&key)
+                .is_some_and(|waiters| waiters.is_empty())
+            {
+                scheduler.waiting_channels.remove(&key);
+            }
+
+            let Some(task_id) = task_id else {
+                return Ok(false);
+            };
+
+            let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                continue;
+            };
+
+            if task.status != TaskStateStatus::Waiting {
+                continue;
+            }
+
+            task.vm.resume_from_channel(value)?;
+            task.status = TaskStateStatus::Ready;
+
+            scheduler.ready.push_back(task_id);
+
+            return Ok(true);
+        }
     }
 
     pub(crate) fn join(shared: &Rc<RefCell<Self>>, id: usize) -> Result<Value, RuntimeError> {
@@ -175,7 +257,7 @@ impl Scheduler {
                     TaskStateStatus::Failed => {
                         return Err(state.error.clone().unwrap_or(RuntimeError::NativeError));
                     }
-                    TaskStateStatus::Ready => {}
+                    TaskStateStatus::Ready | TaskStateStatus::Waiting => {}
                 }
             }
 
@@ -185,7 +267,10 @@ impl Scheduler {
         }
     }
 
-    pub(crate) fn status(shared: &Rc<RefCell<Self>>, id: usize) -> Result<&'static str, RuntimeError> {
+    pub(crate) fn status(
+        shared: &Rc<RefCell<Self>>,
+        id: usize,
+    ) -> Result<&'static str, RuntimeError> {
         let scheduler = shared.borrow();
 
         if scheduler.running.contains(&id) {
@@ -199,6 +284,7 @@ impl Scheduler {
             .map(|task| task.status)
         {
             Some(TaskStateStatus::Ready) => Ok("ready"),
+            Some(TaskStateStatus::Waiting) => Ok("waiting"),
             Some(TaskStateStatus::Completed) => Ok("done"),
             Some(TaskStateStatus::Failed) => Ok("failed"),
             None => Err(RuntimeError::TaskNotFound),
@@ -217,6 +303,9 @@ impl Scheduler {
         for task in self.tasks.iter().flatten() {
             values.extend(task.vm.stack.iter().cloned());
             values.extend(task.vm.temp_roots.iter().cloned());
+            if let Some(channel) = &task.vm.waiting_channel {
+                values.push(channel.clone());
+            }
             values.extend(task.vm.globals.borrow().values().cloned());
             values.extend(
                 task.vm

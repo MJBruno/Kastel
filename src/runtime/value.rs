@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -174,6 +175,12 @@ impl Value {
 
     pub fn new_err(value: Value) -> Self {
         Self::new_heap_object(Object::Result { ok: false, value })
+    }
+
+    pub fn new_channel() -> Self {
+        Self::new_heap_object(Object::Channel(Rc::new(RefCell::new(
+            crate::runtime::channel::ChannelState::new(),
+        ))))
     }
 
     pub fn new_error(kind: impl Into<String>, message: impl Into<String>) -> Self {
@@ -1193,6 +1200,9 @@ impl std::fmt::Display for Value {
                     Object::Result { ok: false, value } => write!(f, "Err({value})"),
                     Object::Error { kind, message } => write!(f, "Err<{kind}>({message})"),
                     Object::Task(task) => write!(f, "Task({})", task.id),
+                    Object::Channel(channel) => {
+                        write!(f, "Channel(size={})", channel.borrow().size())
+                    }
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1347,6 +1357,7 @@ impl Value {
                 Object::Result { .. } => "Result",
                 Object::Error { .. } => "Err",
                 Object::Task(_) => "Task",
+                Object::Channel(_) => "Channel",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",

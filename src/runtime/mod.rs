@@ -1,3 +1,4 @@
+pub mod channel;
 pub mod closure;
 pub mod function;
 pub mod gc;

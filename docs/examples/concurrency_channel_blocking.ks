@@ -1,10 +1,10 @@
-let ch: Channel<int> = channel();
-let log: List<str> = [];
+let ch = channel();
+let log = [];
 
 func consumer(name: str) -> int {
     log.add(name + ":waiting");
     let value = ch.recv();
-    log.add(name + ":received = " + str(value));
+    log.add(name + ":received=" + str(value));
     return value;
 }
 

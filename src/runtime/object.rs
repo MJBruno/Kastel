@@ -5,6 +5,7 @@ use std::rc::Rc;
 use crate::vm::machine::scheduler::TaskHandle;
 
 use crate::module::module::ModuleInstance;
+use crate::runtime::channel::ChannelState;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
@@ -40,6 +41,9 @@ pub enum Object {
 
     /// Handle d'une tâche coopérative.
     Task(Rc<TaskHandle>),
+
+    /// Canal coopératif non borné.
+    Channel(Rc<RefCell<ChannelState>>),
 
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
@@ -174,6 +178,10 @@ impl Object {
             Object::Error { .. } => {}
 
             Object::Task(_) => {}
+
+            Object::Channel(channel) => {
+                channel.borrow_mut().queue.clear();
+            }
 
             Object::Tuple(elements) => {
                 elements.clear();

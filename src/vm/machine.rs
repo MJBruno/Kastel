@@ -5,6 +5,7 @@ use std::rc::{Rc, Weak};
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
+use crate::runtime::channel::ChannelState;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
@@ -146,6 +147,7 @@ pub(crate) const MAX_NATIVE_DEPTH: usize = 500;
 pub(crate) enum RunStatus {
     Completed,
     Yielded,
+    Waiting,
 }
 
 // ============================================================
@@ -188,6 +190,9 @@ pub struct VirtualMachine {
     pub(crate) native_depth: usize,
 
     pub(crate) yield_requested: bool,
+    pub(crate) waiting_requested: bool,
+    pub(crate) task_id: Option<usize>,
+    pub(crate) waiting_channel: Option<Value>,
     pub(crate) last_result: Option<Value>,
     pub(crate) scheduler: Weak<RefCell<scheduler::Scheduler>>,
     pub(crate) scheduler_owner: Option<Rc<RefCell<scheduler::Scheduler>>>,
@@ -261,6 +266,9 @@ impl VirtualMachine {
             temp_roots: Vec::new(),
             native_depth: 0,
             yield_requested: false,
+            waiting_requested: false,
+            task_id: None,
+            waiting_channel: None,
             last_result: None,
             scheduler,
             scheduler_owner: Some(scheduler_owner),
@@ -314,6 +322,9 @@ impl VirtualMachine {
             temp_roots: Vec::new(),
             native_depth: 0,
             yield_requested: false,
+            waiting_requested: false,
+            task_id: None,
+            waiting_channel: None,
             last_result: None,
             scheduler,
             scheduler_owner: Some(scheduler_owner),
@@ -340,6 +351,7 @@ impl VirtualMachine {
         module_loader: ModuleLoader,
         module_path: Option<PathBuf>,
         scheduler: Weak<RefCell<scheduler::Scheduler>>,
+        task_id: usize,
     ) -> Result<Self, RuntimeError> {
         let (arity, local_count, chunk, upvalue_count) = {
             let closure_ref = crate::vm::machine::bytecode::frame_closure(&closure);
@@ -383,6 +395,9 @@ impl VirtualMachine {
             temp_roots: Vec::new(),
             native_depth: 0,
             yield_requested: false,
+            waiting_requested: false,
+            task_id: Some(task_id),
+            waiting_channel: None,
             last_result: None,
             scheduler,
             scheduler_owner: None,
@@ -401,6 +416,38 @@ impl VirtualMachine {
         // sont déjà enregistrées dans cette table et ne doivent pas être
         // réenregistrées à chaque spawn.
         Ok(vm)
+    }
+
+    pub(crate) fn wait_on_channel(
+        &mut self,
+        channel: Rc<RefCell<ChannelState>>,
+        channel_value: Value,
+    ) -> Result<(), RuntimeError> {
+        let task_id = self
+            .task_id
+            .ok_or(RuntimeError::ChannelRecvOutsideTask)?;
+
+        let scheduler = self
+            .scheduler
+            .upgrade()
+            .ok_or(RuntimeError::TaskNotFound)?;
+
+        scheduler::Scheduler::wait_on_channel(&scheduler, task_id, channel.clone())?;
+
+        self.waiting_channel = Some(channel_value);
+        self.waiting_requested = true;
+        Ok(())
+    }
+
+    pub(crate) fn resume_from_channel(&mut self, value: Value) -> Result<(), RuntimeError> {
+        if self.waiting_channel.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_channel = None;
+        self.waiting_requested = false;
+        self.push(value);
+        Ok(())
     }
 
     pub(crate) fn spawn_task(&mut self, arg_count: usize) -> Result<(), RuntimeError> {
@@ -523,6 +570,9 @@ impl VirtualMachine {
         self.temp_roots.clear();
         self.native_depth = 0;
         self.yield_requested = false;
+        self.waiting_requested = false;
+        self.task_id = None;
+        self.waiting_channel = None;
         self.last_result = None;
 
         // Les upvalues ont maintenant été fermées correctement.
