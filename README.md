@@ -1,16 +1,16 @@
-[![Rust](https://img.shields.io/badge/Rust-2024-orange?style=for-the-badge\&logo=rust)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-2024-orange?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
 [![License-MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 [![Bytecode-VM](https://img.shields.io/badge/Bytecode-VM-brightgreen?style=for-the-badge)](src/vm/)
-[![Status](https://img.shields.io/badge/Status-In%20Development-yellow?style=for-the-badge)](#-état-du-projet)
+[![Status](https://img.shields.io/badge/Status-In%20Development-yellow?style=for-the-badge)](#-project-status)
 
 # 🏰 Kastel
 
-> Un langage de programmation dynamique, compilé en bytecode et exécuté par une machine virtuelle stack-based écrite en Rust.
+> A dynamic programming language compiled to bytecode and executed by a stack-based virtual machine written in Rust.
 
-**Kastel** est un langage de programmation dynamique conçu autour d'une architecture d'exécution explicite :
+Kastel is designed around an explicit and modular runtime:
 
 ```text
-Source Kastel
+Kastel source
      │
      ▼
    Lexer
@@ -19,7 +19,7 @@ Source Kastel
    Parser
      │
      ▼
-     AST
+    AST
      │
      ▼
   Compiler
@@ -30,108 +30,97 @@ Source Kastel
      ▼
  Stack-Based VM
      │
-     ├──────────► Runtime
+     ├──────────────► Runtime
+     │                  │
+     │                  ├── Objects
+     │                  ├── Closures
+     │                  └── GC
      │
-     ├──────────► Native Library
+     ├──────────────► Scheduler
+     │                  ├── Tasks
+     │                  ├── Channels
+     │                  └── Mutexes
      │
-     └──────────► Garbage Collector
+     └──────────────► Modules / Stdlib
 ```
 
-Le projet cherche à combiner :
-
-```text
-syntaxe dynamique
-        +
-expressivité
-        +
-bytecode
-        +
-VM explicite
-        +
-runtime structuré
-        +
-gestion mémoire automatique
-```
-
-L'objectif n'est pas uniquement de créer un langage avec une syntaxe moderne, mais de construire **chaque couche du runtime de manière compréhensible, testable et extensible**.
-
-> Kastel est actuellement en phase de consolidation : les fonctionnalités principales sont en place et le travail porte désormais en priorité sur la robustesse, les tests, les diagnostics, les performances et la cohérence du runtime.
+The goal is to build each layer in a readable, testable, and extensible way without hiding the essential mechanisms of the virtual machine.
 
 ---
 
-# ✨ Fonctionnalités
+## ✨ Features
 
-| Domaine       | Fonctionnalités                                               |
-| ------------- | ------------------------------------------------------------- |
-| Langage       | Typage dynamique, annotations de types optionnelles, inférence et types union                                              |
-| Variables     | `let`, `const`                                                |
-| Fonctions     | Fonctions, récursivité, fonctions imbriquées, fonctions anonymes, fonctions fléchées                  |
-| Closures      | Captures lexicales, upvalues, closures                        |
-| Collections   | Listes dynamiques, dictionnaires, objets                    |
-| Contrôle      | `if`,`match`, boucles, `break`, `continue`                            |
-| Itération     | `for .. in`, itérateurs, `range()` lazy                       |
-| OOP           | Classes, instances, champs, méthodes                          |
-| Héritage      | Héritage simple, override, `base`                             |
-| Constructeurs | `new`, `initialize`, constructeurs hérités                          |
-| Interfaces    | Interfaces multiples, héritage d'interfaces, validation       |
-| Méthodes      | `this`, méthodes liées (`BoundMethod`)                        |
-| Modules       | `import`, `export`, chargement de modules                     |
-| Bytecode      | Chunks, constantes, opcodes, désassemblage                    |
-| Runtime       | VM stack-based                                                |
-| Mémoire       | Garbage Collector mark/sweep avec gestion des cycles          |
-| Native        | I/O, math, strings, lists, objects, iterators, system, debug |
-| Diagnostics   | Erreurs de compilation et runtime localisées                  |
-| Debug         | VM trace, GC trace, désassemblage bytecode                    |
+| Domain | Features |
+|---|---|
+| Language | Dynamic typing, optional annotations, inference, union types |
+| Variables | `let`, `const`, local and global variables |
+| Functions | Functions, recursion, nested functions, anonymous functions, arrow functions |
+| Closures | Lexical captures and upvalues |
+| Collections | `List`, dictionaries, and objects |
+| Control flow | `if`, `match`, loops, `break`, `continue` |
+| Iteration | `for ... in`, iterators, and lazy `range()` |
+| OOP | Classes, instances, fields, and methods |
+| Constructors | `new` and `initialize` |
+| Interfaces | Interface contracts and class validation |
+| Enums | Qualified variants, e.g. `Color.Red` |
+| Modules | `import`, `from ... import`, `export`, and module loading |
+| Exceptions | `try`, `catch`, and runtime error propagation |
+| VM | Bytecode, chunks, constants, stack, and `CallFrame` |
+| Memory | Mark/sweep garbage collection and cycle collection |
+| Concurrency | Cooperative tasks, `spawn`, `join`, `yield`, `sleep`, cancellation |
+| Synchronization | Channels, `select`, and mutexes |
+| Diagnostics | Compilation/runtime errors with source locations |
+| Debugging | VM trace, GC trace, and bytecode disassembly |
 
 ---
 
-# 🧠 Architecture
+## 🧠 Architecture
 
-Kastel est organisé en plusieurs couches indépendantes.
+Kastel separates responsibilities into several layers:
 
 ```text
-                         Source Kastel
-                              │
-                              ▼
-                         ┌─────────┐
-                         │  Lexer  │
-                         └────┬────┘
-                              │
-                              ▼
-                         ┌─────────┐
-                         │ Parser  │
-                         └────┬────┘
-                              │
-                              ▼
-                         ┌─────────┐
-                         │   AST   │
-                         └────┬────┘
-                              │
-                              ▼
-                         ┌─────────┐
-                         │Compiler │
-                         └────┬────┘
-                              │
-                              ▼
-                         ┌─────────┐
-                         │ Bytecode│
-                         └────┬────┘
-                              │
-                              ▼
-                       ┌──────────────┐
-                       │ Stack-Based  │
-                       │      VM      │
-                       └──────┬───────┘
-                              │
-              ┌───────────────┼────────────────┐
-              ▼               ▼                ▼
-          Runtime           Native          Modules
-              │
-              ▼
-              GC
+                          Kastel source
+                               │
+                               ▼
+                         ┌───────────┐
+                         │   Lexer   │
+                         └─────┬─────┘
+                               │
+                               ▼
+                         ┌───────────┐
+                         │  Parser   │
+                         └─────┬─────┘
+                               │
+                               ▼
+                         ┌───────────┐
+                         │    AST    │
+                         └─────┬─────┘
+                               │
+                               ▼
+                         ┌───────────┐
+                         │ Compiler  │
+                         └─────┬─────┘
+                               │
+                               ▼
+                         ┌───────────┐
+                         │ Bytecode  │
+                         └─────┬─────┘
+                               │
+                               ▼
+                         ┌───────────┐
+                         │    VM     │
+                         └─────┬─────┘
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                ▼                ▼
+           Runtime          Scheduler         Modules
+              │                │
+              ▼                ├── Tasks
+              GC               ├── Channels
+                               └── Mutexes
 ```
 
-## Organisation du code
+### Code organization
 
 ```text
 src/
@@ -141,51 +130,34 @@ src/
 ├── error/
 ├── frontend/
 ├── module/
-├── native/
 ├── runtime/
+│   ├── channel.rs
+│   ├── closure.rs
+│   ├── function.rs
+│   ├── gc.rs
+│   ├── gc_handle.rs
+│   ├── hashed.rs
+│   ├── iterator.rs
+│   ├── mutex.rs
+│   ├── object.rs
+│   ├── upvalue.rs
+│   └── value.rs
+├── stdlib/
 └── vm/
+    └── machine/
+        ├── concurrency_tests.rs
+        └── scheduler.rs
 ```
 
-### Responsabilités
-
-```text
-app
-    → démarrage et orchestration de l'application
-
-frontend
-    → lexer, parser et AST
-
-compiler
-    → analyse du programme et génération du bytecode
-
-bytecode
-    → opcodes, chunks, constantes et désassemblage
-
-vm
-    → exécution du bytecode
-
-runtime
-    → Value, Object, fonctions, closures, upvalues et GC
-
-native
-    → bibliothèque standard native
-
-module
-    → résolution, chargement et gestion des modules
-
-error
-    → erreurs de compilation et erreurs runtime
-```
-
-Cette séparation permet de faire évoluer le langage sans concentrer toute la logique dans la VM.
+`stdlib` contains the standard library interface exposed to Kastel. Documentation should no longer reference `src/native/`.
 
 ---
 
-# ⚙️ Machine virtuelle
+# ⚙️ Virtual machine
 
-Kastel utilise une **machine virtuelle à pile**.
+Kastel uses a **stack-based VM**.
 
-Les appels de fonctions sont représentés par des `CallFrame` :
+Each function call uses a `CallFrame` containing, among other fields:
 
 ```text
 CallFrame
@@ -194,11 +166,10 @@ CallFrame
 └── slot_start
 ```
 
-La pile contient notamment :
+The stack contains, among other things:
 
 ```text
 Stack
-│
 ├── callees
 ├── arguments
 ├── locals
@@ -206,7 +177,7 @@ Stack
 └── temporary values
 ```
 
-Le fonctionnement général est :
+The general execution cycle is:
 
 ```text
 Bytecode
@@ -227,28 +198,15 @@ Runtime operation
 Stack / Heap / Frame
 ```
 
-La VM protège notamment :
-
-```text
-stack access
-constant access
-local slots
-upvalue slots
-jump targets
-func calls
-argument counts
-opcode validity
-```
-
-Lorsqu'une opération invalide provient du programme ou du bytecode, le runtime doit produire un `RuntimeError` plutôt qu'un `panic!` Rust.
+Critical VM accesses are validated so that an error originating in a Kastel program produces a `RuntimeError` rather than a Rust `panic!`.
 
 ---
 
-# 🔢 Valeurs runtime
+# 🧩 Runtime values and objects
 
-Kastel utilise une représentation dynamique des valeurs.
+Kastel uses a dynamic value representation.
 
-Les valeurs primitives comprennent notamment :
+Primitive values include:
 
 ```text
 Integer
@@ -259,16 +217,16 @@ NativeFunction
 Range
 ```
 
-Les objets alloués sur le tas passent par une représentation commune :
+Heap values use:
 
 ```text
 Value::Object
-        │
-        ▼
-     Gc<Object>
+       │
+       ▼
+    Gc<Object>
 ```
 
-Le système d'objets peut représenter :
+Runtime objects include:
 
 ```text
 String
@@ -282,62 +240,18 @@ Module
 Class
 Instance
 Interface
+Task
+Channel
+Mutex
 ```
 
-Cette architecture permet au Garbage Collector de parcourir une structure d'objets unifiée.
+This common representation allows the GC and the runtime to traverse a coherent object graph.
 
 ---
 
-# 🔗 Fonctions, Closures et Upvalues
+# 🔗 Functions, closures, and upvalues
 
-Kastel supporte les **fonctions imbriquées**, les **closures** et les **captures lexicales**.
-
-Une variable capturée peut évoluer selon le modèle :
-
-```text
-Local
-  │
-  ▼
-Upvalue
-```
-
-et une capture peut elle-même être relayée :
-
-```text
-Local
-  │
-  ▼
-Upvalue
-  │
-  ▼
-Upvalue
-```
-
-Une upvalue ouverte référence initialement un slot de la stack :
-
-```text
-Closure
-   │
-   ▼
-Upvalue
-   │
-   ▼
-Stack slot
-```
-
-Lorsque le scope disparaît, la valeur peut être fermée :
-
-```text
-Closure
-   │
-   ▼
-Upvalue
-   │
-   ▼
-closed Value
-```
-
-Exemple :
+Kastel supports nested functions and lexical captures.
 
 ```kastel
 func make_counter() {
@@ -360,326 +274,86 @@ println(counter());
 
 Résultat :
 
-```kastel
+```text
 1
 2
 3
 ```
 
+A closure can therefore retain a logical reference to a variable whose original scope has already disappeared.
+
 ---
 
-# 🧩 Typage
+# 🔤 Typing
 
-Kastel utilise un modèle de typage dynamique avec des **annotations de types optionnelles** et de l'**inférence**.
-
-Une annotation peut être ajoutée explicitement :
+Kastel remains dynamically typed while allowing optional annotations and inference.
 
 ```kastel
 let name: str = "Bruno";
 let count: int = 10;
-```
 
-L'inférence permet de conserver une écriture concise :
-
-```kastel
-let count = 10;
 let message = "hello";
 ```
 
-Les types union permettent d'accepter plusieurs types :
+Union types allow multiple possible types to be expressed:
 
 ```kastel
 let value: int|float = 10;
-
-func multiply_by_four(value: int|float) -> float {
-    return value * 4;
-}
 ```
 
-Les collections peuvent également être annotées :
+Collections can also be annotated:
 
 ```kastel
 let values: List<int|float> = [];
 ```
 
-Ce modèle permet d'utiliser les types progressivement sans abandonner le caractère dynamique du langage.
+The model aims to retain the flexibility of a dynamic language without discarding type information when it is useful.
 
 ---
 
-# 🏛️ Programmation orientée objet
+# 🏛️ Object-oriented programming
 
-Kastel dispose d'un système OOP basé sur :
+Kastel provides classes, instances, fields, and methods.
 
-```text
-Class
-Instance
-Method
-Field
-Inheritance
-Interface
-BoundMethod
-```
+Classes do not use a class inheritance system. A class can instead satisfy the contract defined by one or more interfaces.
 
-## Classes
+In instance methods, the reference to the current instance is `self`. Kastel does not use `this`.
+
+### Classes
 
 ```kastel
 class Person {
     func initialize(name) {
-        this.name = name;
+        self.name = name;
     }
 
     func greet() {
-        println(this.name);
+        println(self.name);
     }
 }
 
 let person = new Person("Bruno");
-
 person.greet();
 ```
 
-## Champs d'instance
+### Constructors
 
-Chaque instance possède ses propres champs :
+The conventional constructor is `initialize()`:
 
 ```kastel
 class User {
-    func show() {
-        println(this.name);
-    }
-}
-
-let a = new User();
-let b = new User();
-
-a.name = "Alice";
-b.name = "Bob";
-
-a.show();
-b.show();
-```
-
-Résultat :
-
-```text
-Alice
-Bob
-```
-
-Les champs sont stockés séparément pour chaque instance.
-
----
-
-## Héritage
-
-Kastel supporte l'héritage simple :
-
-```kastel
-class Animal {
-    func speak() {
-        println("animal");
-    }
-}
-
-class Dog : Animal {
-    func speak() {
-        println("dog");
-    }
-}
-
-let dog = new Dog();
-
-dog.speak();
-```
-
-Résultat :
-
-```text
-dog
-```
-
----
-
-## `base`
-
-Une méthode peut appeler explicitement l'implémentation du parent :
-
-```kastel
-class Animal {
-    func speak() {
-        println("animal");
-    }
-}
-
-class Dog : Animal {
-    func speak() {
-        println("dog");
-        base.speak();
-    }
-}
-
-let dog = new Dog();
-
-dog.speak();
-```
-
-Résultat :
-
-```text
-dog
-animal
-```
-
-La résolution de `base` fonctionne également avec plusieurs niveaux d'héritage.
-
----
-
-## `initialize` et constructeurs
-
-Les instances sont créées avec `new` :
-
-```kastel
-class Person {
-    func initialize(name) {
-        this.name = name;
-    }
-}
-
-let person = new Person("Bruno");
-```
-
-Les constructeurs peuvent être hérités :
-
-```kastel
-class Animal {
-    func initialize(name) {
-        this.name = name;
-    }
-}
-
-class Dog : Animal {}
-
-let dog = new Dog("Rex");
-```
-
-Une classe enfant peut appeler explicitement son constructeur parent :
-
-```kastel
-class Animal {
-    func initialize(name) {
-        this.name = name;
-    }
-}
-
-class Dog : Animal {
     func initialize(name, age) {
-        base.initialize(name);
-        this.age = age;
+        self.name = name;
+        self.age = age;
     }
 }
 
-let dog = new Dog("Rex", 5);
+let user = new User("Bruno", 30);
 ```
 
-La valeur retournée par `initialize` ne remplace pas l'instance créée par `new`.
+### Interfaces
 
----
-
-## Méthodes comme valeurs
-
-Les méthodes peuvent être récupérées comme valeurs :
-
-```kastel
-class Counter {
-    func show() {
-        println(this.value);
-    }
-}
-
-let counter = new Counter();
-
-counter.value = 42;
-
-let show = counter.show;
-
-show();
-```
-
-Kastel crée alors une méthode liée :
-
-```text
-BoundMethod
-├── method
-└── receiver
-```
-
-Le `receiver` reste associé à la méthode :
-
-```kastel
-let show = counter.show;
-
-counter = null;
-
-show();
-```
-
-La méthode conserve son instance.
-
----
-
-## Résolution des propriétés
-
-La résolution d'une propriété d'instance suit cette logique :
-
-```text
-instance.property
-       │
-       ▼
-champ d'instance ?
-   │          │
-  oui        non
-   │          │
-   ▼          ▼
- Value     recherche
-           dans la hiérarchie
-                │
-                ▼
-           BoundMethod
-```
-
-Ainsi un champ peut masquer une méthode :
-
-```kastel
-func field_callback() {
-    println("field");
-}
-
-class Test {
-    func callback() {
-        println("method");
-    }
-
-    func initialize() {
-        this.callback = field_callback;
-    }
-}
-
-let test = new Test();
-
-test.callback();
-```
-
-Résultat :
-
-```code
-field
-```
-
----
-
-# 🔌 Interfaces
-
-Kastel supporte les interfaces et leur héritage.
+An interface defines a contract that classes can satisfy:
 
 ```kastel
 interface Printable {
@@ -693,337 +367,13 @@ class Document : Printable {
 }
 ```
 
-Une classe peut implémenter plusieurs interfaces :
-
-```kastel
-interface Printable {
-    func print();
-}
-
-interface Serializable {
-    func save();
-}
-
-class Document : Printable, Serializable {
-    func print() {
-        println("print");
-    }
-
-    func save() {
-        println("save");
-    }
-}
-```
-
-Les interfaces peuvent également hériter d'autres interfaces :
-
-```kastel
-interface Printable {
-    func print();
-}
-
-interface Document : Printable {
-    func save();
-}
-```
-
-Le runtime vérifie les contrats d'interface :
-
-```text
-méthode manquante
-        ↓
-InterfaceMethodMissing
-
-mauvaise arité
-        ↓
-InterfaceMethodArityMismatch
-
-contrats incompatibles
-        ↓
-RuntimeError
-```
+The class must provide the methods required by the interface contract. Interfaces can be combined according to the language type rules.
 
 ---
 
-# `is`
+# 🔁 Iteration
 
-Le langage fournit l'opérateur `is` pour tester l'appartenance d'une instance à une classe ou une interface :
-
-```kastel
-class Animal {}
-
-class Dog : Animal {}
-
-let dog = new Dog();
-
-println(dog is Dog);
-println(dog is Animal);
-```
-
-Résultat :
-
-```kastel
-true
-true
-```
-
-Les interfaces sont également supportées :
-
-```kastel
-interface Printable {
-    func print();
-}
-
-class Document : Printable {
-    func print() {
-        println("document");
-    }
-}
-
-let document = new Document();
-
-println(document is Printable);
-```
-
-Résultat :
-
-```kastel
-true
-```
-
----
-
-# 🧹 Garbage Collector
-
-Kastel utilise actuellement un Garbage Collector basé sur :
-
-```text
-MARK
-  ↓
-SWEEP
-```
-
-Le cycle général est :
-
-```text
-Roots
-  │
-  ▼
-MARK
-  │
-  ▼
-Reachable Objects
-  │
-  ▼
-SWEEP
-  │
-  ▼
-Reclaim
-```
-
-Les racines peuvent notamment provenir de :
-
-```text
-VM stack
-globals
-call frames
-open upvalues
-modules
-func constants
-closed upvalues
-```
-
-Les relations entre objets sont parcourues récursivement :
-
-```text
-Class
-├── superclass
-├── interfaces
-└── methods
-
-Instance
-├── class
-└── fields
-
-Closure
-├── func
-├── upvalues
-└── owner_class
-
-BoundMethod
-├── method
-└── receiver
-
-Interface
-└── bases
-```
-
-## Gestion des cycles
-
-Le GC doit pouvoir récupérer des graphes cycliques qui ne sont plus atteignables depuis les racines.
-
-Exemple :
-
-```text
-Instance
-   │
-   ├──────► self
-   │
-   └──────► BoundMethod
-                 │
-                 └──────► receiver
-```
-
-Le système actuel détecte et casse les cycles inaccessibles pendant le sweep.
-
----
-
-# 📦 Bibliothèque standard
-
-La bibliothèque native est organisée par domaines.
-
-```text
-src/native/
-├── mod.rs
-├── io.rs
-├── math.rs
-├── string.rs
-├── list.rs
-├── object.rs
-├── iterator.rs
-├── system.rs
-└── debug.rs
-```
-
-## I/O
-
-```kastel
-print(...)
-println(...)
-input(...)
-```
-
-## Math
-
-```kastel
-abs(x)
-floor(x)
-ceil(x)
-round(x)
-
-sqrt(x)
-pow(x, y)
-
-min(a, b)
-max(a, b)
-
-sin(x)
-cos(x)
-tan(x)
-
-log(x)
-log10(x)
-exp(x)
-
-rand()
-rand_int(max)
-rand_range(start, end)
-```
-
-## Strings
-
-```kastel
-format(...)
-strlen(value)
-lower(value)
-upper(value)
-trim(value)
-
-starts_with(value, prefix)
-ends_with(value, suffix)
-string_contains(value, search)
-
-replace(value, from, to)
-split(value, separator)
-```
-
-## Lists
-
-```kastel
-list.add(value)
-list.remove(index)
-list.size()
-
-list.insert(index, value)
-list.contains(value)
-list.clear()
-```
-
-## Objects
-
-```kastel
-object()
-
-object.get(key)
-object.set(key, value)
-
-object.has(key)
-object.keys()
-object.values()
-object.length()
-```
-
-## Iterateurs
-
-```kastel
-range(...)
-list(iterator)
-```
-
-`range()` est conçu comme une représentation légère et lazy.
-
-```kastel
-for i in range(5) {
-    println(i);
-}
-```
-
-Résultat :
-
-```kastel
-0
-1
-2
-3
-4
-```
-
-## System
-
-```kastel
-int(value)
-float(value)
-str(value)
-bool(value)
-type(value)
-
-clock()
-cwd()
-env(name)
-```
-
-## Debug
-
-```kastel
-inspect(value)
-debug(value)
-```
-
----
-
-# 🔁 Itération
-
-Kastel utilise une syntaxe `for .. in` :
+Kastel uses `for ... in`:
 
 ```kastel
 for value in [10, 20, 30] {
@@ -1031,48 +381,25 @@ for value in [10, 20, 30] {
 }
 ```
 
-Avec une plage :
+Ranges are represented by `range()`:
 
 ```kastel
 for i in range(5) {
     println(i);
 }
-```
 
-Plage avec début, fin et pas :
-
-```kastel
 for i in range(2, 10, 2) {
     println(i);
 }
 ```
 
-Résultat :
-
-```kastel
-2
-4
-6
-8
-```
-
-Les plages descendantes sont également supportées :
-
-```kastel
-for i in range(10, 0, -1) {
-    println(i);
-}
-```
-
-Les tableaux, dictionnaires, chaînes, plages et itérateurs peuvent participer au système d'itération selon leur support runtime.
+Ranges are designed as lightweight, lazy values.
 
 ---
 
 # 📦 Modules
 
-Kastel possède un système de modules permettant de séparer un programme en plusieurs fichiers.
-
-Les opérations principales sont :
+Kastel has a module system with module loading, symbol resolution, and symbol exports.
 
 ```kastel
 import dog.Dog;
@@ -1080,36 +407,204 @@ from dog import *;
 import dog { Dog, Animals, details };
 ```
 
-Les symboles publics peuvent être exposés avec `export`.
+Public symbols can be exposed with `export`.
 
-Le runtime utilise un `ModuleLoader`.
+```kastel
+export class Dog : Printable {
+    func initialize(name) {
+        self.name = name;
+    }
 
-Les objectifs du système sont notamment :
-
-```text
-module resolution
-module loading
-module caching
-exports
-runtime isolation
-module errors
+    func print() {
+        println(self.name);
+    }
+}
 ```
 
-Le système de modules fait partie des composants actuellement consolidés avec le reste du runtime.
+The runtime uses a `ModuleLoader` for module resolution and loading.
 
 ---
 
-# 🛡️ Gestion des erreurs
+# 🧵 Concurrency
 
-Kastel distingue :
+Kastel now has a **cooperative concurrency** layer integrated into the VM.
+
+The scheduler manages task states:
+
+```text
+Ready
+Waiting
+Completed
+Failed
+Cancelled
+```
+
+## Tasks
+
+```kastel
+func worker() {
+    println("worker");
+}
+
+let task = spawn(worker);
+task.join();
+```
+
+Main operations include:
+
+```text
+spawn(...)
+join()
+yield()
+sleep(...)
+task.status()
+task.is_done()
+task.cancel()
+```
+
+The scheduler exécute les tâches par quanta d'instructions et les suspend lorsqu'elles attendent une ressource.
+
+## Channels
+
+Channels allow values to be transferred between tasks:
+
+```kastel
+let ch = channel<int>();
+
+ch.send(42);
+let value = ch.recv();
+```
+
+Available operations include:
+
+```text
+send
+recv
+try_recv
+close
+select
+```
+
+The scheduler can wake waiting tasks and handle timeouts and channel closures.
+
+## Mutexes
+
+Mutexes provide cooperative synchronization at the Kastel task level.
+
+The scheduler tracks the owner and a queue of blocked tasks, then wakes the next waiter when the mutex is released.
+
+## Current model
+
+The current concurrency model does not assign an independent OS thread to each Kastel task. It relies on a **cooperative scheduler integrated into the VM**.
+
+```text
+VM
+ │
+ ▼
+Scheduler
+ ├── Task A ──► Running
+ ├── Task B ──► Ready
+ ├── Task C ──► Waiting on Channel
+ └── Task D ──► Waiting on Mutex
+```
+
+This architecture allows tasks, channels, mutexes, and their GC references to integrate directly with the existing runtime.
+
+---
+
+# 🧹 Garbage collector
+
+Kastel uses a garbage collector based on:
+
+```text
+MARK
+  ↓
+SWEEP
+```
+
+Roots include:
+
+```text
+VM stack
+globals
+call frames
+open upvalues
+modules
+function constants
+closed upvalues
+scheduler tasks
+scheduler waiting values
+```
+
+The GC must also traverse references introduced by concurrency objects:
+
+```text
+Task
+Channel
+Mutex
+```
+
+Les graphes cycliques inaccessibles doivent rester collectables même lorsqu'ils contiennent des références mutuelles.
+
+---
+
+# 📚 Standard library
+
+The standard library is organized under `src/stdlib/`.
+
+It currently covers:
+
+```text
+I/O
+Math
+Strings
+Lists
+Objects
+Iterators
+System
+Debug
+Channels
+Mutexes
+```
+
+Exemples d'API :
+
+```kastel
+print(...)
+println(...)
+input(...)
+
+list.add(value)
+list.remove(index)
+list.size()
+list.insert(index, value)
+list.contains(value)
+list.clear()
+
+range(...)
+
+clock()
+cwd()
+env(name)
+
+inspect(value)
+debug(value)
+```
+
+The standard library evolves with the needs of the language; detailed module documentation should remain aligned with the API actually exposed by `src/stdlib/`.
+
+---
+
+# 🛡️ Error handling
+
+Kastel primarily distinguishes:
 
 ```text
 CompileError
-     +
 RuntimeError
 ```
 
-Les diagnostics peuvent conserver :
+Diagnostics can include:
 
 ```text
 ligne
@@ -1117,7 +612,7 @@ colonne
 message
 ```
 
-Exemples d'erreurs runtime :
+Possible runtime errors include:
 
 ```text
 TypeError
@@ -1134,40 +629,13 @@ StackUnderflow
 ModuleError
 ```
 
-Le principe général est :
-
-```text
-Programme invalide
-       │
-       ▼
-  CompileError
-       │
-       ▼
-   Diagnostic
-```
-
-ou :
-
-```text
-Programme valide
-       │
-       ▼
-Exécution invalide
-       │
-       ▼
- RuntimeError
-       │
-       ▼
-   Diagnostic
-```
-
-Les erreurs internes liées à un programme Kastel ne doivent pas nécessiter un `panic!` Rust.
+Errors originating from a Kastel program should not require a Rust `panic!`.
 
 ---
 
-# 🧪 Tests
+# 🧪 Testing
 
-Le développement de Kastel suit une approche orientée régression :
+The project follows a regression-driven approach:
 
 ```text
 Bug
@@ -1181,7 +649,7 @@ Validation
 Fonctionnalité stabilisée
 ```
 
-Les différentes couches sont testées progressivement :
+Tests cover the main runtime and language layers, including:
 
 ```text
 Lexer
@@ -1197,14 +665,22 @@ Objects
 Iterators
 Modules
 Classes
-Inheritance
 Interfaces
+Enums
+Exceptions
 GC
 Runtime Errors
 Standard Library
+Concurrency
+  ├── Tasks
+  ├── Scheduling
+  ├── Channels
+  ├── Select
+  ├── Mutexes
+  └── Cancellation
 ```
 
-Commandes principales :
+Main commands:
 
 ```bash
 cargo check
@@ -1213,35 +689,29 @@ cargo test
 
 ---
 
-# 🔍 Debug et instrumentation
+# 🔍 Debugging and instrumentation
 
-Kastel possède plusieurs mécanismes de diagnostic pour observer le fonctionnement interne du runtime.
+Kastel provides several tracing levels.
 
-## Exécution normale
-
-```bash
-cargo run --bin kastel -- examples/main.ks
-```
-
-## Trace du Garbage Collector
+### VM trace
 
 ```bash
-cargo run --bin kastel --features trace_gc -q -- examples/main.ks
+cargo run --bin kastel --features debug_trace -- demo/main.ks
 ```
 
-## VM trace
+### GC trace
 
 ```bash
-cargo run --bin kastel --features debug_trace -- examples/main.ks
+cargo run --bin kastel --features trace_gc -- demo/main.ks
 ```
 
-## VM + GC
+### VM + GC
 
 ```bash
-cargo run --bin kastel --features "debug_trace,trace_gc" -- examples/main.ks
+cargo run --bin kastel --features "debug_trace,trace_gc" -- demo/main.ks
 ```
 
-Les traces permettent notamment d'observer :
+These tools make it possible to inspect:
 
 ```text
 instructions
@@ -1251,18 +721,18 @@ calls
 allocations
 GC marking
 GC sweeping
-cycles cassés
+scheduler activity
 ```
 
 ---
 
-# 📁 Structure du projet
+# 📁 Project structure
 
 ```text
 Kastel/
 │
-├── examples/
-│   └── *.ks
+├── demo/
+│   └── main.ks
 │
 ├── src/
 │   ├── app/
@@ -1271,103 +741,90 @@ Kastel/
 │   ├── error/
 │   ├── frontend/
 │   ├── module/
-│   ├── native/
-│   │   ├── mod.rs
-│   │   ├── io.rs
-│   │   ├── math.rs
-│   │   ├── string.rs
-│   │   ├── list.rs
-│   │   ├── object.rs
-│   │   ├── iterator.rs
-│   │   ├── system.rs
-│   │   └── debug.rs
-│   │
 │   ├── runtime/
-│   │   ├── object.rs
-│   │   ├── value.rs
+│   │   ├── channel.rs
+│   │   ├── closure.rs
 │   │   ├── function.rs
 │   │   ├── gc.rs
-│   │   └── ...
-│   │
+│   │   ├── gc_handle.rs
+│   │   ├── iterator.rs
+│   │   ├── mutex.rs
+│   │   ├── object.rs
+│   │   ├── upvalue.rs
+│   │   └── value.rs
+│   ├── stdlib/
 │   └── vm/
+│       └── machine/
+│           └── scheduler.rs
 │
-├── test/
+├── tests/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── LICENSE
 └── README.md
 ```
 
+> The exact structure may evolve with the runtime. The README should reflect the modules actually present under `src/` rather than preserving a historical tree.
+
 ---
 
-# 🚧 État du projet
+# 🚧 Project status
 
-Kastel est actuellement en **phase de consolidation du runtime**.
+Kastel is currently in a **language and runtime consolidation** phase.
 
-Les mécanismes fondamentaux sont désormais en place :
+The current foundation includes:
 
 ```text
-✅ Typage dynamique
-✅ Lexer
-✅ Parser
-✅ AST
+✅ Lexer / Parser / AST
 ✅ Compiler
 ✅ Bytecode
 ✅ Stack-Based VM
 ✅ Variables locales et globales
-✅ const
-✅ Fonctions
-✅ Récursivité
-✅ Closures
-✅ Upvalues
-✅ Lists
-✅ Dictionaries / Objects
-✅ Iterators
-✅ range()
-✅ for .. in
+✅ Dynamic typing
+✅ Annotations de types et inférence
+✅ Fonctions / récursivité
+✅ Closures / upvalues
+✅ Lists / Dict / Objects
+✅ Itérateurs / range / for-in
+✅ Classes / instances
+✅ initialize / constructeurs
+✅ Interfaces et contrats
+✅ Enums
 ✅ Modules
-✅ Classes
-✅ Instances
-✅ Héritage
-✅ Override
-✅ this
-✅ base
-✅ initialize
-✅ Constructeurs hérités
-✅ Interfaces
-✅ Héritage d'interfaces
-✅ BoundMethod
-✅ Opérateur is
+✅ Exceptions
 ✅ Garbage Collector
 ✅ Gestion des cycles
-✅ Runtime errors
-✅ Native functions
-✅ VM / GC tracing
+✅ Tasks coopératives
+✅ Scheduler
+✅ yield / sleep / join / cancellation
+✅ Channels / select
+✅ Mutexes
+✅ Tests de régression
+✅ Traces VM / GC
 ```
 
-Le projet entre maintenant dans une phase où la priorité est davantage la **solidité** que l'accumulation rapide de fonctionnalités.
+Current work prioritizes robustness and consistency across layers rather than adding features without consolidation.
 
 ---
 
-# 🎯 Priorités actuelles
+# 🎯 Current priorities
 
 ```text
 1.  Consolider le runtime
 2.  Renforcer les tests de régression
-3.  Finaliser et tester la bibliothèque standard
-4.  Auditer le Compiler
+3.  Finaliser et uniformiser la stdlib
+4.  Auditer le compiler
 5.  Auditer la VM
-6.  Auditer le Garbage Collector
-7.  Consolider le système de modules
-8.  Uniformiser les diagnostics
-9.  Réduire les duplications du runtime
-10. Ajouter des benchmarks
-11. Profiler les chemins critiques
-12. Optimiser après mesure
-13. Documenter la spécification du langage
+6.  Auditer le GC
+7.  Consolider la concurrence
+8.  Consolider le système de modules
+9.  Uniformiser les diagnostics
+10. Documenter la spécification du langage
+11. Ajouter des benchmarks
+12. Mesurer avant d'optimiser
 ```
 
-La règle de développement est volontairement simple :
+The development principle remains:
 
 ```text
 Fonctionnalité
@@ -1378,59 +835,18 @@ Tests
       ↓
 Régression
       ↓
-Profiling / mesure
+Mesure / Profiling
       ↓
 Optimisation
 ```
 
-Les optimisations majeures, notamment un éventuel **JIT**, seront introduites après stabilisation et mesure du runtime existant.
+Any future JIT, AOT, or other major optimization strategy comes after the current runtime has been consolidated.
 
 ---
 
-# 🗺️ Évolution prévue
+# 🗺️ Evolution
 
-La trajectoire générale du projet est :
-
-```text
-                 Kastel
-                    │
-        ┌───────────┼───────────┐
-        ▼           ▼           ▼
-     Language     Runtime     Stdlib
-        │           │           │
-        ▼           ▼           ▼
-     Syntax       VM / GC    Native API
-        │           │           │
-        └───────────┼───────────┘
-                    ▼
-             Tests / Benchmarks
-                    │
-                    ▼
-               Profiling
-                    │
-                    ▼
-             Stabilisation
-                    │
-                    ▼
-              Optimisation
-```
-
-À plus long terme, Kastel pourra évoluer vers :
-
-```text
-Language
-   │
-   ├── richer standard library
-   ├── stronger tooling
-   ├── specification
-   ├── formatter / diagnostics
-   └── performance optimizations
-                       │
-                       ▼
-                      JIT
-```
-
-Le principe reste de conserver une architecture où :
+The fundamental separation of the project should remain clear:
 
 ```text
 Language
@@ -1442,24 +858,36 @@ Bytecode
 VM
    ↓
 Runtime
-   ↓
-GC
+   ├── GC
+   └── Scheduler
+        ├── Tasks
+        ├── Channels
+        └── Mutexes
 ```
 
-restent clairement séparés.
+Future work may include:
+
+```text
+spécification complète du langage
+outillage / LSP / formatter
+bibliothèque standard plus riche
+benchmarks et profiling
+optimisations VM
+JIT / AOT à plus long terme
+```
 
 ---
 
 # 🛠️ Installation
 
-## Prérequis
+## Prerequisites
 
-* Rust
-* Cargo
+- Rust
+- Cargo
 
-Kastel utilise actuellement l'édition **Rust 2024**.
+Kastel currently uses **Rust 2024**.
 
-Cloner le dépôt :
+Clone the repository:
 
 ```bash
 git clone https://github.com/MJBruno/Kastel.git
@@ -1468,27 +896,25 @@ cd Kastel
 
 ---
 
-# 🔨 Compilation
-
-Compilation standard :
+# 🔨 Build
 
 ```bash
 cargo build
 ```
 
-Compilation optimisée :
+Release build:
 
 ```bash
 cargo build --release
 ```
 
-Vérification :
+Check:
 
 ```bash
 cargo check
 ```
 
-Tests :
+Tests:
 
 ```bash
 cargo test
@@ -1496,9 +922,9 @@ cargo test
 
 ---
 
-# ▶️ Exécuter Kastel
+# ▶️ Running Kastel
 
-Exécuter un programme :
+Run a program:
 
 ```bash
 cargo run --bin kastel -- demo/main.ks
@@ -1507,25 +933,31 @@ cargo run --bin kastel -- demo/main.ks
 Avec la trace GC :
 
 ```bash
-cargo run --bin kastel --features trace_gc -q -- demo/main.ks
+cargo run --bin kastel --features trace_gc -- demo/main.ks
+```
+
+Avec la trace VM :
+
+```bash
+cargo run --bin kastel --features debug_trace -- demo/main.ks
 ```
 
 ---
 
-# 📜 Licence
+# 📜 License
 
-Kastel est distribué sous licence **MIT**.
+Kastel is distributed under the **MIT** license.
 
-Voir [`LICENSE`](LICENSE) pour les conditions complètes.
+See [`LICENSE`](LICENSE) for the full license terms.
 
 ---
 
-# 👤 Auteur
+# 👤 Author
 
 **MAHASOLO Jean Bruno**
 
-Projet personnel de conception d'un langage de programmation dynamique et de sa machine virtuelle en Rust.
+Personal project focused on designing a dynamic programming language and its virtual machine in Rust.
 
-Repository :
+Repository:
 
 https://github.com/MJBruno/Kastel
