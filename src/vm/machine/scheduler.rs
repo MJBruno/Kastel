@@ -18,6 +18,12 @@ pub(crate) const DEFAULT_TASK_QUANTUM: usize = 1024;
 /// abandonnées avec un avertissement au lieu de bloquer la sortie.
 pub(crate) const DRAIN_MAX_POLLS: usize = 200_000;
 
+/// Profondeur maximale de tâches imbriquées (une tâche qui `join` une autre
+/// exécute la cible sur la pile native de la VM appelante). Au-delà, `join`
+/// / `recv` / `select` lèvent `TaskNestingTooDeep` (erreur rattrapable) au lieu
+/// de faire déborder la pile du processus.
+pub(crate) const MAX_NESTED_TASK_DEPTH: usize = 64;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskStateStatus {
     Ready,
@@ -154,6 +160,10 @@ impl Scheduler {
         let (id, mut task, quantum) = {
             let mut scheduler = shared.borrow_mut();
 
+            if scheduler.running.len() >= MAX_NESTED_TASK_DEPTH {
+                return Err(RuntimeError::TaskNestingTooDeep);
+            }
+
             let id = loop {
                 let Some(id) = scheduler.ready.pop_front() else {
                     if scheduler.has_live_tasks() {
@@ -185,10 +195,20 @@ impl Scheduler {
 
         let cancellation_requested = scheduler.cancel_requested.remove(&id);
 
-        if cancellation_requested {
+        // Une annulation demandée pendant le quantum n'agit que si la tâche
+        // est encore en vie à la fin de celui-ci : si elle s'est terminée (ou a
+        // échoué) entre-temps, la demande est arrivée trop tard et son
+        // résultat réel est conservé.
+        let cancel_now = cancellation_requested
+            && matches!(outcome, Ok(RunStatus::Yielded) | Ok(RunStatus::Waiting));
+
+        if cancel_now {
             task.status = TaskStateStatus::Cancelled;
             task.result = None;
             task.error = None;
+            // La tâche a pu s'enregistrer comme attendant un canal / un select
+            // juste avant la fin du quantum : on retire ces inscriptions.
+            Self::unregister_channel_waits(&mut scheduler, id);
             task.vm.release_task_resources();
         } else {
             match outcome {
@@ -217,7 +237,7 @@ impl Scheduler {
 
         // Une tâche terminée n'a plus besoin de sa pile ni de ses frames :
         // seuls `result` / `error` restent utiles (pour `join`).
-        if finished && !cancellation_requested {
+        if finished && !cancel_now {
             task.vm.release_task_resources();
         }
 

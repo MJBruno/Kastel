@@ -263,6 +263,7 @@ impl VirtualMachine {
             | RuntimeError::YieldOutsideTask
             | RuntimeError::TaskDeadlock
             | RuntimeError::TaskCancelled
+            | RuntimeError::TaskNestingTooDeep
             | RuntimeError::ChannelClosed => {
                 Ok(Value::new_error(error.kind_name(), error.to_string()))
             }

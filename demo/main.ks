@@ -1,16 +1,22 @@
-let first = channel<int>();
-let second = channel<int>();
+let channel = channel();
 
-second.send(42);
+func producer() -> int {
+    channel.send(10);
+    channel.send(20);
+    return 2;
+}
 
-let result = select([first, second]);
+let task = spawn(producer);
+let produced = task.join();
 
+println("produced = " + str(produced));
+println("queue = " + str(channel.size()));
 
+let first = channel.try_recv();
+let second = channel.try_recv();
+let missing = channel.try_recv();
 
-
-println(result[0])
-println(result[1])
-println(result[2])
-// result[0] == 1
-// result[1] == 42
-// result[2] == false
+println(first.to_string());
+println(second.to_string());
+println(missing.to_string());
+println(channel.is_empty());

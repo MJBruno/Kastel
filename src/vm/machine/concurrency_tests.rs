@@ -1144,3 +1144,523 @@ fn multiple_tasks_waiting_without_progress_are_reported_as_deadlock() {
         Err(crate::error::runtime_error::RuntimeError::TaskDeadlock)
     ));
 }
+
+// ============================================================
+//   PHASE 3 : ROBUSTESSE DU SCHEDULER
+//   (tâches imbriquées, cas limites d'annulation, stress)
+// ============================================================
+
+fn assert_global_true(vm: &VirtualMachine, name: &str) {
+    assert!(
+        matches!(vm.globals.borrow().get(name), Some(Value::Boolean(true))),
+        "`{name}` devrait valoir true"
+    );
+}
+
+/// Exécute `f` sur un thread à grande pile : les `join` imbriqués récursent
+/// sur la pile native, et les threads de test n'ont que 2 Mio par défaut.
+fn on_big_stack<F: FnOnce() + Send + 'static>(f: F) {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+// ---------- tâches imbriquées ----------
+
+#[test]
+fn nested_tasks_can_spawn_and_join_children() {
+    let (vm, result) = run_script(
+        r#"
+        func leaf(value: int) -> int {
+            return value + 1;
+        }
+
+        func middle(value: int) -> int {
+            let child = spawn(leaf, value);
+            return child.join() * 2;
+        }
+
+        func top() -> int {
+            let child = spawn(middle, 4);
+            return child.join() + 100;
+        }
+
+        let result = spawn(top).join();
+        let ok = result == 110;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn children_outlive_a_parent_that_never_joins_them() {
+    let (vm, result) = run_script(
+        r#"
+        let log = [];
+
+        func child() {
+            log.add(1);
+        }
+
+        func parent() -> int {
+            spawn(child);
+            spawn(child);
+            return 7;
+        }
+
+        let value = spawn(parent).join();
+        let ok = value == 7;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+    // Les enfants sans handle tournent quand même avant la fin du programme.
+    assert_eq!(array_len(&vm, "log"), 2);
+}
+
+#[test]
+fn nested_join_chain_within_the_limit_completes() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            func chain(n: int) -> int {
+                if n == 0 {
+                    return 0;
+                }
+
+                let child = spawn(chain, n - 1);
+                return child.join() + 1;
+            }
+
+            let result = spawn(chain, 20).join();
+            let ok = result == 20;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn nested_join_chain_beyond_the_limit_is_a_catchable_error() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            func chain(n: int) -> int {
+                if n == 0 {
+                    return 0;
+                }
+
+                let child = spawn(chain, n - 1);
+                return child.join() + 1;
+            }
+
+            let caught = false;
+
+            try {
+                spawn(chain, 200).join();
+            } catch (e: Err) {
+                caught = e.kind == "TaskNestingTooDeep";
+            }
+
+            let ok = caught;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn mutual_join_between_nested_tasks_is_a_deadlock_error() {
+    let (vm, result) = run_script(
+        r#"
+        let holder = [];
+
+        func first() -> int {
+            return holder[1].join();
+        }
+
+        func second() -> int {
+            return holder[0].join();
+        }
+
+        let a = spawn(first);
+        let b = spawn(second);
+        holder.add(a);
+        holder.add(b);
+
+        let caught = false;
+
+        try {
+            a.join();
+        } catch (e: Err) {
+            caught = e.kind == "TaskDeadlock";
+        }
+
+        let ok = caught;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn a_task_joining_itself_is_a_deadlock_error() {
+    let (vm, result) = run_script(
+        r#"
+        let holder = [];
+
+        func worker() -> int {
+            return holder[0].join();
+        }
+
+        let task = spawn(worker);
+        holder.add(task);
+
+        let caught = false;
+
+        try {
+            task.join();
+        } catch (e: Err) {
+            caught = e.kind == "TaskDeadlock";
+        }
+
+        let ok = caught;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+// ---------- cas limites d'annulation ----------
+
+#[test]
+fn cancelling_a_finished_task_keeps_its_result() {
+    let (vm, result) = run_script(
+        r#"
+        func worker() -> int {
+            return 5;
+        }
+
+        let task = spawn(worker);
+        let first = task.join();
+        task.cancel();
+
+        let ok = first == 5
+            && task.status() == "done"
+            && task.join() == 5;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn cancelling_twice_is_idempotent() {
+    let (vm, result) = run_script(
+        r#"
+        func worker() -> int {
+            return 1;
+        }
+
+        let task = spawn(worker);
+        task.cancel();
+        task.cancel();
+
+        let ok = task.status() == "cancelled" && task.is_done();
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn a_task_cancelling_itself_stops_at_its_next_yield() {
+    let (vm, result) = run_script(
+        r#"
+        let holder = [];
+        let log = [];
+
+        func worker() -> int {
+            log.add(1);
+            holder[0].cancel();
+            yield();
+            log.add(2);
+            return 1;
+        }
+
+        let task = spawn(worker);
+        holder.add(task);
+
+        let caught = false;
+
+        try {
+            task.join();
+        } catch (e: Err) {
+            caught = e.kind == "TaskCancelled";
+        }
+
+        let ok = caught && task.status() == "cancelled";
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+    assert_eq!(array_len(&vm, "log"), 1);
+}
+
+#[test]
+fn a_late_cancellation_does_not_discard_a_completed_result() {
+    let (vm, result) = run_script(
+        r#"
+        let holder = [];
+
+        func killer() -> int {
+            holder[0].cancel();
+            return 1;
+        }
+
+        func victim() -> int {
+            let helper = spawn(killer);
+            let value = helper.join();
+            return value + 41;
+        }
+
+        let task = spawn(victim);
+        holder.add(task);
+
+        let result = task.join();
+        let ok = result == 42 && task.status() == "done";
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn cancellation_requested_before_blocking_leaves_no_ghost_waiter() {
+    let (vm, result) = run_script(
+        r#"
+        let ch = channel<int>();
+        let holder = [];
+
+        func controller() -> int {
+            holder[0].cancel();
+            return 1;
+        }
+
+        func worker() -> int {
+            let helper = spawn(controller);
+            helper.join();
+            return ch.recv();
+        }
+
+        let task = spawn(worker);
+        holder.add(task);
+
+        let caught = false;
+
+        try {
+            task.join();
+        } catch (e: Err) {
+            caught = e.kind == "TaskCancelled";
+        }
+
+        ch.send(9);
+        let ok = caught
+            && task.status() == "cancelled"
+            && ch.try_recv() == Some(9);
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+
+    let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+    assert!(scheduler.waiting_channels.is_empty());
+    assert!(scheduler.waiting_selects.is_empty());
+    assert!(scheduler.cancel_requested.is_empty());
+}
+
+// ---------- tests de stress ----------
+
+#[test]
+fn stress_many_tasks_all_complete() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            func worker(n: int) -> int {
+                yield();
+                return n;
+            }
+
+            let tasks = [];
+
+            for i in range(0, 500) {
+                tasks.add(spawn(worker, i));
+            }
+
+            let sum = 0;
+
+            for t in tasks {
+                sum = sum + t.join();
+            }
+
+            let ok = sum == 124750;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn stress_producer_consumer_through_a_channel() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>();
+
+            func producer(count: int) -> int {
+                for i in range(0, count) {
+                    ch.send(i);
+
+                    if i % 50 == 0 {
+                        yield();
+                    }
+                }
+
+                ch.close();
+                return count;
+            }
+
+            func consumer() -> int {
+                let sum = 0;
+                let running = true;
+
+                while running {
+                    try {
+                        sum = sum + ch.recv();
+                    } catch (e: Err) {
+                        running = false;
+                    }
+                }
+
+                return sum;
+            }
+
+            let p = spawn(producer, 2000);
+            let c = spawn(consumer);
+
+            let produced = p.join();
+            let consumed = c.join();
+
+            let ok = produced == 2000 && consumed == 1999000;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn stress_cancelling_many_waiting_tasks_cleans_every_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>();
+
+            func waiter() -> int {
+                return ch.recv();
+            }
+
+            func pump() -> int {
+                yield();
+                return 1;
+            }
+
+            let tasks = [];
+
+            for i in range(0, 200) {
+                tasks.add(spawn(waiter));
+            }
+
+            spawn(pump).join();
+
+            let cancelled = 0;
+
+            for t in tasks {
+                t.cancel();
+
+                if t.status() == "cancelled" {
+                    cancelled = cancelled + 1;
+                }
+            }
+
+            ch.send(1);
+
+            let ok = cancelled == 200 && ch.size() == 1;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_channels.is_empty());
+        assert!(scheduler.waiting_selects.is_empty());
+    });
+}
+
+#[test]
+fn stress_gc_pressure_across_many_tasks_keeps_root_data_alive() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            func churn(n: int) -> int {
+                let junk = [];
+
+                for i in range(0, 2000) {
+                    junk.add([i, n]);
+                }
+
+                return junk.size();
+            }
+
+            let keep = [[1], [2], [3]];
+            let tasks = [];
+
+            for i in range(0, 30) {
+                tasks.add(spawn(churn, i));
+            }
+
+            let total = 0;
+
+            for t in tasks {
+                total = total + t.join();
+            }
+
+            let ok = total == 60000 && keep.size() == 3 && keep[0][0] == 1;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}

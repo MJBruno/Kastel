@@ -148,6 +148,9 @@ pub enum RuntimeError {
     TaskNotFound,
     TaskDeadlock,
     TaskCancelled,
+    /// Trop de tâches imbriquées : chaque `join` bloquant depuis une tâche
+    /// exécute la cible sur la pile native, dont la profondeur est bornée.
+    TaskNestingTooDeep,
     ChannelClosed,
     YieldOutsideTask,
 
@@ -226,6 +229,10 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::TaskCancelled => {
                 write!(f, "Task was cancelled.")
+            }
+
+            RuntimeError::TaskNestingTooDeep => {
+                write!(f, "Too many nested task joins.")
             }
 
             RuntimeError::ChannelClosed => {
@@ -432,6 +439,7 @@ impl RuntimeError {
             RuntimeError::TaskNotFound => "TaskNotFound",
             RuntimeError::TaskDeadlock => "TaskDeadlock",
             RuntimeError::TaskCancelled => "TaskCancelled",
+            RuntimeError::TaskNestingTooDeep => "TaskNestingTooDeep",
             RuntimeError::ChannelClosed => "ChannelClosed",
             RuntimeError::YieldOutsideTask => "YieldOutsideTask",
         }
