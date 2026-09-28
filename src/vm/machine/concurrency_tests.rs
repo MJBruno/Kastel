@@ -927,3 +927,32 @@ fn closing_channel_wakes_waiting_consumer_with_catchable_error() {
         Some(Value::Boolean(true))
     ));
 }
+
+
+#[test]
+fn multiple_tasks_waiting_without_progress_are_reported_as_deadlock() {
+    let (_vm, result) = run_script(
+        r#"
+        let first_channel = channel<int>();
+        let second_channel = channel<int>();
+
+        func first_worker() -> int {
+            return first_channel.recv();
+        }
+
+        func second_worker() -> int {
+            return second_channel.recv();
+        }
+
+        let first = spawn(first_worker);
+        let _second = spawn(second_worker);
+
+        first.join();
+    "#,
+    );
+
+    assert!(matches!(
+        result,
+        Err(crate::error::runtime_error::RuntimeError::TaskDeadlock)
+    ));
+}

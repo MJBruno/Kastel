@@ -151,6 +151,9 @@ impl Scheduler {
 
             let id = loop {
                 let Some(id) = scheduler.ready.pop_front() else {
+                    if scheduler.has_live_tasks() {
+                        return Err(RuntimeError::TaskDeadlock);
+                    }
                     return Ok(false);
                 };
 
@@ -277,6 +280,29 @@ impl Scheduler {
                     }
                 }
                 Ok(false) => break,
+                Err(RuntimeError::TaskDeadlock) => {
+                    let scheduler = shared.borrow();
+                    let waiting: Vec<usize> = scheduler
+                        .tasks
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(id, slot)| {
+                            slot.as_ref()
+                                .filter(|task| task.status == TaskStateStatus::Waiting)
+                                .map(|_| id)
+                        })
+                        .collect();
+
+                    if waiting.is_empty() {
+                        eprintln!("Erreur du scheduler : Task scheduler deadlock detected.");
+                    } else {
+                        eprintln!(
+                            "Erreur du scheduler : deadlock détecté, tâches en attente : {:?}",
+                            waiting
+                        );
+                    }
+                    break;
+                }
                 Err(error) => {
                     eprintln!("Erreur du scheduler : {error}");
                     break;
@@ -293,6 +319,13 @@ impl Scheduler {
                     Self::report_unobserved(id, task.error.as_ref());
                 }
         }
+    }
+
+    fn has_live_tasks(&self) -> bool {
+        !self.running.is_empty()
+            || self.tasks.iter().flatten().any(|task| {
+                matches!(task.status, TaskStateStatus::Ready | TaskStateStatus::Waiting)
+            })
     }
 
     fn channel_key(channel: &Rc<RefCell<ChannelState>>) -> usize {
