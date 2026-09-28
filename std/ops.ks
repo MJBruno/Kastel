@@ -48,16 +48,36 @@ export interface Mod {
 }
 
 // ================================================================
-// UNARY OPERATORS
+// UNARY OPERATORS -- PAS surchargeables dans cette version de Kastel
 // ================================================================
+//
+// CORRECTIF : contrairement a Add/Sub/Mul/.../Ord ci-dessus, `-x` et
+// `~x` ne passent PAS par le systeme de capabilities. Le TypeChecker
+// (compiler/type_checker.rs, verification de UnaryOp::Negate /
+// UnaryOp::BitNot) exige directement un operande numerique/int et ne
+// cherche jamais de methode `neg`/`bitnot` sur une classe utilisateur.
+// Declarer une interface `Neg`/`BitNot` et une methode `neg()`/
+// `bitnot()` sur une classe NE branche PAS `-instance`/`~instance` :
+// ca compile (le nom de methode n'a rien de special), mais l'operateur
+// unaire lui-meme echoue au typage des qu'on l'utilise sur cette
+// classe. Le seul moyen de faire un "moins" ou un "bitnot" pour un
+// type utilisateur aujourd'hui est d'appeler la methode explicitement
+// (`valeur.neg()`), jamais via `-valeur`.
+//
+// Les interfaces ci-dessous restent une CONVENTION DE NOMMAGE utile
+// (et une borne generique valide, `<T: Neg>`) si vous ecrivez ce genre
+// de methode a la main -- mais elles ne font PAS ce que `Add`/`Sub`
+// font plus haut. A retirer si un futur compilateur les branche
+// reellement (verifier `Capability` dans compiler/capability.rs :
+// tant que `Neg`/`BitNot` n'y figurent pas, cette limite tient).
 
-// std::ops::Neg -> -x
+// Convention pour -x, PAS branchee sur l'operateur.
 export interface Neg {
     func neg() -> Self;
 }
 
-// std::ops::Not (partie bitwise uniquement : Kastel separe `!` et `~`,
-// voir NOTE plus bas) -> ~x
+// Convention pour ~x, PAS branchee sur l'operateur (`!x`, lui, est
+// TOUJOURS bool et jamais surchargeable -- voir plus bas).
 export interface BitNot {
     func bitnot() -> Self;
 }
@@ -113,18 +133,29 @@ export interface Ord {
 }
 
 // ================================================================
-// INDEXING
+// INDEXING -- PAS surchargeable non plus dans cette version de Kastel
 // ================================================================
-
-// std::ops::Index -> x[y], &x[y]
-// Forme heterogene obligatoire : Index<Idx, Output>.
+//
+// CORRECTIF : `x[y]` (OpCode::GetIndex) et `x[y] = z` (OpCode::SetIndex)
+// ne regardent le type concret QUE pour Array/Tuple/Dict
+// (vm/machine/dispatch.rs) ; une instance de classe utilisateur tombe
+// directement dans le cas `_ => Err(NotIndexable)`, sans jamais chercher
+// de methode `index`/`set_index`. Meme constat que pour Neg/BitNot
+// au-dessus : declarer ces interfaces et les implementer ne fait RIEN
+// pour `instance[cle]`, qui echoue toujours a l'execution. Pour "indexer"
+// un objet aujourd'hui, il faut une methode nommee explicitement
+// (`.get(cle)`, comme le fait Dict lui-meme) et l'appeler telle quelle.
+//
+// std::ops::Index -> x[y], &x[y]. Forme heterogene : Index<Idx, Output>.
+// Convention seulement -- voir le correctif ci-dessus.
 export interface Index<Idx, Output> {
     func index(key: Idx) -> Output;
 }
 
 // std::ops::IndexMut -> x[y] = z, &mut x[y]
 // Adaptation Kastel : pas de reference mutable, `set_index` recoit
-// directement la valeur a ecrire et ne renvoie rien.
+// directement la valeur a ecrire et ne renvoie rien. Convention
+// seulement -- voir le correctif ci-dessus.
 export interface IndexMut<Idx, Output> {
     func set_index(key: Idx, value: Output) -> None;
 }
@@ -150,7 +181,9 @@ export interface IndexMut<Idx, Output> {
 //
 // NOTE : en Rust, `std::ops::Not` couvre A LA FOIS `!flag` (bool) et
 // `!bits` (entier, bitwise). Kastel separe les deux operateurs :
-//   - `~x` (bitwise)  -> capability `BitNot` ci-dessus, surchargeable.
+//   - `~x` (bitwise)  -> interface `BitNot` ci-dessus, mais PAS branchee
+//     par le compilateur actuel (voir le correctif plus haut) : `~x`
+//     reste reserve aux entiers natifs pour l'instant.
 //   - `!x` (logique)  -> TOUJOURS bool, jamais surchargeable, y compris
 //     sur un type `dynamic`. C'est un choix de conception delibere : `!`
 //     reste un operateur logique pur, jamais redefinissable par une

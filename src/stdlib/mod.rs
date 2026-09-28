@@ -56,8 +56,9 @@ pub mod math;
 pub mod option;
 pub mod os;
 pub mod path;
-pub mod result;
+pub mod process;
 pub mod record;
+pub mod result;
 pub mod set;
 pub mod string;
 pub mod system;
@@ -69,7 +70,6 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     math::register(globals);
     string::register(globals);
     array::register(globals);
-    channel::register(globals);
     tuple::register(globals);
     set::register(globals);
     dict::register(globals);
@@ -79,8 +79,10 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     debug::register(globals);
     json::register(globals);
     file::register(globals);
+    channel::register(globals);
     path::register(globals);
     os::register(globals);
+    process::register(globals);
     option::register(globals);
     result::register(globals);
 }
@@ -91,7 +93,6 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     math::register_compiler(compiler);
     string::register_compiler(compiler);
     array::register_compiler(compiler);
-    channel::register_compiler(compiler);
     tuple::register_compiler(compiler);
     set::register_compiler(compiler);
     dict::register_compiler(compiler);
@@ -101,8 +102,10 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     debug::register_compiler(compiler);
     json::register_compiler(compiler);
     file::register_compiler(compiler);
+    channel::register_compiler(compiler);
     path::register_compiler(compiler);
     os::register_compiler(compiler);
+    process::register_compiler(compiler);
     option::register_compiler(compiler);
     result::register_compiler(compiler);
 }

@@ -363,12 +363,24 @@ impl Type {
                     arguments: expected_args,
                 },
             ) => {
-                actual_name == expected_name
-                    && actual_args.len() == expected_args.len()
-                    && actual_args
-                        .iter()
-                        .zip(expected_args)
-                        .all(|(actual, expected)| actual.is_assignable_to(expected, parents))
+                if actual_name != expected_name || actual_args.len() != expected_args.len() {
+                    return false;
+                }
+
+                // `channel()` sans paramètre explicite produit `Channel<dynamic>`.
+                // Une annotation `Channel<T>` peut spécialiser ce canal ; la
+                // liaison locale porte ensuite le type statique déclaré.
+                if actual_name.eq_ignore_ascii_case("Channel")
+                    && actual_args.len() == 1
+                    && actual_args[0].is_dynamic()
+                {
+                    return true;
+                }
+
+                actual_args
+                    .iter()
+                    .zip(expected_args)
+                    .all(|(actual, expected)| actual.is_assignable_to(expected, parents))
             }
 
             _ => false,
@@ -618,6 +630,40 @@ impl Type {
                 _ => None,
             },
 
+            _ => None,
+        }
+    }
+
+    /// Signatures statiques de `Channel<T>`.
+    pub fn channel_member_type(&self, name: &str) -> Option<Type> {
+        let element_type = match self {
+            Type::Generic { name, arguments }
+                if name.eq_ignore_ascii_case("Channel") && arguments.len() == 1 =>
+            {
+                arguments[0].clone()
+            }
+            _ => return None,
+        };
+
+        let function = |params: Vec<Type>, result: Type| Type::Function(FunctionType {
+            generic_params: Vec::new(),
+            generic_constraints: Vec::new(),
+            params,
+            return_type: Box::new(result),
+        });
+
+        match name {
+            "send" => Some(function(vec![element_type], Type::None)),
+            "recv" => Some(function(vec![], element_type.clone())),
+            "try_recv" => Some(function(
+                vec![],
+                Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![element_type],
+                },
+            )),
+            "size" => Some(function(vec![], Type::Int)),
+            "is_empty" => Some(function(vec![], Type::Bool)),
             _ => None,
         }
     }

@@ -38,6 +38,56 @@ export func assert_not_eq(actual, expected, message) {
     }
 }
 
+// Compare deux floats a une tolerance pres (l'egalite exacte de floats
+// est presque toujours le mauvais test : 0.1 + 0.2 != 0.3).
+export func assert_almost_eq(actual: float, expected: float, tolerance: float, message) {
+    let diff = actual - expected;
+    if diff < 0.0 {
+        diff = -diff;
+    }
+    if diff > tolerance {
+        throw format(
+            "{} (attendu {} +/- {}, obtenu {})",
+            message, expected, tolerance, actual
+        );
+    }
+}
+
+// Verifie que `action` (fonction sans argument) leve bien une
+// exception. Echoue si `action` se termine normalement.
+export func assert_throws(action, message) {
+    try {
+        action();
+    } catch (_) {
+        return;
+    }
+    throw format("{} (aucune exception levee)", message);
+}
+
+// Comme assert_eq, mais pour un Result<T, E> : echoue si c'est Err(...).
+export func assert_ok(result, message) {
+    match result {
+        Ok(_) => {
+            return;
+        }
+        Err(error) => {
+            throw format("{} (Err inattendu: {})", message, error);
+        }
+    }
+}
+
+// Comme assert_ok, mais attend Err(...) : echoue si c'est Ok(...).
+export func assert_err(result, message) {
+    match result {
+        Ok(value) => {
+            throw format("{} (Ok inattendu: {})", message, value);
+        }
+        Err(_) => {
+            return;
+        }
+    }
+}
+
 // `cases` est un tableau de paires [nom, fonction_sans_argument].
 // Chaque fonction signale un échec via un `throw` (voir les
 // assert_* ci-dessus). Renvoie `true` si tout est passé.

@@ -2987,6 +2987,35 @@ impl TypeChecker {
                 }
 
                 if let Expression::Variable(name) = callee.as_ref()
+                    && name == "channel"
+                    && self.lookup(name).is_some_and(|binding| binding.native)
+                {
+                    if !arguments.is_empty() {
+                        return Err(CompileError::WrongArgumentCount {
+                            expected: 0,
+                            found: arguments.len(),
+                        });
+                    }
+
+                    let element_type = match generic_args.as_slice() {
+                        [] => Type::Dynamic,
+                        [argument] => self.resolve_type(argument),
+                        _ => {
+                            return Err(CompileError::InvalidGenericArity {
+                                name: name.clone(),
+                                expected: 1,
+                                found: generic_args.len(),
+                            });
+                        }
+                    };
+
+                    return Ok(Type::Generic {
+                        name: "Channel".into(),
+                        arguments: vec![element_type],
+                    });
+                }
+
+                if let Expression::Variable(name) = callee.as_ref()
                     && name == "spawn"
                 {
                     if arguments.is_empty() {
@@ -3092,6 +3121,17 @@ impl TypeChecker {
 
                             return Ok(*signature.return_type);
                         }
+                    }
+
+                    if let Some(Type::Function(signature)) =
+                        object_type.channel_member_type(name)
+                    {
+                        return self.check_call_signature(
+                            &signature,
+                            generic_args,
+                            arguments,
+                            name,
+                        );
                     }
 
                     if let Some(Type::Function(signature)) =
@@ -3663,6 +3703,10 @@ impl TypeChecker {
     }
 
     fn member_type(&self, object_type: &Type, name: &str) -> Result<Type, CompileError> {
+        if let Some(signature) = object_type.channel_member_type(name) {
+            return Ok(signature);
+        }
+
         if let Some(signature) = object_type.task_member_type(name) {
             return Ok(signature);
         }

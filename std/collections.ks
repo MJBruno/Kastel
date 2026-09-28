@@ -139,3 +139,88 @@ export func try_remove<K, V>(entries: Dict<K, V>, key: K) -> Option<V> {
     }
     return None;
 }
+
+// ------------------------------------------------------------------
+// Ajouts : combinateurs generiques supplementaires
+// ------------------------------------------------------------------
+
+// Associe les elements de deux listes position par position ; s'arrete
+// a la plus courte. Renvoie une List de Tuple (a, b).
+export func zip<A, B>(left: List<A>, right: List<B>) {
+    let pairs = [];
+    let limit = left.size();
+    if right.size() < limit {
+        limit = right.size();
+    }
+    let i = 0;
+    while i < limit {
+        pairs.add((left[i], right[i]));
+        i = i + 1;
+    }
+    return pairs;
+}
+
+// map puis aplatit d'un niveau : `transform` renvoie une List par element.
+export func flat_map<T, U>(values: List<T>, transform) -> List<U> {
+    let results = [];
+    for value in values {
+        for item in transform(value) {
+            results.add(item);
+        }
+    }
+    return results;
+}
+
+// Decoupe en morceaux de `size` elements (le dernier peut etre plus
+// court). Err si size <= 0.
+export func chunks<T>(values: List<T>, size: int) -> Result<List<List<T>>, str> {
+    if size <= 0 {
+        return Err("chunks: la taille doit etre strictement positive");
+    }
+    let result = [];
+    let current = [];
+    for value in values {
+        current.add(value);
+        if current.size() == size {
+            result.add(current);
+            current = [];
+        }
+    }
+    if !current.is_empty() {
+        result.add(current);
+    }
+    return Ok(result);
+}
+
+// Regroupe par cle : Dict<K, List<T>>. `key_of` : T -> K.
+export func group_by<T, K>(values: List<T>, key_of) -> Dict<K, List<T>> {
+    let groups = {};
+    for value in values {
+        let key = key_of(value);
+        match try_get(groups, key) {
+            Some(bucket) => {
+                bucket.add(value);
+            }
+            None => {
+                groups.set(key, [value]);
+            }
+        }
+    }
+    return groups;
+}
+
+// Compte les occurrences de chaque valeur : Dict<T, int>.
+export func count_by<T>(values: List<T>) -> Dict<T, int> {
+    let counts = {};
+    for value in values {
+        match try_get(counts, value) {
+            Some(current) => {
+                counts.set(value, current + 1);
+            }
+            None => {
+                counts.set(value, 1);
+            }
+        }
+    }
+    return counts;
+}

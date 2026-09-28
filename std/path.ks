@@ -4,6 +4,8 @@
 // normalisation/aux séparateurs OS (voir src/stdlib/path.rs), pur
 // Kastel pour le reste.
 //
+// Extension/stem/dirname en Option<str> : voir std.fs.
+//
 // Usage :
 //
 //   import std.path;

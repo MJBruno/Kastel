@@ -3,6 +3,8 @@
 // Entrées/sorties fichier, natif (voir src/stdlib/file.rs — appels
 // système, impossibles en Kastel pur).
 //
+// Pour une API Result<T, str> (sans exception), voir std.fs.
+//
 // Usage :
 //
 //   import std.file;

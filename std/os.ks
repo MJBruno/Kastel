@@ -4,9 +4,9 @@
 // déjà des natives globales (src/stdlib/system.rs) ; `os_name`,
 // `os_arch`, `args` et `exit` sont nouvelles (src/stdlib/os.rs).
 //
-// Pas de `system(...)` (exécution de commande shell arbitraire) —
-// exclu volontairement, voir le commentaire en tête de
-// src/stdlib/os.rs.
+// Pas de `system(...)` (commande shell arbitraire) : exclu
+// volontairement. Pour lancer un programme externe SANS shell (donc sans
+// injection de commande), voir std.process.
 //
 // Usage :
 //

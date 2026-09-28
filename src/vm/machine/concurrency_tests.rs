@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use crate::{
     compiler::compiler::Compiler,
+    error::compile_error::CompileError,
     frontend::{lexer::lexer::Lexer, parser::Parser},
     runtime::value::Value,
     stdlib::execute_native,
@@ -21,6 +22,16 @@ fn run_script(source: &str) -> (VirtualMachine, Result<(), crate::error::runtime
 
     (vm, result)
 }
+
+fn compile_only(source: &str) -> Result<(), CompileError> {
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
+
+    let mut compiler = Compiler::new();
+    execute_native(&mut compiler);
+    compiler.compile(&statements).map(|_| ())
+}
+
 
 #[test]
 fn spawn_and_join_return_value() {
@@ -387,4 +398,52 @@ fn channel_wakes_waiters_in_fifo_order() {
 
     result.unwrap();
     assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
+}
+
+
+#[test]
+fn channel_generic_annotation_checks_send_type_and_recv_result() {
+    let (vm, result) = run_script(r#"
+        let ch: Channel<int> = channel();
+        ch.send(42);
+
+        let value: int = ch.recv();
+        let maybe: Option<int> = ch.try_recv();
+
+        let ok = value == 42 && maybe.is_none();
+    "#);
+
+    result.unwrap();
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
+fn channel_generic_constructor_accepts_explicit_type_argument() {
+    let (vm, result) = run_script(r#"
+        let ch = channel<int>();
+        ch.send(7);
+        let value = ch.recv();
+        let ok = value == 7;
+    "#);
+
+    result.unwrap();
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+
+#[test]
+fn channel_generic_annotation_rejects_wrong_send_type() {
+    let error = compile_only(r#"
+        let ch: Channel<int> = channel();
+        ch.send("wrong type");
+    "#)
+    .expect_err("Channel<int> must reject send(str)");
+
+    assert!(matches!(error, CompileError::WrongArgumentType { .. }));
 }

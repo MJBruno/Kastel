@@ -54,7 +54,10 @@ pub fn all() -> HashMap<String, Type> {
 
     // Concurrence : contrats statiques des intrinsèques gérés par le bytecode.
     types.insert("spawn".into(), Dynamic);
-    types.insert("channel".into(), function(&[], Dynamic));
+    types.insert("channel".into(), function(&[], Generic {
+        name: "Channel".into(),
+        arguments: vec![Dynamic],
+    }));
     types.insert("yield".into(), function(&[], None));
 
     // Option / Result

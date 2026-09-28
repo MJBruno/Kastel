@@ -2,9 +2,14 @@
 //
 // Kastel n'a pas de type date/heure natif : ce module en construit un
 // au-dessus de deux briques natives seulement (clock(), qui renvoie
-// les secondes écoulées depuis epoch Unix UTC, et l'arithmétique
-// entière). La conversion jours <-> date civile (année/mois/jour)
-// utilise l'algorithme de Howard Hinnant (domaine public,
+// les secondes écoulées depuis epoch Unix UTC en `float` — donc avec
+// une fraction de seconde utilisable — et de l'arithmétique entière).
+// Toute la classe DateTime travaille en MILLISECONDES depuis epoch
+// (`epoch_millis`), pas en secondes : `.millisecond()` est donc exact,
+// pas dérivé d'une résolution seconde arrondie.
+//
+// La conversion jours <-> date civile (année/mois/jour) utilise
+// l'algorithme de Howard Hinnant (domaine public,
 // http://howardhinnant.github.io/date_algorithms.html), correct sur
 // tout le calendrier grégorien proleptique, dates avant 1970 et années
 // négatives incluses.
@@ -20,7 +25,7 @@ func floor_div(a: int, b: int) -> int {
 }
 
 // `%` seul peut renvoyer un reste négatif pour un dividende négatif
-// (ex. années avant 1970) ; le calendrier a besoin d'un reste toujours
+// (ex. dates avant 1970) ; le calendrier a besoin d'un reste toujours
 // positif.
 func floor_mod(a: int, b: int) -> int {
     return a - idiv(a, b) * b;
@@ -108,30 +113,50 @@ func pad2(n: int) -> str {
     return str(n);
 }
 
+func pad3(n: int) -> str {
+    if n < 10 {
+        return "00" + str(n);
+    }
+    if n < 100 {
+        return "0" + str(n);
+    }
+    return str(n);
+}
+
+// Horodatage courant en millisecondes depuis epoch Unix UTC, sans
+// construire de DateTime — pratique pour mesurer une durée écoulée.
+export func now_millis() -> int {
+    return floor(clock() * 1000.0);
+}
+
 // ------------------------------------------------------------------
 // DateTime
 // ------------------------------------------------------------------
 
 export class DateTime {
-    private let epoch_seconds: int = 0;
+    private let epoch_millis: int = 0;
 
     // Constructeur privé : toute instance passe par une des fabriques
-    // statiques ci-dessous, qui valident leurs entrées (from_ymdhms
+    // statiques ci-dessous, qui valident leurs entrées (from_ymdhms*
     // renvoie un Result plutôt que de construire une date invalide).
-    private func initialize(epoch_seconds: int) {
-        self.epoch_seconds = epoch_seconds;
+    private func initialize(epoch_millis: int) {
+        self.epoch_millis = epoch_millis;
     }
 
     static func now() -> DateTime {
-        return new DateTime(floor(clock()));
+        return new DateTime(now_millis());
     }
 
     static func from_timestamp(epoch_seconds: int) -> DateTime {
-        return new DateTime(epoch_seconds);
+        return new DateTime(epoch_seconds * 1000);
+    }
+
+    static func from_timestamp_millis(epoch_millis: int) -> DateTime {
+        return new DateTime(epoch_millis);
     }
 
     static func from_ymd(year: int, month: int, day: int) -> Result<DateTime, str> {
-        return DateTime.from_ymdhms(year, month, day, 0, 0, 0);
+        return DateTime.from_ymdhms_millis(year, month, day, 0, 0, 0, 0);
     }
 
     static func from_ymdhms(
@@ -141,6 +166,18 @@ export class DateTime {
         hour: int,
         minute: int,
         second: int
+    ) -> Result<DateTime, str> {
+        return DateTime.from_ymdhms_millis(year, month, day, hour, minute, second, 0);
+    }
+
+    static func from_ymdhms_millis(
+        year: int,
+        month: int,
+        day: int,
+        hour: int,
+        minute: int,
+        second: int,
+        millisecond: int
     ) -> Result<DateTime, str> {
         if month < 1 || month > 12 {
             return Err("mois invalide: " + str(month));
@@ -161,23 +198,36 @@ export class DateTime {
         if second < 0 || second > 59 {
             return Err("seconde invalide: " + str(second));
         }
+        if millisecond < 0 || millisecond > 999 {
+            return Err("milliseconde invalide: " + str(millisecond));
+        }
 
         let days = days_from_civil(year, month, day);
-        let seconds = days * 86400 + hour * 3600 + minute * 60 + second;
+        let millis = days * 86400000
+            + hour * 3600000
+            + minute * 60000
+            + second * 1000
+            + millisecond;
 
-        return Ok(new DateTime(seconds));
+        return Ok(new DateTime(millis));
     }
 
+    // Secondes depuis epoch (arrondi vers le bas ; voir timestamp_millis
+    // pour la valeur exacte).
     func timestamp() -> int {
-        return self.epoch_seconds;
+        return floor_div(self.epoch_millis, 1000);
+    }
+
+    func timestamp_millis() -> int {
+        return self.epoch_millis;
     }
 
     func days_since_epoch() -> int {
-        return floor_div(self.epoch_seconds, 86400);
+        return floor_div(self.epoch_millis, 86400000);
     }
 
-    func seconds_of_day() -> int {
-        return self.epoch_seconds - self.days_since_epoch() * 86400;
+    func millis_of_day() -> int {
+        return self.epoch_millis - self.days_since_epoch() * 86400000;
     }
 
     func year() -> int {
@@ -205,15 +255,19 @@ export class DateTime {
     }
 
     func hour() -> int {
-        return idiv(self.seconds_of_day(), 3600);
+        return idiv(self.millis_of_day(), 3600000);
     }
 
     func minute() -> int {
-        return idiv(self.seconds_of_day() % 3600, 60);
+        return idiv(self.millis_of_day() % 3600000, 60000);
     }
 
     func second() -> int {
-        return self.seconds_of_day() % 60;
+        return idiv(self.millis_of_day() % 60000, 1000);
+    }
+
+    func millisecond() -> int {
+        return self.millis_of_day() % 1000;
     }
 
     // 0 = dimanche ... 6 = samedi (1970-01-01 était un jeudi, d'où +4).
@@ -230,18 +284,26 @@ export class DateTime {
         return is_gregorian_leap_year(self.year());
     }
 
+    func add_milliseconds(delta: int) -> DateTime {
+        return new DateTime(self.epoch_millis + delta);
+    }
+
     func add_seconds(delta: int) -> DateTime {
-        return new DateTime(self.epoch_seconds + delta);
+        return self.add_milliseconds(delta * 1000);
     }
 
     func add_days(delta: int) -> DateTime {
-        return self.add_seconds(delta * 86400);
+        return self.add_milliseconds(delta * 86400000);
     }
 
-    // Différence signée en secondes (self - other), positive si self
-    // est postérieur à other.
-    func difference_seconds(other: DateTime) -> int {
-        return self.epoch_seconds - other.epoch_seconds;
+    // Différence signée en millisecondes (self - other), positive si
+    // self est postérieur à other.
+    func difference_millis(other: DateTime) -> int {
+        return self.epoch_millis - other.epoch_millis;
+    }
+
+    func difference_seconds(other: DateTime) -> float {
+        return self.difference_millis(other) / 1000.0;
     }
 
     func to_string() -> str {
@@ -249,18 +311,26 @@ export class DateTime {
             + " " + pad2(self.hour()) + ":" + pad2(self.minute()) + ":" + pad2(self.second());
     }
 
+    // Comme to_string(), avec les millisecondes (format proche
+    // ISO 8601, toujours en UTC implicite : pas de suffixe de fuseau).
+    func to_iso_string() -> str {
+        return str(self.year()) + "-" + pad2(self.month()) + "-" + pad2(self.day())
+            + "T" + pad2(self.hour()) + ":" + pad2(self.minute()) + ":" + pad2(self.second())
+            + "." + pad3(self.millisecond());
+    }
+
     // Nommées `equals`/`compare` : Kastel branche automatiquement
     // ==, <, <=, >, >= dessus (capabilities Eq/Ord), pas besoin de les
     // déclarer explicitement ailleurs.
     func equals(other: DateTime) -> bool {
-        return self.epoch_seconds == other.epoch_seconds;
+        return self.epoch_millis == other.epoch_millis;
     }
 
     func compare(other: DateTime) -> int {
-        if self.epoch_seconds < other.epoch_seconds {
+        if self.epoch_millis < other.epoch_millis {
             return -1;
         }
-        if self.epoch_seconds > other.epoch_seconds {
+        if self.epoch_millis > other.epoch_millis {
             return 1;
         }
         return 0;

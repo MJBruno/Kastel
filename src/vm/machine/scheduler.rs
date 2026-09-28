@@ -199,6 +199,7 @@ impl Scheduler {
     ) -> Result<bool, RuntimeError> {
         let key = Self::channel_key(channel);
         let mut scheduler = shared.borrow_mut();
+        let mut pending_value = Some(value);
 
         loop {
             let task_id = match scheduler.waiting_channels.get_mut(&key) {
@@ -218,20 +219,26 @@ impl Scheduler {
                 return Ok(false);
             };
 
-            let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
-                continue;
+            let should_wake = {
+                let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                    continue;
+                };
+
+                if task.status != TaskStateStatus::Waiting {
+                    false
+                } else {
+                    let value = pending_value.take().ok_or(RuntimeError::NativeError)?;
+
+                    task.vm.resume_from_channel(value)?;
+                    task.status = TaskStateStatus::Ready;
+                    true
+                }
             };
 
-            if task.status != TaskStateStatus::Waiting {
-                continue;
+            if should_wake {
+                scheduler.ready.push_back(task_id);
+                return Ok(true);
             }
-
-            task.vm.resume_from_channel(value)?;
-            task.status = TaskStateStatus::Ready;
-
-            scheduler.ready.push_back(task_id);
-
-            return Ok(true);
         }
     }
 
