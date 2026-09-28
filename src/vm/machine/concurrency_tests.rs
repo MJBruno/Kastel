@@ -9,14 +9,29 @@ use crate::{
     vm::machine::VirtualMachine,
 };
 
-fn run_script(source: &str) -> (VirtualMachine, Result<(), crate::error::runtime_error::RuntimeError>) {
-    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
-    let statements = Parser::new(tokens).parse().unwrap();
+fn run_script(
+    source: &str,
+) -> (
+    VirtualMachine,
+    Result<(), crate::error::runtime_error::RuntimeError>,
+) {
+    let tokens = Lexer::new(source.to_string())
+        .scan_token()
+        .unwrap();
+
+    let statements = Parser::new(tokens)
+        .parse()
+        .unwrap();
 
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
 
-    let function = Rc::new(compiler.compile(&statements).unwrap());
+    let function = Rc::new(
+        compiler
+            .compile(&statements)
+            .unwrap(),
+    );
+
     let mut vm = VirtualMachine::new(function, None);
     let result = vm.run();
 
@@ -24,18 +39,36 @@ fn run_script(source: &str) -> (VirtualMachine, Result<(), crate::error::runtime
 }
 
 fn compile_only(source: &str) -> Result<(), CompileError> {
-    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
-    let statements = Parser::new(tokens).parse().unwrap();
+    let tokens = Lexer::new(source.to_string())
+        .scan_token()
+        .unwrap();
+
+    let statements = Parser::new(tokens)
+        .parse()
+        .unwrap();
 
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
+
     compiler.compile(&statements).map(|_| ())
 }
 
+fn is_wrong_argument_type(error: &CompileError) -> bool {
+    match error {
+        CompileError::WrongArgumentType { .. } => true,
+
+        CompileError::WithLocation { source, .. } => {
+            is_wrong_argument_type(source)
+        }
+
+        _ => false,
+    }
+}
 
 #[test]
 fn spawn_and_join_return_value() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         func worker() -> int {
             return 42;
         }
@@ -43,15 +76,21 @@ fn spawn_and_join_return_value() {
         let task = spawn(worker);
         let result = task.join();
         let ok = result == 42;
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
 }
 
 #[test]
 fn yield_is_a_valid_cooperative_point() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         func worker() -> int {
             yield();
             return 7;
@@ -60,15 +99,21 @@ fn yield_is_a_valid_cooperative_point() {
         let task = spawn(worker);
         let result = task.join();
         let ok = result == 7;
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
 }
 
 #[test]
 fn task_status_is_exposed() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         func worker() -> int {
             return 3;
         }
@@ -76,16 +121,21 @@ fn task_status_is_exposed() {
         let task = spawn(worker);
         let value = task.join();
         let ok = task.is_done() && task.status() == "done" && value == 3;
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
-}
 
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
 
 #[test]
 fn spawn_passes_arguments_to_task() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         func worker(value: int) -> int {
             return value * 2;
         }
@@ -93,15 +143,21 @@ fn spawn_passes_arguments_to_task() {
         let task = spawn(worker, 21);
         let result = task.join();
         let ok = result == 42;
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
 }
 
 #[test]
 fn scheduler_round_robin_runs_other_ready_tasks() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         let log = [];
 
         func worker(id: int) -> int {
@@ -123,15 +179,21 @@ fn scheduler_round_robin_runs_other_ready_tasks() {
             && log[1] == 2
             && log[2] == 11
             && log[3] == 12;
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
 }
 
 #[test]
 fn task_capture_is_rejected() {
-    let (_vm, result) = run_script(r#"
+    let (_vm, result) = run_script(
+        r#"
         func make_task() {
             let value = 10;
             let task = spawn(() => value + 1);
@@ -139,15 +201,23 @@ fn task_capture_is_rejected() {
         }
 
         make_task();
-    "#);
+    "#,
+    );
 
-    let error = result.expect_err("captured task must be rejected");
-    assert!(matches!(error, crate::error::runtime_error::RuntimeError::TaskCaptureNotAllowed));
+    let error = result.expect_err(
+        "captured task must be rejected",
+    );
+
+    assert!(matches!(
+        error,
+        crate::error::runtime_error::RuntimeError::TaskCaptureNotAllowed
+    ));
 }
 
 #[test]
 fn task_errors_can_be_caught() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         func make_task() -> int {
             return spawn(() => 10 << -1).join();
         }
@@ -159,15 +229,21 @@ fn task_errors_can_be_caught() {
         } catch (e: Err) {
             caught = e.kind == "InvalidShiftAmount";
         }
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("caught"), Some(Value::Boolean(true))));
+
+    assert!(matches!(
+        vm.globals.borrow().get("caught"),
+        Some(Value::Boolean(true))
+    ));
 }
 
 #[test]
 fn scheduler_quantum_preempts_without_explicit_yield() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         let log = [];
 
         func busy() -> int {
@@ -198,33 +274,49 @@ fn scheduler_quantum_preempts_without_explicit_yield() {
             && log[0] == 1
             && log[1] == 2
             && log[2] == 3;
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
-}
 
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
 
 #[test]
 fn yield_outside_task_is_rejected() {
-    let (_vm, result) = run_script(r#"
+    let (_vm, result) = run_script(
+        r#"
         yield();
-    "#);
+    "#,
+    );
 
-    let error = result.expect_err("yield outside a task must fail");
-    assert!(matches!(error, crate::error::runtime_error::RuntimeError::YieldOutsideTask));
+    let error = result.expect_err(
+        "yield outside a task must fail",
+    );
+
+    assert!(matches!(
+        error,
+        crate::error::runtime_error::RuntimeError::YieldOutsideTask
+    ));
 }
 
 #[test]
 fn channel_send_and_try_recv() {
-    let (vm, result) = run_script(r#"
-        let ch = channel();
+    let (vm, result) = run_script(
+        r#"
+        let ch = channel<int>();
         let empty_before = ch.is_empty();
+
         ch.send(10);
         ch.send(20);
+
         let size = ch.size();
         let first = ch.try_recv();
         let second = ch.try_recv();
+
         let empty_after = ch.is_empty();
         let missing = ch.try_recv();
 
@@ -234,16 +326,22 @@ fn channel_send_and_try_recv() {
             && second == Some(20)
             && empty_after
             && missing == None;
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
 }
 
 #[test]
 fn channel_is_shared_between_tasks() {
-    let (vm, result) = run_script(r#"
-        let ch = channel();
+    let (vm, result) = run_script(
+        r#"
+        let ch = channel<int>();
 
         func producer() -> int {
             ch.send(42);
@@ -255,32 +353,45 @@ fn channel_is_shared_between_tasks() {
         let received = ch.try_recv();
 
         let ok = task_result == 1 && received == Some(42);
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
 }
 
 #[test]
 fn channel_values_are_gc_roots() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         let ch = channel();
+
         {
             let value = [1, 2, 3];
             ch.send(value);
         }
+
         let received = ch.try_recv();
         let ok = received.is_some();
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
-}
 
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
 
 #[test]
 fn channel_recv_blocks_and_send_wakes_waiting_task() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         let ch = channel();
         let log = [];
 
@@ -309,15 +420,21 @@ fn channel_recv_blocks_and_send_wakes_waiting_task() {
             && log[1] == 2
             && log[2] == 42
             && consumer_task.status() == "done";
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
 }
 
 #[test]
 fn channel_recv_waits_instead_of_busy_polling() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         let ch = channel();
         let observed = "";
 
@@ -335,36 +452,56 @@ fn channel_recv_waits_instead_of_busy_polling() {
         }
 
         let producer_task = spawn(producer);
+
         let producer_result = producer_task.join();
         let consumer_result = consumer_task.join();
 
         let ok = observed == "waiting"
             && producer_result == 1
             && consumer_result == 99;
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
-}
 
-#[test]
-fn channel_recv_outside_task_is_rejected() {
-    let (_vm, result) = run_script(r#"
-        let ch = channel();
-        ch.recv();
-    "#);
-
-    let error = result.expect_err("root recv must fail");
     assert!(matches!(
-        error,
-        crate::error::runtime_error::RuntimeError::ChannelRecvOutsideTask
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
     ));
 }
 
+#[test]
+fn channel_recv_from_root_pumps_scheduler() {
+    let (vm, result) = run_script(
+        r#"
+        let ch: Channel<int> = channel();
+
+        func producer() -> int {
+            ch.send(42);
+            return 7;
+        }
+
+        let task = spawn(producer);
+
+        let received = ch.recv();
+        let producer_result = task.join();
+
+        let ok = received == 42 && producer_result == 7;
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
 
 #[test]
 fn channel_wakes_waiters_in_fifo_order() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         let ch = channel();
         let log = [];
 
@@ -394,26 +531,34 @@ fn channel_wakes_waiters_in_fifo_order() {
             && log[0] == 101
             && log[1] == 202
             && ch.is_empty();
-    "#);
+    "#,
+    );
 
     result.unwrap();
-    assert!(matches!(vm.globals.borrow().get("ok"), Some(Value::Boolean(true))));
-}
 
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
 
 #[test]
 fn channel_generic_annotation_checks_send_type_and_recv_result() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         let ch: Channel<int> = channel();
+
         ch.send(42);
 
         let value: int = ch.recv();
         let maybe: Option<int> = ch.try_recv();
 
         let ok = value == 42 && maybe.is_none();
-    "#);
+    "#,
+    );
 
     result.unwrap();
+
     assert!(matches!(
         vm.globals.borrow().get("ok"),
         Some(Value::Boolean(true))
@@ -422,28 +567,74 @@ fn channel_generic_annotation_checks_send_type_and_recv_result() {
 
 #[test]
 fn channel_generic_constructor_accepts_explicit_type_argument() {
-    let (vm, result) = run_script(r#"
+    let (vm, result) = run_script(
+        r#"
         let ch = channel<int>();
+
         ch.send(7);
+
         let value = ch.recv();
         let ok = value == 7;
-    "#);
+    "#,
+    );
 
     result.unwrap();
+
     assert!(matches!(
         vm.globals.borrow().get("ok"),
         Some(Value::Boolean(true))
     ));
 }
 
-
 #[test]
 fn channel_generic_annotation_rejects_wrong_send_type() {
-    let error = compile_only(r#"
+    let error = compile_only(
+        r#"
         let ch: Channel<int> = channel();
         ch.send("wrong type");
-    "#)
+    "#,
+    )
     .expect_err("Channel<int> must reject send(str)");
 
-    assert!(matches!(error, CompileError::WrongArgumentType { .. }));
+    assert!(
+        is_wrong_argument_type(&error),
+        "expected WrongArgumentType, got: {error:?}"
+    );
+}
+// ============================================================
+//   RÉGRESSION : la VM qui attend (`join` / `recv`) doit rester racine
+// ============================================================
+//
+// Pendant `task.join()`, la tâche tourne (et peut déclencher le GC) alors que
+// la pile de la VM appelante n'est PAS dans le registre du scheduler. Sans
+// épinglage, un tableau détenu uniquement par une variable locale de
+// l'appelant était vidé (`break_cycle`) : `data.size()` renvoyait 0.
+#[test]
+fn locals_of_the_joining_vm_survive_gc_run_by_the_task() {
+    let (vm, result) = run_script(
+        r#"
+        func worker() -> int {
+            let junk = [];
+            for i in range(0, 20000) { junk.add([i]); }
+            return junk.size();
+        }
+
+        func main() -> int {
+            let data = [1, 2, 3];
+            let task = spawn(worker);
+            let produced = task.join();
+            return data.size() + produced;
+        }
+
+        let total = main();
+        let ok = total == 20003;
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
 }

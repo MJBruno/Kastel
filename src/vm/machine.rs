@@ -425,7 +425,7 @@ impl VirtualMachine {
     ) -> Result<(), RuntimeError> {
         let task_id = self
             .task_id
-            .ok_or(RuntimeError::ChannelRecvOutsideTask)?;
+            .ok_or(RuntimeError::TaskNotFound)?;
 
         let scheduler = self
             .scheduler

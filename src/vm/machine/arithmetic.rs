@@ -632,7 +632,7 @@ impl VirtualMachine {
                 return Ok(());
             }
 
-            if *increment > 0 {
+            if self.task_id.is_none() && *increment > 0 {
                 let local128 = local as i128;
                 let limit128 = *limit as i128;
                 let increment128 = *increment as i128;

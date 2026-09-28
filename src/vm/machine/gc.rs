@@ -36,7 +36,16 @@ impl VirtualMachine {
     /// pile, les globales et les frames de la VM appelante, qui restent
     /// figées pendant ce temps.
     pub(crate) fn pin_roots(&self) -> gc::PinnedRoots {
-        let mut values = Vec::with_capacity(self.stack.len() + self.temp_roots.len());
+        self.pin_roots_with(&[])
+    }
+
+    /// Comme `pin_roots`, en épinglant en plus `extra` : valeurs tenues
+    /// uniquement par une variable Rust (récepteur dépilé, par exemple)
+    /// pendant qu'une AUTRE VM (tâche) s'exécute et peut collecter.
+    pub(crate) fn pin_roots_with(&self, extra: &[Value]) -> gc::PinnedRoots {
+        let mut values = Vec::with_capacity(self.stack.len() + self.temp_roots.len() + extra.len());
+
+        values.extend(extra.iter().cloned());
 
         values.extend(self.stack.iter().cloned());
         values.extend(self.temp_roots.iter().cloned());

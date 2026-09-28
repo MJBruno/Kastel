@@ -298,12 +298,12 @@ mod tests {
             Some(Value::Integer(6))
         ));
 
-        // Import direct d'une classe, puis usage sur une ligne suivante.
-        run_line(&mut session, "import std.math.Complexe;");
+        // Import direct d'une fonction exportée du module standard.
+        run_line(&mut session, "import std.math.gcd;");
 
         assert!(matches!(
-            run_line(&mut session, "new Complexe(3, 4).magnitude()"),
-            Some(Value::Float(value)) if value == 5.0
+            run_line(&mut session, "gcd(48, 18)"),
+            Some(Value::Integer(6))
         ));
     }
 

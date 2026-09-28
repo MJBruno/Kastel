@@ -58,7 +58,11 @@ pub fn native_exit(args: &[Value]) -> Result<Value, RuntimeError> {
     let code = match args.len() {
         0 => 0,
         1 => match &args[0] {
-            Value::Integer(code) => *code as i32,
+            // `as i32` tronquait en silence : `exit(4294967296)` sortait avec
+            // le code 0 (succès). Un code hors plage est une erreur.
+            Value::Integer(code) => {
+                i32::try_from(*code).map_err(|_| RuntimeError::TypeError)?
+            }
             _ => return Err(RuntimeError::TypeError),
         },
         found => {

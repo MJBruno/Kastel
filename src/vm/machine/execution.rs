@@ -13,7 +13,7 @@ impl VirtualMachine {
                 super::RunStatus::Completed => return Ok(()),
                 super::RunStatus::Yielded => continue,
                 super::RunStatus::Waiting => {
-                    return Err(RuntimeError::ChannelRecvOutsideTask);
+                    return Err(RuntimeError::TaskDeadlock);
                 }
             }
         }
@@ -26,7 +26,7 @@ impl VirtualMachine {
                 super::RunStatus::Completed => return Ok(()),
                 super::RunStatus::Yielded => continue,
                 super::RunStatus::Waiting => {
-                    return Err(RuntimeError::ChannelRecvOutsideTask);
+                    return Err(RuntimeError::TaskDeadlock);
                 }
             }
         }
@@ -236,9 +236,8 @@ impl VirtualMachine {
 
             RuntimeError::TaskCaptureNotAllowed
             | RuntimeError::TaskNotFound
-            | RuntimeError::TaskDeadlock
             | RuntimeError::YieldOutsideTask
-            | RuntimeError::ChannelRecvOutsideTask => {
+            | RuntimeError::TaskDeadlock => {
                 Ok(Value::new_error(error.kind_name(), error.to_string()))
             }
 

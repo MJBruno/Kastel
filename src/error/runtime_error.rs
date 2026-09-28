@@ -148,7 +148,6 @@ pub enum RuntimeError {
     TaskNotFound,
     TaskDeadlock,
     YieldOutsideTask,
-    ChannelRecvOutsideTask,
 
     /// Résultat hors de l'intervalle des entiers 64 bits signés
     /// (`-9223372036854775808` à `9223372036854775807`). `operation` est
@@ -225,10 +224,6 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::YieldOutsideTask => {
                 write!(f, "yield() can only be used inside a spawned task.")
-            }
-
-            RuntimeError::ChannelRecvOutsideTask => {
-                write!(f, "recv() can only be used inside a spawned task.")
             }
 
             RuntimeError::ModuleError(message) => {
@@ -427,7 +422,6 @@ impl RuntimeError {
             RuntimeError::TaskNotFound => "TaskNotFound",
             RuntimeError::TaskDeadlock => "TaskDeadlock",
             RuntimeError::YieldOutsideTask => "YieldOutsideTask",
-            RuntimeError::ChannelRecvOutsideTask => "ChannelRecvOutsideTask",
         }
     }
 

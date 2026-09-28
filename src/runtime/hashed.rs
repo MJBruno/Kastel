@@ -290,6 +290,20 @@ mod tests {
     }
 
     #[test]
+    fn tuples_are_equal_by_content_with_eq_operator_too() {
+        assert!(Value::equals(pair(1, 2), pair(1, 2)));
+        assert!(!Value::equals(pair(1, 2), pair(2, 1)));
+        assert!(!Value::equals(pair(1, 2), Value::new_tuple(vec![int(1)])));
+
+        // Cohérent avec l'usage comme clé.
+        assert_eq!(pair(1, 2).key_hash(), pair(1, 2).key_hash());
+        assert!(Value::equals(
+            Value::new_tuple(vec![pair(1, 2), text("x")]),
+            Value::new_tuple(vec![pair(1, 2), text("x")]),
+        ));
+    }
+
+    #[test]
     fn integer_and_float_equality_is_exact() {
         // 2^53 + 1 n'est pas représentable en f64 : il ne doit pas égaler 2^53.
         let big = (1i64 << 53) + 1;

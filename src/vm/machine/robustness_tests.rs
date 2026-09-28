@@ -903,11 +903,13 @@ fn enum_duplicate_variants_are_rejected() {
 }
 
 #[test]
-fn enum_opcode_does_not_shift_existing_opcode_values() {
+fn concurrency_opcodes_do_not_shift_existing_opcode_values() {
     assert_eq!(crate::bytecode::opcode::OpCode::OverloadLocal as u8, 67);
     assert_eq!(crate::bytecode::opcode::OpCode::Enum as u8, 68);
     assert_eq!(crate::bytecode::opcode::OpCode::Try as u8, 69);
-    assert_eq!(crate::bytecode::opcode::OpCode::COUNT, 70);
+    assert_eq!(crate::bytecode::opcode::OpCode::Spawn as u8, 70);
+    assert_eq!(crate::bytecode::opcode::OpCode::Yield as u8, 71);
+    assert_eq!(crate::bytecode::opcode::OpCode::COUNT, 72);
 }
 
 #[test]

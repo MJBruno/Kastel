@@ -3026,18 +3026,40 @@ impl TypeChecker {
                     }
 
                     let callee_type = self.check_expression(&arguments[0])?;
-                    for argument in arguments.iter().skip(1) {
-                        self.check_expression(argument)?;
-                    }
+                    let task_arguments = &arguments[1..];
+                    let function_name = format!(
+                        "spawn({})",
+                        self.expression_name(&arguments[0])
+                    );
 
                     let result_type = match callee_type {
-                        Type::Function(signature) => *signature.return_type,
-                        Type::Overloads(signatures) => signatures
-                            .into_iter()
-                            .map(|signature| *signature.return_type)
-                            .reduce(|left, right| left.merge(&right))
-                            .unwrap_or(Type::Dynamic),
-                        Type::Dynamic => Type::Dynamic,
+                        Type::Function(signature) => {
+                            let instantiated = self.instantiate_call_signature(
+                                &signature,
+                                generic_args,
+                                task_arguments,
+                                &function_name,
+                            )?;
+                            *instantiated.return_type
+                        }
+
+                        Type::Overloads(signatures) => {
+                            let signature = self.resolve_overload(
+                                &signatures,
+                                generic_args,
+                                task_arguments,
+                                &function_name,
+                            )?;
+                            *signature.return_type
+                        }
+
+                        Type::Dynamic => {
+                            for argument in task_arguments {
+                                self.check_expression(argument)?;
+                            }
+                            Type::Dynamic
+                        }
+
                         other => {
                             return Err(CompileError::NotCallable {
                                 found: other.to_string(),
@@ -3616,10 +3638,27 @@ impl TypeChecker {
         right_type: Type,
     ) -> Result<Type, CompileError> {
         if matches!(left_type, Type::Union(_)) || matches!(right_type, Type::Union(_)) {
+            // `==` / `!=` sur une union : comparer `int | str` à `1` est
+            // légitime (c'est le test qui distingue les membres). Une paire de
+            // membres incompatible vaut simplement « faux » à l'exécution ;
+            // l'expression n'est une erreur que si AUCUNE paire n'est valide.
+            let is_equality = matches!(operator, BinaryOp::Equal | BinaryOp::NotEqual);
             let mut results = Vec::new();
+            let mut first_error = None;
             for left_member in left_type.members() {
                 for right_member in right_type.members() {
-                    results.push(self.binary_type(operator, left_member.clone(), right_member)?);
+                    match self.binary_type(operator, left_member.clone(), right_member) {
+                        Ok(result) => results.push(result),
+                        Err(error) if is_equality => {
+                            first_error.get_or_insert(error);
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+            if results.is_empty() {
+                if let Some(error) = first_error {
+                    return Err(error);
                 }
             }
             return Ok(Type::union_of(results));

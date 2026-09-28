@@ -1577,6 +1577,19 @@ impl Value {
                         },
                     ) => a_ok == b_ok && Value::equals(a_value.clone(), b_value.clone()),
 
+                    // Un tuple est immuable : il se compare PAR CONTENU, comme
+                    // quand il sert de clé de Dict/Set (`key_equals`). Avant,
+                    // `(1, 2) == (1, 2)` était faux alors que `d[(1, 2)]`
+                    // retrouvait la même clé.
+                    (Object::Tuple(a_items), Object::Tuple(b_items)) => {
+                        Gc::<Object>::ptr_eq(&a, &b)
+                            || (a_items.len() == b_items.len()
+                                && a_items
+                                    .iter()
+                                    .zip(b_items.iter())
+                                    .all(|(left, right)| Value::key_equals(left, right)))
+                    }
+
                     _ => Gc::<Object>::ptr_eq(&a, &b),
                 }
             }

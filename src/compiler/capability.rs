@@ -143,6 +143,100 @@ impl Capability {
             .expect("une capability possède une signature intrinsèque")
     }
 
+    /// Détermine si un type est intrinsèquement comparable par `Eq`.
+    ///
+    /// `Option<T>` est comparable lorsque `T` l'est.
+    /// `Result<T, E>` est comparable lorsque `T` et `E` le sont.
+    fn is_eq_type(ty: &Type) -> bool {
+        if ty.is_dynamic() {
+            return true;
+        }
+
+        match ty {
+            Type::Int | Type::Float | Type::Bool | Type::Str | Type::None => true,
+
+            Type::Generic { name, arguments }
+                if name.eq_ignore_ascii_case("Option") && arguments.len() == 1 =>
+            {
+                Self::is_eq_type(&arguments[0])
+            }
+
+            Type::Generic { name, arguments }
+                if name.eq_ignore_ascii_case("Result") && arguments.len() == 2 =>
+            {
+                Self::is_eq_type(&arguments[0]) && Self::is_eq_type(&arguments[1])
+            }
+
+            _ => false,
+        }
+    }
+
+    /// Vérifie si deux types peuvent être comparés avec `==` / `!=`.
+    fn eq_compatible(left: &Type, right: &Type) -> bool {
+        if left.is_dynamic() || right.is_dynamic() {
+            return true;
+        }
+
+        match (left, right) {
+            // Même type primitif.
+            (Type::Int, Type::Int)
+            | (Type::Float, Type::Float)
+            | (Type::Bool, Type::Bool)
+            | (Type::Str, Type::Str)
+            | (Type::None, Type::None) => true,
+
+            // Les comparaisons numériques restent hétérogènes.
+            (Type::Int, Type::Float) | (Type::Float, Type::Int) => true,
+
+            // `opt == None` / `None == opt` : test d'absence, très courant.
+            (Type::Generic { name, arguments }, Type::None)
+            | (Type::None, Type::Generic { name, arguments })
+                if name.eq_ignore_ascii_case("Option") && arguments.len() == 1 =>
+            {
+                true
+            }
+
+            // Option<T> == Option<U>
+            (
+                Type::Generic {
+                    name: left_name,
+                    arguments: left_args,
+                },
+                Type::Generic {
+                    name: right_name,
+                    arguments: right_args,
+                },
+            ) if left_name.eq_ignore_ascii_case("Option")
+                && right_name.eq_ignore_ascii_case("Option")
+                && left_args.len() == 1
+                && right_args.len() == 1 =>
+            {
+                Self::eq_compatible(&left_args[0], &right_args[0])
+            }
+
+            // Result<T,E> == Result<U,F>
+            (
+                Type::Generic {
+                    name: left_name,
+                    arguments: left_args,
+                },
+                Type::Generic {
+                    name: right_name,
+                    arguments: right_args,
+                },
+            ) if left_name.eq_ignore_ascii_case("Result")
+                && right_name.eq_ignore_ascii_case("Result")
+                && left_args.len() == 2
+                && right_args.len() == 2 =>
+            {
+                Self::eq_compatible(&left_args[0], &right_args[0])
+                    && Self::eq_compatible(&left_args[1], &right_args[1])
+            }
+
+            _ => false,
+        }
+    }
+
     /// Vérifie si un type concret satisfait intrinsèquement cette capability.
     ///
     /// Cette fonction est utilisée pour les contraintes génériques :
@@ -157,44 +251,19 @@ impl Capability {
         }
 
         match self {
-            Self::Add => matches!(
-                ty,
-                Type::Int | Type::Float | Type::Str
-            ),
+            Self::Add => matches!(ty, Type::Int | Type::Float | Type::Str),
 
-            Self::Sub
-            | Self::Mul
-            | Self::Div
-            | Self::Mod => {
+            Self::Sub | Self::Mul | Self::Div | Self::Mod => {
                 matches!(ty, Type::Int | Type::Float)
             }
 
-            Self::Eq => {
-                matches!(
-                    ty,
-                    Type::Int
-                        | Type::Float
-                        | Type::Bool
-                        | Type::Str
-                        | Type::None
-                )
-            }
+            Self::Eq => Self::is_eq_type(ty),
 
             Self::Ord => {
-                matches!(
-                    ty,
-                    Type::Int
-                        | Type::Float
-                        | Type::Str
-                        | Type::Bool
-                )
+                matches!(ty, Type::Int | Type::Float | Type::Str | Type::Bool)
             }
 
-            Self::BitAnd
-            | Self::BitOr
-            | Self::BitXor
-            | Self::ShiftLeft
-            | Self::ShiftRight => {
+            Self::BitAnd | Self::BitOr | Self::BitXor | Self::ShiftLeft | Self::ShiftRight => {
                 matches!(ty, Type::Int)
             }
         }
@@ -221,53 +290,29 @@ impl Capability {
                 _ => None,
             },
 
-            Self::Sub | Self::Mul => {
-                match (left.numeric_kind(), right.numeric_kind()) {
-                    (Some(NumericType::Int), Some(NumericType::Int)) => Some(Type::Int),
+            Self::Sub | Self::Mul => match (left.numeric_kind(), right.numeric_kind()) {
+                (Some(NumericType::Int), Some(NumericType::Int)) => Some(Type::Int),
 
-                    (Some(_), Some(_)) => Some(Type::Float),
+                (Some(_), Some(_)) => Some(Type::Float),
 
-                    _ => None,
-                }
-            }
+                _ => None,
+            },
 
-            Self::Div => {
-                match (left.numeric_kind(), right.numeric_kind()) {
-                    (Some(_), Some(_)) => Some(Type::Float),
-                    _ => None,
-                }
-            }
+            Self::Div => match (left.numeric_kind(), right.numeric_kind()) {
+                (Some(_), Some(_)) => Some(Type::Float),
+                _ => None,
+            },
 
-            Self::Mod => {
-                match (left.numeric_kind(), right.numeric_kind()) {
-                    (Some(NumericType::Int), Some(NumericType::Int)) => Some(Type::Int),
+            Self::Mod => match (left.numeric_kind(), right.numeric_kind()) {
+                (Some(NumericType::Int), Some(NumericType::Int)) => Some(Type::Int),
 
-                    (Some(_), Some(_)) => Some(Type::Float),
+                (Some(_), Some(_)) => Some(Type::Float),
 
-                    _ => None,
-                }
-            }
+                _ => None,
+            },
 
             Self::Eq => {
-                let left_primitive = matches!(
-                    left,
-                    Type::Int
-                        | Type::Float
-                        | Type::Bool
-                        | Type::Str
-                        | Type::None
-                );
-
-                let right_primitive = matches!(
-                    right,
-                    Type::Int
-                        | Type::Float
-                        | Type::Bool
-                        | Type::Str
-                        | Type::None
-                );
-
-                if left_primitive && right_primitive {
+                if Self::eq_compatible(left, right) {
                     Some(Type::Bool)
                 } else {
                     None
@@ -292,11 +337,7 @@ impl Capability {
                 }
             }
 
-            Self::BitAnd
-            | Self::BitOr
-            | Self::BitXor
-            | Self::ShiftLeft
-            | Self::ShiftRight => {
+            Self::BitAnd | Self::BitOr | Self::BitXor | Self::ShiftLeft | Self::ShiftRight => {
                 if matches!(left, Type::Int) && matches!(right, Type::Int) {
                     Some(Type::Int)
                 } else {
@@ -318,10 +359,9 @@ impl Capability {
 
             BinaryOp::Is => None,
 
-            BinaryOp::Less
-            | BinaryOp::LessEqual
-            | BinaryOp::Greater
-            | BinaryOp::GreaterEqual => Some(Self::Ord),
+            BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => {
+                Some(Self::Ord)
+            }
 
             BinaryOp::BitAnd => Some(Self::BitAnd),
             BinaryOp::BitOr => Some(Self::BitOr),
@@ -361,25 +401,13 @@ mod tests {
             Some(Capability::ShiftLeft)
         );
 
-        assert_eq!(
-            Capability::from_operator(&BinaryOp::And),
-            None
-        );
+        assert_eq!(Capability::from_operator(&BinaryOp::And), None);
 
-        assert_eq!(
-            Capability::from_operator(&BinaryOp::Is),
-            None
-        );
+        assert_eq!(Capability::from_operator(&BinaryOp::Is), None);
 
-        assert_eq!(
-            Capability::Eq.operator_method_name(),
-            "equals"
-        );
+        assert_eq!(Capability::Eq.operator_method_name(), "equals");
 
-        assert_eq!(
-            Capability::Ord.operator_method_name(),
-            "compare"
-        );
+        assert_eq!(Capability::Ord.operator_method_name(), "compare");
     }
 
     #[test]
@@ -447,10 +475,53 @@ mod tests {
     }
 
     #[test]
+    fn option_can_be_compared_with_none_in_both_directions() {
+        let option_int = Type::Generic {
+            name: "Option".to_string(),
+            arguments: vec![Type::Int],
+        };
+
+        assert!(Capability::Eq.intrinsic_result(&option_int, &Type::None).is_some());
+        assert!(Capability::Eq.intrinsic_result(&Type::None, &option_int).is_some());
+        assert!(Capability::Eq.intrinsic_result(&Type::Int, &Type::None).is_none());
+    }
+
+    #[test]
     fn eq_supports_primitive_types() {
         assert!(Capability::Eq.is_satisfied_by(&Type::Int));
         assert!(Capability::Eq.is_satisfied_by(&Type::Float));
         assert!(Capability::Eq.is_satisfied_by(&Type::Str));
         assert!(Capability::Eq.is_satisfied_by(&Type::Bool));
+
+        assert_eq!(
+            Capability::Eq.intrinsic_result(&Type::Int, &Type::Float),
+            Some(Type::Bool)
+        );
+    }
+
+    #[test]
+    fn eq_supports_option_and_result_types() {
+        let option_int = Type::Generic {
+            name: "Option".to_string(),
+            arguments: vec![Type::Int],
+        };
+
+        let result_int_str = Type::Generic {
+            name: "Result".to_string(),
+            arguments: vec![Type::Int, Type::Str],
+        };
+
+        assert!(Capability::Eq.is_satisfied_by(&option_int));
+        assert!(Capability::Eq.is_satisfied_by(&result_int_str));
+
+        assert_eq!(
+            Capability::Eq.intrinsic_result(&option_int, &option_int),
+            Some(Type::Bool)
+        );
+
+        assert_eq!(
+            Capability::Eq.intrinsic_result(&result_int_str, &result_int_str),
+            Some(Type::Bool)
+        );
     }
 }

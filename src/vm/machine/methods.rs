@@ -885,7 +885,14 @@ impl VirtualMachine {
                         .ok_or(RuntimeError::TaskNotFound)?;
 
                     let result = match method_name.as_str() {
-                        "join" => super::scheduler::Scheduler::join(&scheduler, task.id)?,
+                        "join" => {
+                            // `join` fait tourner d'autres tâches, dont les
+                            // collectes doivent voir la pile de CETTE VM
+                            // (sinon ses tableaux/dicts seraient vidés).
+                            let _pinned = self.pin_roots_with(&[Value::Object(handle.clone())]);
+
+                            super::scheduler::Scheduler::join(&scheduler, task.id)?
+                        }
                         "status" => Value::new_string(
                             super::scheduler::Scheduler::status(&scheduler, task.id)?.to_string(),
                         ),
@@ -948,8 +955,33 @@ impl VirtualMachine {
 
                             if let Some(value) = channel.borrow_mut().try_recv() {
                                 self.push(value);
+                            } else if self.task_id.is_some() {
+                                self.wait_on_channel(
+                                    channel,
+                                    Value::Object(handle.clone()),
+                                )?;
                             } else {
-                                self.wait_on_channel(channel, Value::Object(handle.clone()))?;
+                                // Même raison que `join` : la pile de cette VM
+                                // et le canal lui-même doivent rester vivants
+                                // pendant que les tâches tournent.
+                                let _pinned =
+                                    self.pin_roots_with(&[Value::Object(handle.clone())]);
+
+                                loop {
+                                    if let Some(value) = channel.borrow_mut().try_recv() {
+                                        self.push(value);
+                                        break;
+                                    }
+
+                                    let scheduler = self
+                                        .scheduler
+                                        .upgrade()
+                                        .ok_or(RuntimeError::TaskNotFound)?;
+
+                                    if !super::scheduler::Scheduler::poll(&scheduler)? {
+                                        return Err(RuntimeError::TaskDeadlock);
+                                    }
+                                }
                             }
                         }
 

@@ -1,13 +1,29 @@
-let ch: Channel<int> = channel();
+class Counter: Iterator<int> {
+    let current: int;
+    let stop: int;
 
-ch.send(42);
+    func initialize(stop: int) {
+        self.current = 0;
+        self.stop = stop;
+    }
 
-let value: int = ch.recv();
-let maybe: Option<int> = ch.try_recv();
+    func next() -> int {
+        let value = self.current;
+        self.current = self.current + 1;
+        return value;
+    }
 
-println("value = " + str(value));
-println("empty = " + str(maybe.is_none()));
+    func has_next() -> bool {
+        return self.current < self.stop;
+    }
+}
 
-let typed = channel<str>();
-typed.send("hello");
-println(typed.recv());
+let iterator: Iterator<int> = new Counter(5);
+
+let values = iterator
+    .map(func(value) { return value * 2; })
+    .filter(func(value) { return value >= 4; })
+    .take(2)
+    .collect();
+
+println(values)
