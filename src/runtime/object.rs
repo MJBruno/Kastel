@@ -45,6 +45,9 @@ pub enum Object {
     /// Canal coopératif non borné.
     Channel(Rc<RefCell<ChannelState>>),
 
+    /// Mutex coopératif non réentrant.
+    Mutex(Rc<RefCell<crate::runtime::mutex::MutexState>>),
+
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
     /// le GC), mais aucune méthode de mutation ne l'expose : voir
@@ -181,6 +184,12 @@ impl Object {
 
             Object::Channel(channel) => {
                 channel.borrow_mut().queue.clear();
+            }
+
+            Object::Mutex(mutex) => {
+                let mut mutex = mutex.borrow_mut();
+                mutex.owner = None;
+                mutex.waiters.clear();
             }
 
             Object::Tuple(elements) => {

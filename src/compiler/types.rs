@@ -670,6 +670,26 @@ impl Type {
         }
     }
 
+    /// Signatures statiques de `Mutex`.
+    pub fn mutex_member_type(&self, name: &str) -> Option<Type> {
+        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("Mutex")) {
+            return None;
+        }
+
+        let function = |result: Type| Type::Function(FunctionType {
+            generic_params: Vec::new(),
+            generic_constraints: Vec::new(),
+            params: Vec::new(),
+            return_type: Box::new(result),
+        });
+
+        match name {
+            "lock" | "unlock" => Some(function(Type::None)),
+            "try_lock" | "is_locked" => Some(function(Type::Bool)),
+            _ => None,
+        }
+    }
+
     /// Signatures statiques de `Task<T>`.
     pub fn task_member_type(&self, name: &str) -> Option<Type> {
         let result_type = match self {

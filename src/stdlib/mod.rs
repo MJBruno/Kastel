@@ -53,6 +53,7 @@ pub mod io;
 pub mod iterator;
 pub mod json;
 pub mod math;
+pub mod mutex;
 pub mod option;
 pub mod os;
 pub mod path;
@@ -80,6 +81,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     json::register(globals);
     file::register(globals);
     channel::register(globals);
+    mutex::register(globals);
     path::register(globals);
     os::register(globals);
     process::register(globals);
@@ -103,6 +105,7 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     json::register_compiler(compiler);
     file::register_compiler(compiler);
     channel::register_compiler(compiler);
+    mutex::register_compiler(compiler);
     path::register_compiler(compiler);
     os::register_compiler(compiler);
     process::register_compiler(compiler);

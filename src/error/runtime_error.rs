@@ -152,6 +152,8 @@ pub enum RuntimeError {
     /// exécute la cible sur la pile native, dont la profondeur est bornée.
     TaskNestingTooDeep,
     ChannelClosed,
+    MutexDeadlock,
+    MutexNotOwner,
     YieldOutsideTask,
 
     /// Résultat hors de l'intervalle des entiers 64 bits signés
@@ -237,6 +239,14 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::ChannelClosed => {
                 write!(f, "Channel is closed.")
+            }
+
+            RuntimeError::MutexDeadlock => {
+                write!(f, "Mutex is already locked by this task.")
+            }
+
+            RuntimeError::MutexNotOwner => {
+                write!(f, "Mutex can only be unlocked by its owner.")
             }
 
             RuntimeError::YieldOutsideTask => {
@@ -441,6 +451,8 @@ impl RuntimeError {
             RuntimeError::TaskCancelled => "TaskCancelled",
             RuntimeError::TaskNestingTooDeep => "TaskNestingTooDeep",
             RuntimeError::ChannelClosed => "ChannelClosed",
+            RuntimeError::MutexDeadlock => "MutexDeadlock",
+            RuntimeError::MutexNotOwner => "MutexNotOwner",
             RuntimeError::YieldOutsideTask => "YieldOutsideTask",
         }
     }

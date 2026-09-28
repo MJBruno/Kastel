@@ -8,6 +8,7 @@ use std::rc::{Rc, Weak};
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
 use crate::runtime::channel::ChannelState;
+use crate::runtime::mutex::MutexState;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
 use crate::runtime::value::Value;
@@ -104,6 +105,13 @@ pub(crate) struct Scheduler {
     /// permet d'ignorer proprement les anciennes entrées après annulation.
     pub(crate) sleeping_tasks: HashMap<usize, Instant>,
     pub(crate) timers: BinaryHeap<Reverse<(Instant, usize)>>,
+    /// Tâche actuellement en attente sur un mutex. Une tâche ne peut bloquer
+    /// que sur un seul mutex à la fois.
+    pub(crate) waiting_mutexes: HashMap<usize, Rc<RefCell<MutexState>>>,
+    /// Mutex actuellement détenus par chaque tâche. Le scheduler les conserve
+    /// pour pouvoir libérer automatiquement les verrous si une tâche termine,
+    /// échoue ou est annulée.
+    pub(crate) owned_mutexes: HashMap<usize, Vec<Rc<RefCell<MutexState>>>>,
 }
 
 impl Scheduler {
@@ -119,6 +127,8 @@ impl Scheduler {
             cancel_requested: std::collections::HashSet::new(),
             sleeping_tasks: HashMap::new(),
             timers: BinaryHeap::new(),
+            waiting_mutexes: HashMap::new(),
+            owned_mutexes: HashMap::new(),
         }
     }
 
@@ -272,7 +282,9 @@ impl Scheduler {
             task.result = None;
             task.error = None;
             Self::unregister_channel_waits(&mut scheduler, id);
+            scheduler.unregister_mutex_wait(id);
             scheduler.unregister_timer(id);
+            scheduler.release_owned_mutexes(id);
             task.vm.release_task_resources();
         } else {
             match outcome {
@@ -298,6 +310,10 @@ impl Scheduler {
             task.status,
             TaskStateStatus::Completed | TaskStateStatus::Failed | TaskStateStatus::Cancelled
         );
+
+        if finished {
+            scheduler.release_owned_mutexes(id);
+        }
 
         if finished && !cancel_now {
             scheduler.unregister_timer(id);
@@ -488,6 +504,171 @@ impl Scheduler {
 
     fn unregister_timer(&mut self, task_id: usize) {
         self.sleeping_tasks.remove(&task_id);
+    }
+
+    fn mutex_key(mutex: &Rc<RefCell<MutexState>>) -> usize {
+        Rc::as_ptr(mutex) as usize
+    }
+
+    fn add_owned_mutex(&mut self, task_id: usize, mutex: Rc<RefCell<MutexState>>) {
+        let key = Self::mutex_key(&mutex);
+        let owned = self.owned_mutexes.entry(task_id).or_default();
+        if !owned.iter().any(|value| Self::mutex_key(value) == key) {
+            owned.push(mutex);
+        }
+    }
+
+    fn remove_owned_mutex(&mut self, task_id: usize, mutex: &Rc<RefCell<MutexState>>) {
+        let key = Self::mutex_key(mutex);
+        if let Some(owned) = self.owned_mutexes.get_mut(&task_id) {
+            owned.retain(|value| Self::mutex_key(value) != key);
+            if owned.is_empty() {
+                self.owned_mutexes.remove(&task_id);
+            }
+        }
+    }
+
+    /// Essaie d'acquérir le mutex. `true` signifie que la tâche possède
+    /// immédiatement le verrou ; `false` signifie qu'elle a été placée en FIFO
+    /// et devra être réveillée par `unlock()`.
+    pub(crate) fn lock_mutex(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        mutex: &Rc<RefCell<MutexState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
+        if state.is_none() && !scheduler.running.contains(&task_id) {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let owner = mutex.borrow().owner;
+        match owner {
+            None => {
+                mutex.borrow_mut().owner = Some(task_id);
+                scheduler.add_owned_mutex(task_id, mutex.clone());
+                Ok(true)
+            }
+            Some(owner_id) if owner_id == task_id => Err(RuntimeError::MutexDeadlock),
+            Some(_) => {
+                let mut state = mutex.borrow_mut();
+                if !state.waiters.contains(&task_id) {
+                    state.waiters.push_back(task_id);
+                }
+                drop(state);
+                scheduler.waiting_mutexes.insert(task_id, mutex.clone());
+                Ok(false)
+            }
+        }
+    }
+
+    /// Tente d'acquérir le mutex sans mettre la tâche en attente.
+   pub(crate) fn try_lock_mutex(
+    shared: &Rc<RefCell<Self>>,
+    task_id: usize,
+    mutex: &Rc<RefCell<MutexState>>,
+) -> Result<bool, RuntimeError> {
+    let mut scheduler = shared.borrow_mut();
+
+    let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
+    if state.is_none() && !scheduler.running.contains(&task_id) {
+        return Err(RuntimeError::TaskNotFound);
+    }
+
+    // Important : terminer le borrow() avant tout borrow_mut().
+    let owner = mutex.borrow().owner;
+
+    match owner {
+        None => {
+            mutex.borrow_mut().owner = Some(task_id);
+            scheduler.add_owned_mutex(task_id, mutex.clone());
+            Ok(true)
+        }
+
+        Some(_) => Ok(false),
+    }
+}
+
+    fn wake_next_mutex_waiter(&mut self, mutex: &Rc<RefCell<MutexState>>) {
+        loop {
+            let next_id = {
+                let mut state = mutex.borrow_mut();
+                state.waiters.pop_front()
+            };
+
+            let Some(next_id) = next_id else {
+                mutex.borrow_mut().owner = None;
+                return;
+            };
+
+            let should_wake = self
+                .tasks
+                .get(next_id)
+                .and_then(Option::as_ref)
+                .is_some_and(|task| {
+                    task.status == TaskStateStatus::Waiting
+                        && self
+                            .waiting_mutexes
+                            .get(&next_id)
+                            .is_some_and(|waiting| Self::mutex_key(waiting) == Self::mutex_key(mutex))
+                });
+
+            self.waiting_mutexes.remove(&next_id);
+
+            if !should_wake {
+                continue;
+            }
+
+            mutex.borrow_mut().owner = Some(next_id);
+            self.add_owned_mutex(next_id, mutex.clone());
+
+            let Some(task) = self.tasks.get_mut(next_id).and_then(Option::as_mut) else {
+                self.remove_owned_mutex(next_id, mutex);
+                continue;
+            };
+
+            if task.vm.resume_from_mutex().is_err() {
+                self.remove_owned_mutex(next_id, mutex);
+                continue;
+            }
+
+            task.status = TaskStateStatus::Ready;
+            self.ready.push_back(next_id);
+            return;
+        }
+    }
+
+    pub(crate) fn unlock_mutex(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        mutex: &Rc<RefCell<MutexState>>,
+    ) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        if mutex.borrow().owner != Some(task_id) {
+            return Err(RuntimeError::MutexNotOwner);
+        }
+
+        scheduler.remove_owned_mutex(task_id, mutex);
+        scheduler.wake_next_mutex_waiter(mutex);
+        Ok(())
+    }
+
+    fn unregister_mutex_wait(&mut self, task_id: usize) {
+        let Some(mutex) = self.waiting_mutexes.remove(&task_id) else {
+            return;
+        };
+
+        mutex.borrow_mut().waiters.retain(|id| *id != task_id);
+    }
+
+    fn release_owned_mutexes(&mut self, task_id: usize) {
+        let mutexes = self.owned_mutexes.remove(&task_id).unwrap_or_default();
+
+        for mutex in mutexes {
+            if mutex.borrow().owner == Some(task_id) {
+                self.wake_next_mutex_waiter(&mutex);
+            }
+        }
     }
 
     fn channel_key(channel: &Rc<RefCell<ChannelState>>) -> usize {
@@ -748,7 +929,9 @@ impl Scheduler {
                 scheduler.ready.retain(|queued_id| *queued_id != id);
 
                 Self::unregister_channel_waits(&mut scheduler, id);
+                scheduler.unregister_mutex_wait(id);
                 scheduler.unregister_timer(id);
+                scheduler.release_owned_mutexes(id);
             }
             TaskStateStatus::Completed
             | TaskStateStatus::Failed

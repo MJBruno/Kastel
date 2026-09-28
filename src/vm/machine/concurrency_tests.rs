@@ -1892,3 +1892,167 @@ fn stress_gc_pressure_across_many_tasks_keeps_root_data_alive() {
         assert_global_true(&vm, "ok");
     });
 }
+
+#[test]
+fn mutex_try_lock_and_unlock() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+
+            func worker() -> bool {
+                let first = m.try_lock();
+                let second = m.try_lock();
+                m.unlock();
+                return first && !second;
+            }
+
+            let task = spawn(worker);
+            let ok = task.join();
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn mutex_waiters_are_fifo_and_resume_after_unlock() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let events = channel<int>();
+
+            func first() {
+                m.lock();
+                events.send(1);
+                yield();
+                m.unlock();
+            }
+
+            func second() {
+                m.lock();
+                events.send(2);
+                m.unlock();
+            }
+
+            let a = spawn(first);
+            events.recv();
+            let b = spawn(second);
+
+            let first_done = a.join();
+            let second_event = events.recv();
+            let second_done = b.join();
+            let ok = second_event == 2 && m.is_locked() == false;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn mutex_non_reentrant_lock_is_a_catchable_error() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+
+            func worker() -> bool {
+                m.lock();
+
+                try {
+                    m.lock();
+                    return false;
+                } catch (e: Err) {
+                    m.unlock();
+                    return e.kind == "MutexDeadlock";
+                }
+            }
+
+            let ok = spawn(worker).join();
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn mutex_unlock_requires_the_owner() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let gate = channel<int>();
+
+            func holder() {
+                m.lock();
+                gate.send(1);
+                yield();
+                m.unlock();
+            }
+
+            func intruder() -> str {
+                try {
+                    m.unlock();
+                    return "bad";
+                } catch (e: Err) {
+                    return e.kind;
+                }
+            }
+
+            let owner = spawn(holder);
+            gate.recv();
+            let result = spawn(intruder).join();
+            owner.cancel();
+            let ok = result == "MutexNotOwner";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_mutex_owner_releases_the_lock() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let gate = channel<int>();
+
+            func holder() {
+                m.lock();
+                gate.send(1);
+                while true {
+                    yield();
+                }
+            }
+
+            func waiter() {
+                m.lock();
+                gate.send(2);
+                m.unlock();
+            }
+
+            let owner = spawn(holder);
+            gate.recv();
+            let waiter_task = spawn(waiter);
+            owner.cancel();
+
+            let acquired = gate.recv();
+            waiter_task.join();
+            let ok = acquired == 2 && !m.is_locked();
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}

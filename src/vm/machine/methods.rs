@@ -42,13 +42,11 @@ impl VirtualMachine {
             channels.push((channel, value));
         }
 
-        let deadline = timeout_ms
-            .map(|milliseconds| {
-                std::time::Instant::now()
-                    .checked_add(std::time::Duration::from_millis(milliseconds))
-                    .ok_or(RuntimeError::InvalidFunction)
-            })
-            .transpose()?;
+        let deadline = timeout_ms.map(|milliseconds| {
+            std::time::Instant::now()
+                .checked_add(std::time::Duration::from_millis(milliseconds))
+                .ok_or(RuntimeError::InvalidFunction)
+        }).transpose()?;
 
         loop {
             for (index, (channel, _)) in channels.iter().enumerate() {
@@ -86,15 +84,13 @@ impl VirtualMachine {
                 self.wait_on_select(channels.clone())?;
 
                 if let Some(stop_at) = deadline {
-                    let remaining =
-                        stop_at.saturating_duration_since(std::time::Instant::now());
+                    let remaining = stop_at.saturating_duration_since(std::time::Instant::now());
                     let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
                     let scheduler = self
                         .scheduler
                         .upgrade()
                         .ok_or(RuntimeError::TaskNotFound)?;
-                    let timer_deadline =
-                        Scheduler::sleep_task(&scheduler, task_id, remaining)?;
+                    let timer_deadline = Scheduler::sleep_task(&scheduler, task_id, remaining)?;
                     self.waiting_timer = Some(timer_deadline);
                 }
 
@@ -102,10 +98,7 @@ impl VirtualMachine {
             }
 
             let _pinned = self.pin_roots_with(
-                &channels
-                    .iter()
-                    .map(|(_, value)| value.clone())
-                    .collect::<Vec<_>>(),
+                &channels.iter().map(|(_, value)| value.clone()).collect::<Vec<_>>(),
             );
             let scheduler = self
                 .scheduler
@@ -248,24 +241,23 @@ impl VirtualMachine {
     /// de classe afin de conserver les règles de visibilité.
     pub(crate) fn caller_owner_class(&self) -> Option<Gc<Object>> {
         let frame = self.frames.last()?;
+        
 
         frame_closure(&frame.closure).owner_class.clone()
     }
 
     /// Il n'existe plus de sous-classes en Kastel. Le mot-clé `protected`,
     /// conservé pour compatibilité, est donc limité à la classe déclarante.
-    fn is_same_class(caller: Option<Gc<Object>>, owner: &Gc<Object>) -> bool {
-        caller
-            .as_ref()
-            .is_some_and(|current| Gc::ptr_eq(current, owner))
+    fn is_same_class(
+        caller: Option<Gc<Object>>,
+        owner: &Gc<Object>,
+    ) -> bool {
+        caller.as_ref().is_some_and(|current| Gc::ptr_eq(current, owner))
     }
 
     /// `new C(...)` : le constructeur est toujours celui de `C`. Il n'existe
     /// aucun constructeur hérité.
-    pub(crate) fn ensure_constructor_access(
-        &self,
-        class: &Gc<Object>,
-    ) -> Result<(), RuntimeError> {
+    pub(crate) fn ensure_constructor_access(&self, class: &Gc<Object>) -> Result<(), RuntimeError> {
         let (declares, is_private, is_protected, class_name) = {
             let object = class.borrow();
 
@@ -890,11 +882,7 @@ impl VirtualMachine {
         // `iter()` : convention unique pour obtenir un itérateur (la syntaxe
         // principale reste `for x in collection`).
         if method_name == "iter"
-            && !matches!(
-                &receiver,
-                Value::Object(handle)
-                    if matches!(&*handle.borrow(), Object::Instance { .. })
-            )
+            && !matches!(&receiver, Value::Object(handle) if matches!(&*handle.borrow(), Object::Instance { .. }))
         {
             if arg_count != 0 {
                 return Err(RuntimeError::WrongArgumentCount {
@@ -909,10 +897,7 @@ impl VirtualMachine {
 
         // Ancien nom, supprimé au profit de `iter()`.
         if method_name == "to_iterator" {
-            return Err(crate::stdlib::renamed_method_error(
-                "to_iterator",
-                "iter()",
-            ));
+            return Err(crate::stdlib::renamed_method_error("to_iterator", "iter()"));
         }
 
         let result = match &receiver {
@@ -922,14 +907,8 @@ impl VirtualMachine {
                 // API standard : size(), is_empty(), start(), stop(), step(),
                 // to_string(). Le reste (map, filter, take...) passe par
                 // l'itérateur.
-                match Self::range_method(
-                    &method_name,
-                    *start,
-                    *stop,
-                    *step,
-                    &receiver,
-                    arg_count,
-                )? {
+                match Self::range_method(&method_name, *start, *stop, *step, &receiver, arg_count)?
+                {
                     Some(result) => result,
 
                     None => {
@@ -964,6 +943,7 @@ impl VirtualMachine {
                         Object::Error { .. } => 14,
                         Object::Task(_) => 15,
                         Object::Channel(_) => 16,
+                        Object::Mutex(_) => 17,
                         _ => 5,
                     }
                 };
@@ -984,9 +964,7 @@ impl VirtualMachine {
                     let result = match method_name.as_str() {
                         "kind" => Value::new_string(kind.clone()),
                         "message" => Value::new_string(message.clone()),
-                        "to_string" => {
-                            Value::new_string(format!("Err<{kind}>({message})"))
-                        }
+                        "to_string" => Value::new_string(format!("Err<{kind}>({message})")),
                         _ => {
                             return Err(RuntimeError::ObjectFieldNotFound {
                                 name: method_name,
@@ -1030,20 +1008,16 @@ impl VirtualMachine {
                             // `join` fait tourner d'autres tâches, dont les
                             // collectes doivent voir la pile de CETTE VM
                             // (sinon ses tableaux/dicts seraient vidés).
-                            let _pinned =
-                                self.pin_roots_with(&[Value::Object(handle.clone())]);
+                            let _pinned = self.pin_roots_with(&[Value::Object(handle.clone())]);
 
                             Scheduler::join(&scheduler, task.id)?
                         }
-
                         "status" => Value::new_string(
                             Scheduler::status(&scheduler, task.id)?.to_string(),
                         ),
-
                         "is_done" => Value::Boolean(
                             Scheduler::is_done(&scheduler, task.id)?,
                         ),
-
                         _ => {
                             return Err(RuntimeError::ObjectFieldNotFound {
                                 name: method_name,
@@ -1079,19 +1053,10 @@ impl VirtualMachine {
                                 return Err(RuntimeError::ChannelClosed);
                             }
 
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
-
-                            if !Scheduler::wake_one_channel(
-                                &scheduler,
-                                &channel,
-                                value.clone(),
-                            )? {
+                            let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            if !Scheduler::wake_one_channel(&scheduler, &channel, value.clone())? {
                                 channel.borrow_mut().send(value);
                             }
-
                             self.push(Value::None);
                         }
 
@@ -1124,13 +1089,11 @@ impl VirtualMachine {
                                 // Même raison que `join` : la pile de cette VM
                                 // et le canal lui-même doivent rester vivants
                                 // pendant que les tâches tournent.
-                                let _pinned = self
-                                    .pin_roots_with(&[Value::Object(handle.clone())]);
+                                let _pinned =
+                                    self.pin_roots_with(&[Value::Object(handle.clone())]);
 
                                 loop {
-                                    if let Some(value) =
-                                        channel.borrow_mut().try_recv()
-                                    {
+                                    if let Some(value) = channel.borrow_mut().try_recv() {
                                         self.push(value);
                                         break;
                                     }
@@ -1228,11 +1191,7 @@ impl VirtualMachine {
                                 }
                             };
 
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
-
+                            let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
                             Scheduler::close_channel(&scheduler, &channel)?;
                             self.push(Value::None);
                         }
@@ -1254,6 +1213,128 @@ impl VirtualMachine {
                             };
 
                             self.push(Value::Boolean(channel.borrow().is_closed()));
+                        }
+
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+                if object_kind == 17 {
+                    match method_name.as_str() {
+                        "lock" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let mutex = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Mutex(mutex) => mutex.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            if self.task_id.is_none() {
+                                return Err(RuntimeError::TaskNotFound);
+                            }
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
+
+                            let acquired =
+                                Scheduler::lock_mutex(&scheduler, task_id, &mutex)?;
+
+                            if acquired {
+                                self.push(Value::None);
+                            } else {
+                                self.waiting_mutex = Some(Value::Object(handle.clone()));
+                                self.waiting_requested = true;
+                            }
+                        }
+
+                        "try_lock" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let mutex = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Mutex(mutex) => mutex.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
+
+                            let acquired =
+                                Scheduler::try_lock_mutex(&scheduler, task_id, &mutex)?;
+                            self.push(Value::Boolean(acquired));
+                        }
+
+                        "unlock" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let mutex = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Mutex(mutex) => mutex.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
+
+                            Scheduler::unlock_mutex(&scheduler, task_id, &mutex)?;
+                            self.push(Value::None);
+                        }
+
+                        "is_locked" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let mutex = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Mutex(mutex) => mutex.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Boolean(mutex.borrow().is_locked()));
                         }
 
                         _ => {
@@ -1335,10 +1416,7 @@ impl VirtualMachine {
                                 // arité ? Alors c'est une erreur d'arité,
                                 // pas un champ introuvable.
                                 let declared =
-                                    Self::class_method_arities(
-                                        class_handle,
-                                        &method_name,
-                                    );
+                                    Self::class_method_arities(class_handle, &method_name);
 
                                 if let Some(expected) = declared.first() {
                                     return Err(RuntimeError::WrongArgumentCount {
@@ -1356,10 +1434,7 @@ impl VirtualMachine {
 
                         let method_handle = match method {
                             Value::Object(method_handle)
-                                if matches!(
-                                    &*method_handle.borrow(),
-                                    Object::Closure(_)
-                                ) =>
+                                if matches!(&*method_handle.borrow(), Object::Closure(_)) =>
                             {
                                 method_handle
                             }
@@ -1388,13 +1463,9 @@ impl VirtualMachine {
 
                         return Ok(());
                     }
-
                     1 => self.invoke_iterator_method(&method_name, &args)?,
 
-                    2 => match crate::stdlib::string::dispatch_method(
-                        &method_name,
-                        &args,
-                    )? {
+                    2 => match crate::stdlib::string::dispatch_method(&method_name, &args)? {
                         Some(result) => result,
 
                         None => {
@@ -1406,9 +1477,7 @@ impl VirtualMachine {
                     },
 
                     3 => {
-                        if let Some(result) =
-                            array::dispatch_method(&method_name, &args)?
-                        {
+                        if let Some(result) = array::dispatch_method(&method_name, &args)? {
                             result
                         } else {
                             self.invoke_array_functional(&method_name, &args)?
@@ -1426,10 +1495,7 @@ impl VirtualMachine {
                         }
                     },
 
-                    6 => match crate::stdlib::tuple::dispatch_method(
-                        &method_name,
-                        &args,
-                    )? {
+                    6 => match crate::stdlib::tuple::dispatch_method(&method_name, &args)? {
                         Some(result) => result,
 
                         None => {
@@ -1440,10 +1506,7 @@ impl VirtualMachine {
                         }
                     },
 
-                    8 => match crate::stdlib::set::dispatch_method(
-                        &method_name,
-                        &args,
-                    )? {
+                    8 => match crate::stdlib::set::dispatch_method(&method_name, &args)? {
                         Some(result) => result,
 
                         None => {
@@ -1464,9 +1527,7 @@ impl VirtualMachine {
                             match &*object {
                                 Object::Record(fields) => fields
                                     .iter()
-                                    .find(|(name, _)| {
-                                        name.as_str() == method_name.as_str()
-                                    })
+                                    .find(|(name, _)| name.as_str() == method_name.as_str())
                                     .map(|(_, value)| value.clone()),
 
                                 _ => None,
@@ -1485,10 +1546,7 @@ impl VirtualMachine {
                             return Ok(());
                         }
 
-                        match crate::stdlib::record::dispatch_method(
-                            &method_name,
-                            &args,
-                        )? {
+                        match crate::stdlib::record::dispatch_method(&method_name, &args)? {
                             Some(result) => result,
 
                             None => {
@@ -1513,9 +1571,7 @@ impl VirtualMachine {
                             let object = handle.borrow();
 
                             match &*object {
-                                Object::Module(module) => {
-                                    module.get_export(&method_name).cloned()
-                                }
+                                Object::Module(module) => module.get_export(&method_name).cloned(),
                                 _ => None,
                             }
                         };
@@ -1544,39 +1600,34 @@ impl VirtualMachine {
 
                             match &*object {
                                 Object::EnumVariant { methods, .. } => {
-                                    let method = methods.get(&method_name).and_then(
-                                        |overloads| {
-                                            overloads.iter().find(|value| {
-                                                matches!(
-                                                    value,
-                                                    Value::Object(method_handle)
-                                                        if matches!(
-                                                            &*method_handle.borrow(),
-                                                            Object::Closure(closure)
-                                                                if closure.function.arity
-                                                                    == arg_count + 1
-                                                        )
-                                                )
-                                            })
-                                        },
-                                    ).cloned();
+                                    let method = methods.get(&method_name).and_then(|overloads| {
+                                        overloads.iter().find(|value| {
+                                            matches!(
+                                                value,
+                                                Value::Object(method_handle)
+                                                    if matches!(
+                                                        &*method_handle.borrow(),
+                                                        Object::Closure(closure)
+                                                            if closure.function.arity == arg_count + 1
+                                                    )
+                                            )
+                                        })
+                                    }).cloned();
 
-                                    let expected =
-                                        methods.get(&method_name).and_then(|overloads| {
-                                            overloads.first().and_then(|value| match value {
-                                                Value::Object(method_handle) => {
-                                                    let method_object =
-                                                        method_handle.borrow();
-                                                    match &*method_object {
-                                                        Object::Closure(closure) => {
-                                                            closure.function.arity.checked_sub(1)
-                                                        }
-                                                        _ => None,
+                                    let expected = methods.get(&method_name).and_then(|overloads| {
+                                        overloads.first().and_then(|value| match value {
+                                            Value::Object(method_handle) => {
+                                                let method_object = method_handle.borrow();
+                                                match &*method_object {
+                                                    Object::Closure(closure) => {
+                                                        closure.function.arity.checked_sub(1)
                                                     }
+                                                    _ => None,
                                                 }
-                                                _ => None,
-                                            })
-                                        });
+                                            }
+                                            _ => None,
+                                        })
+                                    });
 
                                     (method, expected)
                                 }
@@ -1599,10 +1650,7 @@ impl VirtualMachine {
                             });
                         };
 
-                        if !matches!(
-                            &*method_handle.borrow(),
-                            Object::Closure(_)
-                        ) {
+                        if !matches!(&*method_handle.borrow(), Object::Closure(_)) {
                             return Err(RuntimeError::NotCallable);
                         }
 
@@ -1644,27 +1692,25 @@ impl VirtualMachine {
                                                     if matches!(
                                                         &*method_handle.borrow(),
                                                         Object::Closure(closure)
-                                                            if closure.function.arity
-                                                                == arg_count
+                                                            if closure.function.arity == arg_count
                                                     )
                                             )
                                         })
                                     }).cloned();
 
-                                    let declared_arity =
-                                        overloads.and_then(|overloads| {
-                                            overloads.first().and_then(|value| match value {
-                                                Value::Object(method_handle) => {
-                                                    match &*method_handle.borrow() {
-                                                        Object::Closure(closure) => {
-                                                            Some(closure.function.arity)
-                                                        }
-                                                        _ => None,
+                                    let declared_arity = overloads.and_then(|overloads| {
+                                        overloads.first().and_then(|value| match value {
+                                            Value::Object(method_handle) => {
+                                                match &*method_handle.borrow() {
+                                                    Object::Closure(closure) => {
+                                                        Some(closure.function.arity)
                                                     }
+                                                    _ => None,
                                                 }
-                                                _ => None,
-                                            })
-                                        });
+                                            }
+                                            _ => None,
+                                        })
+                                    });
 
                                     (method, declared_arity)
                                 }
@@ -1675,10 +1721,7 @@ impl VirtualMachine {
 
                         let method_handle = match method {
                             Some(Value::Object(method_handle))
-                                if matches!(
-                                    &*method_handle.borrow(),
-                                    Object::Closure(_)
-                                ) =>
+                                if matches!(&*method_handle.borrow(), Object::Closure(_)) =>
                             {
                                 method_handle
                             }
@@ -1852,8 +1895,7 @@ impl VirtualMachine {
                 let mut accumulator = args[2].clone();
 
                 for element in elements {
-                    accumulator =
-                        self.invoke_sync(callback.clone(), &[accumulator, element])?;
+                    accumulator = self.invoke_sync(callback.clone(), &[accumulator, element])?;
                 }
 
                 Ok(accumulator)

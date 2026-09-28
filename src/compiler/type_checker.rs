@@ -3223,6 +3223,17 @@ impl TypeChecker {
                     }
 
                     if let Some(Type::Function(signature)) =
+                        object_type.mutex_member_type(name)
+                    {
+                        return self.check_call_signature(
+                            &signature,
+                            generic_args,
+                            arguments,
+                            name,
+                        );
+                    }
+
+                    if let Some(Type::Function(signature)) =
                         object_type.option_result_member_type(name)
                     {
                         return self.check_call_signature(
@@ -3817,6 +3828,10 @@ impl TypeChecker {
         }
 
         if let Some(signature) = object_type.task_member_type(name) {
+            return Ok(signature);
+        }
+
+        if let Some(signature) = object_type.mutex_member_type(name) {
             return Ok(signature);
         }
 

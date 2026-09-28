@@ -183,6 +183,12 @@ impl Value {
         ))))
     }
 
+    pub fn new_mutex() -> Self {
+        Self::new_heap_object(Object::Mutex(Rc::new(RefCell::new(
+            crate::runtime::mutex::MutexState::new(),
+        ))))
+    }
+
     pub fn new_error(kind: impl Into<String>, message: impl Into<String>) -> Self {
         Self::new_heap_object(Object::Error {
             kind: kind.into(),
@@ -1203,6 +1209,7 @@ impl std::fmt::Display for Value {
                     Object::Channel(channel) => {
                         write!(f, "Channel(size={})", channel.borrow().size())
                     }
+                    Object::Mutex(_) => write!(f, "Mutex"),
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1358,6 +1365,7 @@ impl Value {
                 Object::Error { .. } => "Err",
                 Object::Task(_) => "Task",
                 Object::Channel(_) => "Channel",
+                Object::Mutex(_) => "Mutex",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",
