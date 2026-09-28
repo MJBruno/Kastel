@@ -88,6 +88,144 @@ fn spawn_and_join_return_value() {
 }
 
 #[test]
+fn sleep_is_a_valid_cooperative_point() {
+    let (vm, result) = run_script(
+        r#"
+        let log = [];
+
+        func worker() -> int {
+            log.add(1);
+            sleep(5);
+            log.add(2);
+            return 7;
+        }
+
+        let task = spawn(worker);
+        let result = task.join();
+        let ok = result == 7 && log.size() == 2;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn sleep_zero_yields_to_another_ready_task() {
+    let (vm, result) = run_script(
+        r#"
+        let log = [];
+
+        func first() {
+            log.add(1);
+            sleep(0);
+            log.add(3);
+        }
+
+        func second() {
+            log.add(2);
+        }
+
+        let a = spawn(first);
+        let b = spawn(second);
+        a.join();
+        b.join();
+        let ok = log[0] == 1 && log[1] == 2 && log[2] == 3;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn sleep_zero_does_not_deadlock_and_resumes() {
+    let (vm, result) = run_script(
+        r#"
+        func worker() -> int {
+            sleep(0);
+            return 11;
+        }
+
+        let task = spawn(worker);
+        let result = task.join();
+        let ok = result == 11 && task.status() == "done";
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn root_sleep_allows_ready_tasks_to_progress() {
+    let (vm, result) = run_script(
+        r#"
+        let done = false;
+
+        func worker() {
+            done = true;
+        }
+
+        spawn(worker);
+        sleep(5);
+        let ok = done;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn cancelling_a_sleeping_task_removes_its_timer() {
+    let (vm, result) = run_script(
+        r#"
+        let holder = [];
+        let log = [];
+
+        func victim() {
+            sleep(20);
+            log.add(1);
+        }
+
+        func killer() {
+            holder[0].cancel();
+        }
+
+        let victim_task = spawn(victim);
+        holder.add(victim_task);
+        let killer_task = spawn(killer);
+        killer_task.join();
+
+        let caught = false;
+        try {
+            victim_task.join();
+        } catch (e: Err) {
+            caught = e.kind == "TaskCancelled";
+        }
+
+        let ok = caught && victim_task.status() == "cancelled" && log.size() == 0;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn sleep_requires_an_integer_duration() {
+    let error = compile_only(
+        r#"
+        sleep("10");
+    "#,
+    )
+    .expect_err("sleep should reject non-integer durations");
+
+    assert!(is_wrong_argument_type(&error));
+}
+
+#[test]
 fn yield_is_a_valid_cooperative_point() {
     let (vm, result) = run_script(
         r#"

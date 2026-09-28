@@ -132,11 +132,14 @@ pub enum OpCode {
     /// Attend le premier événement disponible sur une liste de channels.
     /// Retourne un tuple `(index, value, closed)`.
     Select,
+
+    /// Suspend la tâche courante pendant un nombre de millisecondes.
+    Sleep,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::Select as usize + 1;
+    pub const COUNT: usize = Self::Sleep as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -220,7 +223,8 @@ mod tests {
         assert_eq!(OpCode::Spawn as u8, 70);
         assert_eq!(OpCode::Yield as u8, 71);
         assert_eq!(OpCode::Select as u8, 72);
-        assert_eq!(OpCode::COUNT, 73);
+        assert_eq!(OpCode::Sleep as u8, 73);
+        assert_eq!(OpCode::COUNT, 74);
     }
 
     #[test]

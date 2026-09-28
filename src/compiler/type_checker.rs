@@ -2975,6 +2975,29 @@ impl TypeChecker {
                 }
 
                 if let Expression::Variable(name) = callee.as_ref()
+                    && name == "sleep"
+                {
+                    if arguments.len() != 1 {
+                        return Err(CompileError::WrongArgumentCount {
+                            expected: 1,
+                            found: arguments.len(),
+                        });
+                    }
+
+                    let duration_type = self.check_expression(&arguments[0])?;
+                    if !matches!(duration_type, Type::Int | Type::Dynamic) {
+                        return Err(CompileError::WrongArgumentType {
+                            function: "sleep".into(),
+                            index: 0,
+                            expected: "int".into(),
+                            found: duration_type.to_string(),
+                        });
+                    }
+
+                    return Ok(Type::None);
+                }
+
+                if let Expression::Variable(name) = callee.as_ref()
                     && name == "select"
                 {
                     if arguments.len() != 1 {

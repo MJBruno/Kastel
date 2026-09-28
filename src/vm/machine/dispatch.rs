@@ -491,6 +491,19 @@ impl VirtualMachine {
                 Ok(false)
             }
 
+            OpCode::Sleep => {
+                let milliseconds = self.pop()?;
+                let Value::Integer(milliseconds) = milliseconds else {
+                    return Err(RuntimeError::TypeError);
+                };
+                if milliseconds < 0 {
+                    return Err(RuntimeError::TypeError);
+                }
+
+                self.sleep_for(std::time::Duration::from_millis(milliseconds as u64))?;
+                Ok(false)
+            }
+
             // ========================================================
             // RETURN / HALT
             // ========================================================

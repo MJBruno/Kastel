@@ -177,6 +177,22 @@ impl Compiler {
                         self.emit_opcode(OpCode::Select);
                         return Ok(());
                     }
+
+                    if name == "sleep" {
+                        if arguments.len() != 1 {
+                            return Err(CompileError::WrongArgumentCount {
+                                expected: 1,
+                                found: arguments.len(),
+                            });
+                        }
+
+                        self.compile_expression(&arguments[0])?;
+                        self.current_line = *line;
+                        self.current_column = *column;
+                        self.emit_opcode(OpCode::Sleep);
+                        self.emit_opcode(OpCode::None);
+                        return Ok(());
+                    }
                 }
 
                 self.compile_call(callee, arguments, *line, *column)?;

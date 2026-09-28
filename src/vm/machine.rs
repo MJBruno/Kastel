@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use std::rc::{Rc, Weak};
 
 use crate::error::runtime_error::RuntimeError;
@@ -12,6 +13,7 @@ use crate::runtime::object::Object;
 use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
 use crate::stdlib::register_natives;
+use crate::vm::machine::scheduler::Scheduler;
 
 #[cfg(test)]
 mod option_result_tests;
@@ -194,6 +196,7 @@ pub struct VirtualMachine {
     pub(crate) task_id: Option<usize>,
     pub(crate) waiting_channel: Option<Value>,
     pub(crate) waiting_select_channels: Option<Vec<Value>>,
+    pub(crate) waiting_timer: Option<Instant>,
     pub(crate) waiting_error: Option<RuntimeError>,
     pub(crate) last_result: Option<Value>,
     pub(crate) scheduler: Weak<RefCell<scheduler::Scheduler>>,
@@ -272,6 +275,7 @@ impl VirtualMachine {
             task_id: None,
             waiting_channel: None,
             waiting_select_channels: None,
+            waiting_timer: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -330,6 +334,7 @@ impl VirtualMachine {
             task_id: None,
             waiting_channel: None,
             waiting_select_channels: None,
+            waiting_timer: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -405,6 +410,7 @@ impl VirtualMachine {
             task_id: Some(task_id),
             waiting_channel: None,
             waiting_select_channels: None,
+            waiting_timer: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -443,6 +449,50 @@ impl VirtualMachine {
         scheduler::Scheduler::wait_on_channel(&scheduler, task_id, channel.clone())?;
 
         self.waiting_channel = Some(channel_value);
+        self.waiting_requested = true;
+        Ok(())
+    }
+
+    pub(crate) fn sleep_for(&mut self, duration: Duration) -> Result<(), RuntimeError> {
+        let Some(task_id) = self.task_id else {
+            // La VM racine n'est pas elle-même une tâche. Dans ce contexte,
+            // on conserve une sémantique intuitive : `sleep()` suspend aussi
+            // les tâches du scheduler pendant la durée demandée, sans créer
+            // une fausse tâche bloquée.
+            let deadline = Instant::now()
+                .checked_add(duration)
+                .ok_or(RuntimeError::InvalidFunction)?;
+
+            let _pinned = self.pin_roots();
+            let scheduler = self
+                .scheduler
+                .upgrade()
+                .ok_or(RuntimeError::TaskNotFound)?;
+
+            while Instant::now() < deadline {
+                match Scheduler::poll(&scheduler) {
+                    Ok(true) => {}
+                    Ok(false) | Err(RuntimeError::TaskDeadlock) => {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        if remaining.is_zero() {
+                            break;
+                        }
+                        std::thread::sleep(remaining);
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            return Ok(());
+        };
+
+        let scheduler = self
+            .scheduler
+            .upgrade()
+            .ok_or(RuntimeError::TaskNotFound)?;
+
+        let deadline = Scheduler::sleep_task(&scheduler, task_id, duration)?;
+        self.waiting_timer = Some(deadline);
         self.waiting_requested = true;
         Ok(())
     }
@@ -486,6 +536,17 @@ impl VirtualMachine {
             value,
             Value::Boolean(closed),
         ]));
+        Ok(())
+    }
+
+    pub(crate) fn resume_from_timer(&mut self) -> Result<(), RuntimeError> {
+        if self.waiting_timer.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_timer = None;
+        self.waiting_error = None;
+        self.waiting_requested = false;
         Ok(())
     }
 
@@ -623,6 +684,7 @@ impl VirtualMachine {
         self.temp_roots.clear();
         self.waiting_channel = None;
         self.waiting_select_channels = None;
+        self.waiting_timer = None;
         self.last_result = None;
         self.open_upvalues.clear();
     }
@@ -661,6 +723,7 @@ impl VirtualMachine {
         self.task_id = None;
         self.waiting_channel = None;
         self.waiting_select_channels = None;
+        self.waiting_timer = None;
         self.last_result = None;
 
         // Les upvalues ont maintenant été fermées correctement.

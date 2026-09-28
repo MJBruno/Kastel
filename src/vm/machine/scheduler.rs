@@ -1,5 +1,8 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::thread;
+use std::time::{Duration, Instant};
 use std::rc::{Rc, Weak};
 
 use crate::error::runtime_error::RuntimeError;
@@ -89,6 +92,11 @@ pub(crate) struct Scheduler {
     /// La tâche courante n'est pas présente dans `tasks` pendant son quantum,
     /// donc la demande doit vivre à côté du tableau principal.
     pub(crate) cancel_requested: std::collections::HashSet<usize>,
+    /// Tâches endormies : `task_id -> échéance`. Le tas contient les mêmes
+    /// entrées pour obtenir rapidement la prochaine échéance ; la HashMap
+    /// permet d'ignorer proprement les anciennes entrées après annulation.
+    pub(crate) sleeping_tasks: HashMap<usize, Instant>,
+    pub(crate) timers: BinaryHeap<Reverse<(Instant, usize)>>,
 }
 
 impl Scheduler {
@@ -102,6 +110,8 @@ impl Scheduler {
             waiting_channels: HashMap::new(),
             waiting_selects: HashMap::new(),
             cancel_requested: std::collections::HashSet::new(),
+            sleeping_tasks: HashMap::new(),
+            timers: BinaryHeap::new(),
         }
     }
 
@@ -165,16 +175,35 @@ impl Scheduler {
             }
 
             let id = loop {
-                let Some(id) = scheduler.ready.pop_front() else {
-                    if scheduler.has_live_tasks() {
-                        return Err(RuntimeError::TaskDeadlock);
+                scheduler.wake_expired_timers();
+
+                if let Some(id) = scheduler.ready.pop_front() {
+                    if scheduler.tasks.get(id).and_then(Option::as_ref).is_some() {
+                        break id;
                     }
+                    continue;
+                }
+
+                if !scheduler.has_live_tasks() {
                     return Ok(false);
+                }
+
+                let Some(deadline) = scheduler.next_timer_deadline() else {
+                    return Err(RuntimeError::TaskDeadlock);
                 };
 
-                if scheduler.tasks.get(id).and_then(Option::as_ref).is_some() {
-                    break id;
+                let now = Instant::now();
+                let remaining = deadline.saturating_duration_since(now);
+                if remaining.is_zero() {
+                    continue;
                 }
+
+                // Aucune tâche n'est prête : dormir le thread du scheduler
+                // ne bloque donc aucune autre tâche exécutable. Dès qu'une
+                // échéance arrive, la prochaine itération réveille les tâches.
+                drop(scheduler);
+                thread::sleep(remaining);
+                scheduler = shared.borrow_mut();
             };
 
             let task = scheduler
@@ -351,6 +380,77 @@ impl Scheduler {
             || self.tasks.iter().flatten().any(|task| {
                 matches!(task.status, TaskStateStatus::Ready | TaskStateStatus::Waiting)
             })
+    }
+
+    fn wake_expired_timers(&mut self) {
+        let now = Instant::now();
+
+        while let Some(Reverse((deadline, task_id))) = self.timers.peek().cloned() {
+            if deadline > now {
+                break;
+            }
+
+            self.timers.pop();
+
+            let Some(current_deadline) = self.sleeping_tasks.get(&task_id).copied() else {
+                continue;
+            };
+
+            if current_deadline != deadline {
+                continue;
+            }
+
+            self.sleeping_tasks.remove(&task_id);
+
+            let Some(task) = self.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                continue;
+            };
+
+            if task.status != TaskStateStatus::Waiting {
+                continue;
+            }
+
+            if task.vm.resume_from_timer().is_err() {
+                continue;
+            }
+
+            task.status = TaskStateStatus::Ready;
+            self.ready.push_back(task_id);
+        }
+    }
+
+    fn next_timer_deadline(&self) -> Option<Instant> {
+        self.timers
+            .iter()
+            .filter_map(|Reverse((deadline, task_id))| {
+                (self.sleeping_tasks.get(task_id) == Some(deadline)).then_some(*deadline)
+            })
+            .min()
+    }
+
+    pub(crate) fn sleep_task(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        duration: Duration,
+    ) -> Result<Instant, RuntimeError> {
+        let deadline = Instant::now()
+            .checked_add(duration)
+            .ok_or(RuntimeError::InvalidFunction)?;
+
+        let mut scheduler = shared.borrow_mut();
+        if scheduler.tasks.get(task_id).and_then(Option::as_ref).is_none()
+            && !scheduler.running.contains(&task_id)
+        {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        scheduler.sleeping_tasks.insert(task_id, deadline);
+        scheduler.timers.push(Reverse((deadline, task_id)));
+        Ok(deadline)
+    }
+
+    fn unregister_timer(&mut self, task_id: usize) {
+        self.sleeping_tasks.remove(&task_id);
     }
 
     fn channel_key(channel: &Rc<RefCell<ChannelState>>) -> usize {
@@ -609,6 +709,7 @@ impl Scheduler {
                 scheduler.ready.retain(|queued_id| *queued_id != id);
 
                 Self::unregister_channel_waits(&mut scheduler, id);
+                scheduler.unregister_timer(id);
             }
             TaskStateStatus::Completed
             | TaskStateStatus::Failed

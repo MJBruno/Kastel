@@ -910,7 +910,8 @@ fn concurrency_opcodes_do_not_shift_existing_opcode_values() {
     assert_eq!(crate::bytecode::opcode::OpCode::Spawn as u8, 70);
     assert_eq!(crate::bytecode::opcode::OpCode::Yield as u8, 71);
     assert_eq!(crate::bytecode::opcode::OpCode::Select as u8, 72);
-    assert_eq!(crate::bytecode::opcode::OpCode::COUNT, 73);
+    assert_eq!(crate::bytecode::opcode::OpCode::Sleep as u8, 73);
+    assert_eq!(crate::bytecode::opcode::OpCode::COUNT, 74);
 }
 
 #[test]
