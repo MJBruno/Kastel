@@ -46,7 +46,7 @@ impl Compiler {
             // ====================================================
             // FONCTION ANONYME / CALLBACK
             //
-            // function(x) {
+            // func(x) {
             //     return x * 2;
             // }
             //

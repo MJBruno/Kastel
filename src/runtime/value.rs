@@ -23,7 +23,7 @@ use crate::stdlib::NativeFn;
 // déjà en cours de parcours, ou une profondeur excessive, sont refusés.
 
 thread_local! {
-    static CONTAINER_STACK: std::cell::RefCell<Vec<usize>> = std::cell::RefCell::new(Vec::new());
+    static CONTAINER_STACK: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Profondeur maximale d'affichage (`println`, `str`, `inspect`) ; au-delà

@@ -419,15 +419,14 @@ impl Compiler {
         // (cas normal pour toute classe globale), ce n'est pas une vraie
         // redéclaration : on ne rejette que les collisions avec un nom
         // global qui existait déjà pour une AUTRE raison.
-        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name)
+        if !self.in_function
+            && self.scope_depth == 0
+            && !self.predeclared_functions.contains(name)
+            && let Some(global) = self.globals.borrow().get(name)
+            && !global.native
         {
-            if let Some(global) = self.globals.borrow().get(name) {
-                if !global.native {
-                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
-                }
-            }
+            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
-
         let runtime_bases: Vec<&TypeExpr> = bases
             .iter()
             .filter(|base| {
@@ -583,12 +582,13 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name) {
-            if let Some(global) = self.globals.borrow().get(name) {
-                if !global.native {
-                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
-                }
-            }
+        if !self.in_function
+            && self.scope_depth == 0
+            && !self.predeclared_functions.contains(name)
+            && let Some(global) = self.globals.borrow().get(name)
+            && !global.native
+        {
+            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
 
         let name_constant = self.identifier_constant(name)?;
@@ -639,11 +639,11 @@ impl Compiler {
 
             self.emit_constant_op(OpCode::DefineGlobal, name_constant);
         } else {
-            let slot = self
-                .context
-                .borrow_mut()
-                .locals
-                .declare_local(name, self.scope_depth, true)?;
+            let slot =
+                self.context
+                    .borrow_mut()
+                    .locals
+                    .declare_local(name, self.scope_depth, true)?;
 
             self.context
                 .borrow_mut()
@@ -670,13 +670,13 @@ impl Compiler {
             return Err(CompileError::TooManyObjectFields);
         }
 
-        if !self.in_function && self.scope_depth == 0 && !self.predeclared_functions.contains(name)
+        if !self.in_function
+            && self.scope_depth == 0
+            && !self.predeclared_functions.contains(name)
+            && let Some(global) = self.globals.borrow().get(name)
+            && !global.native
         {
-            if let Some(global) = self.globals.borrow().get(name) {
-                if !global.native {
-                    return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
-                }
-            }
+            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
 
         let runtime_bases: Vec<&TypeExpr> = bases
@@ -797,8 +797,7 @@ impl Compiler {
             Some(TypeExpr::Named(name)) => self.identifier_constant(name)?,
             Some(_) => {
                 return Err(CompileError::InternalCompilerError(
-                    "Le type d'un catch doit être un type nommé, par exemple `Err`."
-                        .to_string(),
+                    "Le type d'un catch doit être un type nommé, par exemple `Err`.".to_string(),
                 ));
             }
         };
@@ -1045,9 +1044,7 @@ impl Compiler {
         match pattern {
             Pattern::Binding(name) => push_name(name),
 
-            Pattern::Wildcard
-            | Pattern::Literal(_)
-            | Pattern::EnumVariant { .. } => {}
+            Pattern::Wildcard | Pattern::Literal(_) | Pattern::EnumVariant { .. } => {}
 
             Pattern::Or(patterns) => {
                 for pattern in patterns {
@@ -1060,9 +1057,7 @@ impl Compiler {
                 Self::collect_pattern_binding_names(end, names);
             }
 
-            Pattern::Array(patterns)
-            | Pattern::ArrayRest(patterns)
-            | Pattern::Tuple(patterns) => {
+            Pattern::Array(patterns) | Pattern::ArrayRest(patterns) | Pattern::Tuple(patterns) => {
                 for pattern in patterns {
                     Self::collect_pattern_binding_names(pattern, names);
                 }
@@ -1125,9 +1120,8 @@ impl Compiler {
 
             Pattern::Tuple(patterns) => self.compile_tuple_pattern_expression(expression, patterns),
 
-            Pattern::OptionSome(pattern) => {
-                self.compile_option_result_pattern(expression, "Option", "is_some", "unwrap", pattern)
-            }
+            Pattern::OptionSome(pattern) => self
+                .compile_option_result_pattern(expression, "Option", "is_some", "unwrap", pattern),
 
             Pattern::ResultOk(pattern) => {
                 self.compile_option_result_pattern(expression, "Result", "is_ok", "unwrap", pattern)
@@ -1419,41 +1413,40 @@ impl Compiler {
         let length_false_jump = self.emit_jump(OpCode::JumpIfFalse);
         self.emit_opcode(OpCode::Pop);
 
+        let mut element_false_jumps = Vec::with_capacity(patterns.len());
 
-            let mut element_false_jumps = Vec::with_capacity(patterns.len());
+        for (index, pattern) in patterns.iter().enumerate() {
+            let element_expression = Expression::Index {
+                object: Box::new(expression.clone()),
+                index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
+                line: 0,
+                column: 0,
+            };
 
-            for (index, pattern) in patterns.iter().enumerate() {
-                let element_expression = Expression::Index {
-                    object: Box::new(expression.clone()),
-                    index: Box::new(Expression::Literal(Literal::Integer(index as i64))),
-                    line: 0,
-                    column: 0,
-                };
-
-                let false_jump = self.compile_pattern_test_expression(&element_expression, pattern)?;
-                self.emit_opcode(OpCode::Pop);
-                element_false_jumps.push(false_jump);
-            }
-
-            self.emit_opcode(OpCode::True);
-            let success_jump = self.emit_jump(OpCode::Jump);
-
-            self.patch_jump(type_false_jump)?;
+            let false_jump = self.compile_pattern_test_expression(&element_expression, pattern)?;
             self.emit_opcode(OpCode::Pop);
-            self.emit_opcode(OpCode::False);
-            let mut result_jumps = vec![self.emit_jump(OpCode::Jump)];
+            element_false_jumps.push(false_jump);
+        }
 
-            self.patch_jump(length_false_jump)?;
+        self.emit_opcode(OpCode::True);
+        let success_jump = self.emit_jump(OpCode::Jump);
+
+        self.patch_jump(type_false_jump)?;
+        self.emit_opcode(OpCode::Pop);
+        self.emit_opcode(OpCode::False);
+        let mut result_jumps = vec![self.emit_jump(OpCode::Jump)];
+
+        self.patch_jump(length_false_jump)?;
+        self.emit_opcode(OpCode::Pop);
+        self.emit_opcode(OpCode::False);
+        result_jumps.push(self.emit_jump(OpCode::Jump));
+
+        for false_jump in element_false_jumps {
+            self.patch_jump(false_jump)?;
             self.emit_opcode(OpCode::Pop);
             self.emit_opcode(OpCode::False);
             result_jumps.push(self.emit_jump(OpCode::Jump));
-
-            for false_jump in element_false_jumps {
-                self.patch_jump(false_jump)?;
-                self.emit_opcode(OpCode::Pop);
-                self.emit_opcode(OpCode::False);
-                result_jumps.push(self.emit_jump(OpCode::Jump));
-            }
+        }
 
         self.patch_jump(success_jump)?;
 
@@ -1596,12 +1589,12 @@ impl Compiler {
 
             let binding_name = item.alias.as_deref().unwrap_or(&item.name);
 
-            if let Some(global) = self.globals.borrow().get(binding_name) {
-                if !global.native {
-                    return Err(CompileError::VariableAlreadyDeclared(
-                        binding_name.to_string(),
-                    ));
-                }
+            if let Some(global) = self.globals.borrow().get(binding_name)
+                && !global.native
+            {
+                return Err(CompileError::VariableAlreadyDeclared(
+                    binding_name.to_string(),
+                ));
             }
 
             let module_constant = self.make_constant(Value::new_string(module_name.clone()))?;
@@ -1684,12 +1677,12 @@ impl Compiler {
             return Ok(());
         }
 
-        if let Some(global) = self.globals.borrow().get(binding_name) {
-            if !global.native {
-                return Err(CompileError::VariableAlreadyDeclared(
-                    binding_name.to_string(),
-                ));
-            }
+        if let Some(global) = self.globals.borrow().get(binding_name)
+            && !global.native
+        {
+            return Err(CompileError::VariableAlreadyDeclared(
+                binding_name.to_string(),
+            ));
         }
 
         // ------------------------------------------------------------

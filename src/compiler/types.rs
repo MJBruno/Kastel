@@ -664,6 +664,8 @@ impl Type {
             )),
             "size" => Some(function(vec![], Type::Int)),
             "is_empty" => Some(function(vec![], Type::Bool)),
+            "close" => Some(function(vec![], Type::None)),
+            "is_closed" => Some(function(vec![], Type::Bool)),
             _ => None,
         }
     }
@@ -689,6 +691,7 @@ impl Type {
             "join" => Some(function(result_type)),
             "status" => Some(function(Type::Str)),
             "is_done" => Some(function(Type::Bool)),
+            "cancel" => Some(function(Type::None)),
             _ => None,
         }
     }

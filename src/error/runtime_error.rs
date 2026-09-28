@@ -147,6 +147,8 @@ pub enum RuntimeError {
     TaskCaptureNotAllowed,
     TaskNotFound,
     TaskDeadlock,
+    TaskCancelled,
+    ChannelClosed,
     YieldOutsideTask,
 
     /// Résultat hors de l'intervalle des entiers 64 bits signés
@@ -220,6 +222,14 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::TaskDeadlock => {
                 write!(f, "Task scheduler deadlock detected.")
+            }
+
+            RuntimeError::TaskCancelled => {
+                write!(f, "Task was cancelled.")
+            }
+
+            RuntimeError::ChannelClosed => {
+                write!(f, "Channel is closed.")
             }
 
             RuntimeError::YieldOutsideTask => {
@@ -421,6 +431,8 @@ impl RuntimeError {
             RuntimeError::TaskCaptureNotAllowed => "TaskCaptureNotAllowed",
             RuntimeError::TaskNotFound => "TaskNotFound",
             RuntimeError::TaskDeadlock => "TaskDeadlock",
+            RuntimeError::TaskCancelled => "TaskCancelled",
+            RuntimeError::ChannelClosed => "ChannelClosed",
             RuntimeError::YieldOutsideTask => "YieldOutsideTask",
         }
     }

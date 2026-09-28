@@ -534,8 +534,8 @@ impl VirtualMachine {
     /// Exécute l'instruction `instruction` PRÉCÉDÉE de `Wide` : son opérande
     /// constante est lue sur 16 bits. Hors de la boucle chaude (les indices
     /// > 255 sont rares) ; seules les instructions à opérande constante sont
-    /// admises, toute autre est un bytecode invalide (ce qui rejette aussi
-    /// `Wide Wide`).
+    /// > admises, toute autre est un bytecode invalide (ce qui rejette aussi
+    /// > `Wide Wide`).
     #[inline(never)]
     fn dispatch_wide(&mut self, instruction: u8) -> Result<bool, RuntimeError> {
         let opcode =

@@ -194,8 +194,8 @@ pub fn native_pow(args: &[Value]) -> Result<Value, RuntimeError> {
     // Comme pow() en Python : deux entiers avec un exposant positif ou
     // nul donnent un résultat entier (8, pas 8.0). Dès qu'un flottant
     // ou un exposant négatif entre en jeu, le résultat est un Float.
-    if let (Value::Integer(base), Value::Integer(exponent)) = (&args[0], &args[1]) {
-        if *exponent >= 0 {
+    if let (Value::Integer(base), Value::Integer(exponent)) = (&args[0], &args[1])
+        && *exponent >= 0 {
             let overflow = RuntimeError::IntegerOverflow {
                 operation: "puissance",
             };
@@ -216,7 +216,6 @@ pub fn native_pow(args: &[Value]) -> Result<Value, RuntimeError> {
                 },
             };
         }
-    }
 
     let base = expect_number(&args[0])?;
     let exponent = expect_number(&args[1])?;

@@ -484,21 +484,19 @@ impl TypeChecker {
                     return Type::Named(target.clone());
                 }
 
-                if let Some(alias) = self.aliases.get(name) {
-                    if alias.generic_params.is_empty() {
+                if let Some(alias) = self.aliases.get(name)
+                    && alias.generic_params.is_empty() {
                         return self.resolve_type_in_environment(
                             &alias.body,
                             environment,
                             depth + 1,
                         );
                     }
-                }
 
-                if let Some(alias) = self.imported_type_aliases.get(name) {
-                    if alias.generic_params.is_empty() {
+                if let Some(alias) = self.imported_type_aliases.get(name)
+                    && alias.generic_params.is_empty() {
                         return alias.ty.clone();
                     }
-                }
 
                 Type::from_type_expr(expr)
             }
@@ -518,8 +516,8 @@ impl TypeChecker {
                     };
                 }
 
-                if let Some(alias) = self.aliases.get(name) {
-                    if alias.generic_params.len() == resolved_arguments.len() {
+                if let Some(alias) = self.aliases.get(name)
+                    && alias.generic_params.len() == resolved_arguments.len() {
                         let alias_environment = alias
                             .generic_params
                             .iter()
@@ -542,10 +540,9 @@ impl TypeChecker {
                             .collect::<HashMap<_, _>>();
                         return Self::substitute_type(&resolved, &substitutions);
                     }
-                }
 
-                if let Some(alias) = self.imported_type_aliases.get(name) {
-                    if alias.generic_params.len() == resolved_arguments.len() {
+                if let Some(alias) = self.imported_type_aliases.get(name)
+                    && alias.generic_params.len() == resolved_arguments.len() {
                         let substitutions = alias
                             .generic_params
                             .iter()
@@ -554,7 +551,6 @@ impl TypeChecker {
                             .collect::<HashMap<_, _>>();
                         return Self::substitute_type(&alias.ty, &substitutions);
                     }
-                }
 
                 Type::build_generic(name, resolved_arguments)
             }
@@ -974,8 +970,8 @@ impl TypeChecker {
             return true;
         }
 
-        if let Type::Named(name) | Type::Generic { name, .. } = interface {
-            if let Some(capability) = Capability::from_name(name) {
+        if let Type::Named(name) | Type::Generic { name, .. } = interface
+            && let Some(capability) = Capability::from_name(name) {
                 let normalized = match interface {
                     Type::Named(_) => capability.default_interface_type(ty),
                     _ => interface.clone(),
@@ -988,7 +984,6 @@ impl TypeChecker {
                     return true;
                 }
             }
-        }
 
         match ty {
             Type::TypeParam(name) => self
@@ -1232,7 +1227,7 @@ impl TypeChecker {
 
     fn validate_interface_implementations(&self) -> Result<(), CompileError> {
         for (class_name, class) in &self.classes {
-            if class.is_interface || class.enum_variants.len() > 0 {
+            if class.is_interface || !class.enum_variants.is_empty() {
                 continue;
             }
 
@@ -1547,7 +1542,7 @@ impl TypeChecker {
                         .collect::<Vec<_>>();
                     let interface_names = interface_types
                         .iter()
-                        .filter_map(|interface| Self::type_name(interface))
+                        .filter_map(Self::type_name)
                         .collect::<Vec<_>>();
 
                     for interface_type in &interface_types {
@@ -1677,7 +1672,7 @@ impl TypeChecker {
                             generic_constraints: class_generic_constraints,
                             is_interface: false,
                             interfaces: interface_names,
-                            interface_types: interface_types,
+                            interface_types,
                             methods: method_map,
                             fields: field_map,
                             static_methods: static_method_map,
@@ -1811,7 +1806,7 @@ impl TypeChecker {
                         .collect::<Vec<_>>();
                     let interface_names = interface_types
                         .iter()
-                        .filter_map(|interface| Self::type_name(interface))
+                        .filter_map(Self::type_name)
                         .collect::<Vec<_>>();
                     for interface_type in &interface_types {
                         if !self.is_interface_type(interface_type) {
@@ -1889,7 +1884,7 @@ impl TypeChecker {
                             generic_constraints: interface_generic_constraints,
                             is_interface: true,
                             interfaces: interface_names,
-                            interface_types: interface_types,
+                            interface_types,
                             methods: method_map,
                             fields: HashMap::new(),
                             static_methods: HashMap::new(),
@@ -1926,11 +1921,10 @@ impl TypeChecker {
             .and_then(|scope| scope.get(name))
             .is_some_and(|binding| binding.native);
 
-        if let Some(existing) = self.scopes.first().and_then(|scope| scope.get(name)) {
-            if !existing.native || !existing_native {
+        if let Some(existing) = self.scopes.first().and_then(|scope| scope.get(name))
+            && (!existing.native || !existing_native) {
                 return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
             }
-        }
 
         self.scopes[0].insert(
             name.to_string(),
@@ -2546,8 +2540,8 @@ impl TypeChecker {
             .clone()
             .filter(|_| self.return_types.is_empty());
 
-        if let Some(expected) = missing_annotated_return {
-            if self.return_types.is_empty() {
+        if let Some(expected) = missing_annotated_return
+            && self.return_types.is_empty() {
                 self.pop_scope();
                 self.current_return_type = previous_return;
                 self.return_types = previous_returns;
@@ -2559,11 +2553,10 @@ impl TypeChecker {
                     found: Type::None.to_string(),
                 });
             }
-        }
 
         if return_type.is_none() {
             if let Some(function) = self.functions.get_mut(name) {
-                function.return_type = Box::new(inferred_return.clone());
+                *function.return_type = inferred_return.clone();
             }
 
             // Fonction locale surchargée : signature de MÊME arité.
@@ -2573,7 +2566,7 @@ impl TypeChecker {
                     .iter_mut()
                     .find(|signature| signature.params.len() == params.len())
             {
-                signature.return_type = Box::new(inferred_return.clone());
+                *signature.return_type = inferred_return.clone();
             }
 
             // Fonction surchargée : on met à jour la signature de MÊME arité.
@@ -2583,16 +2576,14 @@ impl TypeChecker {
                     .iter_mut()
                     .find(|signature| signature.params.len() == params.len())
             {
-                signature.return_type = Box::new(inferred_return.clone());
+                *signature.return_type = inferred_return.clone();
             }
 
-            if nested {
-                if let Some(binding) = self.scopes[parent_scope_index].get_mut(name) {
-                    if let Type::Function(signature) = &mut binding.ty {
-                        signature.return_type = Box::new(inferred_return);
+            if nested
+                && let Some(binding) = self.scopes[parent_scope_index].get_mut(name)
+                    && let Type::Function(signature) = &mut binding.ty {
+                        *signature.return_type = inferred_return;
                     }
-                }
-            }
         }
 
         self.pop_scope();
@@ -2737,8 +2728,8 @@ impl TypeChecker {
             .clone()
             .filter(|_| self.return_types.is_empty());
 
-        if let Some(expected) = missing_annotated_return {
-            if self.return_types.is_empty() {
+        if let Some(expected) = missing_annotated_return
+            && self.return_types.is_empty() {
                 self.pop_scope();
                 self.current_return_type = previous_return;
                 self.return_types = previous_returns;
@@ -2752,19 +2743,16 @@ impl TypeChecker {
                     found: Type::None.to_string(),
                 });
             }
-        }
 
-        if let Some(class) = self.classes.get_mut(class_name) {
-            if let Some(overloads) = class.methods.get_mut(&method.name) {
-                if let Some(signature) = overloads
+        if let Some(class) = self.classes.get_mut(class_name)
+            && let Some(overloads) = class.methods.get_mut(&method.name)
+                && let Some(signature) = overloads
                     .iter_mut()
                     .find(|signature| signature.params.len() == method.params.len())
                     && method.return_type.is_none()
                 {
-                    signature.return_type = Box::new(inferred_return);
+                    *signature.return_type = inferred_return;
                 }
-            }
-        }
 
         self.pop_scope();
         self.current_return_type = previous_return;
@@ -3365,15 +3353,14 @@ impl TypeChecker {
 
                 // Une classe générique peut déduire ses paramètres depuis son
                 // constructeur : `new Box(42)` devient `Box<int>`.
-                if !class_generic_names.is_empty() && generic_args.is_empty() {
-                    if let Some(inferred) = self.infer_class_arguments_from_constructor(
+                if !class_generic_names.is_empty() && generic_args.is_empty()
+                    && let Some(inferred) = self.infer_class_arguments_from_constructor(
                         &class_name,
                         arguments,
                         &class_generic_names,
                     )? {
                         class_arguments = inferred;
                     }
-                }
 
                 if let Some(info) = &class_info
                     && !info.generic_constraints.is_empty()
@@ -3425,8 +3412,14 @@ impl TypeChecker {
             }
 
             Expression::SelfValue => {
+                // `self` (valeur) n'a de sens que dans une méthode de classe
+                // ou d'enum (`check_class` pose `current_class`). Ailleurs
+                // -- fonction libre, record, script -- il n'est lié à rien et
+                // échouait à l'exécution (variable globale `self` inconnue).
+                // `Self`, le TYPE des interfaces, n'est pas concerné : c'est
+                // un `Type::SelfType`, pas cette expression.
                 let Some(class_name) = self.current_class.as_ref() else {
-                    return Ok(Type::Dynamic);
+                    return Err(CompileError::SelfOutsideClass);
                 };
 
                 let Some(class_info) = self.classes.get(class_name) else {
@@ -3656,11 +3649,10 @@ impl TypeChecker {
                     }
                 }
             }
-            if results.is_empty() {
-                if let Some(error) = first_error {
+            if results.is_empty()
+                && let Some(error) = first_error {
                     return Err(error);
                 }
-            }
             return Ok(Type::union_of(results));
         }
 
@@ -3835,9 +3827,7 @@ impl TypeChecker {
                 let mut candidate: Option<FunctionType> = None;
 
                 for constraint in constraints {
-                    let interface = match constraint {
-                        GenericConstraint::Interface(interface) => interface,
-                    };
+                    let GenericConstraint::Interface(interface) = constraint;
 
                     let signatures = self.find_methods_for_type(interface, name);
                     if signatures.len() > 1 {
@@ -4771,13 +4761,12 @@ impl TypeChecker {
                 self.ensure_assignable(&start_type, matched_type)?;
                 self.ensure_assignable(&end_type, matched_type)?;
 
-                if let Some(order) = Self::compare_numeric_literals(start_literal, end_literal) {
-                    if order > 0 || (!*inclusive && order == 0) {
+                if let Some(order) = Self::compare_numeric_literals(start_literal, end_literal)
+                    && (order > 0 || (!*inclusive && order == 0)) {
                         return Err(CompileError::InvalidPattern(
                             "le range est vide ou inversé".to_string(),
                         ));
                     }
-                }
 
                 Ok(HashMap::new())
             }
@@ -5271,7 +5260,7 @@ impl TypeChecker {
                 }
                 let some_covered = some_patterns
                     .iter()
-                    .any(|pattern| Self::catch_all_pattern(pattern));
+                    .any(Self::catch_all_pattern);
                 let mut missing = Vec::new();
                 if !some_covered {
                     missing.push("Some(_)".to_string());
@@ -5302,7 +5291,7 @@ impl TypeChecker {
 
                 [(!ok_covered, "Ok(_)"), (!err_covered, "Err(_)")]
                     .into_iter()
-                    .filter_map(|(missing, label)| missing.then(|| label.to_string()))
+                    .filter(|&(missing, _label)| missing).map(|(_missing, label)| label.to_string())
                     .collect()
             }
             Type::Named(name) if name.eq_ignore_ascii_case("Result") => {
@@ -5328,7 +5317,7 @@ impl TypeChecker {
                     (!err_covered, "Err(_)"),
                 ]
                 .into_iter()
-                .filter_map(|(missing, label)| missing.then(|| label.to_string()))
+                .filter(|&(missing, _label)| missing).map(|(_missing, label)| label.to_string())
                 .collect()
             }
             Type::Named(name) | Type::Generic { name, .. } => {
@@ -5440,8 +5429,7 @@ impl TypeChecker {
             name: expected_name,
             ..
         } = expected
-        {
-            if actual_name == expected_name {
+            && actual_name == expected_name {
                 if let Type::Generic {
                     arguments: actual_args,
                     ..
@@ -5460,7 +5448,6 @@ impl TypeChecker {
 
                 return matches!(expected, Type::Named(_));
             }
-        }
 
         let Some(class) = self.classes.get(actual_name) else {
             return false;
@@ -5736,6 +5723,21 @@ let r: int = first((1, 2));
         matches!(error, CompileError::PrivateMemberAccess { .. })
     }
 
+    /// Comme `is_private_access` : remonte l'erreur d'origine sous `WithLocation`
+    /// et vérifie qu'il s'agit de `SelfOutsideClass`.
+    fn is_self_outside_class(result: &Result<(), CompileError>) -> bool {
+        let mut error = match result {
+            Err(error) => error,
+            Ok(()) => return false,
+        };
+
+        while let CompileError::WithLocation { source, .. } = error {
+            error = &**source;
+        }
+
+        matches!(error, CompileError::SelfOutsideClass)
+    }
+
     const PERSONNE: &str = r#"
 class Personne {
     private let age: int = 0;
@@ -5877,6 +5879,53 @@ class Point {
         // constructeur par défaut.
         assert!(check("class B { let n: int = 0; } let b = new B();").is_ok());
         assert!(check("class B { let n: int = 0; } let b = new B(5);").is_err());
+    }
+
+    #[test]
+    fn self_value_is_rejected_outside_classes_but_self_type_stays_valid() {
+        // Fonction libre et record : pas de `self`.
+        assert!(is_self_outside_class(&check("func f() { return self; }")));
+        assert!(is_self_outside_class(&check(
+            "let p = { n: 1, get: func() { return self.n; } };"
+        )));
+
+        // Méthode de classe, méthode d'enum et fonction locale imbriquée
+        // dans une méthode : `self` reste valide.
+        assert!(
+            check(
+                r#"
+class A {
+    let n: int = 0;
+    func get() -> int { return self.n; }
+    func later() { let f = func() { return self.n; }; return f(); }
+}
+enum Status {
+    Done,
+    Todo
+
+    func is_done() -> bool { return self == Status.Done; }
+}
+"#
+            )
+            .is_ok()
+        );
+
+        // `Self` (type) dans une interface : toujours accepté.
+        assert!(
+            check(
+                r#"
+interface Add {
+    func add(other: Self) -> Self;
+}
+class Money : Add {
+    let amount: int;
+    func initialize(amount: int) { self.amount = amount; }
+    func add(other: Self) -> Self { return new Money(self.amount + other.amount); }
+}
+"#
+            )
+            .is_ok()
+        );
     }
 
     #[test]

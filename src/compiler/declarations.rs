@@ -63,10 +63,10 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         let existing = self.globals.borrow().get(name).cloned();
 
-        if let Some(global) = existing {
-            if !global.native {
-                return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
-            }
+        if let Some(global) = existing
+            && !global.native
+        {
+            return Err(CompileError::VariableAlreadyDeclared(name.to_string()));
         }
 
         let name_constant = self.identifier_constant(name)?;

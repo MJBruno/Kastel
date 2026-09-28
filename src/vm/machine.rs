@@ -193,6 +193,7 @@ pub struct VirtualMachine {
     pub(crate) waiting_requested: bool,
     pub(crate) task_id: Option<usize>,
     pub(crate) waiting_channel: Option<Value>,
+    pub(crate) waiting_error: Option<RuntimeError>,
     pub(crate) last_result: Option<Value>,
     pub(crate) scheduler: Weak<RefCell<scheduler::Scheduler>>,
     pub(crate) scheduler_owner: Option<Rc<RefCell<scheduler::Scheduler>>>,
@@ -269,6 +270,7 @@ impl VirtualMachine {
             waiting_requested: false,
             task_id: None,
             waiting_channel: None,
+            waiting_error: None,
             last_result: None,
             scheduler,
             scheduler_owner: Some(scheduler_owner),
@@ -325,6 +327,7 @@ impl VirtualMachine {
             waiting_requested: false,
             task_id: None,
             waiting_channel: None,
+            waiting_error: None,
             last_result: None,
             scheduler,
             scheduler_owner: Some(scheduler_owner),
@@ -398,6 +401,7 @@ impl VirtualMachine {
             waiting_requested: false,
             task_id: Some(task_id),
             waiting_channel: None,
+            waiting_error: None,
             last_result: None,
             scheduler,
             scheduler_owner: None,
@@ -445,8 +449,23 @@ impl VirtualMachine {
         }
 
         self.waiting_channel = None;
+        self.waiting_error = None;
         self.waiting_requested = false;
         self.push(value);
+        Ok(())
+    }
+
+    pub(crate) fn resume_from_channel_error(
+        &mut self,
+        error: RuntimeError,
+    ) -> Result<(), RuntimeError> {
+        if self.waiting_channel.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_channel = None;
+        self.waiting_error = Some(error);
+        self.waiting_requested = false;
         Ok(())
     }
 
@@ -538,6 +557,27 @@ impl VirtualMachine {
         crate::runtime::gc::register_object(&task_object);
         self.push(Value::Object(task_object));
         Ok(())
+    }
+
+    /// Libère la pile, les frames et les racines d'une tâche TERMINÉE. Sans
+    /// cela, chaque tâche finie gardait sa pile entière tant que le scheduler
+    /// vivait (fuite proportionnelle au nombre de `spawn`).
+    pub(crate) fn release_task_resources(&mut self) {
+        // Fermer d'abord les upvalues encore ouvertes : un objet partagé qui
+        // survit à la tâche ne doit pas pointer vers une pile effacée. En cas
+        // d'incohérence (échec en plein déroulement), on ne touche à rien.
+        if self.close_upvalues(0).is_err() {
+            return;
+        }
+
+        self.stack.clear();
+        self.frames.clear();
+        self.exception_handlers.clear();
+        self.pending_exception = None;
+        self.temp_roots.clear();
+        self.waiting_channel = None;
+        self.last_result = None;
+        self.open_upvalues.clear();
     }
 
     pub(crate) fn last_result_value(&self) -> Value {
@@ -671,11 +711,10 @@ impl VirtualMachine {
         for upvalue in &self.open_upvalues {
             let upvalue_ref = upvalue.borrow();
 
-            if upvalue_ref.slot >= last && upvalue_ref.closed.is_none() {
-                if upvalue_ref.slot >= self.stack.len() {
+            if upvalue_ref.slot >= last && upvalue_ref.closed.is_none()
+                && upvalue_ref.slot >= self.stack.len() {
                     return Err(RuntimeError::InvalidFunction);
                 }
-            }
         }
 
         // Fermer les upvalues qui appartiennent au frame supprimé.
@@ -700,23 +739,7 @@ impl VirtualMachine {
 
         Ok(())
     }
-    // ============================================================
-    // EXCEPTION HANDLERS
-    // ============================================================
 
-    // pub(crate) fn current_frame_handler_count(
-    //     &self,
-    // ) -> usize {
-    //     let frame_index =
-    //         self.frames.len().saturating_sub(1);
-
-    //     self.exception_handlers
-    //         .iter()
-    //         .filter(|handler| {
-    //             handler.frame_index == frame_index
-    //         })
-    //         .count()
-    // }
 
     pub(crate) fn register_exception_handler(
         &mut self,
@@ -796,27 +819,6 @@ impl VirtualMachine {
         Ok(())
     }
 
-    // ============================================================
-    // PENDING EXCEPTION
-    // ============================================================
-
-    // pub(crate) fn set_pending_exception(
-    //     &mut self,
-    //     value: Value,
-    // ) {
-    //     self.pending_exception = Some(
-    //         PendingException {
-    //             value,
-    //             rethrow: true,
-    //         },
-    //     );
-    // }
-
-    // pub(crate) fn take_pending_exception(
-    //     &mut self,
-    // ) -> Option<PendingException> {
-    //     self.pending_exception.take()
-    // }
 
     // ============================================================
     // FRAME CLEANUP

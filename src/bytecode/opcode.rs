@@ -136,7 +136,7 @@ impl OpCode {
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
-    pub fn from_byte(value: u8) -> Result<Self, ()> {
+    pub(crate) fn from_byte(value: u8) -> Result<Self, ()> {
         if value as usize >= Self::COUNT {
             return Err(());
         }

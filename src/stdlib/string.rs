@@ -92,12 +92,11 @@ impl FormatSpec {
         }
 
         // [sign]
-        if let Some(&character) = chars.get(index) {
-            if matches!(character, '+' | '-' | ' ') {
+        if let Some(&character) = chars.get(index)
+            && matches!(character, '+' | '-' | ' ') {
                 result.sign = Some(character);
                 index += 1;
             }
-        }
 
         // [#]
         if chars.get(index) == Some(&'#') {
@@ -219,7 +218,7 @@ fn apply_width(text: String, spec: &FormatSpec, numeric: bool) -> Result<String,
 }
 
 fn repeat_char(character: char, count: usize) -> String {
-    std::iter::repeat(character).take(count).collect()
+    std::iter::repeat_n(character, count).collect()
 }
 
 fn apply_numeric_equal_padding(text: String, fill: char, padding: usize) -> String {
@@ -262,7 +261,7 @@ fn group_digits(digits: &str, separator: char, group_size: usize) -> String {
     let total = digits.chars().count();
 
     for (index, character) in digits.chars().enumerate() {
-        if index > 0 && (total - index) % group_size == 0 {
+        if index > 0 && (total - index).is_multiple_of(group_size) {
             result.push(separator);
         }
         result.push(character);
@@ -446,11 +445,10 @@ fn format_float(value: f64, spec: FormatSpec) -> Result<String, RuntimeError> {
         rendered.push('.');
     }
 
-    if let Some(separator) = spec.grouping {
-        if matches!(kind, 'f' | 'F' | 'g' | 'G' | '%') {
+    if let Some(separator) = spec.grouping
+        && matches!(kind, 'f' | 'F' | 'g' | 'G' | '%') {
             rendered = group_decimal(&rendered, separator);
         }
-    }
 
     if kind == '%' {
         rendered.push('%');

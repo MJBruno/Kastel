@@ -237,6 +237,10 @@ pub enum CompileError {
         method: String,
         arity: usize,
     },
+
+    /// `self` (la VALEUR) utilisé hors d'une méthode de classe ou d'enum.
+    /// Ne concerne pas `Self`, le TYPE des interfaces.
+    SelfOutsideClass,
 }
 
 impl std::fmt::Display for CompileError {
@@ -537,6 +541,13 @@ impl std::fmt::Display for CompileError {
                 )
             }
 
+            CompileError::SelfOutsideClass => {
+                write!(
+                    f,
+                    "'self' n'existe que dans une méthode de classe ou d'enum"
+                )
+            }
+
             CompileError::ExpressionTooDeep { limit } => {
                 write!(
                     f,
@@ -756,6 +767,15 @@ impl CompileError {
                 0,
             )
             .with_help("ajoutez la méthode requise à la classe ou retirez l'interface de sa liste de bases"),
+
+            CompileError::SelfOutsideClass => Diagnostic::new(
+                "'self' utilisé hors d'une classe ou d'un enum".to_string(),
+                0,
+                0,
+            )
+            .with_help(
+                "un record n'a pas de `self` : utilisez une classe, ou nommez la variable qui contient le record",
+            ),
 
             CompileError::ExpressionTooDeep { limit } => Diagnostic::new(
                 format!("expression trop profondément imbriquée (limite : {limit})"),

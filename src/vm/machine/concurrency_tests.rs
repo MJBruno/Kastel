@@ -638,3 +638,292 @@ fn locals_of_the_joining_vm_survive_gc_run_by_the_task() {
         Some(Value::Boolean(true))
     ));
 }
+
+// ============================================================
+//   TÂCHES JAMAIS JOINTES : elles s'exécutent, puis sont libérées
+// ============================================================
+
+fn array_len(vm: &VirtualMachine, name: &str) -> usize {
+    let globals = vm.globals.borrow();
+
+    match globals.get(name) {
+        Some(Value::Object(handle)) => match &*handle.borrow() {
+            crate::runtime::object::Object::Array(items) => items.len(),
+            _ => panic!("`{name}` n'est pas un tableau"),
+        },
+        _ => panic!("`{name}` est absent ou n'est pas un objet"),
+    }
+}
+
+#[test]
+fn an_unjoined_task_still_runs_before_the_program_ends() {
+    let (vm, result) = run_script(
+        r#"
+        let log = [];
+
+        func worker() {
+            log.add(1);
+        }
+
+        spawn(worker);
+        spawn(worker);
+    "#,
+    );
+
+    result.unwrap();
+
+    assert_eq!(array_len(&vm, "log"), 2);
+}
+
+#[test]
+fn finished_tasks_release_their_stack_and_detached_ones_their_slot() {
+    let (vm, result) = run_script(
+        r#"
+        let log = [];
+
+        func worker() {
+            let scratch = [1, 2, 3];
+            log.add(scratch.size());
+        }
+
+        let kept = spawn(worker);
+        kept.join();
+
+        for i in range(0, 200) { spawn(worker); }
+    "#,
+    );
+
+    result.unwrap();
+
+    assert_eq!(array_len(&vm, "log"), 201);
+
+    let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+
+    // Tâche encore référencée par `kept` : résultat conservé, pile libérée.
+    let kept = scheduler.tasks[0].as_ref().expect("la tâche gardée existe");
+    assert!(kept.vm.stack.is_empty());
+
+    // Les tâches sans handle ont libéré leur slot (la dernière peut encore être
+    // référencée par le dernier résultat d'expression de la VM).
+    let still_held = scheduler.tasks[1..].iter().filter(|slot| slot.is_some()).count();
+    assert!(still_held <= 1, "{still_held} slots non libérés");
+}
+
+
+#[test]
+fn task_can_be_cancelled_before_it_runs() {
+    let (vm, result) = run_script(
+        r#"
+        let ran = false;
+
+        func worker() {
+            ran = true;
+            return 42;
+        }
+
+        let task = spawn(worker);
+        task.cancel();
+
+        let ok = task.is_done()
+            && task.status() == "cancelled"
+            && ran == false;
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
+fn waiting_task_can_be_cancelled() {
+    let (vm, result) = run_script(
+        r#"
+        let ch = channel<int>();
+
+        func consumer() -> int {
+            return ch.recv();
+        }
+
+        func starter() -> int {
+            return 1;
+        }
+
+        let consumer_task = spawn(consumer);
+        let starter_task = spawn(starter);
+
+        starter_task.join();
+        let waiting = consumer_task.status();
+
+        consumer_task.cancel();
+
+        let ok = waiting == "waiting"
+            && consumer_task.status() == "cancelled"
+            && consumer_task.is_done();
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
+fn cancellation_requested_by_another_task_stops_the_target() {
+    let (vm, result) = run_script(
+        r#"
+        func worker() -> int {
+            let i = 0;
+
+            while i < 100000 {
+                i = i + 1;
+                yield();
+            }
+
+            return 42;
+        }
+
+        let target: Task<int> = spawn(worker);
+
+        func controller() -> int {
+            target.cancel();
+            return 1;
+        }
+
+        let controller_task = spawn(controller);
+
+        let controller_result = controller_task.join();
+        let caught = false;
+
+        try {
+            target.join();
+        } catch (e: Err) {
+            caught = e.kind == "TaskCancelled";
+        }
+
+        let ok = controller_result == 1
+            && target.status() == "cancelled"
+            && caught;
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+
+#[test]
+fn channel_close_is_idempotent_and_send_is_rejected() {
+    let (vm, result) = run_script(
+        r#"
+        let ch = channel<int>();
+
+        let open_before = !ch.is_closed();
+        ch.close();
+        ch.close();
+
+        let closed_after = ch.is_closed();
+        let send_failed = false;
+
+        try {
+            ch.send(1);
+        } catch (e: Err) {
+            send_failed = e.kind == "ChannelClosed";
+        }
+
+        let empty = ch.try_recv() == None;
+        let ok = open_before && closed_after && send_failed && empty;
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
+fn channel_close_preserves_buffered_values() {
+    let (vm, result) = run_script(
+        r#"
+        let ch = channel<int>();
+        ch.send(10);
+        ch.send(20);
+        ch.close();
+
+        let first = ch.recv();
+        let second = ch.recv();
+        let failed = false;
+
+        try {
+            ch.recv();
+        } catch (e: Err) {
+            failed = e.kind == "ChannelClosed";
+        }
+
+        let ok = first == 10 && second == 20 && failed;
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
+fn closing_channel_wakes_waiting_consumer_with_catchable_error() {
+    let (vm, result) = run_script(
+        r#"
+        let ch = channel<int>();
+        let observed = "waiting";
+
+        func consumer() -> str {
+            try {
+                ch.recv();
+                return "unexpected";
+            } catch (e: Err) {
+                observed = e.kind;
+                return "closed";
+            }
+        }
+
+        func closer() {
+            yield();
+            ch.close();
+        }
+
+        let task = spawn(consumer);
+        let closer_task = spawn(closer);
+
+        let result = task.join();
+        let closer_result = closer_task.join();
+        let ok = result == "closed"
+            && closer_result == None
+            && observed == "ChannelClosed"
+            && task.status() == "done"
+            && ch.is_closed();
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}

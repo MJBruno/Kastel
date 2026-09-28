@@ -13,12 +13,18 @@ use super::{RunStatus, VirtualMachine};
 
 pub(crate) const DEFAULT_TASK_QUANTUM: usize = 1024;
 
+/// Nombre maximal de quanta exécutés par `drain` en fin de programme. Au-delà,
+/// les tâches encore actives (boucle infinie avec `yield`, par exemple) sont
+/// abandonnées avec un avertissement au lieu de bloquer la sortie.
+pub(crate) const DRAIN_MAX_POLLS: usize = 200_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TaskStateStatus {
     Ready,
     Waiting,
     Completed,
     Failed,
+    Cancelled,
 }
 
 pub(crate) struct TaskState {
@@ -26,6 +32,11 @@ pub(crate) struct TaskState {
     pub(crate) status: TaskStateStatus,
     pub(crate) result: Option<Value>,
     pub(crate) error: Option<RuntimeError>,
+    /// L'échec (`error`) a été remonté à quelqu'un (`join`) ou signalé.
+    pub(crate) observed: bool,
+    /// Plus aucun handle ne référence la tâche : elle tourne jusqu'au bout,
+    /// puis son slot est libéré (et son échec éventuel signalé).
+    pub(crate) detached: bool,
 }
 
 #[derive(Debug)]
@@ -42,6 +53,21 @@ impl PartialEq for TaskHandle {
 
 impl Eq for TaskHandle {}
 
+impl Drop for TaskHandle {
+    fn drop(&mut self) {
+        let Some(shared) = self.scheduler.upgrade() else {
+            return;
+        };
+
+        // `try_borrow_mut` : le handle peut être détruit pendant qu'un emprunt
+        // du scheduler est actif (ex. pendant `poll`). Dans ce cas rare, le slot
+        // n'est pas libéré tout de suite, mais on ne panique jamais.
+        if let Ok(mut scheduler) = shared.try_borrow_mut() {
+            scheduler.detach(self.id);
+        }
+    }
+}
+
 pub(crate) struct Scheduler {
     pub(crate) tasks: Vec<Option<TaskState>>,
     pub(crate) ready: VecDeque<usize>,
@@ -49,6 +75,10 @@ pub(crate) struct Scheduler {
     pub(crate) next_id: usize,
     pub(crate) quantum: usize,
     pub(crate) waiting_channels: HashMap<usize, VecDeque<usize>>,
+    /// Annulations demandées pendant qu'une tâche est en cours d'exécution.
+    /// La tâche courante n'est pas présente dans `tasks` pendant son quantum,
+    /// donc la demande doit vivre à côté du tableau principal.
+    pub(crate) cancel_requested: std::collections::HashSet<usize>,
 }
 
 impl Scheduler {
@@ -60,6 +90,7 @@ impl Scheduler {
             next_id: 0,
             quantum: DEFAULT_TASK_QUANTUM,
             waiting_channels: HashMap::new(),
+            cancel_requested: std::collections::HashSet::new(),
         }
     }
 
@@ -97,6 +128,8 @@ impl Scheduler {
             status: TaskStateStatus::Ready,
             result: None,
             error: None,
+            observed: false,
+            detached: false,
         };
 
         let mut scheduler = shared.borrow_mut();
@@ -142,26 +175,124 @@ impl Scheduler {
         let mut scheduler = shared.borrow_mut();
         scheduler.running.pop();
 
-        match outcome {
-            Ok(RunStatus::Yielded) => {
-                task.status = TaskStateStatus::Ready;
-                scheduler.ready.push_back(id);
-            }
-            Ok(RunStatus::Waiting) => {
-                task.status = TaskStateStatus::Waiting;
-            }
-            Ok(RunStatus::Completed) => {
-                task.status = TaskStateStatus::Completed;
-                task.result = Some(task.vm.last_result_value());
-            }
-            Err(error) => {
-                task.status = TaskStateStatus::Failed;
-                task.error = Some(error);
+        let cancellation_requested = scheduler.cancel_requested.remove(&id);
+
+        if cancellation_requested {
+            task.status = TaskStateStatus::Cancelled;
+            task.result = None;
+            task.error = None;
+            task.vm.release_task_resources();
+        } else {
+            match outcome {
+                Ok(RunStatus::Yielded) => {
+                    task.status = TaskStateStatus::Ready;
+                    scheduler.ready.push_back(id);
+                }
+                Ok(RunStatus::Waiting) => {
+                    task.status = TaskStateStatus::Waiting;
+                }
+                Ok(RunStatus::Completed) => {
+                    task.status = TaskStateStatus::Completed;
+                    task.result = Some(task.vm.last_result_value());
+                }
+                Err(error) => {
+                    task.status = TaskStateStatus::Failed;
+                    task.error = Some(error);
+                }
             }
         }
 
-        scheduler.tasks[id] = Some(task);
+        let finished = matches!(
+            task.status,
+            TaskStateStatus::Completed | TaskStateStatus::Failed | TaskStateStatus::Cancelled
+        );
+
+        // Une tâche terminée n'a plus besoin de sa pile ni de ses frames :
+        // seuls `result` / `error` restent utiles (pour `join`).
+        if finished && !cancellation_requested {
+            task.vm.release_task_resources();
+        }
+
+        if finished && task.detached {
+            if task.status == TaskStateStatus::Failed && !task.observed {
+                Self::report_unobserved(id, task.error.as_ref());
+            }
+            // Le slot reste à `None` : la tâche est libérée.
+        } else {
+            scheduler.tasks[id] = Some(task);
+        }
+
         Ok(true)
+    }
+
+    /// Appelé quand le dernier handle d'une tâche est détruit.
+    fn detach(&mut self, id: usize) {
+        let Some(slot) = self.tasks.get_mut(id) else {
+            return;
+        };
+
+        // `None` : tâche en cours d'exécution (sortie temporairement de
+        // `tasks`) ou déjà libérée. Cas rare, sans conséquence fonctionnelle.
+        let Some(task) = slot.as_mut() else {
+            return;
+        };
+
+        match task.status {
+            TaskStateStatus::Ready | TaskStateStatus::Waiting => task.detached = true,
+            TaskStateStatus::Completed | TaskStateStatus::Cancelled => *slot = None,
+            TaskStateStatus::Failed => {
+                if !task.observed {
+                    Self::report_unobserved(id, task.error.as_ref());
+                }
+                *slot = None;
+            }
+        }
+    }
+
+    fn report_unobserved(id: usize, error: Option<&RuntimeError>) {
+        match error {
+            Some(error) => {
+                eprintln!("Erreur : la tâche {id} a échoué sans que personne ne l'attende : {error}")
+            }
+            None => eprintln!("Erreur : la tâche {id} a échoué sans que personne ne l'attende"),
+        }
+    }
+
+    /// Fin de programme : exécute les tâches qui n'ont jamais été jointes
+    /// (jusqu'à ce qu'elles se terminent ou se bloquent), puis signale les
+    /// échecs que personne n'a observés.
+    pub(crate) fn drain(shared: &Rc<RefCell<Self>>) {
+        let mut polls = 0usize;
+
+        loop {
+            match Self::poll(shared) {
+                Ok(true) => {
+                    polls += 1;
+
+                    if polls >= DRAIN_MAX_POLLS {
+                        eprintln!(
+                            "Avertissement : des tâches encore actives ont été abandonnées à la fin du programme"
+                        );
+                        break;
+                    }
+                }
+                Ok(false) => break,
+                Err(error) => {
+                    eprintln!("Erreur du scheduler : {error}");
+                    break;
+                }
+            }
+        }
+
+        let mut scheduler = shared.borrow_mut();
+
+        for (id, slot) in scheduler.tasks.iter_mut().enumerate() {
+            if let Some(task) = slot
+                && task.status == TaskStateStatus::Failed && !task.observed {
+                    task.observed = true;
+                    Self::report_unobserved(id, task.error.as_ref());
+                }
+        }
     }
 
     fn channel_key(channel: &Rc<RefCell<ChannelState>>) -> usize {
@@ -190,6 +321,44 @@ impl Scheduler {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn close_channel(
+        shared: &Rc<RefCell<Self>>,
+        channel: &Rc<RefCell<ChannelState>>,
+    ) -> Result<bool, RuntimeError> {
+        let closed_now = channel.borrow_mut().close();
+        if !closed_now {
+            return Ok(false);
+        }
+
+        let key = Self::channel_key(channel);
+        let mut scheduler = shared.borrow_mut();
+        let Some(waiters) = scheduler.waiting_channels.remove(&key) else {
+            return Ok(true);
+        };
+
+        for task_id in waiters {
+            let should_wake = {
+                let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                    continue;
+                };
+
+                if task.status != TaskStateStatus::Waiting {
+                    false
+                } else {
+                    task.vm.resume_from_channel_error(RuntimeError::ChannelClosed)?;
+                    task.status = TaskStateStatus::Ready;
+                    true
+                }
+            };
+
+            if should_wake {
+                scheduler.ready.push_back(task_id);
+            }
+        }
+
+        Ok(true)
     }
 
     pub(crate) fn wake_one_channel(
@@ -242,10 +411,55 @@ impl Scheduler {
         }
     }
 
+    pub(crate) fn cancel(shared: &Rc<RefCell<Self>>, id: usize) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+
+        if scheduler.running.contains(&id) {
+            scheduler.cancel_requested.insert(id);
+            return Ok(());
+        }
+
+        let status = scheduler
+            .tasks
+            .get(id)
+            .and_then(Option::as_ref)
+            .map(|task| task.status)
+            .ok_or(RuntimeError::TaskNotFound)?;
+
+        match status {
+            TaskStateStatus::Ready | TaskStateStatus::Waiting => {
+                let task = scheduler
+                    .tasks
+                    .get_mut(id)
+                    .and_then(Option::as_mut)
+                    .ok_or(RuntimeError::TaskNotFound)?;
+
+                task.status = TaskStateStatus::Cancelled;
+                task.result = None;
+                task.error = None;
+                task.vm.release_task_resources();
+
+                scheduler.ready.retain(|queued_id| *queued_id != id);
+
+                for waiters in scheduler.waiting_channels.values_mut() {
+                    waiters.retain(|waiting_id| *waiting_id != id);
+                }
+                scheduler
+                    .waiting_channels
+                    .retain(|_, waiters| !waiters.is_empty());
+            }
+            TaskStateStatus::Completed
+            | TaskStateStatus::Failed
+            | TaskStateStatus::Cancelled => {}
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn join(shared: &Rc<RefCell<Self>>, id: usize) -> Result<Value, RuntimeError> {
         loop {
             {
-                let scheduler = shared.borrow();
+                let mut scheduler = shared.borrow_mut();
 
                 if scheduler.running.contains(&id) {
                     return Err(RuntimeError::TaskDeadlock);
@@ -253,8 +467,8 @@ impl Scheduler {
 
                 let state = scheduler
                     .tasks
-                    .get(id)
-                    .and_then(Option::as_ref)
+                    .get_mut(id)
+                    .and_then(Option::as_mut)
                     .ok_or(RuntimeError::TaskNotFound)?;
 
                 match state.status {
@@ -262,7 +476,12 @@ impl Scheduler {
                         return Ok(state.result.clone().unwrap_or(Value::None));
                     }
                     TaskStateStatus::Failed => {
+                        // L'échec est remonté à l'appelant : il est observé.
+                        state.observed = true;
                         return Err(state.error.clone().unwrap_or(RuntimeError::NativeError));
+                    }
+                    TaskStateStatus::Cancelled => {
+                        return Err(RuntimeError::TaskCancelled);
                     }
                     TaskStateStatus::Ready | TaskStateStatus::Waiting => {}
                 }
@@ -294,12 +513,13 @@ impl Scheduler {
             Some(TaskStateStatus::Waiting) => Ok("waiting"),
             Some(TaskStateStatus::Completed) => Ok("done"),
             Some(TaskStateStatus::Failed) => Ok("failed"),
+            Some(TaskStateStatus::Cancelled) => Ok("cancelled"),
             None => Err(RuntimeError::TaskNotFound),
         }
     }
 
     pub(crate) fn is_done(shared: &Rc<RefCell<Self>>, id: usize) -> Result<bool, RuntimeError> {
-        Ok(matches!(Self::status(shared, id)?, "done" | "failed"))
+        Ok(matches!(Self::status(shared, id)?, "done" | "failed" | "cancelled"))
     }
 
     pub(crate) fn append_gc_roots(

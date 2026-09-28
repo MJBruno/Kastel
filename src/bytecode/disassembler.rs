@@ -174,8 +174,9 @@ impl Chunk {
             // METHODS
             // =====================================================
             OpCode::InvokeMethod => self.constant_instruction("OP_INVOKE_METHOD", offset),
-            OpCode::InvokeBaseMethod => self.constant_instruction("OP_REMOVED_INVOKE_BASE_METHOD", offset),
-
+            OpCode::InvokeBaseMethod => {
+                self.constant_instruction("OP_REMOVED_INVOKE_BASE_METHOD", offset)
+            }
 
             // =====================================================
             // CLASSES / INSTANCES / INTERFACES

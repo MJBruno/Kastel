@@ -128,9 +128,9 @@ impl VirtualMachine {
     /// de classe afin de conserver les règles de visibilité.
     pub(crate) fn caller_owner_class(&self) -> Option<Gc<Object>> {
         let frame = self.frames.last()?;
-        let owner = frame_closure(&frame.closure).owner_class.clone();
+        
 
-        owner
+        frame_closure(&frame.closure).owner_class.clone()
     }
 
     /// Il n'existe plus de sous-classes en Kastel. Le mot-clé `protected`,
@@ -885,6 +885,11 @@ impl VirtualMachine {
                         .ok_or(RuntimeError::TaskNotFound)?;
 
                     let result = match method_name.as_str() {
+                        "cancel" => {
+                            super::scheduler::Scheduler::cancel(&scheduler, task.id)?;
+                            Value::None
+                        }
+
                         "join" => {
                             // `join` fait tourner d'autres tâches, dont les
                             // collectes doivent voir la pile de CETTE VM
@@ -930,6 +935,10 @@ impl VirtualMachine {
                                 }
                             };
 
+                            if channel.borrow().is_closed() {
+                                return Err(RuntimeError::ChannelClosed);
+                            }
+
                             let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
                             if !super::scheduler::Scheduler::wake_one_channel(&scheduler, &channel, value.clone())? {
                                 channel.borrow_mut().send(value);
@@ -955,6 +964,8 @@ impl VirtualMachine {
 
                             if let Some(value) = channel.borrow_mut().try_recv() {
                                 self.push(value);
+                            } else if channel.borrow().is_closed() {
+                                return Err(RuntimeError::ChannelClosed);
                             } else if self.task_id.is_some() {
                                 self.wait_on_channel(
                                     channel,
@@ -971,6 +982,10 @@ impl VirtualMachine {
                                     if let Some(value) = channel.borrow_mut().try_recv() {
                                         self.push(value);
                                         break;
+                                    }
+
+                                    if channel.borrow().is_closed() {
+                                        return Err(RuntimeError::ChannelClosed);
                                     }
 
                                     let scheduler = self
@@ -1044,6 +1059,46 @@ impl VirtualMachine {
                             };
 
                             self.push(Value::Boolean(channel.borrow().is_empty()));
+                        }
+
+                        "close" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            super::scheduler::Scheduler::close_channel(&scheduler, &channel)?;
+                            self.push(Value::None);
+                        }
+
+                        "is_closed" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Boolean(channel.borrow().is_closed()));
                         }
 
                         _ => {

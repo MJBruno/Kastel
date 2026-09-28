@@ -10,13 +10,31 @@ impl VirtualMachine {
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
             match self.run_internal(true, None)? {
-                super::RunStatus::Completed => return Ok(()),
+                super::RunStatus::Completed => {
+                    self.drain_tasks();
+                    return Ok(());
+                }
                 super::RunStatus::Yielded => continue,
                 super::RunStatus::Waiting => {
                     return Err(RuntimeError::TaskDeadlock);
                 }
             }
         }
+    }
+
+    /// Fin de programme : les tâches lancées mais jamais jointes s'exécutent
+    /// avant de rendre la main (voir `Scheduler::drain`). Seule la VM qui
+    /// POSSÈDE le scheduler le fait ; une tâche n'en possède pas.
+    fn drain_tasks(&mut self) {
+        let Some(owner) = self.scheduler_owner.clone() else {
+            return;
+        };
+
+        // Les valeurs de cette VM (résultat REPL, pile) doivent survivre aux
+        // collectes déclenchées par les tâches.
+        let _pinned = self.pin_roots();
+
+        super::scheduler::Scheduler::drain(&owner);
     }
 
     #[allow(dead_code)]
@@ -48,11 +66,17 @@ impl VirtualMachine {
         let mut instructions = 0usize;
 
         loop {
-            if let Some(budget) = instruction_budget {
-                if instructions >= budget {
-                    return Ok(super::RunStatus::Yielded);
+            if let Some(error) = self.waiting_error.take() {
+                if !self.propagate_runtime_error(error.clone())? {
+                    self.print_profile();
+                    return Err(error);
                 }
             }
+
+            if let Some(budget) = instruction_budget
+                && instructions >= budget {
+                    return Ok(super::RunStatus::Yielded);
+                }
             instructions += 1;
             if cfg!(feature = "debug_trace") {
                 self.debug_machine()?;
@@ -237,7 +261,9 @@ impl VirtualMachine {
             RuntimeError::TaskCaptureNotAllowed
             | RuntimeError::TaskNotFound
             | RuntimeError::YieldOutsideTask
-            | RuntimeError::TaskDeadlock => {
+            | RuntimeError::TaskDeadlock
+            | RuntimeError::TaskCancelled
+            | RuntimeError::ChannelClosed => {
                 Ok(Value::new_error(error.kind_name(), error.to_string()))
             }
 

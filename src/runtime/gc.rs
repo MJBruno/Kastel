@@ -76,7 +76,7 @@ pub struct ExternalRoots {
 }
 
 thread_local! {
-    static EXTERNAL_ROOTS: RefCell<Vec<ExternalRoots>> = RefCell::new(Vec::new());
+    static EXTERNAL_ROOTS: RefCell<Vec<ExternalRoots>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Garde RAII : les racines épinglées le restent tant qu'elle existe.
