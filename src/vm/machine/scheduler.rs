@@ -77,6 +77,13 @@ impl Drop for TaskHandle {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PollOutcome {
+    Progressed,
+    Idle,
+    DeadlineReached,
+}
+
 pub(crate) struct Scheduler {
     pub(crate) tasks: Vec<Option<TaskState>>,
     pub(crate) ready: VecDeque<usize>,
@@ -167,6 +174,16 @@ impl Scheduler {
     }
 
     pub(crate) fn poll(shared: &Rc<RefCell<Self>>) -> Result<bool, RuntimeError> {
+        match Self::poll_until(shared, None)? {
+            PollOutcome::Progressed => Ok(true),
+            PollOutcome::Idle | PollOutcome::DeadlineReached => Ok(false),
+        }
+    }
+
+    pub(crate) fn poll_until(
+        shared: &Rc<RefCell<Self>>,
+        deadline: Option<Instant>,
+    ) -> Result<PollOutcome, RuntimeError> {
         let (id, mut task, quantum) = {
             let mut scheduler = shared.borrow_mut();
 
@@ -177,6 +194,12 @@ impl Scheduler {
             let id = loop {
                 scheduler.wake_expired_timers();
 
+                if let Some(stop_at) = deadline
+                    && Instant::now() >= stop_at
+                {
+                    return Ok(PollOutcome::DeadlineReached);
+                }
+
                 if let Some(id) = scheduler.ready.pop_front() {
                     if scheduler.tasks.get(id).and_then(Option::as_ref).is_some() {
                         break id;
@@ -185,25 +208,42 @@ impl Scheduler {
                 }
 
                 if !scheduler.has_live_tasks() {
-                    return Ok(false);
+                    if let Some(stop_at) = deadline {
+                        let remaining = stop_at.saturating_duration_since(Instant::now());
+                        if !remaining.is_zero() {
+                            drop(scheduler);
+                            thread::sleep(remaining);
+                            return Ok(PollOutcome::DeadlineReached);
+                        }
+                        return Ok(PollOutcome::DeadlineReached);
+                    }
+                    return Ok(PollOutcome::Idle);
                 }
 
-                let Some(deadline) = scheduler.next_timer_deadline() else {
-                    return Err(RuntimeError::TaskDeadlock);
+                let next_timer = scheduler.next_timer_deadline();
+                let next_wakeup = match (next_timer, deadline) {
+                    (Some(timer), Some(stop_at)) => timer.min(stop_at),
+                    (Some(timer), None) => timer,
+                    (None, Some(stop_at)) => stop_at,
+                    (None, None) => return Err(RuntimeError::TaskDeadlock),
                 };
 
                 let now = Instant::now();
-                let remaining = deadline.saturating_duration_since(now);
-                if remaining.is_zero() {
+                if next_wakeup <= now {
                     continue;
                 }
 
-                // Aucune tâche n'est prête : dormir le thread du scheduler
-                // ne bloque donc aucune autre tâche exécutable. Dès qu'une
-                // échéance arrive, la prochaine itération réveille les tâches.
+                let remaining = next_wakeup.saturating_duration_since(now);
                 drop(scheduler);
                 thread::sleep(remaining);
                 scheduler = shared.borrow_mut();
+
+                if let Some(stop_at) = deadline
+                    && Instant::now() >= stop_at
+                    && scheduler.ready.is_empty()
+                {
+                    return Ok(PollOutcome::DeadlineReached);
+                }
             };
 
             let task = scheduler
@@ -224,10 +264,6 @@ impl Scheduler {
 
         let cancellation_requested = scheduler.cancel_requested.remove(&id);
 
-        // Une annulation demandée pendant le quantum n'agit que si la tâche
-        // est encore en vie à la fin de celui-ci : si elle s'est terminée (ou a
-        // échoué) entre-temps, la demande est arrivée trop tard et son
-        // résultat réel est conservé.
         let cancel_now = cancellation_requested
             && matches!(outcome, Ok(RunStatus::Yielded) | Ok(RunStatus::Waiting));
 
@@ -235,9 +271,8 @@ impl Scheduler {
             task.status = TaskStateStatus::Cancelled;
             task.result = None;
             task.error = None;
-            // La tâche a pu s'enregistrer comme attendant un canal / un select
-            // juste avant la fin du quantum : on retire ces inscriptions.
             Self::unregister_channel_waits(&mut scheduler, id);
+            scheduler.unregister_timer(id);
             task.vm.release_task_resources();
         } else {
             match outcome {
@@ -264,9 +299,8 @@ impl Scheduler {
             TaskStateStatus::Completed | TaskStateStatus::Failed | TaskStateStatus::Cancelled
         );
 
-        // Une tâche terminée n'a plus besoin de sa pile ni de ses frames :
-        // seuls `result` / `error` restent utiles (pour `join`).
         if finished && !cancel_now {
+            scheduler.unregister_timer(id);
             task.vm.release_task_resources();
         }
 
@@ -274,12 +308,11 @@ impl Scheduler {
             if task.status == TaskStateStatus::Failed && !task.observed {
                 Self::report_unobserved(id, task.error.as_ref());
             }
-            // Le slot reste à `None` : la tâche est libérée.
         } else {
             scheduler.tasks[id] = Some(task);
         }
 
-        Ok(true)
+        Ok(PollOutcome::Progressed)
     }
 
     /// Appelé quand le dernier handle d'une tâche est détruit.
@@ -410,11 +443,15 @@ impl Scheduler {
                 continue;
             }
 
+            let select_timeout = task.vm.waiting_select_channels.is_some();
             if task.vm.resume_from_timer().is_err() {
                 continue;
             }
 
             task.status = TaskStateStatus::Ready;
+            if select_timeout {
+                Self::unregister_channel_waits(self, task_id);
+            }
             self.ready.push_back(task_id);
         }
     }
@@ -587,6 +624,7 @@ impl Scheduler {
                 task.vm.resume_from_select(index, Value::None, true)?;
                 task.status = TaskStateStatus::Ready;
                 Self::unregister_channel_waits(&mut scheduler, task_id);
+                scheduler.unregister_timer(task_id);
                 scheduler.ready.push_back(task_id);
             } else {
                 let task = scheduler
@@ -661,6 +699,7 @@ impl Scheduler {
                 task.vm.resume_from_select(index, value, false)?;
                 task.status = TaskStateStatus::Ready;
                 Self::unregister_channel_waits(&mut scheduler, task_id);
+                scheduler.unregister_timer(task_id);
                 scheduler.ready.push_back(task_id);
                 return Ok(true);
             }

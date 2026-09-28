@@ -164,11 +164,19 @@ impl Compiler {
                     }
 
                     if name == "select" {
-                        if arguments.len() != 1 {
+                        if !(1..=2).contains(&arguments.len()) {
                             return Err(CompileError::WrongArgumentCount {
                                 expected: 1,
                                 found: arguments.len(),
                             });
+                        }
+
+                        // `Select` attend toujours deux valeurs sur la pile :
+                        // timeout (ou None), puis la liste des channels.
+                        if let Some(timeout) = arguments.get(1) {
+                            self.compile_expression(timeout)?;
+                        } else {
+                            self.emit_opcode(OpCode::None);
                         }
 
                         self.compile_expression(&arguments[0])?;

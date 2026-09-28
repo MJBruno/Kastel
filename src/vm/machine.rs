@@ -13,7 +13,6 @@ use crate::runtime::object::Object;
 use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
 use crate::stdlib::register_natives;
-use crate::vm::machine::scheduler::Scheduler;
 
 #[cfg(test)]
 mod option_result_tests;
@@ -470,7 +469,7 @@ impl VirtualMachine {
                 .ok_or(RuntimeError::TaskNotFound)?;
 
             while Instant::now() < deadline {
-                match Scheduler::poll(&scheduler) {
+                match scheduler::Scheduler::poll(&scheduler) {
                     Ok(true) => {}
                     Ok(false) | Err(RuntimeError::TaskDeadlock) => {
                         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -491,7 +490,7 @@ impl VirtualMachine {
             .upgrade()
             .ok_or(RuntimeError::TaskNotFound)?;
 
-        let deadline = Scheduler::sleep_task(&scheduler, task_id, duration)?;
+        let deadline = scheduler::Scheduler::sleep_task(&scheduler, task_id, duration)?;
         self.waiting_timer = Some(deadline);
         self.waiting_requested = true;
         Ok(())
@@ -544,9 +543,20 @@ impl VirtualMachine {
             return Err(RuntimeError::TaskNotFound);
         }
 
+        let select_timeout = self.waiting_select_channels.is_some();
         self.waiting_timer = None;
         self.waiting_error = None;
         self.waiting_requested = false;
+
+        if select_timeout {
+            self.waiting_select_channels = None;
+            self.push(Value::new_tuple(vec![
+                Value::Integer(-1),
+                Value::None,
+                Value::Boolean(false),
+            ]));
+        }
+
         Ok(())
     }
 

@@ -3000,11 +3000,23 @@ impl TypeChecker {
                 if let Expression::Variable(name) = callee.as_ref()
                     && name == "select"
                 {
-                    if arguments.len() != 1 {
+                    if !(1..=2).contains(&arguments.len()) {
                         return Err(CompileError::WrongArgumentCount {
                             expected: 1,
                             found: arguments.len(),
                         });
+                    }
+
+                    if let Some(timeout) = arguments.get(1) {
+                        let timeout_type = self.check_expression(timeout)?;
+                        if !matches!(timeout_type, Type::Int | Type::Dynamic) {
+                            return Err(CompileError::WrongArgumentType {
+                                function: "select".into(),
+                                index: 1,
+                                expected: "int".into(),
+                                found: timeout_type.to_string(),
+                            });
+                        }
                     }
 
                     let channels_type = self.check_expression(&arguments[0])?;

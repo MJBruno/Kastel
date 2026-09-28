@@ -1634,6 +1634,96 @@ fn cancellation_requested_before_blocking_leaves_no_ghost_waiter() {
     assert!(scheduler.cancel_requested.is_empty());
 }
 
+
+#[test]
+fn select_with_timeout_returns_timeout_tuple() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>();
+            let selected = select([ch], 5);
+            let ok = selected[0] == -1 && selected[1] == None && selected[2] == false;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn select_wakes_on_channel_before_timeout() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>();
+
+            func sender() -> int {
+                sleep(5);
+                ch.send(42);
+                return 1;
+            }
+
+            spawn(sender);
+            let selected = select([ch], 1000);
+            let ok = selected[0] == 0 && selected[1] == 42 && selected[2] == false;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn select_timeout_cleans_all_channel_registrations() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let first = channel<int>();
+            let second = channel<int>();
+
+            func waiter() -> int {
+                let selected = select([first, second], 5);
+                return selected[0];
+            }
+
+            let task = spawn(waiter);
+            let result = task.join();
+            let ok = result == -1;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_channels.is_empty());
+        assert!(scheduler.waiting_selects.is_empty());
+        assert!(scheduler.sleeping_tasks.is_empty());
+    });
+}
+
+#[test]
+fn select_rejects_negative_timeout() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>();
+            let ok = false;
+            try {
+                select([ch], -1);
+            } catch (e: Err) {
+                ok = e.kind == "TypeError";
+            }
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
 // ---------- tests de stress ----------
 
 #[test]
