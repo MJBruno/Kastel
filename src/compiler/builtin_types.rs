@@ -59,6 +59,7 @@ pub fn all() -> HashMap<String, Type> {
         arguments: vec![Dynamic],
     }));
     types.insert("yield".into(), function(&[], None));
+    types.insert("select".into(), Dynamic);
 
     // Option / Result
     types.insert(

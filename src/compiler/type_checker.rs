@@ -2975,6 +2975,49 @@ impl TypeChecker {
                 }
 
                 if let Expression::Variable(name) = callee.as_ref()
+                    && name == "select"
+                {
+                    if arguments.len() != 1 {
+                        return Err(CompileError::WrongArgumentCount {
+                            expected: 1,
+                            found: arguments.len(),
+                        });
+                    }
+
+                    let channels_type = self.check_expression(&arguments[0])?;
+                    let element_type = match &channels_type {
+                        Type::Array(element) => (**element).clone(),
+                        Type::ArrayDynamic | Type::Dynamic => Type::Dynamic,
+                        _ => {
+                            return Err(CompileError::WrongArgumentType {
+                                function: "select".into(),
+                                index: 0,
+                                expected: "List<Channel<dynamic>>".into(),
+                                found: channels_type.to_string(),
+                            });
+                        }
+                    };
+
+                    if !matches!(element_type, Type::Dynamic) {
+                        let expected_channel = Type::Generic {
+                            name: "Channel".into(),
+                            arguments: vec![Type::Dynamic],
+                        };
+
+                        if !self.are_assignable(&element_type, &expected_channel) {
+                            return Err(CompileError::WrongArgumentType {
+                                function: "select".into(),
+                                index: 0,
+                                expected: "List<Channel<dynamic>>".into(),
+                                found: channels_type.to_string(),
+                            });
+                        }
+                    }
+
+                    return Ok(Type::Tuple(vec![Type::Int, Type::Dynamic, Type::Bool]));
+                }
+
+                if let Expression::Variable(name) = callee.as_ref()
                     && name == "channel"
                     && self.lookup(name).is_some_and(|binding| binding.native)
                 {

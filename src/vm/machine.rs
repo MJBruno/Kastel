@@ -193,6 +193,7 @@ pub struct VirtualMachine {
     pub(crate) waiting_requested: bool,
     pub(crate) task_id: Option<usize>,
     pub(crate) waiting_channel: Option<Value>,
+    pub(crate) waiting_select_channels: Option<Vec<Value>>,
     pub(crate) waiting_error: Option<RuntimeError>,
     pub(crate) last_result: Option<Value>,
     pub(crate) scheduler: Weak<RefCell<scheduler::Scheduler>>,
@@ -270,6 +271,7 @@ impl VirtualMachine {
             waiting_requested: false,
             task_id: None,
             waiting_channel: None,
+            waiting_select_channels: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -327,6 +329,7 @@ impl VirtualMachine {
             waiting_requested: false,
             task_id: None,
             waiting_channel: None,
+            waiting_select_channels: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -401,6 +404,7 @@ impl VirtualMachine {
             waiting_requested: false,
             task_id: Some(task_id),
             waiting_channel: None,
+            waiting_select_channels: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -440,6 +444,48 @@ impl VirtualMachine {
 
         self.waiting_channel = Some(channel_value);
         self.waiting_requested = true;
+        Ok(())
+    }
+
+    pub(crate) fn wait_on_select(
+        &mut self,
+        channels: Vec<(Rc<RefCell<ChannelState>>, Value)>,
+    ) -> Result<(), RuntimeError> {
+        let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+
+        let scheduler = self
+            .scheduler
+            .upgrade()
+            .ok_or(RuntimeError::TaskNotFound)?;
+
+        let values: Vec<Value> = channels.iter().map(|(_, value)| value.clone()).collect();
+        scheduler::Scheduler::wait_on_select(&scheduler, task_id, &channels)?;
+
+        self.waiting_select_channels = Some(values);
+        self.waiting_channel = None;
+        self.waiting_requested = true;
+        Ok(())
+    }
+
+    pub(crate) fn resume_from_select(
+        &mut self,
+        index: usize,
+        value: Value,
+        closed: bool,
+    ) -> Result<(), RuntimeError> {
+        if self.waiting_select_channels.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_select_channels = None;
+        self.waiting_channel = None;
+        self.waiting_error = None;
+        self.waiting_requested = false;
+        self.push(Value::new_tuple(vec![
+            Value::Integer(index as i64),
+            value,
+            Value::Boolean(closed),
+        ]));
         Ok(())
     }
 
@@ -576,6 +622,7 @@ impl VirtualMachine {
         self.pending_exception = None;
         self.temp_roots.clear();
         self.waiting_channel = None;
+        self.waiting_select_channels = None;
         self.last_result = None;
         self.open_upvalues.clear();
     }
@@ -613,6 +660,7 @@ impl VirtualMachine {
         self.waiting_requested = false;
         self.task_id = None;
         self.waiting_channel = None;
+        self.waiting_select_channels = None;
         self.last_result = None;
 
         // Les upvalues ont maintenant été fermées correctement.

@@ -1,13 +1,16 @@
-let log = [];
+let first = channel<int>();
+let second = channel<int>();
 
-func worker() {
-    let scratch = [1, 2, 3];
-    log.add(scratch.size());
-}
+second.send(42);
 
-let kept = spawn(worker);
-kept.join();
+let result = select([first, second]);
 
-for i in range(0, 200) { 
-    spawn(worker); 
-}
+
+
+
+println(result[0])
+println(result[1])
+println(result[2])
+// result[0] == 1
+// result[1] == 42
+// result[2] == false

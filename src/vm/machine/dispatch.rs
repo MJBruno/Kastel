@@ -486,6 +486,11 @@ impl VirtualMachine {
                 Ok(false)
             }
 
+            OpCode::Select => {
+                self.select_channels()?;
+                Ok(false)
+            }
+
             // ========================================================
             // RETURN / HALT
             // ========================================================

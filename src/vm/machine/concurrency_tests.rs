@@ -930,6 +930,194 @@ fn closing_channel_wakes_waiting_consumer_with_catchable_error() {
 
 
 #[test]
+fn select_returns_first_ready_channel_in_deterministic_order() {
+    let (vm, result) = run_script(
+        r#"
+        let first = channel<int>();
+        let second = channel<int>();
+        second.send(42);
+
+        let selected = select([first, second]);
+        let ok = selected[0] == 1
+            && selected[1] == 42
+            && selected[2] == false;
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
+fn select_blocks_until_one_channel_receives() {
+    let (vm, result) = run_script(
+        r#"
+        let first = channel<int>();
+        let second = channel<int>();
+
+        func consumer() -> int {
+            let selected = select([first, second]);
+            if selected[0] == 1 {
+                return selected[1];
+            }
+            return -1;
+        }
+
+        func producer() -> int {
+            yield();
+            second.send(77);
+            first.send(99);
+            return 1;
+        }
+
+        let consumer_task = spawn(consumer);
+        let producer_task = spawn(producer);
+
+        let consumer_result = consumer_task.join();
+        let producer_result = producer_task.join();
+        let buffered = first.try_recv();
+        let ok = consumer_result == 77
+            && producer_result == 1
+            && buffered == Some(99);
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
+fn closing_a_waited_select_wakes_it_as_a_closed_case() {
+    let (vm, result) = run_script(
+        r#"
+        let first = channel<int>();
+        let second = channel<int>();
+
+        func consumer() -> int {
+            let selected = select([first, second]);
+            if selected[0] == 1 && selected[1] == None && selected[2] == true {
+                return 7;
+            }
+            return -1;
+        }
+
+        func closer() -> int {
+            yield();
+            second.close();
+            return 1;
+        }
+
+        let consumer_task = spawn(consumer);
+        let closer_task = spawn(closer);
+        let consumer_result = consumer_task.join();
+        let closer_result = closer_task.join();
+        let ok = consumer_result == 7 && closer_result == 1;
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
+fn select_reports_closed_channel_without_losing_which_channel_closed() {
+    let (vm, result) = run_script(
+        r#"
+        let first = channel<int>();
+        let second = channel<int>();
+        second.close();
+
+        let selected = select([first, second]);
+        let ok = selected[0] == 1
+            && selected[1] == None
+            && selected[2] == true;
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
+fn select_with_no_progress_is_reported_as_deadlock() {
+    let (_vm, result) = run_script(
+        r#"
+        let first = channel<int>();
+        let second = channel<int>();
+
+        func worker() -> int {
+            let selected = select([first, second]);
+            return selected[0];
+        }
+
+        let task = spawn(worker);
+        task.join();
+    "#,
+    );
+
+    assert!(matches!(
+        result,
+        Err(crate::error::runtime_error::RuntimeError::TaskDeadlock)
+    ));
+}
+
+#[test]
+fn cancelling_select_removes_all_channel_wait_registrations() {
+    let (vm, result) = run_script(
+        r#"
+        let first = channel<int>();
+        let second = channel<int>();
+
+        func worker() -> int {
+            let selected = select([first, second]);
+            return selected[0];
+        }
+
+        let task = spawn(worker);
+
+        func starter() -> int {
+            yield();
+            return 1;
+        }
+
+        let starter_task = spawn(starter);
+        starter_task.join();
+        task.cancel();
+
+        first.send(10);
+        second.send(20);
+
+        let ok = task.status() == "cancelled"
+            && first.try_recv() == Some(10)
+            && second.try_recv() == Some(20);
+    "#,
+    );
+
+    result.unwrap();
+
+    assert!(matches!(
+        vm.globals.borrow().get("ok"),
+        Some(Value::Boolean(true))
+    ));
+}
+
+#[test]
 fn multiple_tasks_waiting_without_progress_are_reported_as_deadlock() {
     let (_vm, result) = run_script(
         r#"

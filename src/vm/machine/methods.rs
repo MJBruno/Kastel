@@ -9,6 +9,69 @@ use crate::{
 };
 
 impl VirtualMachine {
+    pub(crate) fn select_channels(&mut self) -> Result<(), RuntimeError> {
+        let collection = self.pop()?;
+        let count = collection.array_len()?;
+        if count == 0 {
+            return Err(RuntimeError::InvalidFunction);
+        }
+
+        let mut channels = Vec::with_capacity(count);
+        for index in 0..count {
+            let value = collection.array_get(index)?;
+            let channel = match &value {
+                Value::Object(handle) => {
+                    let object = handle.borrow();
+                    match &*object {
+                        Object::Channel(channel) => channel.clone(),
+                        _ => return Err(RuntimeError::TypeError),
+                    }
+                }
+                _ => return Err(RuntimeError::TypeError),
+            };
+
+            channels.push((channel, value));
+        }
+
+        loop {
+            for (index, (channel, _)) in channels.iter().enumerate() {
+                if let Some(value) = channel.borrow_mut().try_recv() {
+                    self.push(Value::new_tuple(vec![
+                        Value::Integer(index as i64),
+                        value,
+                        Value::Boolean(false),
+                    ]));
+                    return Ok(());
+                }
+
+                if channel.borrow().is_closed() {
+                    self.push(Value::new_tuple(vec![
+                        Value::Integer(index as i64),
+                        Value::None,
+                        Value::Boolean(true),
+                    ]));
+                    return Ok(());
+                }
+            }
+
+            if self.task_id.is_some() {
+                self.wait_on_select(channels)?;
+                return Ok(());
+            }
+
+            let channel_values: Vec<Value> = channels.iter().map(|(_, value)| value.clone()).collect();
+            let _pinned = self.pin_roots_with(&channel_values);
+            let scheduler = self
+                .scheduler
+                .upgrade()
+                .ok_or(RuntimeError::TaskNotFound)?;
+
+            if !super::scheduler::Scheduler::poll(&scheduler)? {
+                return Err(RuntimeError::TaskDeadlock);
+            }
+        }
+    }
+
     // ============================================================
     //                     METHOD RESOLUTION
     // ============================================================

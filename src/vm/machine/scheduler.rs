@@ -75,6 +75,10 @@ pub(crate) struct Scheduler {
     pub(crate) next_id: usize,
     pub(crate) quantum: usize,
     pub(crate) waiting_channels: HashMap<usize, VecDeque<usize>>,
+    /// Pour les tâches en `select`, associe chaque tâche aux channels sur
+    /// lesquels elle est enregistrée. Une même tâche peut donc apparaître
+    /// dans plusieurs files d'attente, mais ne sera réveillée qu'une seule fois.
+    pub(crate) waiting_selects: HashMap<usize, Vec<usize>>,
     /// Annulations demandées pendant qu'une tâche est en cours d'exécution.
     /// La tâche courante n'est pas présente dans `tasks` pendant son quantum,
     /// donc la demande doit vivre à côté du tableau principal.
@@ -90,6 +94,7 @@ impl Scheduler {
             next_id: 0,
             quantum: DEFAULT_TASK_QUANTUM,
             waiting_channels: HashMap::new(),
+            waiting_selects: HashMap::new(),
             cancel_requested: std::collections::HashSet::new(),
         }
     }
@@ -356,6 +361,63 @@ impl Scheduler {
         Ok(())
     }
 
+    pub(crate) fn wait_on_select(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        channels: &[(Rc<RefCell<ChannelState>>, Value)],
+    ) -> Result<(), RuntimeError> {
+        if channels.is_empty() {
+            return Err(RuntimeError::InvalidFunction);
+        }
+
+        let mut scheduler = shared.borrow_mut();
+        let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
+        if state.is_none() && !scheduler.running.contains(&task_id) {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let mut keys = Vec::with_capacity(channels.len());
+
+        for (channel, _) in channels {
+            let key = Self::channel_key(channel);
+            if !keys.contains(&key) {
+                keys.push(key);
+
+                let waiters = scheduler.waiting_channels.entry(key).or_default();
+                if !waiters.contains(&task_id) {
+                    waiters.push_back(task_id);
+                }
+            }
+        }
+
+        scheduler.waiting_selects.insert(task_id, keys);
+        Ok(())
+    }
+
+    fn unregister_channel_waits(scheduler: &mut Self, task_id: usize) {
+        for waiters in scheduler.waiting_channels.values_mut() {
+            waiters.retain(|waiting_id| *waiting_id != task_id);
+        }
+        scheduler
+            .waiting_channels
+            .retain(|_, waiters| !waiters.is_empty());
+        scheduler.waiting_selects.remove(&task_id);
+    }
+
+    fn select_index_for_channel(task: &TaskState, channel_key: usize) -> Option<usize> {
+        task.vm.waiting_select_channels.as_ref()?.iter().position(|value| {
+            let Value::Object(handle) = value else {
+                return false;
+            };
+
+            let object = handle.borrow();
+            match &*object {
+                Object::Channel(channel) => Self::channel_key(channel) == channel_key,
+                _ => false,
+            }
+        })
+    }
+
     pub(crate) fn close_channel(
         shared: &Rc<RefCell<Self>>,
         channel: &Rc<RefCell<ChannelState>>,
@@ -367,26 +429,53 @@ impl Scheduler {
 
         let key = Self::channel_key(channel);
         let mut scheduler = shared.borrow_mut();
-        let Some(waiters) = scheduler.waiting_channels.remove(&key) else {
-            return Ok(true);
-        };
+        let waiters = scheduler
+            .waiting_channels
+            .remove(&key)
+            .unwrap_or_default();
 
         for task_id in waiters {
+            let is_select = scheduler.waiting_selects.contains_key(&task_id);
             let should_wake = {
-                let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                let Some(task) = scheduler.tasks.get(task_id).and_then(Option::as_ref) else {
                     continue;
                 };
 
-                if task.status != TaskStateStatus::Waiting {
-                    false
-                } else {
-                    task.vm.resume_from_channel_error(RuntimeError::ChannelClosed)?;
-                    task.status = TaskStateStatus::Ready;
-                    true
-                }
+                task.status == TaskStateStatus::Waiting
             };
 
-            if should_wake {
+            if !should_wake {
+                continue;
+            }
+
+            if is_select {
+                let index = {
+                    let task = scheduler
+                        .tasks
+                        .get(task_id)
+                        .and_then(Option::as_ref)
+                        .ok_or(RuntimeError::TaskNotFound)?;
+                    Self::select_index_for_channel(task, key)
+                        .ok_or(RuntimeError::TaskNotFound)?
+                };
+
+                let task = scheduler
+                    .tasks
+                    .get_mut(task_id)
+                    .and_then(Option::as_mut)
+                    .ok_or(RuntimeError::TaskNotFound)?;
+                task.vm.resume_from_select(index, Value::None, true)?;
+                task.status = TaskStateStatus::Ready;
+                Self::unregister_channel_waits(&mut scheduler, task_id);
+                scheduler.ready.push_back(task_id);
+            } else {
+                let task = scheduler
+                    .tasks
+                    .get_mut(task_id)
+                    .and_then(Option::as_mut)
+                    .ok_or(RuntimeError::TaskNotFound)?;
+                task.vm.resume_from_channel_error(RuntimeError::ChannelClosed)?;
+                task.status = TaskStateStatus::Ready;
                 scheduler.ready.push_back(task_id);
             }
         }
@@ -422,25 +511,50 @@ impl Scheduler {
             };
 
             let should_wake = {
-                let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                let Some(task) = scheduler.tasks.get(task_id).and_then(Option::as_ref) else {
                     continue;
                 };
-
-                if task.status != TaskStateStatus::Waiting {
-                    false
-                } else {
-                    let value = pending_value.take().ok_or(RuntimeError::NativeError)?;
-
-                    task.vm.resume_from_channel(value)?;
-                    task.status = TaskStateStatus::Ready;
-                    true
-                }
+                task.status == TaskStateStatus::Waiting
             };
 
-            if should_wake {
+            if !should_wake {
+                continue;
+            }
+
+            if scheduler.waiting_selects.contains_key(&task_id) {
+                let index = {
+                    let task = scheduler
+                        .tasks
+                        .get(task_id)
+                        .and_then(Option::as_ref)
+                        .ok_or(RuntimeError::TaskNotFound)?;
+                    Self::select_index_for_channel(task, key)
+                        .ok_or(RuntimeError::TaskNotFound)?
+                };
+
+                let value = pending_value.take().ok_or(RuntimeError::NativeError)?;
+                let task = scheduler
+                    .tasks
+                    .get_mut(task_id)
+                    .and_then(Option::as_mut)
+                    .ok_or(RuntimeError::TaskNotFound)?;
+                task.vm.resume_from_select(index, value, false)?;
+                task.status = TaskStateStatus::Ready;
+                Self::unregister_channel_waits(&mut scheduler, task_id);
                 scheduler.ready.push_back(task_id);
                 return Ok(true);
             }
+
+            let value = pending_value.take().ok_or(RuntimeError::NativeError)?;
+            let task = scheduler
+                .tasks
+                .get_mut(task_id)
+                .and_then(Option::as_mut)
+                .ok_or(RuntimeError::TaskNotFound)?;
+            task.vm.resume_from_channel(value)?;
+            task.status = TaskStateStatus::Ready;
+            scheduler.ready.push_back(task_id);
+            return Ok(true);
         }
     }
 
@@ -474,12 +588,7 @@ impl Scheduler {
 
                 scheduler.ready.retain(|queued_id| *queued_id != id);
 
-                for waiters in scheduler.waiting_channels.values_mut() {
-                    waiters.retain(|waiting_id| *waiting_id != id);
-                }
-                scheduler
-                    .waiting_channels
-                    .retain(|_, waiters| !waiters.is_empty());
+                Self::unregister_channel_waits(&mut scheduler, id);
             }
             TaskStateStatus::Completed
             | TaskStateStatus::Failed
@@ -565,6 +674,9 @@ impl Scheduler {
             values.extend(task.vm.temp_roots.iter().cloned());
             if let Some(channel) = &task.vm.waiting_channel {
                 values.push(channel.clone());
+            }
+            if let Some(channels) = &task.vm.waiting_select_channels {
+                values.extend(channels.iter().cloned());
             }
             values.extend(task.vm.globals.borrow().values().cloned());
             values.extend(
