@@ -1,20 +1,20 @@
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
-use std::rc::{Rc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
+use std::rc::{Rc, Weak};
 
 use crate::error::runtime_error::RuntimeError;
-use crate::module::module::ModuleLoader;
 use crate::runtime::barrier::BarrierState;
+use crate::module::module::ModuleLoader;
 use crate::runtime::channel::ChannelState;
-use crate::runtime::gc_handle::Gc;
 use crate::runtime::mutex::MutexState;
-use crate::runtime::object::Object;
 use crate::runtime::semaphore::SemaphoreState;
-use crate::runtime::value::Value;
 use crate::runtime::wait_group::WaitGroupState;
+use crate::runtime::gc_handle::Gc;
+use crate::runtime::object::Object;
+use crate::runtime::value::Value;
 
 use super::{RunStatus, VirtualMachine};
 
@@ -300,6 +300,9 @@ impl Scheduler {
             Self::unregister_channel_waits(&mut scheduler, id);
             scheduler.unregister_mutex_wait(id);
             scheduler.unregister_wait_group_wait(id);
+            if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
+                scheduler.break_barrier(barrier);
+            }
             scheduler.unregister_semaphore_wait(id);
             scheduler.unregister_timer(id);
             scheduler.release_owned_mutexes(id);
@@ -380,9 +383,7 @@ impl Scheduler {
     fn report_unobserved(id: usize, error: Option<&RuntimeError>) {
         match error {
             Some(error) => {
-                eprintln!(
-                    "Erreur : la tâche {id} a échoué sans que personne ne l'attende : {error}"
-                )
+                eprintln!("Erreur : la tâche {id} a échoué sans que personne ne l'attende : {error}")
             }
             None => eprintln!("Erreur : la tâche {id} a échoué sans que personne ne l'attende"),
         }
@@ -441,22 +442,17 @@ impl Scheduler {
 
         for (id, slot) in scheduler.tasks.iter_mut().enumerate() {
             if let Some(task) = slot
-                && task.status == TaskStateStatus::Failed
-                && !task.observed
-            {
-                task.observed = true;
-                Self::report_unobserved(id, task.error.as_ref());
-            }
+                && task.status == TaskStateStatus::Failed && !task.observed {
+                    task.observed = true;
+                    Self::report_unobserved(id, task.error.as_ref());
+                }
         }
     }
 
     fn has_live_tasks(&self) -> bool {
         !self.running.is_empty()
             || self.tasks.iter().flatten().any(|task| {
-                matches!(
-                    task.status,
-                    TaskStateStatus::Ready | TaskStateStatus::Waiting
-                )
+                matches!(task.status, TaskStateStatus::Ready | TaskStateStatus::Waiting)
             })
     }
 
@@ -520,11 +516,7 @@ impl Scheduler {
             .ok_or(RuntimeError::InvalidFunction)?;
 
         let mut scheduler = shared.borrow_mut();
-        if scheduler
-            .tasks
-            .get(task_id)
-            .and_then(Option::as_ref)
-            .is_none()
+        if scheduler.tasks.get(task_id).and_then(Option::as_ref).is_none()
             && !scheduler.running.contains(&task_id)
         {
             return Err(RuntimeError::TaskNotFound);
@@ -637,9 +629,10 @@ impl Scheduler {
                 .and_then(Option::as_ref)
                 .is_some_and(|task| {
                     task.status == TaskStateStatus::Waiting
-                        && self.waiting_mutexes.get(&next_id).is_some_and(|waiting| {
-                            Self::mutex_key(waiting) == Self::mutex_key(mutex)
-                        })
+                        && self
+                            .waiting_mutexes
+                            .get(&next_id)
+                            .is_some_and(|waiting| Self::mutex_key(waiting) == Self::mutex_key(mutex))
                 });
 
             self.waiting_mutexes.remove(&next_id);
@@ -704,7 +697,11 @@ impl Scheduler {
         Rc::as_ptr(semaphore) as usize
     }
 
-    fn add_owned_semaphore(&mut self, task_id: usize, semaphore: Rc<RefCell<SemaphoreState>>) {
+    fn add_owned_semaphore(
+        &mut self,
+        task_id: usize,
+        semaphore: Rc<RefCell<SemaphoreState>>,
+    ) {
         self.owned_semaphores
             .entry(task_id)
             .or_default()
@@ -763,9 +760,7 @@ impl Scheduler {
                 state.waiters.push_back(task_id);
             }
         }
-        scheduler
-            .waiting_semaphores
-            .insert(task_id, semaphore.clone());
+        scheduler.waiting_semaphores.insert(task_id, semaphore.clone());
         Ok(false)
     }
 
@@ -938,7 +933,10 @@ impl Scheduler {
         Ok(())
     }
 
-    fn wake_wait_group_waiters(scheduler: &mut Self, wait_group: &Rc<RefCell<WaitGroupState>>) {
+    fn wake_wait_group_waiters(
+        scheduler: &mut Self,
+        wait_group: &Rc<RefCell<WaitGroupState>>,
+    ) {
         let waiters = {
             let mut group = wait_group.borrow_mut();
             std::mem::take(&mut group.waiters)
@@ -955,7 +953,8 @@ impl Scheduler {
                             .waiting_wait_groups
                             .get(&task_id)
                             .is_some_and(|waiting| {
-                                Self::wait_group_key(waiting) == Self::wait_group_key(wait_group)
+                                Self::wait_group_key(waiting)
+                                    == Self::wait_group_key(wait_group)
                             })
                 });
 
@@ -965,7 +964,11 @@ impl Scheduler {
                 continue;
             }
 
-            let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+            let Some(task) = scheduler
+                .tasks
+                .get_mut(task_id)
+                .and_then(Option::as_mut)
+            else {
                 continue;
             };
 
@@ -997,11 +1000,7 @@ impl Scheduler {
     ) -> Result<bool, RuntimeError> {
         let mut scheduler = shared.borrow_mut();
 
-        if scheduler
-            .tasks
-            .get(task_id)
-            .and_then(Option::as_ref)
-            .is_none()
+        if scheduler.tasks.get(task_id).and_then(Option::as_ref).is_none()
             && !scheduler.running.contains(&task_id)
         {
             return Err(RuntimeError::TaskNotFound);
@@ -1070,7 +1069,11 @@ impl Scheduler {
                 continue;
             }
 
-            let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+            let Some(task) = scheduler
+                .tasks
+                .get_mut(task_id)
+                .and_then(Option::as_mut)
+            else {
                 continue;
             };
 
@@ -1114,7 +1117,11 @@ impl Scheduler {
                 continue;
             }
 
-            let Some(task) = self.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+            let Some(task) = self
+                .tasks
+                .get_mut(task_id)
+                .and_then(Option::as_mut)
+            else {
                 continue;
             };
 
@@ -1131,7 +1138,10 @@ impl Scheduler {
         }
     }
 
-    fn unregister_barrier_wait(&mut self, task_id: usize) -> Option<Rc<RefCell<BarrierState>>> {
+    fn unregister_barrier_wait(
+        &mut self,
+        task_id: usize,
+    ) -> Option<Rc<RefCell<BarrierState>>> {
         let barrier = self.waiting_barriers.remove(&task_id)?;
         barrier.borrow_mut().waiters.retain(|id| *id != task_id);
         Some(barrier)
@@ -1265,9 +1275,7 @@ impl Scheduler {
 
             let object = handle.borrow();
             match &*object {
-                Object::Channel(channel) if Self::channel_key(channel) == channel_key => {
-                    Some(index)
-                }
+                Object::Channel(channel) if Self::channel_key(channel) == channel_key => Some(index),
                 _ => None,
             }
         })
@@ -1284,7 +1292,10 @@ impl Scheduler {
 
         let key = Self::channel_key(channel);
         let mut scheduler = shared.borrow_mut();
-        let waiters = scheduler.waiting_channels.remove(&key).unwrap_or_default();
+        let waiters = scheduler
+            .waiting_channels
+            .remove(&key)
+            .unwrap_or_default();
 
         for task_id in waiters {
             let is_select = scheduler.waiting_selects.contains_key(&task_id);
@@ -1327,8 +1338,7 @@ impl Scheduler {
                     .get_mut(task_id)
                     .and_then(Option::as_mut)
                     .ok_or(RuntimeError::TaskNotFound)?;
-                task.vm
-                    .resume_from_channel_error(RuntimeError::ChannelClosed)?;
+                task.vm.resume_from_channel_error(RuntimeError::ChannelClosed)?;
                 task.status = TaskStateStatus::Ready;
                 scheduler.ready.push_back(task_id);
             }
@@ -1358,17 +1368,19 @@ impl Scheduler {
                 };
 
                 let resumed = {
-                    let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut)
-                    else {
+                    let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
                         continue;
                     };
                     if task.status != TaskStateStatus::Waiting {
                         false
                     } else {
-                        task.vm.resume_from_select(index, Value::None, true).is_ok() && {
-                            task.status = TaskStateStatus::Ready;
-                            true
-                        }
+                        task.vm
+                            .resume_from_select(index, Value::None, true)
+                            .is_ok()
+                            && {
+                                task.status = TaskStateStatus::Ready;
+                                true
+                            }
                     }
                 };
 
@@ -1385,8 +1397,7 @@ impl Scheduler {
                     continue;
                 };
 
-                if task.status != TaskStateStatus::Waiting || task.vm.waiting_channel_send.is_none()
-                {
+                if task.status != TaskStateStatus::Waiting || task.vm.waiting_channel_send.is_none() {
                     false
                 } else {
                     task.vm
@@ -1467,17 +1478,17 @@ impl Scheduler {
 
                 if channel.borrow().is_closed() {
                     let resumed = {
-                        let Some(task) = self.tasks.get_mut(task_id).and_then(Option::as_mut)
-                        else {
+                        let Some(task) = self.tasks.get_mut(task_id).and_then(Option::as_mut) else {
                             continue;
                         };
                         if task.status != TaskStateStatus::Waiting {
                             false
                         } else {
-                            task.vm.resume_from_select(index, Value::None, true).is_ok() && {
-                                task.status = TaskStateStatus::Ready;
-                                true
-                            }
+                            task.vm.resume_from_select(index, Value::None, true).is_ok()
+                                && {
+                                    task.status = TaskStateStatus::Ready;
+                                    true
+                                }
                         }
                     };
                     if resumed {
@@ -1695,7 +1706,9 @@ impl Scheduler {
                 task.vm.release_task_resources();
             }
 
-            TaskStateStatus::Completed | TaskStateStatus::Failed | TaskStateStatus::Cancelled => {}
+            TaskStateStatus::Completed
+            | TaskStateStatus::Failed
+            | TaskStateStatus::Cancelled => {}
         }
 
         Ok(())
@@ -1764,10 +1777,7 @@ impl Scheduler {
     }
 
     pub(crate) fn is_done(shared: &Rc<RefCell<Self>>, id: usize) -> Result<bool, RuntimeError> {
-        Ok(matches!(
-            Self::status(shared, id)?,
-            "done" | "failed" | "cancelled"
-        ))
+        Ok(matches!(Self::status(shared, id)?, "done" | "failed" | "cancelled"))
     }
 
     pub(crate) fn append_gc_roots(

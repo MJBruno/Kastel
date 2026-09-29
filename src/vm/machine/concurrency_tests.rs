@@ -65,6 +65,14 @@ fn is_wrong_argument_type(error: &CompileError) -> bool {
     }
 }
 
+fn is_type_mismatch(error: &CompileError) -> bool {
+    match error {
+        CompileError::TypeMismatch { .. } => true,
+        CompileError::WithLocation { source, .. } => is_type_mismatch(source),
+        _ => false,
+    }
+}
+
 #[test]
 fn spawn_and_join_return_value() {
     let (vm, result) = run_script(
@@ -3292,10 +3300,65 @@ fn cancelling_barrier_waiter_breaks_barrier_and_wakes_others() {
 }
 
 #[test]
+fn self_cancellation_while_waiting_on_barrier_breaks_barrier() {
+    let (vm, result) = run_script(
+        r#"
+        let b = barrier(3);
+        let holder = [];
+        let started = channel<int>();
+
+        func first() {
+            started.send(1);
+            holder[0].cancel();
+            b.wait();
+        }
+
+        func second() -> str {
+            started.send(2);
+            try {
+                b.wait();
+                return "unexpected";
+            } catch (e: Err) {
+                return e.kind;
+            }
+        }
+
+        let first_task = spawn(first);
+        holder.add(first_task);
+        let second_task = spawn(second);
+
+        started.recv();
+        started.recv();
+
+        let first_cancelled = false;
+        try {
+            first_task.join();
+        } catch (e: Err) {
+            first_cancelled = e.kind == "TaskCancelled";
+        }
+
+        let second_result = second_task.join();
+        let ok = first_cancelled
+            && second_result == "BarrierBroken"
+            && first_task.status() == "cancelled"
+            && b.is_broken();
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+
+    let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+    assert!(scheduler.waiting_barriers.is_empty());
+}
+
+
+#[test]
 fn waiting_barrier_is_kept_alive_by_the_scheduler() {
     on_big_stack(|| {
         let (vm, result) = run_script(
             r#"
+            let b: dynamic = barrier(3);
             let started = channel<int>();
 
             func waiter(barrier_arg) -> str {
@@ -3308,25 +3371,21 @@ fn waiting_barrier_is_kept_alive_by_the_scheduler() {
                 }
             }
 
-            func launch() {
-                let b = barrier(3);
-                let first = spawn(waiter, b);
-                let second = spawn(waiter, b);
-                started.recv();
-                started.recv();
-                return (first, second);
-            }
+            let first = spawn(waiter, b);
+            let second = spawn(waiter, b);
+            started.recv();
+            started.recv();
 
-            let tasks = launch();
+            b = None;
 
             for i in range(0, 2000) {
                 let junk = [i, i + 1, i + 2];
             }
 
-            tasks[0].cancel();
-            let second_result = tasks[1].join();
+            first.cancel();
+            let second_result = second.join();
             let ok = second_result == "BarrierBroken"
-                && tasks[1].status() == "done";
+                && second.status() == "done";
         "#,
         );
         result.unwrap();
@@ -3353,16 +3412,6 @@ fn barrier_wait_outside_task_is_rejected() {
     });
 }
 
-fn is_type_mismatch(error: &CompileError) -> bool {
-    let mut error = error;
-
-    while let CompileError::WithLocation { source, .. } = error {
-        error = &**source;
-    }
-
-    matches!(error, CompileError::TypeMismatch { .. })
-}
-
 #[test]
 fn barrier_member_types_are_checked_statically() {
     let error = compile_only(
@@ -3372,6 +3421,5 @@ fn barrier_member_types_are_checked_statically() {
     "#,
     )
     .unwrap_err();
-
     assert!(is_type_mismatch(&error));
 }

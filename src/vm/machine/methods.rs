@@ -1865,7 +1865,7 @@ impl VirtualMachine {
                                 _ => unreachable!(),
                             };
                             self.push(value);
-                        } 
+                        }
 
                         _ => {
                             return Err(RuntimeError::ObjectFieldNotFound {
