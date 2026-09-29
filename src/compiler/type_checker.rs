@@ -4638,6 +4638,69 @@ impl TypeChecker {
                         })
                 })
             }
+            Type::Union(expected_members) => {
+                // Une union peut contenir une branche générique (`T | None`).
+                // Il faut tester chaque branche indépendamment : une branche
+                // non générique peut réussir sans produire de binding, alors
+                // qu'une branche `T` apporte l'information utile.
+                //
+                // On choisit la branche qui produit le plus de bindings
+                // nouveaux. Si plusieurs branches produisent exactement le
+                // même résultat mais des substitutions différentes,
+                // l'inférence est ambiguë et doit échouer plutôt que choisir
+                // arbitrairement un type.
+                let mut candidates = Vec::new();
+
+                for expected_member in expected_members {
+                    let mut candidate = bindings.clone();
+                    if Self::infer_generic_bindings(
+                        expected_member,
+                        actual,
+                        &mut candidate,
+                        generic_params,
+                    ) {
+                        let exact_match = expected_member == actual;
+                        let new_bindings = candidate
+                            .iter()
+                            .filter(|(name, value)| bindings.get(*name) != Some(*value))
+                            .count();
+                        candidates.push((exact_match, new_bindings, candidate));
+                    }
+                }
+
+                let Some(max_exact_match) = candidates
+                    .iter()
+                    .map(|(exact_match, _, _)| *exact_match)
+                    .max()
+                else {
+                    return false;
+                };
+
+                let Some(max_bindings) = candidates
+                    .iter()
+                    .filter(|(exact_match, _, _)| *exact_match == max_exact_match)
+                    .map(|(_, count, _)| *count)
+                    .max()
+                else {
+                    return false;
+                };
+
+                let best = candidates
+                    .into_iter()
+                    .filter(|(exact_match, count, _)| {
+                        *exact_match == max_exact_match && *count == max_bindings
+                    })
+                    .map(|(_, _, candidate)| candidate)
+                    .collect::<Vec<_>>();
+
+                let first = &best[0];
+                if best.iter().skip(1).any(|candidate| candidate != first) {
+                    return false;
+                }
+
+                *bindings = first.clone();
+                true
+            }
             Type::Generic {
                 name: expected_name,
                 arguments: expected_arguments,
@@ -6603,6 +6666,31 @@ let comparison: bool = left < right;
                 .is_err()
         );
         assert!(check("func identity<T>(value: T) -> T { return value; } let d: dynamic = 1; let x: dynamic = identity(d);").is_ok());
+    }
+
+    #[test]
+    fn generic_functions_infer_through_unions() {
+        let valid = check(
+            r#"
+func unwrap_or_none<T>(value: T | None) -> T {
+    return value;
+}
+
+let number: int = unwrap_or_none(42);
+"#,
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let invalid = check(
+            r#"
+func unwrap_or_none<T>(value: T | None) -> T {
+    return value;
+}
+
+let text: str = unwrap_or_none(None);
+"#,
+        );
+        assert!(invalid.is_err(), "None seul ne permet pas d'inférer T");
     }
 
     #[test]
