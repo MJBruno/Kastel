@@ -10,6 +10,8 @@ use crate::{bytecode::chunk::Chunk, runtime::upvalue::Upvalue};
 pub struct Function {
     pub name: String,
     pub arity: usize,
+    /// Une fonction async produit un `Task<T>` au moment de son appel.
+    pub is_async: bool,
     /// Bytecode PARTAGÉ : chaque appel crée un `CallFrame` qui n'en prend
     /// qu'une référence (`Rc::clone`). Avant, le fragment entier (code,
     /// tables de positions, constantes) était copié à CHAQUE appel.

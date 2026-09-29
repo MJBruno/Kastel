@@ -37,7 +37,10 @@ impl Parser {
         } else if self.match_token(TokenKind::Const) {
             self.parse_variable_declaration(false)?
         } else if self.match_token(TokenKind::Function) {
-            vec![self.parse_function_statement()?]
+            vec![self.parse_function_statement(false)?]
+        } else if self.match_token(TokenKind::Async) {
+            self.consume(TokenKind::Function, "'func' attendu après 'async'")?;
+            vec![self.parse_function_statement(true)?]
         } else if self.match_token(TokenKind::Class) {
             vec![self.parse_class_statement()?]
         } else if self.match_token(TokenKind::Interface) {

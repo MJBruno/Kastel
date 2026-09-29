@@ -44,6 +44,8 @@ pub enum TokenKind {
     Catch,
     Throw,
     Finally,
+    Async,
+    Await,
 
     // ============================================================
     // OPÉRATEURS
@@ -175,6 +177,8 @@ impl Token {
             "catch" => Some(TokenKind::Catch),
             "throw" => Some(TokenKind::Throw),
             "finally" => Some(TokenKind::Finally),
+            "async" => Some(TokenKind::Async),
+            "await" => Some(TokenKind::Await),
 
             "is" => Some(TokenKind::Is),
 

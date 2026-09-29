@@ -209,7 +209,10 @@ impl Parser {
 
             declarations.remove(0)
         } else if self.match_token(TokenKind::Function) {
-            self.parse_function_statement()?
+            self.parse_function_statement(false)?
+        } else if self.match_token(TokenKind::Async) {
+            self.consume(TokenKind::Function, "'func' attendu après 'async'")?;
+            self.parse_function_statement(true)?
         } else if self.match_token(TokenKind::Class) {
             self.parse_class_statement()?
         } else if self.match_token(TokenKind::Interface) {
@@ -224,7 +227,7 @@ impl Parser {
         } else {
             return Err(ParserError {
                 message:
-                    "'export' doit être suivi de let, const, function, class, interface, enum ou type"
+                    "'export' doit être suivi de let, const, function, async function, class, interface, enum ou type"
                         .to_string(),
                 line: self.peek().line,
                 column: self.peek().column,

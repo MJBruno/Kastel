@@ -1417,6 +1417,7 @@ impl TypeChecker {
                     params,
                     param_types,
                     return_type,
+                    is_async,
                     ..
                 } => {
                     let generic_names = Self::validate_generic_declaration(generic_params)?;
@@ -1438,6 +1439,14 @@ impl TypeChecker {
                         .as_ref()
                         .map(|annotation| self.resolve_type(annotation))
                         .unwrap_or(Type::Dynamic);
+                    let return_type = if *is_async {
+                        Type::Generic {
+                            name: "Task".into(),
+                            arguments: vec![return_type],
+                        }
+                    } else {
+                        return_type
+                    };
 
                     let generic_constraints = self.generic_constraints(generic_params)?;
                     self.generic_params = previous_generics;
@@ -2118,6 +2127,7 @@ impl TypeChecker {
                 param_types,
                 return_type,
                 body,
+                is_async,
             } => self.check_function(
                 name,
                 generic_params,
@@ -2125,6 +2135,7 @@ impl TypeChecker {
                 param_types,
                 return_type.as_ref(),
                 body,
+                *is_async,
             ),
 
             Statement::Return { value } => {
@@ -2425,6 +2436,7 @@ impl TypeChecker {
         param_types: &[Option<TypeExpr>],
         return_type: Option<&TypeExpr>,
         body: &[Statement],
+        is_async: bool,
     ) -> Result<(), CompileError> {
         let previous_return = self.current_return_type.take();
         let previous_returns = std::mem::take(&mut self.return_types);
@@ -2435,6 +2447,18 @@ impl TypeChecker {
         let active_generic_constraints = self.generic_constraints_map(generic_params)?;
         let previous_constraints =
             std::mem::replace(&mut self.generic_constraints, active_generic_constraints);
+
+        let function_return_type = return_type
+            .map(|annotation| self.resolve_type(annotation))
+            .unwrap_or(Type::Dynamic);
+        let exposed_return_type = if is_async {
+            Type::Generic {
+                name: "Task".into(),
+                arguments: vec![function_return_type.clone()],
+            }
+        } else {
+            function_return_type.clone()
+        };
 
         let declared_signature = FunctionType {
             generic_params: generic_params.iter().map(|p| p.name.clone()).collect(),
@@ -2449,11 +2473,7 @@ impl TypeChecker {
                         .map_or(Type::Dynamic, |annotation| self.resolve_type(annotation))
                 })
                 .collect(),
-            return_type: Box::new(
-                return_type
-                    .map(|annotation| self.resolve_type(annotation))
-                    .unwrap_or(Type::Dynamic),
-            ),
+            return_type: Box::new(exposed_return_type),
         };
 
         let nested = self.scopes.len() > 1;
@@ -2510,7 +2530,7 @@ impl TypeChecker {
             )?;
         }
 
-        self.current_return_type = return_type.map(|annotation| self.resolve_type(annotation));
+        self.current_return_type = return_type.map(|_| function_return_type.clone());
         self.check_statements(body)?;
 
         let inferred_return = self.infer_return_type();
@@ -2535,8 +2555,17 @@ impl TypeChecker {
         }
 
         if return_type.is_none() {
+            let inferred_exposed_return = if is_async {
+                Type::Generic {
+                    name: "Task".into(),
+                    arguments: vec![inferred_return.clone()],
+                }
+            } else {
+                inferred_return.clone()
+            };
+
             if let Some(function) = self.functions.get_mut(name) {
-                *function.return_type = inferred_return.clone();
+                *function.return_type = inferred_exposed_return.clone();
             }
 
             // Fonction locale surchargée : signature de MÊME arité.
@@ -2546,7 +2575,7 @@ impl TypeChecker {
                     .iter_mut()
                     .find(|signature| signature.params.len() == params.len())
             {
-                *signature.return_type = inferred_return.clone();
+                *signature.return_type = inferred_exposed_return.clone();
             }
 
             // Fonction surchargée : on met à jour la signature de MÊME arité.
@@ -2556,14 +2585,14 @@ impl TypeChecker {
                     .iter_mut()
                     .find(|signature| signature.params.len() == params.len())
             {
-                *signature.return_type = inferred_return.clone();
+                *signature.return_type = inferred_exposed_return.clone();
             }
 
             if nested
                 && let Some(binding) = self.scopes[parent_scope_index].get_mut(name)
                 && let Type::Function(signature) = &mut binding.ty
             {
-                *signature.return_type = inferred_return;
+                *signature.return_type = inferred_exposed_return;
             }
         }
 
@@ -2938,6 +2967,23 @@ impl TypeChecker {
                     params: vec![Type::Dynamic; params.len()],
                     return_type: Box::new(return_type),
                 }))
+            }
+
+            Expression::Await(inner) => {
+                let awaited = self.check_expression(inner)?;
+                match awaited {
+                    Type::Generic { name, arguments }
+                        if name.eq_ignore_ascii_case("Task") && arguments.len() == 1 => {
+                        Ok(arguments[0].clone())
+                    }
+                    Type::Dynamic => Ok(Type::Dynamic),
+                    other => Err(CompileError::WrongArgumentType {
+                        function: "await".into(),
+                        index: 0,
+                        expected: "Task<T>".into(),
+                        found: other.to_string(),
+                    }),
+                }
             }
 
             Expression::Call {

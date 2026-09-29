@@ -410,6 +410,11 @@ impl Parser {
             });
         }
 
+        if self.match_token(TokenKind::Await) {
+            let operand = self.unary()?;
+            return Ok(Expression::Await(Box::new(operand)));
+        }
+
         if self.match_token(TokenKind::Tilde) {
             let (line, column) = (self.peek().line, self.peek().column);
             let operand = self.unary()?;
@@ -497,8 +502,12 @@ impl Parser {
 
             if self.match_token(TokenKind::LeftParen) {
                 let (line, column) = (self.previous().line, self.previous().column);
-                expression =
-                    self.parse_call(expression, generic_args.unwrap_or_default(), line, column)?;
+                expression = self.parse_call(
+                    expression,
+                    generic_args.unwrap_or_default(),
+                    line,
+                    column,
+                )?;
                 continue;
             }
 
@@ -594,7 +603,9 @@ impl Parser {
                     }
                 }
 
-                TokenKind::Colon if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                TokenKind::Colon
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
                     return true;
                 }
 

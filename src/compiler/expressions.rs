@@ -287,6 +287,11 @@ impl Compiler {
                 self.emit_constant_op(OpCode::GetProperty, name_constant);
             }
 
+            Expression::Await(expression) => {
+                self.compile_expression(expression)?;
+                self.emit_opcode(OpCode::Await);
+            }
+
             Expression::Try(expression) => {
                 if !self.in_function {
                     return Err(CompileError::ReturnOutsidFunction);

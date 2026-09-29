@@ -10,7 +10,7 @@ impl Parser {
     // FUNCTION
     // ============================================================
 
-    pub(super) fn parse_function_statement(&mut self) -> Result<Statement, ParserError> {
+    pub(super) fn parse_function_statement(&mut self, is_async: bool) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom de fonction attendu")?;
         let generic_params = self.parse_generic_parameters()?;
 
@@ -51,6 +51,7 @@ impl Parser {
             param_types,
             return_type,
             body,
+            is_async,
         })
     }
 }

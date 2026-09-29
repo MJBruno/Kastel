@@ -34,6 +34,7 @@ impl Compiler {
         name: &str,
         params: &[String],
         body: &[Statement],
+        is_async: bool,
     ) -> Result<(), CompileError> {
         // ========================================================
         // GLOBAL FUNCTION
@@ -82,7 +83,7 @@ impl Compiler {
                 constant
             };
 
-            let function = self.compile_function(name, params, body)?;
+            let function = self.compile_function_with_async(name, params, body, is_async)?;
 
             let function_constant =
                 self.make_constant(Value::new_function(Rc::new(function.clone())))?;
@@ -124,7 +125,7 @@ impl Compiler {
             });
         }
 
-        let function = self.compile_function(name, params, body)?;
+        let function = self.compile_function_with_async(name, params, body, is_async)?;
 
         let function_constant =
             self.make_constant(Value::new_function(Rc::new(function.clone())))?;
@@ -176,6 +177,16 @@ impl Compiler {
         params: &[String],
         body: &[Statement],
     ) -> Result<Function, CompileError> {
+        self.compile_function_with_async(name, params, body, false)
+    }
+
+    pub(crate) fn compile_function_with_async(
+        &mut self,
+        name: &str,
+        params: &[String],
+        body: &[Statement],
+        is_async: bool,
+    ) -> Result<Function, CompileError> {
         let enclosing = Rc::clone(&self.context);
 
         let mut compiler =
@@ -206,6 +217,7 @@ impl Compiler {
         Ok(Function {
             name: name.to_string(),
             arity: compiler.function_arity as usize,
+            is_async,
             chunk: Rc::new(compiler.chunk),
             local_count,
             upvalue_count,

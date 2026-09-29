@@ -4670,3 +4670,100 @@ fn event_methods_are_checked_statically() {
     ));
 }
 
+
+
+// ---------- async / await ----------
+
+#[test]
+fn async_function_returns_a_task_and_await_produces_its_result() {
+    let (vm, result) = run_script(
+        r#"
+        async func compute(value: int) -> int {
+            sleep(1);
+            return value * 2;
+        }
+
+        let task: Task<int> = compute(21);
+        let result = await task;
+        let ok = result == 42 && task.status() == "done";
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn multiple_async_calls_run_as_independent_tasks_before_await() {
+    let (vm, result) = run_script(
+        r#"
+        async func work(value: int) -> int {
+            sleep(2);
+            return value;
+        }
+
+        let first = work(10);
+        let second = work(20);
+        let ok = first.status() == "ready" || first.status() == "running";
+        let a = await first;
+        let b = await second;
+        ok = ok && a == 10 && b == 20;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn async_function_errors_are_propagated_by_await() {
+    let (vm, result) = run_script(
+        r#"
+        async func fail() -> int {
+            sleep(-1);
+            return 1;
+        }
+
+        let task = fail();
+        let ok = false;
+        try {
+            await task;
+        } catch (e: Err) {
+            ok = e.kind == "TypeError";
+        }
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn await_rejects_non_task_statically() {
+    let error = compile_only(
+        r#"
+        let value: int = await 42;
+    "#,
+    )
+    .unwrap_err();
+
+    assert!(is_wrong_argument_type(&error));
+}
+
+#[test]
+fn async_return_inference_exposes_task_of_the_inferred_type() {
+    let (vm, result) = run_script(
+        r#"
+        async func inferred() {
+            return "ready";
+        }
+
+        let task: Task<str> = inferred();
+        let value: str = await task;
+        let ok = value == "ready";
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}

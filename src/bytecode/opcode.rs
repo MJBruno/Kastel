@@ -135,11 +135,14 @@ pub enum OpCode {
 
     /// Suspend la tâche courante pendant un nombre de millisecondes.
     Sleep,
+
+    /// Attend une `Task<T>` et pousse son résultat sur la pile.
+    Await,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::Sleep as usize + 1;
+    pub const COUNT: usize = Self::Await as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -224,7 +227,8 @@ mod tests {
         assert_eq!(OpCode::Yield as u8, 71);
         assert_eq!(OpCode::Select as u8, 72);
         assert_eq!(OpCode::Sleep as u8, 73);
-        assert_eq!(OpCode::COUNT, 74);
+        assert_eq!(OpCode::Await as u8, 74);
+        assert_eq!(OpCode::COUNT, 75);
     }
 
     #[test]

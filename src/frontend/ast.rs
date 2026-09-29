@@ -288,6 +288,8 @@ pub enum Statement {
         /// Voir `FunctionMethod::return_type`.
         return_type: Option<TypeExpr>,
         body: Vec<Statement>,
+        /// Une fonction async est appelée pour produire immédiatement un `Task<T>`.
+        is_async: bool,
     },
 
     Return {
@@ -444,6 +446,9 @@ pub enum Expression {
     /// `None?` / `Err(error)?` termine la fonction courante en
     /// retournant respectivement `None` / `Err(error)`.
     Try(Box<Expression>),
+
+    /// Attend une `Task<T>` et produit son résultat `T`.
+    Await(Box<Expression>),
 
     Ternary {
         condition: Box<Expression>,

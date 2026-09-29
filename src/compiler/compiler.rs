@@ -385,6 +385,7 @@ impl Compiler {
         let function = Function {
             name: "<script>".to_string(),
             arity: 0,
+            is_async: false,
             chunk: Rc::new(self.chunk),
             local_count: local_count.into(),
             upvalue_count: 0,

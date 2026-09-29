@@ -151,7 +151,18 @@ impl VirtualMachine {
                     return match selected {
                         Some(Value::Object(closure)) => {
                             self.stack[callee_index] = Value::Object(closure.clone());
-                            self.call(closure, arg_count)
+                            let is_async = {
+                                let object = closure.borrow();
+                                match &*object {
+                                    Object::Closure(closure) => closure.function.is_async,
+                                    _ => false,
+                                }
+                            };
+                            if is_async {
+                                self.spawn_task(arg_count)
+                            } else {
+                                self.call(closure, arg_count)
+                            }
                         }
 
                         _ => {
@@ -177,7 +188,18 @@ impl VirtualMachine {
                 };
 
                 if is_closure {
-                    self.call(handle, arg_count)?;
+                    let is_async = {
+                        let object = handle.borrow();
+                        match &*object {
+                            Object::Closure(closure) => closure.function.is_async,
+                            _ => false,
+                        }
+                    };
+                    if is_async {
+                        self.spawn_task(arg_count)?;
+                    } else {
+                        self.call(handle, arg_count)?;
+                    }
                     return Ok(());
                 }
 
@@ -209,6 +231,25 @@ impl VirtualMachine {
 
             _ => Err(RuntimeError::NotCallable),
         }
+    }
+
+    pub(crate) fn await_task(&mut self) -> Result<(), RuntimeError> {
+        let task_value = self.pop()?;
+        let handle = match task_value {
+            Value::Object(object) => match &*object.borrow() {
+                Object::Task(task) => Rc::clone(task),
+                _ => return Err(RuntimeError::TypeError),
+            },
+            _ => return Err(RuntimeError::TypeError),
+        };
+
+        let scheduler = handle
+            .scheduler
+            .upgrade()
+            .ok_or(RuntimeError::TaskNotFound)?;
+        let result = super::scheduler::Scheduler::join(&scheduler, handle.id)?;
+        self.push(result);
+        Ok(())
     }
 
     // ============================================================

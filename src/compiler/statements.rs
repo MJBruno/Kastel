@@ -320,9 +320,9 @@ impl Compiler {
             Statement::TypeAlias { .. } => {}
 
             Statement::Function {
-                name, params, body, ..
+                name, params, body, is_async, ..
             } => {
-                self.compile_function_statement(name, params, body)?;
+                self.compile_function_statement(name, params, body, *is_async)?;
             }
 
             Statement::Break => {
@@ -1836,6 +1836,7 @@ impl Compiler {
         Ok(Function {
             name: "<repl>".to_string(),
             arity: 0,
+            is_async: false,
             chunk: std::rc::Rc::new(self.chunk),
             local_count: local_count.into(),
             upvalue_count: 0,
