@@ -206,6 +206,8 @@ pub struct VirtualMachine {
     pub(crate) waiting_rwlock: Option<Value>,
     pub(crate) waiting_event: Option<Value>,
     pub(crate) waiting_condvar: Option<Value>,
+    /// Tâche attendue par `await` lorsque la VM est suspendue coopérativement.
+    pub(crate) waiting_task: Option<usize>,
     pub(crate) waiting_error: Option<RuntimeError>,
     pub(crate) last_result: Option<Value>,
     pub(crate) scheduler: Weak<RefCell<scheduler::Scheduler>>,
@@ -294,6 +296,7 @@ impl VirtualMachine {
             waiting_rwlock: None,
             waiting_event: None,
             waiting_condvar: None,
+            waiting_task: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -362,6 +365,7 @@ impl VirtualMachine {
             waiting_rwlock: None,
             waiting_event: None,
             waiting_condvar: None,
+            waiting_task: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -447,6 +451,7 @@ impl VirtualMachine {
             waiting_rwlock: None,
             waiting_event: None,
             waiting_condvar: None,
+            waiting_task: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -504,10 +509,9 @@ impl VirtualMachine {
 
     pub(crate) fn sleep_for(&mut self, duration: Duration) -> Result<(), RuntimeError> {
         let Some(task_id) = self.task_id else {
-            // La VM racine n'est pas elle-même une tâche. Dans ce contexte,
-            // on conserve une sémantique intuitive : `sleep()` suspend aussi
-            // les tâches du scheduler pendant la durée demandée, sans créer
-            // une fausse tâche bloquée.
+            // La VM racine n'est pas elle-même une tâche.
+            // Pendant son sommeil, elle continue à faire progresser le scheduler,
+            // mais jamais au-delà de son propre délai.
             let deadline = Instant::now()
                 .checked_add(duration)
                 .ok_or(RuntimeError::InvalidFunction)?;
@@ -515,28 +519,40 @@ impl VirtualMachine {
             let _pinned = self.pin_roots();
             let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
-            while Instant::now() < deadline {
-                match scheduler::Scheduler::poll(&scheduler) {
-                    Ok(true) => {}
-                    Ok(false) | Err(RuntimeError::TaskDeadlock) => {
-                        let remaining = deadline.saturating_duration_since(Instant::now());
-                        if remaining.is_zero() {
-                            break;
-                        }
-                        std::thread::sleep(remaining);
+            loop {
+                if Instant::now() >= deadline {
+                    break;
+                }
+
+                match scheduler::Scheduler::poll_until(&scheduler, Some(deadline))? {
+                    scheduler::PollOutcome::Progressed => {}
+
+                    scheduler::PollOutcome::DeadlineReached => {
                         break;
                     }
-                    Err(error) => return Err(error),
+
+                    scheduler::PollOutcome::Idle => {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+
+                        if !remaining.is_zero() {
+                            std::thread::sleep(remaining);
+                        }
+
+                        break;
+                    }
                 }
             }
+
             return Ok(());
         };
 
         let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
         let deadline = scheduler::Scheduler::sleep_task(&scheduler, task_id, duration)?;
+
         self.waiting_timer = Some(deadline);
         self.waiting_requested = true;
+
         Ok(())
     }
 
@@ -858,6 +874,7 @@ impl VirtualMachine {
         self.waiting_rwlock = None;
         self.waiting_event = None;
         self.waiting_condvar = None;
+        self.waiting_task = None;
         self.last_result = None;
         self.open_upvalues.clear();
     }
@@ -906,6 +923,7 @@ impl VirtualMachine {
         self.waiting_rwlock = None;
         self.waiting_event = None;
         self.waiting_condvar = None;
+        self.waiting_task = None;
         self.last_result = None;
 
         // Les upvalues ont maintenant été fermées correctement.

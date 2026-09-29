@@ -235,20 +235,69 @@ impl VirtualMachine {
 
     pub(crate) fn await_task(&mut self) -> Result<(), RuntimeError> {
         let task_value = self.pop()?;
-        let handle = match task_value {
+        let target_handle = match task_value {
             Value::Object(object) => match &*object.borrow() {
                 Object::Task(task) => Rc::clone(task),
                 _ => return Err(RuntimeError::TypeError),
             },
             _ => return Err(RuntimeError::TypeError),
         };
+        let target_id = target_handle.id;
 
-        let scheduler = handle
+        let scheduler = self
             .scheduler
             .upgrade()
             .ok_or(RuntimeError::TaskNotFound)?;
-        let result = super::scheduler::Scheduler::join(&scheduler, handle.id)?;
-        self.push(result);
+
+        let Some(waiter_id) = self.task_id else {
+            // La VM racine ne peut pas être suspendue : conserver l'attente
+            // synchrone historique.
+            let result = super::scheduler::Scheduler::join(&scheduler, target_id)?;
+            self.push(result);
+            return Ok(());
+        };
+
+        if waiter_id == target_id {
+            return Err(RuntimeError::TaskDeadlock);
+        }
+
+        match super::scheduler::Scheduler::await_task(&scheduler, waiter_id, target_id)? {
+            super::scheduler::AwaitOutcome::Ready(value) => {
+                self.push(value);
+                Ok(())
+            }
+            super::scheduler::AwaitOutcome::Waiting => {
+                self.waiting_task = Some(target_id);
+                self.waiting_requested = true;
+                Ok(())
+            }
+            super::scheduler::AwaitOutcome::Failed(error) => Err(error),
+        }
+    }
+
+    pub(crate) fn resume_from_task(&mut self, value: Value) -> Result<(), RuntimeError> {
+        if self.waiting_task.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_task = None;
+        self.waiting_error = None;
+        self.waiting_requested = false;
+        self.push(value);
+        Ok(())
+    }
+
+    pub(crate) fn resume_from_task_error(
+        &mut self,
+        error: RuntimeError,
+    ) -> Result<(), RuntimeError> {
+        if self.waiting_task.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_task = None;
+        self.waiting_error = Some(error);
+        self.waiting_requested = false;
         Ok(())
     }
 

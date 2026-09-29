@@ -4767,3 +4767,185 @@ fn async_return_inference_exposes_task_of_the_inferred_type() {
     result.unwrap();
     assert_global_true(&vm, "ok");
 }
+
+
+#[test]
+fn async_await_inside_tasks_is_cooperative_beyond_nested_join_limit() {
+    let (vm, result) = run_script(
+        r#"
+        async func chain(n: int) -> int {
+            if n == 0 {
+                return 0;
+            }
+
+            let next = chain(n - 1);
+            return (await next) + 1;
+        }
+
+        let task = chain(80);
+        let result = await task;
+        let ok = result == 80;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn multiple_tasks_can_await_the_same_task_and_resume_fifo() {
+    let (vm, result) = run_script(
+        r#"
+        let order = [];
+
+        async func produce() -> int {
+            sleep(2);
+            return 7;
+        }
+
+        async func waiter(target: Task<int>, id: int) -> int {
+            let value = await target;
+            order.add(id);
+            return value + id;
+        }
+
+        let target = produce();
+        let first = waiter(target, 1);
+        let second = waiter(target, 2);
+        let third = waiter(target, 3);
+
+        let a = await first;
+        let b = await second;
+        let c = await third;
+
+        let ok = a == 8
+            && b == 9
+            && c == 10
+            && order.size() == 3
+            && order[0] == 1
+            && order[1] == 2
+            && order[2] == 3;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn cancelling_an_awaiting_task_removes_the_task_wait_registration() {
+    let (vm, result) = run_script(
+        r#"
+        async func slow() -> int {
+            sleep(50);
+            return 1;
+        }
+
+        async func waiter(target: Task<int>) -> int {
+            return await target;
+        }
+
+        let target = slow();
+        let waiter_task = waiter(target);
+
+        while waiter_task.status() != "waiting" {
+            sleep(1);
+        }
+
+        waiter_task.cancel();
+
+        let cancelled = false;
+        try {
+            waiter_task.join();
+        } catch (e: Err) {
+            cancelled = e.kind == "TaskCancelled";
+        }
+
+        let ok = cancelled && waiter_task.status() == "cancelled";
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+
+    let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+    assert!(scheduler.waiting_tasks.is_empty());
+    assert!(scheduler.task_waiters.is_empty());
+}
+
+#[test]
+fn cancelling_an_awaited_task_wakes_its_waiters_with_task_cancelled() {
+    let (vm, result) = run_script(
+        r#"
+        async func slow() -> int {
+            sleep(50);
+            return 1;
+        }
+
+        async func waiter(target: Task<int>) -> str {
+            try {
+                await target;
+                return "unexpected";
+            } catch (e: Err) {
+                return e.kind;
+            }
+        }
+
+        let target = slow();
+        let waiter_task = waiter(target);
+
+        while waiter_task.status() != "waiting" {
+            sleep(1);
+        }
+
+        target.cancel();
+
+        let result = await waiter_task;
+        let ok = result == "TaskCancelled" && target.status() == "cancelled";
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+
+    let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+    assert!(scheduler.waiting_tasks.is_empty());
+    assert!(scheduler.task_waiters.is_empty());
+}
+
+#[test]
+fn mutual_async_await_is_reported_as_a_deadlock() {
+    let (vm, result) = run_script(
+        r#"
+        let holders = [];
+
+        async func first() -> str {
+            try {
+                return await holders[1];
+            } catch (e: Err) {
+                return e.kind;
+            }
+        }
+
+        async func second() -> str {
+            try {
+                return await holders[0];
+            } catch (e: Err) {
+                return e.kind;
+            }
+        }
+
+        let first_task = first();
+        let second_task = second();
+        holders.add(first_task);
+        holders.add(second_task);
+
+        let first_result = await first_task;
+        let ok = first_result == "TaskDeadlock"
+            || second_task.status() == "failed";
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
