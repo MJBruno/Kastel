@@ -6,16 +6,25 @@ use crate::{
     runtime::value::Value,
 };
 
-/// Construit un canal coopératif non borné.
+/// Construit un canal coopératif. Sans argument, le canal est non borné.
+/// Avec un entier strictement positif, il est borné à cette capacité.
 pub fn native_channel(args: &[Value]) -> Result<Value, RuntimeError> {
-    if !args.is_empty() {
-        return Err(RuntimeError::WrongArgumentCount {
-            expected: 0,
-            found: args.len(),
-        });
-    }
+    match args {
+        [] => Ok(Value::new_channel()),
 
-    Ok(Value::new_channel())
+        [Value::Integer(capacity)] if *capacity > 0 => {
+            Ok(Value::new_bounded_channel(*capacity as usize))
+        }
+
+        [Value::Integer(_)] => Err(RuntimeError::ChannelNonPositive),
+
+        [_] => Err(RuntimeError::TypeError),
+
+        _ => Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        }),
+    }
 }
 
 pub fn register(globals: &mut HashMap<String, Value>) {

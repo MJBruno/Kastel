@@ -183,6 +183,12 @@ impl Value {
         ))))
     }
 
+    pub fn new_bounded_channel(capacity: usize) -> Self {
+        Self::new_heap_object(Object::Channel(Rc::new(RefCell::new(
+            crate::runtime::channel::ChannelState::with_capacity(capacity),
+        ))))
+    }
+
     pub fn new_mutex() -> Self {
         Self::new_heap_object(Object::Mutex(Rc::new(RefCell::new(
             crate::runtime::mutex::MutexState::new(),

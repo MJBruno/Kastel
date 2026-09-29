@@ -265,6 +265,7 @@ impl VirtualMachine {
             | RuntimeError::TaskCancelled
             | RuntimeError::TaskNestingTooDeep
             | RuntimeError::ChannelClosed
+            | RuntimeError::ChannelNonPositive
             | RuntimeError::MutexDeadlock
             | RuntimeError::MutexNotOwner
             | RuntimeError::SemaphoreNonPositive

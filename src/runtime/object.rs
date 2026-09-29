@@ -42,7 +42,7 @@ pub enum Object {
     /// Handle d'une tâche coopérative.
     Task(Rc<TaskHandle>),
 
-    /// Canal coopératif non borné.
+    /// Canal coopératif, non borné ou borné selon `ChannelState::capacity`.
     Channel(Rc<RefCell<ChannelState>>),
 
     /// Mutex coopératif non réentrant.

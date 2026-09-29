@@ -50,12 +50,19 @@ impl VirtualMachine {
 
         loop {
             for (index, (channel, _)) in channels.iter().enumerate() {
-                if let Some(value) = channel.borrow_mut().try_recv() {
+                let received = { channel.borrow_mut().try_recv() };
+                if let Some(value) = received {
                     self.push(Value::new_tuple(vec![
                         Value::Integer(index as i64),
                         value,
                         Value::Boolean(false),
                     ]));
+
+                    let scheduler = self
+                        .scheduler
+                        .upgrade()
+                        .ok_or(RuntimeError::TaskNotFound)?;
+                    Scheduler::wake_one_channel_sender_for_public(&scheduler, channel);
                     return Ok(());
                 }
 
@@ -1055,11 +1062,57 @@ impl VirtualMachine {
                                 return Err(RuntimeError::ChannelClosed);
                             }
 
-                            let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
-                            if !Scheduler::wake_one_channel(&scheduler, &channel, value.clone())? {
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
+
+                            if Scheduler::wake_one_channel(&scheduler, &channel, value.clone())? {
+                                self.push(Value::None);
+                            } else if !channel.borrow().is_full() {
                                 channel.borrow_mut().send(value);
+                                self.push(Value::None);
+                            } else if self.task_id.is_some() {
+                                self.wait_on_channel_send(
+                                    channel,
+                                    Value::Object(handle.clone()),
+                                    value,
+                                )?;
+                            } else {
+                                // La VM racine n'est pas une tâche et ne peut
+                                // donc pas être enregistrée comme sender bloqué.
+                                // Elle pompe le scheduler jusqu'à ce qu'une
+                                // place se libère, comme `recv()` le fait déjà.
+                                let _pinned = self.pin_roots_with(&[
+                                    Value::Object(handle.clone()),
+                                    value.clone(),
+                                ]);
+
+                                loop {
+                                    if channel.borrow().is_closed() {
+                                        return Err(RuntimeError::ChannelClosed);
+                                    }
+
+                                    if Scheduler::wake_one_channel(
+                                        &scheduler,
+                                        &channel,
+                                        value.clone(),
+                                    )? {
+                                        self.push(Value::None);
+                                        break;
+                                    }
+
+                                    if !channel.borrow().is_full() {
+                                        channel.borrow_mut().send(value.clone());
+                                        self.push(Value::None);
+                                        break;
+                                    }
+
+                                    if !Scheduler::poll(&scheduler)? {
+                                        return Err(RuntimeError::TaskDeadlock);
+                                    }
+                                }
                             }
-                            self.push(Value::None);
                         }
 
                         "recv" => {
@@ -1078,8 +1131,14 @@ impl VirtualMachine {
                                 }
                             };
 
-                            if let Some(value) = channel.borrow_mut().try_recv() {
+                            let received = { channel.borrow_mut().try_recv() };
+                            if let Some(value) = received {
                                 self.push(value);
+                                let scheduler = self
+                                    .scheduler
+                                    .upgrade()
+                                    .ok_or(RuntimeError::TaskNotFound)?;
+                                Scheduler::wake_one_channel_sender_for_public(&scheduler, &channel);
                             } else if channel.borrow().is_closed() {
                                 return Err(RuntimeError::ChannelClosed);
                             } else if self.task_id.is_some() {
@@ -1088,15 +1147,21 @@ impl VirtualMachine {
                                     Value::Object(handle.clone()),
                                 )?;
                             } else {
-                                // Même raison que `join` : la pile de cette VM
-                                // et le canal lui-même doivent rester vivants
-                                // pendant que les tâches tournent.
                                 let _pinned =
                                     self.pin_roots_with(&[Value::Object(handle.clone())]);
 
                                 loop {
-                                    if let Some(value) = channel.borrow_mut().try_recv() {
+                                    let received = { channel.borrow_mut().try_recv() };
+                                    if let Some(value) = received {
                                         self.push(value);
+                                        let scheduler = self
+                                            .scheduler
+                                            .upgrade()
+                                            .ok_or(RuntimeError::TaskNotFound)?;
+                                        Scheduler::wake_one_channel_sender_for_public(
+                                            &scheduler,
+                                            &channel,
+                                        );
                                         break;
                                     }
 
@@ -1132,7 +1197,14 @@ impl VirtualMachine {
                                 }
                             };
 
-                            let value = channel.borrow_mut().try_recv();
+                            let value = { channel.borrow_mut().try_recv() };
+                            if value.is_some() {
+                                let scheduler = self
+                                    .scheduler
+                                    .upgrade()
+                                    .ok_or(RuntimeError::TaskNotFound)?;
+                                Scheduler::wake_one_channel_sender_for_public(&scheduler, &channel);
+                            }
                             self.push(match value {
                                 Some(value) => Value::new_some(value),
                                 None => Value::None,
@@ -1193,7 +1265,10 @@ impl VirtualMachine {
                                 }
                             };
 
-                            let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
                             Scheduler::close_channel(&scheduler, &channel)?;
                             self.push(Value::None);
                         }

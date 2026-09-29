@@ -194,6 +194,7 @@ pub struct VirtualMachine {
     pub(crate) waiting_requested: bool,
     pub(crate) task_id: Option<usize>,
     pub(crate) waiting_channel: Option<Value>,
+    pub(crate) waiting_channel_send: Option<Value>,
     pub(crate) waiting_select_channels: Option<Vec<Value>>,
     pub(crate) waiting_timer: Option<Instant>,
     pub(crate) waiting_mutex: Option<Value>,
@@ -276,6 +277,7 @@ impl VirtualMachine {
             waiting_requested: false,
             task_id: None,
             waiting_channel: None,
+            waiting_channel_send: None,
             waiting_select_channels: None,
             waiting_timer: None,
             waiting_mutex: None,
@@ -338,6 +340,7 @@ impl VirtualMachine {
             waiting_requested: false,
             task_id: None,
             waiting_channel: None,
+            waiting_channel_send: None,
             waiting_select_channels: None,
             waiting_timer: None,
             waiting_mutex: None,
@@ -417,6 +420,7 @@ impl VirtualMachine {
             waiting_requested: false,
             task_id: Some(task_id),
             waiting_channel: None,
+            waiting_channel_send: None,
             waiting_select_channels: None,
             waiting_timer: None,
             waiting_mutex: None,
@@ -460,6 +464,27 @@ impl VirtualMachine {
         scheduler::Scheduler::wait_on_channel(&scheduler, task_id, channel.clone())?;
 
         self.waiting_channel = Some(channel_value);
+        self.waiting_requested = true;
+        Ok(())
+    }
+
+    pub(crate) fn wait_on_channel_send(
+        &mut self,
+        channel: Rc<RefCell<ChannelState>>,
+        channel_value: Value,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+
+        let scheduler = self
+            .scheduler
+            .upgrade()
+            .ok_or(RuntimeError::TaskNotFound)?;
+
+        scheduler::Scheduler::wait_on_channel_send(&scheduler, task_id, channel)?;
+
+        self.waiting_channel = Some(channel_value);
+        self.waiting_channel_send = Some(value);
         self.waiting_requested = true;
         Ok(())
     }
@@ -608,6 +633,19 @@ impl VirtualMachine {
         Ok(())
     }
 
+    pub(crate) fn resume_from_channel_send(&mut self) -> Result<(), RuntimeError> {
+        if self.waiting_channel_send.is_none() || self.waiting_channel.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_channel = None;
+        self.waiting_channel_send = None;
+        self.waiting_error = None;
+        self.waiting_requested = false;
+        self.push(Value::None);
+        Ok(())
+    }
+
     pub(crate) fn resume_from_channel(&mut self, value: Value) -> Result<(), RuntimeError> {
         if self.waiting_channel.is_none() {
             return Err(RuntimeError::TaskNotFound);
@@ -741,6 +779,7 @@ impl VirtualMachine {
         self.pending_exception = None;
         self.temp_roots.clear();
         self.waiting_channel = None;
+        self.waiting_channel_send = None;
         self.waiting_select_channels = None;
         self.waiting_timer = None;
         self.waiting_mutex = None;
@@ -783,6 +822,7 @@ impl VirtualMachine {
         self.waiting_requested = false;
         self.task_id = None;
         self.waiting_channel = None;
+        self.waiting_channel_send = None;
         self.waiting_select_channels = None;
         self.waiting_timer = None;
         self.waiting_mutex = None;

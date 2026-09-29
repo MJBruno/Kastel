@@ -152,6 +152,7 @@ pub enum RuntimeError {
     /// exécute la cible sur la pile native, dont la profondeur est bornée.
     TaskNestingTooDeep,
     ChannelClosed,
+    ChannelNonPositive,
     MutexDeadlock,
     MutexNotOwner,
     SemaphoreNonPositive,
@@ -243,6 +244,10 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::ChannelClosed => {
                 write!(f, "Channel is closed.")
+            }
+
+            RuntimeError::ChannelNonPositive => {
+                write!(f, "Channel capacity must be greater than zero.")
             }
 
             RuntimeError::MutexDeadlock => {
@@ -471,6 +476,7 @@ impl RuntimeError {
             RuntimeError::TaskCancelled => "TaskCancelled",
             RuntimeError::TaskNestingTooDeep => "TaskNestingTooDeep",
             RuntimeError::ChannelClosed => "ChannelClosed",
+            RuntimeError::ChannelNonPositive => "ChannelNonPositive",
             RuntimeError::MutexDeadlock => "MutexDeadlock",
             RuntimeError::MutexNotOwner => "MutexNotOwner",
             RuntimeError::SemaphoreNonPositive => "SemaphoreNonPositive",

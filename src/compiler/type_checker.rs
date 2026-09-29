@@ -3056,11 +3056,23 @@ impl TypeChecker {
                     && name == "channel"
                     && self.lookup(name).is_some_and(|binding| binding.native)
                 {
-                    if !arguments.is_empty() {
+                    if arguments.len() > 1 {
                         return Err(CompileError::WrongArgumentCount {
-                            expected: 0,
+                            expected: 1,
                             found: arguments.len(),
                         });
+                    }
+
+                    if let Some(capacity) = arguments.first() {
+                        let capacity_type = self.check_expression(capacity)?;
+                        if !matches!(capacity_type, Type::Int | Type::Dynamic) {
+                            return Err(CompileError::WrongArgumentType {
+                                function: "channel".into(),
+                                index: 0,
+                                expected: "int".into(),
+                                found: capacity_type.to_string(),
+                            });
+                        }
                     }
 
                     let element_type = match generic_args.as_slice() {

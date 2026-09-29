@@ -2059,6 +2059,183 @@ fn cancelling_mutex_owner_releases_the_lock() {
 
 
 #[test]
+fn bounded_channel_blocks_send_until_recv() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(1);
+            let started = channel<int>();
+            let events = [];
+
+            func sender() {
+                ch.send(1);
+                events.add(1);
+                started.send(1);
+                ch.send(2);
+                events.add(2);
+            }
+
+            let task = spawn(sender);
+            started.recv();
+
+            let waiting = task.status() == "waiting";
+            let first = ch.recv();
+            let second = ch.recv();
+            task.join();
+
+            let ok = waiting
+                && first == 1
+                && second == 2
+                && events.size() == 2
+                && events[0] == 1
+                && events[1] == 2
+                && ch.size() == 0;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn bounded_channel_sender_wakes_after_consume() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(2);
+            let started = channel<int>();
+            let events = [];
+
+            func sender() {
+                ch.send(1);
+                ch.send(2);
+                started.send(1);
+                ch.send(3);
+                events.add(3);
+            }
+
+            let task = spawn(sender);
+            started.recv();
+
+            let waiting = task.status() == "waiting";
+            let first = ch.recv();
+            let queued_after_recv = ch.size();
+            let second = ch.recv();
+            let third = ch.recv();
+            task.join();
+
+            let ok = waiting
+                && first == 1
+                && queued_after_recv == 2
+                && second == 2
+                && third == 3
+                && events.size() == 1;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_bounded_channel_sender_cleans_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(1);
+            let started = channel<int>();
+            ch.send(1);
+
+            func sender() {
+                started.send(1);
+                ch.send(2);
+            }
+
+            let task = spawn(sender);
+            started.recv();
+            task.cancel();
+
+            let value = ch.recv();
+            let ok = value == 1
+                && task.status() == "cancelled";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_channel_senders.is_empty());
+    });
+}
+
+#[test]
+fn closing_bounded_channel_wakes_blocked_sender() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(1);
+            let started = channel<int>();
+            ch.send(1);
+
+            func sender() -> str {
+                started.send(1);
+                try {
+                    ch.send(2);
+                    return "bad";
+                } catch (e: Err) {
+                    return e.kind;
+                }
+            }
+
+            let task = spawn(sender);
+            started.recv();
+            ch.close();
+
+            let result = task.join();
+            let queued = ch.recv();
+            let closed = false;
+
+            try {
+                ch.recv();
+            } catch (e: Err) {
+                closed = e.kind == "ChannelClosed";
+            }
+
+            let ok = result == "ChannelClosed"
+                && queued == 1
+                && closed
+                && task.status() == "done";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn channel_rejects_non_positive_capacity() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ok = false;
+            try {
+                let ch = channel(0);
+            } catch (e: Err) {
+                ok = e.kind == "ChannelNonPositive";
+            }
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
 fn semaphore_try_acquire_and_release() {
     on_big_stack(|| {
         let (vm, result) = run_script(
@@ -2071,7 +2248,6 @@ fn semaphore_try_acquire_and_release() {
                 let third = s.try_acquire();
 
                 s.release();
-
                 let fourth = s.try_acquire();
 
                 s.release();
@@ -2090,10 +2266,7 @@ fn semaphore_try_acquire_and_release() {
         );
 
         result.unwrap();
-        assert_eq!(
-            vm.globals.borrow().get("ok"),
-            Some(&Value::Boolean(true))
-        );
+        assert_global_true(&vm, "ok");
     });
 }
 
@@ -2172,41 +2345,25 @@ fn cancelling_semaphore_waiter_cleans_registration() {
 
             func holder() {
                 s.acquire();
-
                 acquired.send(1);
-
-                // Conserve le permis tant que le waiter doit rester bloqué.
                 release_owner.recv();
-
                 s.release();
             }
 
             func waiter() {
-                // Le scheduler doit exécuter cette tâche jusqu'à son
-                // acquire() avant que le test puisse continuer.
                 waiter_started.send(1);
-
                 s.acquire();
-
-                // Ne devrait jamais être exécuté : le waiter sera annulé.
                 acquired.send(2);
                 s.release();
             }
 
             let holder_task = spawn(holder);
-
-            // Garantit que holder possède le permis.
             acquired.recv();
 
             let waiter_task = spawn(waiter);
-
-            // Le waiter a démarré puis rencontre s.acquire().
-            // Comme holder détient l'unique permis, il devient Waiting.
             waiter_started.recv();
-
             waiter_task.cancel();
 
-            // Le propriétaire peut maintenant libérer son permis.
             release_owner.send(1);
             holder_task.join();
 
@@ -2216,20 +2373,13 @@ fn cancelling_semaphore_waiter_cleans_registration() {
         );
 
         result.unwrap();
-        assert_eq!(
-            vm.globals.borrow().get("ok"),
-            Some(&Value::Boolean(true))
-        );
+        assert_global_true(&vm, "ok");
 
-        // Vérification directe : aucune inscription Semaphore fantôme
-        // ne doit rester dans le scheduler.
         let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
-        assert!(
-            scheduler.waiting_semaphores.is_empty(),
-            "des waiters Semaphore annulés sont encore enregistrés"
-        );
+        assert!(scheduler.waiting_semaphores.is_empty());
     });
 }
+
 #[test]
 fn cancelling_semaphore_owner_releases_the_permit() {
     on_big_stack(|| {
@@ -2254,18 +2404,12 @@ fn cancelling_semaphore_owner_releases_the_permit() {
             }
 
             let holder_task = spawn(holder);
-
-            // Garantit que holder possède le permis.
             gate.recv();
 
             let waiter_task = spawn(waiter);
-
-            // L'annulation doit libérer automatiquement le permis.
             holder_task.cancel();
 
-            // Le waiter doit maintenant pouvoir acquérir le permis.
             let acquired = gate.recv();
-
             waiter_task.join();
 
             let ok = acquired == 2
@@ -2276,10 +2420,7 @@ fn cancelling_semaphore_owner_releases_the_permit() {
         );
 
         result.unwrap();
-        assert_eq!(
-            vm.globals.borrow().get("ok"),
-            Some(&Value::Boolean(true))
-        );
+        assert_global_true(&vm, "ok");
     });
 }
 
