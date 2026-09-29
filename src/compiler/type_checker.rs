@@ -3879,6 +3879,10 @@ impl TypeChecker {
             return Ok(signature);
         }
 
+        if let Some(signature) = object_type.barrier_member_type(name) {
+            return Ok(signature);
+        }
+
         if let Some(signature) = object_type.option_result_member_type(name) {
             return Ok(signature);
         }

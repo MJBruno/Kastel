@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
+use crate::runtime::barrier::BarrierState;
 use crate::runtime::channel::ChannelState;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::mutex::MutexState;
@@ -117,6 +118,7 @@ pub(crate) struct Scheduler {
     /// échoue ou est annulée.
     pub(crate) owned_mutexes: HashMap<usize, Vec<Rc<RefCell<MutexState>>>>,
     pub(crate) waiting_wait_groups: HashMap<usize, Rc<RefCell<WaitGroupState>>>,
+    pub(crate) waiting_barriers: HashMap<usize, Rc<RefCell<BarrierState>>>,
     /// Sémaphore attendu par chaque tâche.
     pub(crate) waiting_semaphores: HashMap<usize, Rc<RefCell<SemaphoreState>>>,
     /// Permis de sémaphore détenus par chaque tâche.
@@ -140,6 +142,7 @@ impl Scheduler {
             waiting_mutexes: HashMap::new(),
             owned_mutexes: HashMap::new(),
             waiting_wait_groups: HashMap::new(),
+            waiting_barriers: HashMap::new(),
             waiting_semaphores: HashMap::new(),
             owned_semaphores: HashMap::new(),
         }
@@ -983,6 +986,157 @@ impl Scheduler {
         wait_group.borrow_mut().waiters.retain(|id| *id != task_id);
     }
 
+    fn barrier_key(barrier: &Rc<RefCell<BarrierState>>) -> usize {
+        Rc::as_ptr(barrier) as usize
+    }
+
+    pub(crate) fn wait_on_barrier(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        barrier: Rc<RefCell<BarrierState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+
+        if scheduler
+            .tasks
+            .get(task_id)
+            .and_then(Option::as_ref)
+            .is_none()
+            && !scheduler.running.contains(&task_id)
+        {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let (release, waiters) = {
+            let mut state = barrier.borrow_mut();
+
+            if state.broken {
+                return Err(RuntimeError::BarrierBroken);
+            }
+
+            state.arrived = state
+                .arrived
+                .checked_add(1)
+                .ok_or(RuntimeError::InvalidFunction)?;
+
+            if state.arrived == state.parties {
+                state.arrived = 0;
+                state.generation = state
+                    .generation
+                    .checked_add(1)
+                    .ok_or(RuntimeError::InvalidFunction)?;
+                (true, std::mem::take(&mut state.waiters))
+            } else {
+                if !state.waiters.contains(&task_id) {
+                    state.waiters.push_back(task_id);
+                }
+                (false, VecDeque::new())
+            }
+        };
+
+        if release {
+            Self::wake_barrier_waiters(&mut scheduler, &barrier, waiters);
+        } else {
+            scheduler.waiting_barriers.insert(task_id, barrier);
+        }
+
+        Ok(release)
+    }
+
+    fn wake_barrier_waiters(
+        scheduler: &mut Self,
+        barrier: &Rc<RefCell<BarrierState>>,
+        waiters: VecDeque<usize>,
+    ) {
+        let key = Self::barrier_key(barrier);
+
+        for task_id in waiters {
+            let should_wake = scheduler
+                .tasks
+                .get(task_id)
+                .and_then(Option::as_ref)
+                .is_some_and(|task| {
+                    task.status == TaskStateStatus::Waiting
+                        && scheduler
+                            .waiting_barriers
+                            .get(&task_id)
+                            .is_some_and(|waiting| Self::barrier_key(waiting) == key)
+                        && task.vm.waiting_barrier.is_some()
+                });
+
+            scheduler.waiting_barriers.remove(&task_id);
+
+            if !should_wake {
+                continue;
+            }
+
+            let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                continue;
+            };
+
+            if task.vm.resume_from_barrier().is_err() {
+                continue;
+            }
+
+            task.status = TaskStateStatus::Ready;
+            scheduler.ready.push_back(task_id);
+        }
+    }
+
+    fn break_barrier(&mut self, barrier: Rc<RefCell<BarrierState>>) {
+        let waiters = {
+            let mut state = barrier.borrow_mut();
+            if state.broken {
+                return;
+            }
+            state.broken = true;
+            state.arrived = 0;
+            std::mem::take(&mut state.waiters)
+        };
+
+        let key = Self::barrier_key(&barrier);
+        for task_id in waiters {
+            let should_wake = self
+                .tasks
+                .get(task_id)
+                .and_then(Option::as_ref)
+                .is_some_and(|task| {
+                    task.status == TaskStateStatus::Waiting
+                        && self
+                            .waiting_barriers
+                            .get(&task_id)
+                            .is_some_and(|waiting| Self::barrier_key(waiting) == key)
+                        && task.vm.waiting_barrier.is_some()
+                });
+
+            self.waiting_barriers.remove(&task_id);
+            if !should_wake {
+                continue;
+            }
+
+            let Some(task) = self.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                continue;
+            };
+
+            if task
+                .vm
+                .resume_from_barrier_error(RuntimeError::BarrierBroken)
+                .is_err()
+            {
+                continue;
+            }
+
+            task.status = TaskStateStatus::Ready;
+            self.ready.push_back(task_id);
+        }
+    }
+
+    fn unregister_barrier_wait(&mut self, task_id: usize) -> Option<Rc<RefCell<BarrierState>>> {
+        let barrier = self.waiting_barriers.remove(&task_id)?;
+        barrier.borrow_mut().waiters.retain(|id| *id != task_id);
+        Some(barrier)
+    }
+
     fn channel_key(channel: &Rc<RefCell<ChannelState>>) -> usize {
         Rc::as_ptr(channel) as usize
     }
@@ -1523,6 +1677,9 @@ impl Scheduler {
                 Self::unregister_channel_waits(&mut scheduler, id);
                 scheduler.unregister_mutex_wait(id);
                 scheduler.unregister_wait_group_wait(id);
+                if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
+                    scheduler.break_barrier(barrier);
+                }
                 scheduler.unregister_semaphore_wait(id);
                 scheduler.unregister_timer(id);
 
@@ -1632,6 +1789,9 @@ impl Scheduler {
             }
             if let Some(wait_group) = &task.vm.waiting_wait_group {
                 values.push(wait_group.clone());
+            }
+            if let Some(barrier) = &task.vm.waiting_barrier {
+                values.push(barrier.clone());
             }
             if let Some(channels) = &task.vm.waiting_select_channels {
                 values.extend(channels.iter().cloned());

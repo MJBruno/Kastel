@@ -655,7 +655,7 @@ impl Type {
 
         match name {
             "send" => Some(function(vec![element_type.clone()], Type::None)),
-            "try_send" => Some(function(vec![element_type], Type::Bool)),
+            "try_send" => Some(function(vec![element_type.clone()], Type::Bool)),
             "recv" => Some(function(vec![], element_type.clone())),
             "try_recv" => Some(function(
                 vec![],
@@ -745,6 +745,29 @@ impl Type {
             "done" | "wait" => Some(function(vec![], Type::None)),
             "count" => Some(function(vec![], Type::Int)),
             "is_done" => Some(function(vec![], Type::Bool)),
+            _ => None,
+        }
+    }
+
+    /// Signatures statiques de `Barrier`.
+    pub fn barrier_member_type(&self, name: &str) -> Option<Type> {
+        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("Barrier")) {
+            return None;
+        }
+
+        let function = |result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                generic_constraints: Vec::new(),
+                params: Vec::new(),
+                return_type: Box::new(result),
+            })
+        };
+
+        match name {
+            "wait" => Some(function(Type::None)),
+            "parties" | "arrived" | "generation" => Some(function(Type::Int)),
+            "is_broken" => Some(function(Type::Bool)),
             _ => None,
         }
     }

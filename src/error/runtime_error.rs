@@ -158,6 +158,8 @@ pub enum RuntimeError {
     SemaphoreNonPositive,
     SemaphoreNotOwner,
     WaitGroupUnderflow,
+    BarrierNonPositive,
+    BarrierBroken,
     WaitGroupNegativeCount,
     YieldOutsideTask,
 
@@ -278,6 +280,14 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::WaitGroupNegativeCount => {
                 write!(f, "WaitGroup count cannot be negative.")
+            }
+
+            RuntimeError::BarrierNonPositive => {
+                write!(f, "Barrier parties must be greater than zero.")
+            }
+
+            RuntimeError::BarrierBroken => {
+                write!(f, "Barrier is broken.")
             }
 
             RuntimeError::YieldOutsideTask => {
@@ -489,6 +499,8 @@ impl RuntimeError {
             RuntimeError::SemaphoreNotOwner => "SemaphoreNotOwner",
             RuntimeError::WaitGroupUnderflow => "WaitGroupUnderflow",
             RuntimeError::WaitGroupNegativeCount => "WaitGroupNegativeCount",
+            RuntimeError::BarrierNonPositive => "BarrierNonPositive",
+            RuntimeError::BarrierBroken => "BarrierBroken",
             RuntimeError::YieldOutsideTask => "YieldOutsideTask",
         }
     }

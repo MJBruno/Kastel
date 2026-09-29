@@ -3168,3 +3168,210 @@ fn pending_select_send_value_survives_gc_pressure() {
         assert_global_true(&vm, "ok");
     });
 }
+
+
+#[test]
+fn barrier_properties_are_exposed() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let b = barrier(3);
+            let ok = b.parties() == 3
+                && b.arrived() == 0
+                && b.generation() == 0
+                && !b.is_broken();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn barrier_rejects_non_positive_parties() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ok = false;
+            try {
+                barrier(0);
+            } catch (e: Err) {
+                ok = e.kind == "BarrierNonPositive";
+            }
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn barrier_wait_releases_all_participants_and_is_reusable() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let b = barrier(2);
+            let done = channel<int>(4);
+
+            func first() -> int {
+                b.wait();
+                done.send(10);
+                b.wait();
+                done.send(30);
+                return 1;
+            }
+
+            func second() -> int {
+                b.wait();
+                done.send(20);
+                b.wait();
+                done.send(40);
+                return 2;
+            }
+
+            let a = spawn(first);
+            let c = spawn(second);
+
+            let x = done.recv();
+            let y = done.recv();
+            let z = done.recv();
+            let w = done.recv();
+
+            let r1 = a.join();
+            let r2 = c.join();
+            let ok = x + y + z + w == 100
+                && r1 == 1
+                && r2 == 2
+                && b.generation() == 2
+                && b.arrived() == 0
+                && !b.is_broken();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_barrier_waiter_breaks_barrier_and_wakes_others() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let b = barrier(3);
+            let started = channel<int>();
+
+            func waiter() -> str {
+                started.send(1);
+                try {
+                    b.wait();
+                    return "released";
+                } catch (e: Err) {
+                    return e.kind;
+                }
+            }
+
+            let first = spawn(waiter);
+            let second = spawn(waiter);
+            started.recv();
+            started.recv();
+
+            let before = b.arrived() == 2;
+            first.cancel();
+            let second_result = second.join();
+            let ok = before
+                && second_result == "BarrierBroken"
+                && b.is_broken()
+                && b.arrived() == 0;
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_barriers.is_empty());
+    });
+}
+
+#[test]
+fn waiting_barrier_is_kept_alive_by_the_scheduler() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let started = channel<int>();
+
+            func waiter(barrier_arg) -> str {
+                started.send(1);
+                try {
+                    barrier_arg.wait();
+                    return "released";
+                } catch (e: Err) {
+                    return e.kind;
+                }
+            }
+
+            func launch() {
+                let b = barrier(3);
+                let first = spawn(waiter, b);
+                let second = spawn(waiter, b);
+                started.recv();
+                started.recv();
+                return (first, second);
+            }
+
+            let tasks = launch();
+
+            for i in range(0, 2000) {
+                let junk = [i, i + 1, i + 2];
+            }
+
+            tasks[0].cancel();
+            let second_result = tasks[1].join();
+            let ok = second_result == "BarrierBroken"
+                && tasks[1].status() == "done";
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn barrier_wait_outside_task_is_rejected() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let b = barrier(1);
+            let ok = false;
+            try {
+                b.wait();
+            } catch (e: Err) {
+                ok = e.kind == "TaskNotFound";
+            }
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+fn is_type_mismatch(error: &CompileError) -> bool {
+    let mut error = error;
+
+    while let CompileError::WithLocation { source, .. } = error {
+        error = &**source;
+    }
+
+    matches!(error, CompileError::TypeMismatch { .. })
+}
+
+#[test]
+fn barrier_member_types_are_checked_statically() {
+    let error = compile_only(
+        r#"
+        let b = barrier(2);
+        let x: str = b.parties();
+    "#,
+    )
+    .unwrap_err();
+
+    assert!(is_type_mismatch(&error));
+}

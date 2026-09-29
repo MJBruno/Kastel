@@ -272,7 +272,9 @@ impl VirtualMachine {
             | RuntimeError::SemaphoreNonPositive
             | RuntimeError::SemaphoreNotOwner
             | RuntimeError::WaitGroupUnderflow
-            | RuntimeError::WaitGroupNegativeCount => {
+            | RuntimeError::WaitGroupNegativeCount
+            | RuntimeError::BarrierNonPositive
+            | RuntimeError::BarrierBroken => {
                 Ok(Value::new_error(error.kind_name(), error.to_string()))
             }
 

@@ -991,6 +991,7 @@ impl VirtualMachine {
                         Object::Mutex(_) => 17,
                         Object::WaitGroup(_) => 18,
                         Object::Semaphore(_) => 19,
+                        Object::Barrier(_) => 20,
                         _ => 5,
                     }
                 };
@@ -1793,6 +1794,78 @@ impl VirtualMachine {
 
                             self.push(Value::Integer(semaphore.borrow().capacity() as i64));
                         }
+
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+                if object_kind == 20 {
+                    match method_name.as_str() {
+                        "wait" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let barrier = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Barrier(barrier) => barrier.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+
+                            let released =
+                                Scheduler::wait_on_barrier(&scheduler, task_id, barrier)?;
+
+                            if released {
+                                self.push(Value::None);
+                            } else {
+                                self.waiting_barrier = Some(Value::Object(handle.clone()));
+                                self.waiting_requested = true;
+                            }
+                        }
+
+                        "parties" | "arrived" | "generation" | "is_broken" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let barrier = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Barrier(barrier) => barrier.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let value = match method_name.as_str() {
+                                "parties" => Value::Integer(barrier.borrow().parties() as i64),
+                                "arrived" => Value::Integer(barrier.borrow().arrived() as i64),
+                                "generation" => {
+                                    Value::Integer(barrier.borrow().generation() as i64)
+                                }
+                                "is_broken" => Value::Boolean(barrier.borrow().is_broken()),
+                                _ => unreachable!(),
+                            };
+                            self.push(value);
+                        } 
 
                         _ => {
                             return Err(RuntimeError::ObjectFieldNotFound {

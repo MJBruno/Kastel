@@ -5,6 +5,7 @@ use std::rc::Rc;
 use crate::vm::machine::scheduler::TaskHandle;
 
 use crate::module::module::ModuleInstance;
+use crate::runtime::barrier::BarrierState;
 use crate::runtime::channel::ChannelState;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
@@ -53,6 +54,9 @@ pub enum Object {
 
     /// Compteur de coordination coopératif.
     WaitGroup(Rc<RefCell<crate::runtime::wait_group::WaitGroupState>>),
+
+    /// Barrière coopérative réutilisable à nombre fixe de participants.
+    Barrier(Rc<RefCell<BarrierState>>),
 
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
@@ -204,6 +208,10 @@ impl Object {
 
             Object::WaitGroup(wait_group) => {
                 wait_group.borrow_mut().waiters.clear();
+            }
+
+            Object::Barrier(barrier) => {
+                barrier.borrow_mut().waiters.clear();
             }
 
             Object::Tuple(elements) => {

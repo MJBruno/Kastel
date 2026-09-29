@@ -201,6 +201,12 @@ impl Value {
         ))))
     }
 
+    pub fn new_barrier(parties: usize) -> Self {
+        Self::new_heap_object(Object::Barrier(Rc::new(RefCell::new(
+            crate::runtime::barrier::BarrierState::new(parties),
+        ))))
+    }
+
     pub fn new_semaphore(capacity: usize) -> Self {
         Self::new_heap_object(Object::Semaphore(Rc::new(RefCell::new(
             crate::runtime::semaphore::SemaphoreState::new(capacity),
@@ -1231,6 +1237,10 @@ impl std::fmt::Display for Value {
                     Object::WaitGroup(wait_group) => {
                         write!(f, "WaitGroup(count={})", wait_group.borrow().count())
                     }
+                    Object::Barrier(barrier) => {
+                        let state = barrier.borrow();
+                        write!(f, "Barrier({}/{})", state.arrived(), state.parties())
+                    }
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1393,6 +1403,7 @@ impl Value {
                 Object::Mutex(_) => "Mutex",
                 Object::Semaphore(_) => "Semaphore",
                 Object::WaitGroup(_) => "WaitGroup",
+                Object::Barrier(_) => "Barrier",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",
