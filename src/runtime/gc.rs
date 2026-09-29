@@ -341,6 +341,7 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
         Object::WaitGroup(_) => {}
         Object::Barrier(_) => {}
         Object::RwLock(_) => {}
+        Object::Event(_) => {}
 
         Object::Tuple(elements) => {
             for value in elements {

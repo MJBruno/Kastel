@@ -50,6 +50,7 @@ pub mod rwlock;
 pub mod channel;
 pub mod debug;
 pub mod dict;
+pub mod event;
 pub mod file;
 pub mod io;
 pub mod iterator;
@@ -78,6 +79,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     tuple::register(globals);
     set::register(globals);
     dict::register(globals);
+    event::register(globals);
     // object::register(globals);
     iterator::register(globals);
     system::register(globals);
@@ -106,6 +108,7 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     tuple::register_compiler(compiler);
     set::register_compiler(compiler);
     dict::register_compiler(compiler);
+    event::register_compiler(compiler);
     // object::register_compiler(compiler);
     iterator::register_compiler(compiler);
     system::register_compiler(compiler);

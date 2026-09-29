@@ -9,6 +9,7 @@ use crate::runtime::barrier::BarrierState;
 use crate::runtime::channel::ChannelState;
 use crate::runtime::rwlock::RwLockState;
 use crate::runtime::closure::Closure;
+use crate::runtime::event::EventState;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::hashed::{DictEntries, SetElements};
@@ -61,6 +62,9 @@ pub enum Object {
 
     /// RwLock coopératif équitable : lecteurs partagés, écrivain exclusif.
     RwLock(Rc<RefCell<RwLockState>>),
+
+    /// Événement coopératif à état permanent.
+    Event(Rc<RefCell<EventState>>),
 
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
@@ -223,6 +227,10 @@ impl Object {
                 rwlock.writer = None;
                 rwlock.readers.clear();
                 rwlock.waiters.clear();
+            }
+
+            Object::Event(event) => {
+                event.borrow_mut().waiters.clear();
             }
 
             Object::Tuple(elements) => {

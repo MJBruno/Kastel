@@ -207,6 +207,12 @@ impl Value {
         ))))
     }
 
+    pub fn new_event() -> Self {
+        Self::new_heap_object(Object::Event(Rc::new(RefCell::new(
+            crate::runtime::event::EventState::new(),
+        ))))
+    }
+
     pub fn new_barrier(parties: usize) -> Self {
         Self::new_heap_object(Object::Barrier(Rc::new(RefCell::new(
             crate::runtime::barrier::BarrierState::new(parties),
@@ -1252,6 +1258,10 @@ impl std::fmt::Display for Value {
                         write!(f, "RwLock(readers={}, writer={})", state.reader_count(), state.is_write_locked())
                     }
 
+                    Object::Event(event) => {
+                        write!(f, "Event(set={})", event.borrow().is_set())
+                    }
+
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
                     // `(1)`, comme la syntaxe littérale elle-même l'exige.
@@ -1415,6 +1425,7 @@ impl Value {
                 Object::WaitGroup(_) => "WaitGroup",
                 Object::Barrier(_) => "Barrier",
                 Object::RwLock(_) => "RwLock",
+                Object::Event(_) => "Event",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",

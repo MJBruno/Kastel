@@ -3929,3 +3929,297 @@ fn rwlock_methods_are_checked_statically() {
         CompileError::WithLocation { .. } | CompileError::TypeMismatch { .. }
     ));
 }
+
+#[test]
+fn event_set_and_reset_follow_manual_reset_semantics() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e = event();
+            let before = !e.is_set();
+            e.set();
+            let first = e.is_set();
+            e.wait();
+            e.reset();
+            let after_reset = !e.is_set();
+            let ok = before && first && after_reset;
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn event_wait_returns_immediately_when_already_set() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e = event();
+            e.set();
+            func worker() -> int {
+                e.wait();
+                return 42;
+            }
+            let ok = spawn(worker).join() == 42;
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn event_set_wakes_all_waiters_in_fifo_order() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e = event();
+            let entered = channel<int>();
+            let events = channel<int>(2);
+
+            func waiter(id) {
+                entered.send(id);
+                e.wait();
+                events.send(id);
+            }
+
+            let first = spawn(waiter, 1);
+            entered.recv();
+            let second = spawn(waiter, 2);
+            entered.recv();
+
+            e.set();
+            let first_event = events.recv();
+            let second_event = events.recv();
+            first.join();
+            second.join();
+
+            let ok = first_event == 1 && second_event == 2;
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn event_is_manual_reset_for_waiters_added_after_set() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e = event();
+            let count = [];
+
+            func worker() {
+                e.wait();
+                count.add(1);
+            }
+
+            e.set();
+            let task = spawn(worker);
+            task.join();
+
+            let ok = count.size() == 1 && e.is_set();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_event_waiter_cleans_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e = event();
+            let started = channel<int>();
+
+            func waiter() {
+                started.send(1);
+                e.wait();
+            }
+
+            let task = spawn(waiter);
+            started.recv();
+            task.cancel();
+            e.set();
+
+            let ok = task.status() == "cancelled" && e.is_set();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_events.is_empty());
+    });
+}
+
+#[test]
+fn self_cancellation_while_waiting_on_event_cleans_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e = event();
+            let handle = [];
+            let started = channel<int>();
+
+            func worker() {
+                started.send(1);
+                handle[0].cancel();
+                e.wait();
+            }
+
+            let task = spawn(worker);
+            handle.add(task);
+            started.recv();
+
+            let cancelled = false;
+            try {
+                task.join();
+            } catch (err: Err) {
+                cancelled = err.kind == "TaskCancelled";
+            }
+
+            let ok = cancelled && task.status() == "cancelled";
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_events.is_empty());
+    });
+}
+
+#[test]
+fn event_set_is_idempotent_and_does_not_duplicate_wakes() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e = event();
+            let count = [];
+
+            func worker() {
+                e.wait();
+                count.add(1);
+            }
+
+            let task = spawn(worker);
+            e.set();
+            e.set();
+            task.join();
+
+            let ok = count.size() == 1 && e.is_set();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn event_reset_blocks_new_waiters_until_set_again() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e = event();
+            let started = channel<int>();
+            let done = channel<int>();
+
+            func worker() {
+                started.send(1);
+                e.wait();
+                done.send(2);
+            }
+
+            e.set();
+            e.reset();
+            let task = spawn(worker);
+            started.recv();
+            let not_done_yet = task.status() == "waiting";
+            e.set();
+            let value = done.recv();
+            task.join();
+
+            let ok = not_done_yet && value == 2 && e.is_set();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn root_event_wait_pumps_the_scheduler() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e = event();
+
+            func signaler() {
+                sleep(1);
+                e.set();
+            }
+
+            let task = spawn(signaler);
+            e.wait();
+            let ok = e.is_set() && task.is_done();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn waiting_event_is_kept_alive_by_the_scheduler() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let e: dynamic = event();
+            let started = channel<int>();
+
+            func waiter(e_arg) {
+                started.send(1);
+                e_arg.wait();
+            }
+
+            let task = spawn(waiter, e);
+            started.recv();
+            e = None;
+
+            for i in range(0, 2000) {
+                let junk = [i, i + 1, i + 2];
+            }
+
+            task.cancel();
+            let ok = task.status() == "cancelled";
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_events.is_empty());
+    });
+}
+
+#[test]
+fn event_methods_are_checked_statically() {
+    let error = compile_only(
+        r#"
+        let e = event();
+        let value: str = e.is_set();
+    "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        CompileError::WithLocation { .. } | CompileError::TypeMismatch { .. }
+    ));
+}
+

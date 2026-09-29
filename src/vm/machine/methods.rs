@@ -993,6 +993,7 @@ impl VirtualMachine {
                         Object::Semaphore(_) => 19,
                         Object::Barrier(_) => 20,
                         Object::RwLock(_) => 21,
+                        Object::Event(_) => 22,
                         _ => 5,
                     }
                 };
@@ -1866,6 +1867,134 @@ impl VirtualMachine {
                                 _ => unreachable!(),
                             };
                             self.push(value);
+                        }
+
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+                if object_kind == 22 {
+                    match method_name.as_str() {
+                        "wait" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let event = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Event(event) => event.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            if event.borrow().signaled {
+                                self.push(Value::None);
+                                return Ok(());
+                            }
+
+                            if let Some(task_id) = self.task_id {
+                                let scheduler =
+                                    self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                                let ready = Scheduler::wait_on_event(
+                                    &scheduler,
+                                    task_id,
+                                    event.clone(),
+                                )?;
+
+                                if ready {
+                                    self.push(Value::None);
+                                } else {
+                                    self.waiting_event = Some(Value::Object(handle.clone()));
+                                    self.waiting_requested = true;
+                                }
+                            } else {
+                                let _pinned = self.pin_roots_with(&[Value::Object(handle.clone())]);
+                                loop {
+                                    if event.borrow().signaled {
+                                        self.push(Value::None);
+                                        break;
+                                    }
+
+                                    let scheduler = self
+                                        .scheduler
+                                        .upgrade()
+                                        .ok_or(RuntimeError::TaskNotFound)?;
+                                    if !Scheduler::poll(&scheduler)? {
+                                        return Err(RuntimeError::TaskDeadlock);
+                                    }
+                                }
+                            }
+                        }
+
+                        "set" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let event = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Event(event) => event.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            Scheduler::set_event(&scheduler, &event)?;
+                            self.push(Value::None);
+                        }
+
+                        "reset" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let event = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Event(event) => event.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            Scheduler::reset_event(&scheduler, &event)?;
+                            self.push(Value::None);
+                        }
+
+                        "is_set" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let event = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Event(event) => event.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+                            self.push(Value::Boolean(event.borrow().signaled));
                         }
 
                         _ => {

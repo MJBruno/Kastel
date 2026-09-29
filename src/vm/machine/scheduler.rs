@@ -11,6 +11,7 @@ use crate::module::module::ModuleLoader;
 use crate::runtime::channel::ChannelState;
 use crate::runtime::mutex::MutexState;
 use crate::runtime::rwlock::{RwLockMode, RwLockState};
+use crate::runtime::event::EventState;
 use crate::runtime::semaphore::SemaphoreState;
 use crate::runtime::wait_group::WaitGroupState;
 use crate::runtime::gc_handle::Gc;
@@ -116,6 +117,7 @@ pub(crate) struct Scheduler {
     pub(crate) waiting_mutexes: HashMap<usize, Rc<RefCell<MutexState>>>,
     /// RwLock attendu par chaque tâche.
     pub(crate) waiting_rwlocks: HashMap<usize, Rc<RefCell<RwLockState>>>,
+    pub(crate) waiting_events: HashMap<usize, Rc<RefCell<EventState>>>,
     /// RwLocks actuellement détenus par chaque tâche.
     pub(crate) owned_rwlocks: HashMap<usize, Vec<Rc<RefCell<RwLockState>>>>,
     /// Mutex actuellement détenus par chaque tâche. Le scheduler les conserve
@@ -146,6 +148,7 @@ impl Scheduler {
             timers: BinaryHeap::new(),
             waiting_mutexes: HashMap::new(),
             waiting_rwlocks: HashMap::new(),
+            waiting_events: HashMap::new(),
             owned_rwlocks: HashMap::new(),
             owned_mutexes: HashMap::new(),
             waiting_wait_groups: HashMap::new(),
@@ -307,6 +310,7 @@ impl Scheduler {
             Self::unregister_channel_waits(&mut scheduler, id);
             scheduler.unregister_mutex_wait(id);
             scheduler.unregister_rwlock_wait(id);
+            scheduler.unregister_event_wait(id);
             scheduler.unregister_wait_group_wait(id);
             if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
                 scheduler.break_barrier(barrier);
@@ -351,6 +355,7 @@ impl Scheduler {
         if finished && !cancel_now {
             scheduler.unregister_timer(id);
             scheduler.unregister_rwlock_wait(id);
+            scheduler.unregister_event_wait(id);
             scheduler.unregister_wait_group_wait(id);
             scheduler.unregister_semaphore_wait(id);
             task.vm.release_task_resources();
@@ -989,6 +994,100 @@ impl Scheduler {
                 self.wake_rwlock_waiters(&rwlock);
             }
         }
+    }
+
+    fn event_key(event: &Rc<RefCell<EventState>>) -> usize {
+        Rc::as_ptr(event) as usize
+    }
+
+    pub(crate) fn wait_on_event(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        event: Rc<RefCell<EventState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
+        if state.is_none() && !scheduler.running.contains(&task_id) {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        if event.borrow().signaled {
+            return Ok(true);
+        }
+
+        let mut state = event.borrow_mut();
+        if !state.waiters.contains(&task_id) {
+            state.waiters.push_back(task_id);
+        }
+        drop(state);
+        scheduler.waiting_events.insert(task_id, event);
+        Ok(false)
+    }
+
+    pub(crate) fn set_event(
+        shared: &Rc<RefCell<Self>>,
+        event: &Rc<RefCell<EventState>>,
+    ) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let waiters = {
+            let mut state = event.borrow_mut();
+            state.signaled = true;
+            std::mem::take(&mut state.waiters)
+        };
+
+        let key = Self::event_key(event);
+        for task_id in waiters {
+            let should_wake = scheduler
+                .tasks
+                .get(task_id)
+                .and_then(Option::as_ref)
+                .is_some_and(|task| {
+                    task.status == TaskStateStatus::Waiting
+                        && scheduler
+                            .waiting_events
+                            .get(&task_id)
+                            .is_some_and(|waiting| Self::event_key(waiting) == key)
+                        && task.vm.waiting_event.is_some()
+                });
+
+            scheduler.waiting_events.remove(&task_id);
+            if !should_wake {
+                continue;
+            }
+
+            let Some(task) = scheduler
+                .tasks
+                .get_mut(task_id)
+                .and_then(Option::as_mut)
+            else {
+                continue;
+            };
+
+            if task.vm.resume_from_event().is_err() {
+                continue;
+            }
+
+            task.status = TaskStateStatus::Ready;
+            scheduler.ready.push_back(task_id);
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn reset_event(
+        shared: &Rc<RefCell<Self>>,
+        event: &Rc<RefCell<EventState>>,
+    ) -> Result<(), RuntimeError> {
+        let _scheduler = shared.borrow_mut();
+        event.borrow_mut().signaled = false;
+        Ok(())
+    }
+
+    fn unregister_event_wait(&mut self, task_id: usize) {
+        let Some(event) = self.waiting_events.remove(&task_id) else {
+            return;
+        };
+        event.borrow_mut().waiters.retain(|id| *id != task_id);
     }
 
     fn semaphore_key(semaphore: &Rc<RefCell<SemaphoreState>>) -> usize {
@@ -1986,6 +2085,7 @@ impl Scheduler {
                 Self::unregister_channel_waits(&mut scheduler, id);
                 scheduler.unregister_mutex_wait(id);
                 scheduler.unregister_rwlock_wait(id);
+                scheduler.unregister_event_wait(id);
                 scheduler.unregister_wait_group_wait(id);
                 if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
                     scheduler.break_barrier(barrier);
@@ -2105,6 +2205,9 @@ impl Scheduler {
             }
             if let Some(rwlock) = &task.vm.waiting_rwlock {
                 values.push(rwlock.clone());
+            }
+            if let Some(event) = &task.vm.waiting_event {
+                values.push(event.clone());
             }
             if let Some(channels) = &task.vm.waiting_select_channels {
                 values.extend(channels.iter().cloned());

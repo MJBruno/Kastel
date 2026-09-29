@@ -1,6 +1,7 @@
 pub mod barrier;
 pub mod channel;
 pub mod closure;
+pub mod event;
 pub mod function;
 pub mod gc;
 pub mod gc_handle;
