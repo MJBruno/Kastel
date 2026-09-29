@@ -15,14 +15,22 @@ fn run_script(
     VirtualMachine,
     Result<(), crate::error::runtime_error::RuntimeError>,
 ) {
-    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+    let tokens = Lexer::new(source.to_string())
+        .scan_token()
+        .unwrap();
 
-    let statements = Parser::new(tokens).parse().unwrap();
+    let statements = Parser::new(tokens)
+        .parse()
+        .unwrap();
 
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
 
-    let function = Rc::new(compiler.compile(&statements).unwrap());
+    let function = Rc::new(
+        compiler
+            .compile(&statements)
+            .unwrap(),
+    );
 
     let mut vm = VirtualMachine::new(function, None);
     let result = vm.run();
@@ -31,9 +39,13 @@ fn run_script(
 }
 
 fn compile_only(source: &str) -> Result<(), CompileError> {
-    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+    let tokens = Lexer::new(source.to_string())
+        .scan_token()
+        .unwrap();
 
-    let statements = Parser::new(tokens).parse().unwrap();
+    let statements = Parser::new(tokens)
+        .parse()
+        .unwrap();
 
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
@@ -45,7 +57,9 @@ fn is_wrong_argument_type(error: &CompileError) -> bool {
     match error {
         CompileError::WrongArgumentType { .. } => true,
 
-        CompileError::WithLocation { source, .. } => is_wrong_argument_type(source),
+        CompileError::WithLocation { source, .. } => {
+            is_wrong_argument_type(source)
+        }
 
         _ => false,
     }
@@ -328,7 +342,9 @@ fn task_capture_is_rejected() {
     "#,
     );
 
-    let error = result.expect_err("captured task must be rejected");
+    let error = result.expect_err(
+        "captured task must be rejected",
+    );
 
     assert!(matches!(
         error,
@@ -415,7 +431,9 @@ fn yield_outside_task_is_rejected() {
     "#,
     );
 
-    let error = result.expect_err("yield outside a task must fail");
+    let error = result.expect_err(
+        "yield outside a task must fail",
+    );
 
     assert!(matches!(
         error,
@@ -825,12 +843,10 @@ fn finished_tasks_release_their_stack_and_detached_ones_their_slot() {
 
     // Les tâches sans handle ont libéré leur slot (la dernière peut encore être
     // référencée par le dernier résultat d'expression de la VM).
-    let still_held = scheduler.tasks[1..]
-        .iter()
-        .filter(|slot| slot.is_some())
-        .count();
+    let still_held = scheduler.tasks[1..].iter().filter(|slot| slot.is_some()).count();
     assert!(still_held <= 1, "{still_held} slots non libérés");
 }
+
 
 #[test]
 fn task_can_be_cancelled_before_it_runs() {
@@ -943,6 +959,7 @@ fn cancellation_requested_by_another_task_stops_the_target() {
     ));
 }
 
+
 #[test]
 fn channel_close_is_idempotent_and_send_is_rejected() {
     let (vm, result) = run_script(
@@ -1048,6 +1065,7 @@ fn closing_channel_wakes_waiting_consumer_with_catchable_error() {
         Some(Value::Boolean(true))
     ));
 }
+
 
 #[test]
 fn select_returns_first_ready_channel_in_deterministic_order() {
@@ -1616,6 +1634,7 @@ fn cancellation_requested_before_blocking_leaves_no_ghost_waiter() {
     assert!(scheduler.cancel_requested.is_empty());
 }
 
+
 #[test]
 fn select_with_timeout_returns_timeout_tuple() {
     on_big_stack(|| {
@@ -2037,6 +2056,7 @@ fn cancelling_mutex_owner_releases_the_lock() {
         assert_global_true(&vm, "ok");
     });
 }
+
 
 #[test]
 fn bounded_channel_blocks_send_until_recv() {
@@ -2842,6 +2862,7 @@ fn multiple_wait_group_waiters_resume_fifo() {
     });
 }
 
+
 #[test]
 fn mutex_wait_group_and_timer_coordinate_contended_work() {
     on_big_stack(|| {
@@ -2949,6 +2970,197 @@ fn channel_select_and_wait_group_coordinate_producer_shutdown() {
                 && result[1] == 42
                 && result[2] == false
                 && group.is_done();
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+
+#[test]
+fn mixed_channel_waiters_preserve_fifo_order() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel(1);
+            let started = channel<int>();
+            ch.send(0);
+
+            func normal_sender(value: int) -> int {
+                started.send(value);
+                ch.send(value);
+                return value;
+            }
+
+            func select_sender(value: int) -> int {
+                started.send(value);
+                let selected = select([(ch, value)]);
+                if selected[0] == 0 && selected[1] == None && selected[2] == false {
+                    return value;
+                }
+                return -1;
+            }
+
+            let first = spawn(normal_sender, 1);
+            started.recv();
+            let second = spawn(select_sender, 2);
+            started.recv();
+            let third = spawn(normal_sender, 3);
+            started.recv();
+
+            let initial = ch.recv();
+            let r1 = first.join();
+            let v1 = ch.recv();
+            let r2 = second.join();
+            let v2 = ch.recv();
+            let r3 = third.join();
+            let v3 = ch.recv();
+
+            let ok = initial == 0
+                && r1 == 1 && v1 == 1
+                && r2 == 2 && v2 == 2
+                && r3 == 3 && v3 == 3;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn select_send_waiters_are_fifo() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel(1);
+            let started = channel<int>();
+            ch.send(0);
+
+            func sender(value: int) -> int {
+                started.send(value);
+                let selected = select([(ch, value)]);
+                if selected[0] == 0 && selected[1] == None && selected[2] == false {
+                    return value;
+                }
+                return -1;
+            }
+
+            let first = spawn(sender, 1);
+            started.recv();
+            let second = spawn(sender, 2);
+            started.recv();
+            let third = spawn(sender, 3);
+            started.recv();
+
+            let initial = ch.recv();
+            let r1 = first.join();
+            let v1 = ch.recv();
+            let r2 = second.join();
+            let v2 = ch.recv();
+            let r3 = third.join();
+            let v3 = ch.recv();
+
+            let ok = initial == 0
+                && r1 == 1 && v1 == 1
+                && r2 == 2 && v2 == 2
+                && r3 == 3 && v3 == 3;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn select_receive_waiters_are_fifo() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>();
+            let started = channel<int>();
+
+            func receiver(value: int) -> int {
+                started.send(value);
+                let selected = select([ch]);
+                if selected[0] == 0 && selected[2] == false {
+                    return selected[1];
+                }
+                return -1;
+            }
+
+            let first = spawn(receiver, 1);
+            started.recv();
+            let second = spawn(receiver, 2);
+            started.recv();
+            let third = spawn(receiver, 3);
+            started.recv();
+
+            ch.send(10);
+            let r1 = first.join();
+            ch.send(20);
+            let r2 = second.join();
+            ch.send(30);
+            let r3 = third.join();
+
+            let ok = r1 == 10 && r2 == 20 && r3 == 30;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn pending_select_send_value_survives_gc_pressure() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel(1);
+            let started = channel<int>();
+            ch.send([0]);
+
+            func sender() -> int {
+                started.send(1);
+                let selected = select([(ch, [1, 2, 3, 4, 5])]);
+                if selected[0] == 0 && selected[1] == None && selected[2] == false {
+                    return 1;
+                }
+                return -1;
+            }
+
+            func churn() -> int {
+                let junk = [];
+                for i in range(0, 3000) {
+                    junk.add([i, i + 1, i + 2]);
+                }
+                return junk.size();
+            }
+
+            let task = spawn(sender);
+            started.recv();
+            let churned = spawn(churn).join();
+            let status_before = task.status();
+
+            let initial = ch.recv();
+            let result = task.join();
+            let sent = ch.recv();
+
+            let ok = churned == 3000
+                && status_before == "waiting"
+                && initial.size() == 1
+                && initial[0] == 0
+                && result == 1
+                && sent.size() == 5
+                && sent[0] == 1
+                && sent[1] == 2
+                && sent[2] == 3
+                && sent[3] == 4
+                && sent[4] == 5;
         "#,
         );
 
