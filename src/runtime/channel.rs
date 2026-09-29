@@ -51,6 +51,10 @@ impl ChannelState {
             .is_some_and(|capacity| self.queue.len() >= capacity)
     }
 
+    pub fn capacity(&self) -> Option<usize> {
+        self.capacity
+    }
+
     /// Ferme le canal. Les valeurs déjà en file restent recevables.
     pub fn close(&mut self) -> bool {
         if self.closed {

@@ -654,7 +654,8 @@ impl Type {
         };
 
         match name {
-            "send" => Some(function(vec![element_type], Type::None)),
+            "send" => Some(function(vec![element_type.clone()], Type::None)),
+            "try_send" => Some(function(vec![element_type], Type::Bool)),
             "recv" => Some(function(vec![], element_type.clone())),
             "try_recv" => Some(function(
                 vec![],
@@ -664,6 +665,14 @@ impl Type {
                 },
             )),
             "size" => Some(function(vec![], Type::Int)),
+            "capacity" => Some(function(
+                vec![],
+                Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![Type::Int],
+                },
+            )),
+            "is_full" => Some(function(vec![], Type::Bool)),
             "is_empty" => Some(function(vec![], Type::Bool)),
             "close" => Some(function(vec![], Type::None)),
             "is_closed" => Some(function(vec![], Type::Bool)),

@@ -1146,6 +1146,41 @@ impl VirtualMachine {
                             }
                         }
 
+                        "try_send" => {
+                            if arg_count != 1 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 1,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let value = args[1].clone();
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            if channel.borrow().is_closed() {
+                                self.push(Value::Boolean(false));
+                            } else {
+                                let scheduler =
+                                    self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+
+                                if Scheduler::wake_one_channel(&scheduler, &channel, value.clone())?
+                                {
+                                    self.push(Value::Boolean(true));
+                                } else if channel.borrow().is_full() {
+                                    self.push(Value::Boolean(false));
+                                } else {
+                                    channel.borrow_mut().send(value);
+                                    self.push(Value::Boolean(true));
+                                }
+                            }
+                        }
+
                         "recv" => {
                             if arg_count != 0 {
                                 return Err(RuntimeError::WrongArgumentCount {
@@ -1231,6 +1266,47 @@ impl VirtualMachine {
                                 Some(value) => Value::new_some(value),
                                 None => Value::None,
                             });
+                        }
+
+                        "capacity" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(match channel.borrow().capacity() {
+                                Some(capacity) => Value::new_some(Value::Integer(capacity as i64)),
+                                None => Value::None,
+                            });
+                        }
+
+                        "is_full" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let channel = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Channel(channel) => channel.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Boolean(channel.borrow().is_full()));
                         }
 
                         "size" => {

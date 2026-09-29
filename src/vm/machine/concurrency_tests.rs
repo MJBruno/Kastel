@@ -2197,6 +2197,118 @@ fn closing_bounded_channel_wakes_blocked_sender() {
 }
 
 #[test]
+fn channel_try_send_does_not_block_when_full() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(1);
+            ch.send(1);
+
+            let sent = ch.try_send(2);
+            let first = ch.recv();
+            let second = ch.try_recv();
+
+            let ok = !sent && first == 1 && second == None;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn channel_try_send_wakes_waiting_receiver() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>();
+            let started = channel<int>();
+
+            func receiver() -> int {
+                started.send(1);
+                return ch.recv();
+            }
+
+            let task = spawn(receiver);
+            started.recv();
+
+            let waiting = task.status() == "waiting";
+            let sent = ch.try_send(7);
+            let received = task.join();
+
+            let ok = waiting && sent && received == 7;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn channel_try_send_on_closed_channel_returns_false() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(1);
+            ch.close();
+
+            let sent = ch.try_send(1);
+            let ok = !sent && ch.is_closed();
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn channel_capacity_and_is_full_report_state() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let unbounded = channel<int>();
+            let bounded = channel<int>(2);
+
+            let initial = unbounded.capacity() == None
+                && !unbounded.is_full()
+                && bounded.capacity() == Some(2)
+                && !bounded.is_full();
+
+            bounded.send(1);
+            let partial = bounded.capacity() == Some(2) && !bounded.is_full();
+
+            bounded.send(2);
+            let full = bounded.is_full() && bounded.size() == 2;
+
+            bounded.recv();
+            let reopened = !bounded.is_full();
+
+            let ok = initial && partial && full && reopened;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn channel_try_send_checks_element_type_statically() {
+    let error = compile_only(
+        r#"
+        let ch = channel<int>();
+        ch.try_send("wrong");
+    "#,
+    )
+    .unwrap_err();
+
+    assert!(is_wrong_argument_type(&error));
+}
+
+#[test]
 fn channel_rejects_non_positive_capacity() {
     on_big_stack(|| {
         let (vm, result) = run_script(
