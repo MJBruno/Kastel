@@ -160,6 +160,8 @@ pub enum RuntimeError {
     WaitGroupUnderflow,
     BarrierNonPositive,
     BarrierBroken,
+    RwLockDeadlock,
+    RwLockNotOwner,
     WaitGroupNegativeCount,
     YieldOutsideTask,
 
@@ -288,6 +290,14 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::BarrierBroken => {
                 write!(f, "Barrier is broken.")
+            }
+
+            RuntimeError::RwLockDeadlock => {
+                write!(f, "RwLock acquisition would deadlock.")
+            }
+
+            RuntimeError::RwLockNotOwner => {
+                write!(f, "RwLock is not owned by this task.")
             }
 
             RuntimeError::YieldOutsideTask => {
@@ -501,6 +511,8 @@ impl RuntimeError {
             RuntimeError::WaitGroupNegativeCount => "WaitGroupNegativeCount",
             RuntimeError::BarrierNonPositive => "BarrierNonPositive",
             RuntimeError::BarrierBroken => "BarrierBroken",
+            RuntimeError::RwLockDeadlock => "RwLockDeadlock",
+            RuntimeError::RwLockNotOwner => "RwLockNotOwner",
             RuntimeError::YieldOutsideTask => "YieldOutsideTask",
         }
     }

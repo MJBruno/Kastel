@@ -46,6 +46,7 @@ pub(crate) fn to_string_method(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub mod array;
 pub mod barrier;
+pub mod rwlock;
 pub mod channel;
 pub mod debug;
 pub mod dict;
@@ -88,6 +89,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     semaphore::register(globals);
     wait_group::register(globals);
     barrier::register(globals);
+    rwlock::register(globals);
     path::register(globals);
     os::register(globals);
     process::register(globals);
@@ -115,6 +117,7 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     semaphore::register_compiler(compiler);
     wait_group::register_compiler(compiler);
     barrier::register_compiler(compiler);
+    rwlock::register_compiler(compiler);
     path::register_compiler(compiler);
     os::register_compiler(compiler);
     process::register_compiler(compiler);

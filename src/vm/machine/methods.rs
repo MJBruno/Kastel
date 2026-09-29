@@ -992,6 +992,7 @@ impl VirtualMachine {
                         Object::WaitGroup(_) => 18,
                         Object::Semaphore(_) => 19,
                         Object::Barrier(_) => 20,
+                        Object::RwLock(_) => 21,
                         _ => 5,
                     }
                 };
@@ -1865,6 +1866,230 @@ impl VirtualMachine {
                                 _ => unreachable!(),
                             };
                             self.push(value);
+                        }
+
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+                if object_kind == 21 {
+                    match method_name.as_str() {
+                        "read_lock" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let rwlock = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::RwLock(rwlock) => rwlock.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            let acquired =
+                                Scheduler::lock_rwlock_read(&scheduler, task_id, &rwlock)?;
+
+                            if acquired {
+                                self.push(Value::None);
+                            } else {
+                                self.waiting_rwlock = Some(Value::Object(handle.clone()));
+                                self.waiting_requested = true;
+                            }
+                        }
+
+                        "try_read_lock" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let rwlock = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::RwLock(rwlock) => rwlock.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            let acquired =
+                                Scheduler::try_lock_rwlock_read(&scheduler, task_id, &rwlock)?;
+                            self.push(Value::Boolean(acquired));
+                        }
+
+                        "read_unlock" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let rwlock = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::RwLock(rwlock) => rwlock.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            Scheduler::read_unlock_rwlock(&scheduler, task_id, &rwlock)?;
+                            self.push(Value::None);
+                        }
+
+                        "write_lock" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let rwlock = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::RwLock(rwlock) => rwlock.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            let acquired =
+                                Scheduler::lock_rwlock_write(&scheduler, task_id, &rwlock)?;
+
+                            if acquired {
+                                self.push(Value::None);
+                            } else {
+                                self.waiting_rwlock = Some(Value::Object(handle.clone()));
+                                self.waiting_requested = true;
+                            }
+                        }
+
+                        "try_write_lock" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let rwlock = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::RwLock(rwlock) => rwlock.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            let acquired =
+                                Scheduler::try_lock_rwlock_write(&scheduler, task_id, &rwlock)?;
+                            self.push(Value::Boolean(acquired));
+                        }
+
+                        "write_unlock" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let rwlock = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::RwLock(rwlock) => rwlock.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            Scheduler::write_unlock_rwlock(&scheduler, task_id, &rwlock)?;
+                            self.push(Value::None);
+                        }
+
+                        "reader_count" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let rwlock = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::RwLock(rwlock) => rwlock.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Integer(rwlock.borrow().reader_count() as i64));
+                        }
+
+                        "is_read_locked" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let rwlock = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::RwLock(rwlock) => rwlock.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Boolean(rwlock.borrow().is_read_locked()));
+                        }
+
+                        "is_write_locked" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let rwlock = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::RwLock(rwlock) => rwlock.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Boolean(rwlock.borrow().is_write_locked()));
                         }
 
                         _ => {

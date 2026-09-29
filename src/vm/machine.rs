@@ -203,6 +203,7 @@ pub struct VirtualMachine {
     pub(crate) waiting_semaphore: Option<Value>,
     pub(crate) waiting_wait_group: Option<Value>,
     pub(crate) waiting_barrier: Option<Value>,
+    pub(crate) waiting_rwlock: Option<Value>,
     pub(crate) waiting_error: Option<RuntimeError>,
     pub(crate) last_result: Option<Value>,
     pub(crate) scheduler: Weak<RefCell<scheduler::Scheduler>>,
@@ -288,6 +289,7 @@ impl VirtualMachine {
             waiting_semaphore: None,
             waiting_wait_group: None,
             waiting_barrier: None,
+            waiting_rwlock: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -353,6 +355,7 @@ impl VirtualMachine {
             waiting_semaphore: None,
             waiting_wait_group: None,
             waiting_barrier: None,
+            waiting_rwlock: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -435,6 +438,7 @@ impl VirtualMachine {
             waiting_semaphore: None,
             waiting_wait_group: None,
             waiting_barrier: None,
+            waiting_rwlock: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -630,8 +634,21 @@ impl VirtualMachine {
         }
 
         self.waiting_barrier = None;
+        self.waiting_rwlock = None;
         self.waiting_error = Some(error);
         self.waiting_requested = false;
+        Ok(())
+    }
+
+    pub(crate) fn resume_from_rwlock(&mut self) -> Result<(), RuntimeError> {
+        if self.waiting_rwlock.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_rwlock = None;
+        self.waiting_error = None;
+        self.waiting_requested = false;
+        self.push(Value::None);
         Ok(())
     }
 
@@ -816,6 +833,7 @@ impl VirtualMachine {
         self.waiting_semaphore = None;
         self.waiting_wait_group = None;
         self.waiting_barrier = None;
+        self.waiting_rwlock = None;
         self.last_result = None;
         self.open_upvalues.clear();
     }
@@ -861,6 +879,7 @@ impl VirtualMachine {
         self.waiting_semaphore = None;
         self.waiting_wait_group = None;
         self.waiting_barrier = None;
+        self.waiting_rwlock = None;
         self.last_result = None;
 
         // Les upvalues ont maintenant été fermées correctement.

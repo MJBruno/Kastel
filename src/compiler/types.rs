@@ -772,6 +772,33 @@ impl Type {
         }
     }
 
+    /// Signatures statiques de `RwLock`.
+    pub fn rwlock_member_type(&self, name: &str) -> Option<Type> {
+        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("RwLock")) {
+            return None;
+        }
+
+        let function = |result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                generic_constraints: Vec::new(),
+                params: Vec::new(),
+                return_type: Box::new(result),
+            })
+        };
+
+        match name {
+            "read_lock" | "write_lock" | "read_unlock" | "write_unlock" => {
+                Some(function(Type::None))
+            }
+            "try_read_lock" | "try_write_lock" | "is_read_locked" | "is_write_locked" => {
+                Some(function(Type::Bool))
+            }
+            "reader_count" => Some(function(Type::Int)),
+            _ => None,
+        }
+    }
+
     /// Signatures statiques de `Task<T>`.
     pub fn task_member_type(&self, name: &str) -> Option<Type> {
         let result_type = match self {

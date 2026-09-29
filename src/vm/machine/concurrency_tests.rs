@@ -2851,9 +2851,15 @@ fn multiple_wait_group_waiters_resume_fifo() {
             }
 
             let a = spawn(waiter, 1);
-            sleep(1);
+            while a.status() != "waiting" {
+                sleep(1);
+            }
+
             let b = spawn(waiter, 2);
-            sleep(1);
+            while b.status() != "waiting" {
+                sleep(1);
+            }
+
             group.done();
 
             let first = events.recv();
@@ -3422,4 +3428,504 @@ fn barrier_member_types_are_checked_statically() {
     )
     .unwrap_err();
     assert!(is_type_mismatch(&error));
+}
+
+
+#[test]
+fn rwlock_readers_can_share_and_report_state() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+            let entered = channel<int>(2);
+
+            func reader(value: int) {
+                lock.read_lock();
+                entered.send(value);
+                yield();
+                lock.read_unlock();
+            }
+
+            let a = spawn(reader, 1);
+            entered.recv();
+            let b = spawn(reader, 2);
+            entered.recv();
+
+            a.join();
+            b.join();
+
+            let ok = lock.reader_count() == 0
+                && !lock.is_read_locked()
+                && !lock.is_write_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn rwlock_writer_waits_for_readers_and_wakes_after_release() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+            let entered = channel<int>();
+            let release = channel<int>();
+            let events = channel<int>();
+
+            func reader() {
+                lock.read_lock();
+                entered.send(1);
+                release.recv();
+                lock.read_unlock();
+            }
+
+            func writer() {
+                entered.send(2);
+                lock.write_lock();
+                events.send(3);
+                lock.write_unlock();
+            }
+
+            let reader_task = spawn(reader);
+            entered.recv();
+            let writer_task = spawn(writer);
+            entered.recv();
+
+            release.send(1);
+            let event = events.recv();
+            reader_task.join();
+            writer_task.join();
+
+            let ok = event == 3 && lock.reader_count() == 0 && !lock.is_write_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn rwlock_reader_waits_behind_writer() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+            let entered = channel<int>();
+            let release = channel<int>();
+            let events = channel<int>();
+
+            func writer() {
+                lock.write_lock();
+                entered.send(1);
+                release.recv();
+                events.send(10);
+                lock.write_unlock();
+            }
+
+            func reader() {
+                entered.send(2);
+                lock.read_lock();
+                events.send(20);
+                lock.read_unlock();
+            }
+
+            let writer_task = spawn(writer);
+            entered.recv();
+            let reader_task = spawn(reader);
+            entered.recv();
+
+            release.send(1);
+            let first = events.recv();
+            let second = events.recv();
+            writer_task.join();
+            reader_task.join();
+
+            let ok = first == 10 && second == 20;
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn rwlock_fifo_prevents_new_reader_from_passing_writer() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+            let entered = channel<int>();
+            let release = channel<int>();
+            let events = channel<int>(2);
+
+            func first_reader() {
+                lock.read_lock();
+                entered.send(1);
+                release.recv();
+                lock.read_unlock();
+            }
+
+            func writer() {
+                entered.send(2);
+                lock.write_lock();
+                events.send(10);
+                lock.write_unlock();
+            }
+
+            func second_reader() {
+                entered.send(3);
+                lock.read_lock();
+                events.send(20);
+                lock.read_unlock();
+            }
+
+            let first = spawn(first_reader);
+            entered.recv();
+            let writer_task = spawn(writer);
+            entered.recv();
+            let reader_task = spawn(second_reader);
+            entered.recv();
+
+            release.send(1);
+            let first_event = events.recv();
+            let second_event = events.recv();
+            first.join();
+            writer_task.join();
+            reader_task.join();
+
+            let ok = first_event == 10 && second_event == 20;
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn rwlock_try_operations_are_nonblocking() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+
+            func worker() -> bool {
+                let first_read = lock.try_read_lock();
+                let second_read = lock.try_read_lock();
+                lock.read_unlock();
+
+                let first_write = lock.try_write_lock();
+                lock.write_unlock();
+
+                return first_read
+                    && !second_read
+                    && first_write
+                    && lock.reader_count() == 0
+                    && !lock.is_write_locked();
+            }
+
+            let ok = spawn(worker).join();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn rwlock_reentrant_and_upgrade_attempts_are_deadlocks() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+
+            func reader() -> bool {
+                lock.read_lock();
+                let same_read = false;
+                let upgrade = false;
+
+                try {
+                    lock.read_lock();
+                } catch (e: Err) {
+                    same_read = e.kind == "RwLockDeadlock";
+                }
+
+                try {
+                    lock.write_lock();
+                } catch (e: Err) {
+                    upgrade = e.kind == "RwLockDeadlock";
+                }
+
+                lock.read_unlock();
+                return same_read && upgrade;
+            }
+
+            func writer() -> bool {
+                lock.write_lock();
+                let downgrade = false;
+
+                try {
+                    lock.read_lock();
+                } catch (e: Err) {
+                    downgrade = e.kind == "RwLockDeadlock";
+                }
+
+                lock.write_unlock();
+                return downgrade;
+            }
+
+            let ok = spawn(reader).join() && spawn(writer).join();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn rwlock_unlock_requires_the_matching_owner() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+            let entered = channel<int>();
+
+            func holder() {
+                lock.write_lock();
+                entered.send(1);
+                yield();
+                lock.write_unlock();
+            }
+
+            func intruder() -> str {
+                try {
+                    lock.write_unlock();
+                    return "bad";
+                } catch (e: Err) {
+                    return e.kind;
+                }
+            }
+
+            let owner = spawn(holder);
+            entered.recv();
+            let result = spawn(intruder).join();
+            owner.cancel();
+
+            let ok = result == "RwLockNotOwner" && !lock.is_write_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_rwlock_waiter_cleans_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+            let entered = channel<int>();
+            let release = channel<int>();
+
+            func holder() {
+                lock.write_lock();
+                entered.send(1);
+                release.recv();
+                lock.write_unlock();
+            }
+
+            func waiter() {
+                entered.send(2);
+                lock.read_lock();
+                lock.read_unlock();
+            }
+
+            let owner = spawn(holder);
+            entered.recv();
+            let waiter_task = spawn(waiter);
+            entered.recv();
+
+            waiter_task.cancel();
+            release.send(1);
+            owner.join();
+
+            let ok = waiter_task.status() == "cancelled" && !lock.is_write_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_rwlocks.is_empty());
+    });
+}
+
+#[test]
+fn cancelling_rwlock_owner_releases_the_lock() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+            let entered = channel<int>();
+            let events = channel<int>();
+
+            func holder() {
+                lock.write_lock();
+                entered.send(1);
+                while true {
+                    yield();
+                }
+            }
+
+            func waiter() {
+                lock.write_lock();
+                events.send(2);
+                lock.write_unlock();
+            }
+
+            let owner = spawn(holder);
+            entered.recv();
+            let waiter_task = spawn(waiter);
+            owner.cancel();
+
+            let event = events.recv();
+            waiter_task.join();
+
+            let ok = event == 2
+                && owner.status() == "cancelled"
+                && waiter_task.status() == "done"
+                && !lock.is_write_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn self_cancellation_while_waiting_on_rwlock_cleans_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock = rwlock();
+            let first_handle = [];
+            let started = channel<int>();
+
+            func owner() {
+                lock.write_lock();
+                started.send(1);
+                while true {
+                    yield();
+                }
+            }
+
+            func first() {
+                started.send(2);
+                first_handle[0].cancel();
+                lock.read_lock();
+                lock.read_unlock();
+            }
+
+            func second() -> str {
+                started.send(3);
+                lock.read_lock();
+                lock.read_unlock();
+                return "done";
+            }
+
+            let owner_task = spawn(owner);
+            started.recv();
+            let first_task = spawn(first);
+            first_handle.add(first_task);
+            started.recv();
+            let second_task = spawn(second);
+            started.recv();
+
+            let first_cancelled = false;
+            try {
+                first_task.join();
+            } catch (e: Err) {
+                first_cancelled = e.kind == "TaskCancelled";
+            }
+
+            owner_task.cancel();
+            let second_result = second_task.join();
+            let ok = first_cancelled
+                && second_result == "done"
+                && first_task.status() == "cancelled"
+                && second_task.status() == "done";
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_rwlocks.is_empty());
+    });
+}
+
+#[test]
+fn waiting_rwlock_is_kept_alive_by_the_scheduler() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let lock: dynamic = rwlock();
+            let started = channel<int>();
+
+            func holder(lock_arg) {
+                lock_arg.write_lock();
+                started.send(1);
+                while true {
+                    yield();
+                }
+            }
+
+            func waiter(lock_arg) -> str {
+                started.send(2);
+                try {
+                    lock_arg.read_lock();
+                    lock_arg.read_unlock();
+                    return "done";
+                } catch (e: Err) {
+                    return e.kind;
+                }
+            }
+
+            let holder_task = spawn(holder, lock);
+            started.recv();
+            let waiter_task = spawn(waiter, lock);
+            started.recv();
+
+            lock = None;
+
+            for i in range(0, 2000) {
+                let junk = [i, i + 1, i + 2];
+            }
+
+            holder_task.cancel();
+            let result_value = waiter_task.join();
+            let ok = result_value == "done" && waiter_task.status() == "done";
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn rwlock_methods_are_checked_statically() {
+    let error = compile_only(
+        r#"
+        let lock = rwlock();
+        let value: str = lock.reader_count();
+    "#,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        CompileError::WithLocation { .. } | CompileError::TypeMismatch { .. }
+    ));
 }

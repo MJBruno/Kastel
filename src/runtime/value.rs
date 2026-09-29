@@ -201,6 +201,12 @@ impl Value {
         ))))
     }
 
+    pub fn new_rwlock() -> Self {
+        Self::new_heap_object(Object::RwLock(Rc::new(RefCell::new(
+            crate::runtime::rwlock::RwLockState::new(),
+        ))))
+    }
+
     pub fn new_barrier(parties: usize) -> Self {
         Self::new_heap_object(Object::Barrier(Rc::new(RefCell::new(
             crate::runtime::barrier::BarrierState::new(parties),
@@ -1241,6 +1247,10 @@ impl std::fmt::Display for Value {
                         let state = barrier.borrow();
                         write!(f, "Barrier({}/{})", state.arrived(), state.parties())
                     }
+                    Object::RwLock(rwlock) => {
+                        let state = rwlock.borrow();
+                        write!(f, "RwLock(readers={}, writer={})", state.reader_count(), state.is_write_locked())
+                    }
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1404,6 +1414,7 @@ impl Value {
                 Object::Semaphore(_) => "Semaphore",
                 Object::WaitGroup(_) => "WaitGroup",
                 Object::Barrier(_) => "Barrier",
+                Object::RwLock(_) => "RwLock",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",

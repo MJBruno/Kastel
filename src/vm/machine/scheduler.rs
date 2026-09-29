@@ -10,6 +10,7 @@ use crate::runtime::barrier::BarrierState;
 use crate::module::module::ModuleLoader;
 use crate::runtime::channel::ChannelState;
 use crate::runtime::mutex::MutexState;
+use crate::runtime::rwlock::{RwLockMode, RwLockState};
 use crate::runtime::semaphore::SemaphoreState;
 use crate::runtime::wait_group::WaitGroupState;
 use crate::runtime::gc_handle::Gc;
@@ -113,6 +114,10 @@ pub(crate) struct Scheduler {
     /// Tâche actuellement en attente sur un mutex. Une tâche ne peut bloquer
     /// que sur un seul mutex à la fois.
     pub(crate) waiting_mutexes: HashMap<usize, Rc<RefCell<MutexState>>>,
+    /// RwLock attendu par chaque tâche.
+    pub(crate) waiting_rwlocks: HashMap<usize, Rc<RefCell<RwLockState>>>,
+    /// RwLocks actuellement détenus par chaque tâche.
+    pub(crate) owned_rwlocks: HashMap<usize, Vec<Rc<RefCell<RwLockState>>>>,
     /// Mutex actuellement détenus par chaque tâche. Le scheduler les conserve
     /// pour pouvoir libérer automatiquement les verrous si une tâche termine,
     /// échoue ou est annulée.
@@ -140,6 +145,8 @@ impl Scheduler {
             sleeping_tasks: HashMap::new(),
             timers: BinaryHeap::new(),
             waiting_mutexes: HashMap::new(),
+            waiting_rwlocks: HashMap::new(),
+            owned_rwlocks: HashMap::new(),
             owned_mutexes: HashMap::new(),
             waiting_wait_groups: HashMap::new(),
             waiting_barriers: HashMap::new(),
@@ -299,6 +306,7 @@ impl Scheduler {
             task.error = None;
             Self::unregister_channel_waits(&mut scheduler, id);
             scheduler.unregister_mutex_wait(id);
+            scheduler.unregister_rwlock_wait(id);
             scheduler.unregister_wait_group_wait(id);
             if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
                 scheduler.break_barrier(barrier);
@@ -306,6 +314,7 @@ impl Scheduler {
             scheduler.unregister_semaphore_wait(id);
             scheduler.unregister_timer(id);
             scheduler.release_owned_mutexes(id);
+            scheduler.release_owned_rwlocks(id);
             scheduler.release_owned_semaphores(id);
             task.vm.release_task_resources();
         } else {
@@ -335,11 +344,13 @@ impl Scheduler {
 
         if finished {
             scheduler.release_owned_mutexes(id);
+            scheduler.release_owned_rwlocks(id);
             scheduler.release_owned_semaphores(id);
         }
 
         if finished && !cancel_now {
             scheduler.unregister_timer(id);
+            scheduler.unregister_rwlock_wait(id);
             scheduler.unregister_wait_group_wait(id);
             scheduler.unregister_semaphore_wait(id);
             task.vm.release_task_resources();
@@ -689,6 +700,293 @@ impl Scheduler {
         for mutex in mutexes {
             if mutex.borrow().owner == Some(task_id) {
                 self.wake_next_mutex_waiter(&mutex);
+            }
+        }
+    }
+
+    fn rwlock_key(rwlock: &Rc<RefCell<RwLockState>>) -> usize {
+        Rc::as_ptr(rwlock) as usize
+    }
+
+    fn add_owned_rwlock(&mut self, task_id: usize, rwlock: Rc<RefCell<RwLockState>>) {
+        let key = Self::rwlock_key(&rwlock);
+        let owned = self.owned_rwlocks.entry(task_id).or_default();
+        if !owned.iter().any(|value| Self::rwlock_key(value) == key) {
+            owned.push(rwlock);
+        }
+    }
+
+    fn remove_owned_rwlock(&mut self, task_id: usize, rwlock: &Rc<RefCell<RwLockState>>) {
+        let key = Self::rwlock_key(rwlock);
+        if let Some(owned) = self.owned_rwlocks.get_mut(&task_id) {
+            owned.retain(|value| Self::rwlock_key(value) != key);
+            if owned.is_empty() {
+                self.owned_rwlocks.remove(&task_id);
+            }
+        }
+    }
+
+    /// Acquiert un verrou de lecture. Les nouvelles lectures ne passent pas
+    /// devant une demande déjà en file, ce qui empêche la famine d'un écrivain.
+    pub(crate) fn lock_rwlock_read(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        rwlock: &Rc<RefCell<RwLockState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        if scheduler.tasks.get(task_id).and_then(Option::as_ref).is_none()
+            && !scheduler.running.contains(&task_id)
+        {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let mut state = rwlock.borrow_mut();
+        if state.writer == Some(task_id) || state.readers.contains(&task_id) {
+            return Err(RuntimeError::RwLockDeadlock);
+        }
+
+        if state.writer.is_none() && state.waiters.is_empty() {
+            state.readers.push(task_id);
+            drop(state);
+            scheduler.add_owned_rwlock(task_id, rwlock.clone());
+            return Ok(true);
+        }
+
+        if !state.waiters.iter().any(|(id, _)| *id == task_id) {
+            state.waiters.push_back((task_id, RwLockMode::Read));
+        }
+        drop(state);
+        scheduler.waiting_rwlocks.insert(task_id, rwlock.clone());
+        Ok(false)
+    }
+
+    /// Tente une acquisition en lecture sans blocage.
+    pub(crate) fn try_lock_rwlock_read(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        rwlock: &Rc<RefCell<RwLockState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        if scheduler.tasks.get(task_id).and_then(Option::as_ref).is_none()
+            && !scheduler.running.contains(&task_id)
+        {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let mut state = rwlock.borrow_mut();
+        if state.writer.is_some() || !state.waiters.is_empty() || state.readers.contains(&task_id) {
+            return Ok(false);
+        }
+
+        state.readers.push(task_id);
+        drop(state);
+        scheduler.add_owned_rwlock(task_id, rwlock.clone());
+        Ok(true)
+    }
+
+    /// Acquiert le verrou d'écriture exclusif.
+    pub(crate) fn lock_rwlock_write(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        rwlock: &Rc<RefCell<RwLockState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        if scheduler.tasks.get(task_id).and_then(Option::as_ref).is_none()
+            && !scheduler.running.contains(&task_id)
+        {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let mut state = rwlock.borrow_mut();
+        if state.writer == Some(task_id) || state.readers.contains(&task_id) {
+            return Err(RuntimeError::RwLockDeadlock);
+        }
+
+        if state.writer.is_none() && state.readers.is_empty() && state.waiters.is_empty() {
+            state.writer = Some(task_id);
+            drop(state);
+            scheduler.add_owned_rwlock(task_id, rwlock.clone());
+            return Ok(true);
+        }
+
+        if !state.waiters.iter().any(|(id, _)| *id == task_id) {
+            state.waiters.push_back((task_id, RwLockMode::Write));
+        }
+        drop(state);
+        scheduler.waiting_rwlocks.insert(task_id, rwlock.clone());
+        Ok(false)
+    }
+
+    /// Tente une acquisition en écriture sans blocage.
+    pub(crate) fn try_lock_rwlock_write(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        rwlock: &Rc<RefCell<RwLockState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        if scheduler.tasks.get(task_id).and_then(Option::as_ref).is_none()
+            && !scheduler.running.contains(&task_id)
+        {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let mut state = rwlock.borrow_mut();
+        if state.writer.is_some() || !state.readers.is_empty() || !state.waiters.is_empty() {
+            return Ok(false);
+        }
+
+        state.writer = Some(task_id);
+        drop(state);
+        scheduler.add_owned_rwlock(task_id, rwlock.clone());
+        Ok(true)
+    }
+
+    pub(crate) fn read_unlock_rwlock(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        rwlock: &Rc<RefCell<RwLockState>>,
+    ) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let position = rwlock
+            .borrow()
+            .readers
+            .iter()
+            .position(|id| *id == task_id)
+            .ok_or(RuntimeError::RwLockNotOwner)?;
+
+        rwlock.borrow_mut().readers.remove(position);
+        scheduler.remove_owned_rwlock(task_id, rwlock);
+        scheduler.wake_rwlock_waiters(rwlock);
+        Ok(())
+    }
+
+    pub(crate) fn write_unlock_rwlock(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        rwlock: &Rc<RefCell<RwLockState>>,
+    ) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        if rwlock.borrow().writer != Some(task_id) {
+            return Err(RuntimeError::RwLockNotOwner);
+        }
+
+        rwlock.borrow_mut().writer = None;
+        scheduler.remove_owned_rwlock(task_id, rwlock);
+        scheduler.wake_rwlock_waiters(rwlock);
+        Ok(())
+    }
+
+    fn wake_rwlock_waiters(&mut self, rwlock: &Rc<RefCell<RwLockState>>) {
+        loop {
+            let Some((task_id, mode)) = ({
+                let mut state = rwlock.borrow_mut();
+                if state.writer.is_some() {
+                    return;
+                }
+                state.waiters.pop_front()
+            }) else {
+                return;
+            };
+
+            let should_wake = self
+                .tasks
+                .get(task_id)
+                .and_then(Option::as_ref)
+                .is_some_and(|task| {
+                    task.status == TaskStateStatus::Waiting
+                        && self
+                            .waiting_rwlocks
+                            .get(&task_id)
+                            .is_some_and(|waiting| Self::rwlock_key(waiting) == Self::rwlock_key(rwlock))
+                        && task.vm.waiting_rwlock.is_some()
+                });
+
+            self.waiting_rwlocks.remove(&task_id);
+            if !should_wake {
+                continue;
+            }
+
+            match mode {
+                RwLockMode::Read => {
+                    rwlock.borrow_mut().readers.push(task_id);
+                    self.add_owned_rwlock(task_id, rwlock.clone());
+
+                    let Some(task) = self.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                        rwlock.borrow_mut().readers.retain(|id| *id != task_id);
+                        self.remove_owned_rwlock(task_id, rwlock);
+                        continue;
+                    };
+
+                    if task.vm.resume_from_rwlock().is_err() {
+                        rwlock.borrow_mut().readers.retain(|id| *id != task_id);
+                        self.remove_owned_rwlock(task_id, rwlock);
+                        continue;
+                    }
+
+                    task.status = TaskStateStatus::Ready;
+                    self.ready.push_back(task_id);
+                }
+
+                RwLockMode::Write => {
+                    if !rwlock.borrow().readers.is_empty() {
+                        rwlock.borrow_mut().waiters.push_front((task_id, mode));
+                        return;
+                    }
+
+                    rwlock.borrow_mut().writer = Some(task_id);
+                    self.add_owned_rwlock(task_id, rwlock.clone());
+
+                    let Some(task) = self.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                        rwlock.borrow_mut().writer = None;
+                        self.remove_owned_rwlock(task_id, rwlock);
+                        continue;
+                    };
+
+                    if task.vm.resume_from_rwlock().is_err() {
+                        rwlock.borrow_mut().writer = None;
+                        self.remove_owned_rwlock(task_id, rwlock);
+                        continue;
+                    }
+
+                    task.status = TaskStateStatus::Ready;
+                    self.ready.push_back(task_id);
+                    return;
+                }
+            }
+        }
+    }
+
+    fn unregister_rwlock_wait(&mut self, task_id: usize) {
+        let Some(rwlock) = self.waiting_rwlocks.remove(&task_id) else {
+            return;
+        };
+
+        rwlock
+            .borrow_mut()
+            .waiters
+            .retain(|(id, _)| *id != task_id);
+        self.wake_rwlock_waiters(&rwlock);
+    }
+
+    fn release_owned_rwlocks(&mut self, task_id: usize) {
+        let rwlocks = self.owned_rwlocks.remove(&task_id).unwrap_or_default();
+
+        for rwlock in rwlocks {
+            let released = {
+                let mut state = rwlock.borrow_mut();
+                if state.writer == Some(task_id) {
+                    state.writer = None;
+                    true
+                } else if let Some(position) = state.readers.iter().position(|id| *id == task_id) {
+                    state.readers.remove(position);
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if released {
+                self.wake_rwlock_waiters(&rwlock);
             }
         }
     }
@@ -1687,6 +1985,7 @@ impl Scheduler {
 
                 Self::unregister_channel_waits(&mut scheduler, id);
                 scheduler.unregister_mutex_wait(id);
+                scheduler.unregister_rwlock_wait(id);
                 scheduler.unregister_wait_group_wait(id);
                 if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
                     scheduler.break_barrier(barrier);
@@ -1695,6 +1994,7 @@ impl Scheduler {
                 scheduler.unregister_timer(id);
 
                 scheduler.release_owned_mutexes(id);
+                scheduler.release_owned_rwlocks(id);
                 scheduler.release_owned_semaphores(id);
 
                 let task = scheduler
@@ -1802,6 +2102,9 @@ impl Scheduler {
             }
             if let Some(barrier) = &task.vm.waiting_barrier {
                 values.push(barrier.clone());
+            }
+            if let Some(rwlock) = &task.vm.waiting_rwlock {
+                values.push(rwlock.clone());
             }
             if let Some(channels) = &task.vm.waiting_select_channels {
                 values.extend(channels.iter().cloned());

@@ -274,7 +274,9 @@ impl VirtualMachine {
             | RuntimeError::WaitGroupUnderflow
             | RuntimeError::WaitGroupNegativeCount
             | RuntimeError::BarrierNonPositive
-            | RuntimeError::BarrierBroken => {
+            | RuntimeError::BarrierBroken
+            | RuntimeError::RwLockDeadlock
+            | RuntimeError::RwLockNotOwner => {
                 Ok(Value::new_error(error.kind_name(), error.to_string()))
             }
 

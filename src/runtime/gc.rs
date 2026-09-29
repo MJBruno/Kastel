@@ -340,6 +340,7 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
         Object::Semaphore(_) => {}
         Object::WaitGroup(_) => {}
         Object::Barrier(_) => {}
+        Object::RwLock(_) => {}
 
         Object::Tuple(elements) => {
             for value in elements {

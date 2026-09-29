@@ -7,6 +7,7 @@ use crate::vm::machine::scheduler::TaskHandle;
 use crate::module::module::ModuleInstance;
 use crate::runtime::barrier::BarrierState;
 use crate::runtime::channel::ChannelState;
+use crate::runtime::rwlock::RwLockState;
 use crate::runtime::closure::Closure;
 use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
@@ -57,6 +58,9 @@ pub enum Object {
 
     /// Barrière coopérative réutilisable à nombre fixe de participants.
     Barrier(Rc<RefCell<BarrierState>>),
+
+    /// RwLock coopératif équitable : lecteurs partagés, écrivain exclusif.
+    RwLock(Rc<RefCell<RwLockState>>),
 
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
@@ -212,6 +216,13 @@ impl Object {
 
             Object::Barrier(barrier) => {
                 barrier.borrow_mut().waiters.clear();
+            }
+
+            Object::RwLock(rwlock) => {
+                let mut rwlock = rwlock.borrow_mut();
+                rwlock.writer = None;
+                rwlock.readers.clear();
+                rwlock.waiters.clear();
             }
 
             Object::Tuple(elements) => {
