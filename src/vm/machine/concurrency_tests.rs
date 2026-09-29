@@ -2056,3 +2056,496 @@ fn cancelling_mutex_owner_releases_the_lock() {
         assert_global_true(&vm, "ok");
     });
 }
+
+
+#[test]
+fn semaphore_try_acquire_and_release() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let s = semaphore(2);
+
+            func worker() -> bool {
+                let first = s.try_acquire();
+                let second = s.try_acquire();
+                let third = s.try_acquire();
+
+                s.release();
+
+                let fourth = s.try_acquire();
+
+                s.release();
+                s.release();
+
+                return first
+                    && second
+                    && !third
+                    && fourth
+                    && s.available() == 2
+                    && s.capacity() == 2;
+            }
+
+            let ok = spawn(worker).join();
+        "#,
+        );
+
+        result.unwrap();
+        assert_eq!(
+            vm.globals.borrow().get("ok"),
+            Some(&Value::Boolean(true))
+        );
+    });
+}
+
+#[test]
+fn semaphore_waiters_are_fifo() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let s = semaphore(1);
+            let events = channel<int>();
+
+            func first() {
+                s.acquire();
+                events.send(1);
+                yield();
+                s.release();
+            }
+
+            func second() {
+                s.acquire();
+                events.send(2);
+                s.release();
+            }
+
+            let a = spawn(first);
+            events.recv();
+            let b = spawn(second);
+
+            let first_done = a.join();
+            let second_event = events.recv();
+            let second_done = b.join();
+            let ok = second_event == 2 && s.available() == 1;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn semaphore_release_requires_a_held_permit() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let s = semaphore(1);
+
+            func worker() -> str {
+                try {
+                    s.release();
+                    return "bad";
+                } catch (e: Err) {
+                    return e.kind;
+                }
+            }
+
+            let result = spawn(worker).join();
+            let ok = result == "SemaphoreNotOwner";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_semaphore_waiter_cleans_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let s = semaphore(1);
+            let acquired = channel<int>();
+            let waiter_started = channel<int>();
+            let release_owner = channel<int>();
+
+            func holder() {
+                s.acquire();
+
+                acquired.send(1);
+
+                // Conserve le permis tant que le waiter doit rester bloqué.
+                release_owner.recv();
+
+                s.release();
+            }
+
+            func waiter() {
+                // Le scheduler doit exécuter cette tâche jusqu'à son
+                // acquire() avant que le test puisse continuer.
+                waiter_started.send(1);
+
+                s.acquire();
+
+                // Ne devrait jamais être exécuté : le waiter sera annulé.
+                acquired.send(2);
+                s.release();
+            }
+
+            let holder_task = spawn(holder);
+
+            // Garantit que holder possède le permis.
+            acquired.recv();
+
+            let waiter_task = spawn(waiter);
+
+            // Le waiter a démarré puis rencontre s.acquire().
+            // Comme holder détient l'unique permis, il devient Waiting.
+            waiter_started.recv();
+
+            waiter_task.cancel();
+
+            // Le propriétaire peut maintenant libérer son permis.
+            release_owner.send(1);
+            holder_task.join();
+
+            let ok = waiter_task.status() == "cancelled"
+                && s.available() == 1;
+        "#,
+        );
+
+        result.unwrap();
+        assert_eq!(
+            vm.globals.borrow().get("ok"),
+            Some(&Value::Boolean(true))
+        );
+
+        // Vérification directe : aucune inscription Semaphore fantôme
+        // ne doit rester dans le scheduler.
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(
+            scheduler.waiting_semaphores.is_empty(),
+            "des waiters Semaphore annulés sont encore enregistrés"
+        );
+    });
+}
+#[test]
+fn cancelling_semaphore_owner_releases_the_permit() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let s = semaphore(1);
+            let gate = channel<int>();
+
+            func holder() {
+                s.acquire();
+                gate.send(1);
+
+                while true {
+                    yield();
+                }
+            }
+
+            func waiter() {
+                s.acquire();
+                gate.send(2);
+                s.release();
+            }
+
+            let holder_task = spawn(holder);
+
+            // Garantit que holder possède le permis.
+            gate.recv();
+
+            let waiter_task = spawn(waiter);
+
+            // L'annulation doit libérer automatiquement le permis.
+            holder_task.cancel();
+
+            // Le waiter doit maintenant pouvoir acquérir le permis.
+            let acquired = gate.recv();
+
+            waiter_task.join();
+
+            let ok = acquired == 2
+                && holder_task.status() == "cancelled"
+                && waiter_task.status() == "done"
+                && s.available() == 1;
+        "#,
+        );
+
+        result.unwrap();
+        assert_eq!(
+            vm.globals.borrow().get("ok"),
+            Some(&Value::Boolean(true))
+        );
+    });
+}
+
+#[test]
+fn semaphore_rejects_non_positive_capacity() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ok = false;
+            try {
+                let s = semaphore(0);
+            } catch (e: Err) {
+                ok = e.kind == "SemaphoreNonPositive";
+            }
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn wait_group_add_done_and_wait() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let group = wait_group();
+            let events = [];
+            group.add(2);
+
+            func worker(value) {
+                sleep(2);
+                events.add(value);
+                group.done();
+            }
+
+            spawn(worker, 1);
+            spawn(worker, 2);
+            group.wait();
+
+            let ok = group.count() == 0
+                && group.is_done()
+                && events.size() == 2;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn wait_group_rejects_done_below_zero() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let group = wait_group();
+            let ok = false;
+
+            try {
+                group.done();
+            } catch (e: Err) {
+                ok = e.kind == "WaitGroupUnderflow";
+            }
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn wait_group_rejects_negative_add() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let group = wait_group();
+            let ok = false;
+
+            try {
+                group.add(-1);
+            } catch (e: Err) {
+                ok = e.kind == "WaitGroupNegativeCount";
+            }
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_wait_group_waiter_cleans_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let group = wait_group();
+            group.add(1);
+
+            func waiter() {
+                group.wait();
+            }
+
+            let task = spawn(waiter);
+            sleep(1);
+            task.cancel();
+            group.done();
+
+            let ok = task.status() == "cancelled" && group.is_done();
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn multiple_wait_group_waiters_resume_fifo() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let group = wait_group();
+            let events = channel<int>();
+            group.add(1);
+
+            func waiter(value) {
+                group.wait();
+                events.send(value);
+            }
+
+            let a = spawn(waiter, 1);
+            sleep(1);
+            let b = spawn(waiter, 2);
+            sleep(1);
+            group.done();
+
+            let first = events.recv();
+            let second = events.recv();
+            a.join();
+            b.join();
+
+            let ok = first == 1 && second == 2;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+
+#[test]
+fn mutex_wait_group_and_timer_coordinate_contended_work() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let mutex = mutex();
+            let group = wait_group();
+            let counter = 0;
+            group.add(12);
+
+            func worker() {
+                mutex.lock();
+                let current = counter;
+                sleep(0);
+                counter = current + 1;
+                mutex.unlock();
+                group.done();
+            }
+
+            for _ in range(12) {
+                spawn(worker);
+            }
+
+            group.wait();
+
+            let ok = counter == 12
+                && group.is_done()
+                && group.count() == 0
+                && !mutex.is_locked();
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelled_mutex_owner_releases_lock_and_does_not_break_wait_group() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let mutex = mutex();
+            let group = wait_group();
+            let gate = channel<int>();
+            let acquired = false;
+
+            group.add(1);
+
+            func owner() {
+                mutex.lock();
+                gate.send(1);
+                while true {
+                    yield();
+                }
+            }
+
+            func waiter() {
+                mutex.lock();
+                acquired = true;
+                mutex.unlock();
+                group.done();
+            }
+
+            let owner_task = spawn(owner);
+            gate.recv();
+            spawn(waiter);
+            owner_task.cancel();
+
+            group.wait();
+
+            let ok = acquired
+                && group.is_done()
+                && !mutex.is_locked();
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn channel_select_and_wait_group_coordinate_producer_shutdown() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let values = channel<int>();
+            let group = wait_group();
+            group.add(1);
+
+            func producer() {
+                sleep(2);
+                values.send(42);
+                values.close();
+                group.done();
+            }
+
+            spawn(producer);
+
+            let result = select([values], 1000);
+            group.wait();
+
+            let ok = result[0] == 0
+                && result[1] == 42
+                && result[2] == false
+                && group.is_done();
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}

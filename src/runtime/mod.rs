@@ -6,6 +6,8 @@ pub mod gc_handle;
 pub mod hashed;
 pub mod iterator;
 pub mod mutex;
+pub mod semaphore;
+pub mod wait_group;
 pub mod object;
 pub mod upvalue;
 pub mod value;

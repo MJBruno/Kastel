@@ -944,6 +944,8 @@ impl VirtualMachine {
                         Object::Task(_) => 15,
                         Object::Channel(_) => 16,
                         Object::Mutex(_) => 17,
+                        Object::WaitGroup(_) => 18,
+                        Object::Semaphore(_) => 19,
                         _ => 5,
                     }
                 };
@@ -1335,6 +1337,311 @@ impl VirtualMachine {
                             };
 
                             self.push(Value::Boolean(mutex.borrow().is_locked()));
+                        }
+
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+                if object_kind == 18 {
+                    match method_name.as_str() {
+                        "add" => {
+                            if arg_count != 1 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 1,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let amount = match &args[1] {
+                                Value::Integer(value) if *value >= 0 => *value as usize,
+                                Value::Integer(_) => {
+                                    return Err(RuntimeError::WaitGroupNegativeCount);
+                                }
+                                _ => return Err(RuntimeError::TypeError),
+                            };
+
+                            let wait_group = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::WaitGroup(wait_group) => wait_group.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
+
+                            Scheduler::wait_group_add(&scheduler, &wait_group, amount)?;
+                            self.push(Value::None);
+                        }
+
+                        "done" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let wait_group = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::WaitGroup(wait_group) => wait_group.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
+
+                            Scheduler::wait_group_done(&scheduler, &wait_group)?;
+                            self.push(Value::None);
+                        }
+
+                        "wait" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let wait_group = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::WaitGroup(wait_group) => wait_group.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            {
+                                let state = wait_group.borrow();
+                                if state.is_done() {
+                                    self.push(Value::None);
+                                    return Ok(());
+                                }
+                            }
+
+                            if let Some(task_id) = self.task_id {
+                                let scheduler = self
+                                    .scheduler
+                                    .upgrade()
+                                    .ok_or(RuntimeError::TaskNotFound)?;
+
+                                Scheduler::wait_on_wait_group(
+                                    &scheduler,
+                                    task_id,
+                                    wait_group.clone(),
+                                )?;
+                                self.waiting_wait_group = Some(Value::Object(handle.clone()));
+                                self.waiting_requested = true;
+                            } else {
+                                let _pinned = self
+                                    .pin_roots_with(&[Value::Object(handle.clone())]);
+
+                                loop {
+                                    if wait_group.borrow().is_done() {
+                                        self.push(Value::None);
+                                        break;
+                                    }
+
+                                    let scheduler = self
+                                        .scheduler
+                                        .upgrade()
+                                        .ok_or(RuntimeError::TaskNotFound)?;
+
+                                    if !Scheduler::poll(&scheduler)? {
+                                        return Err(RuntimeError::TaskDeadlock);
+                                    }
+                                }
+                            }
+                        }
+
+                        "count" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let wait_group = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::WaitGroup(wait_group) => wait_group.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Integer(wait_group.borrow().count() as i64));
+                        }
+
+                        "is_done" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let wait_group = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::WaitGroup(wait_group) => wait_group.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Boolean(wait_group.borrow().is_done()));
+                        }
+
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+                if object_kind == 19 {
+                    match method_name.as_str() {
+                        "acquire" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let semaphore = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Semaphore(semaphore) => semaphore.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
+
+                            let acquired =
+                                Scheduler::acquire_semaphore(&scheduler, task_id, &semaphore)?;
+
+                            if acquired {
+                                self.push(Value::None);
+                            } else {
+                                self.waiting_semaphore = Some(Value::Object(handle.clone()));
+                                self.waiting_requested = true;
+                            }
+                        }
+
+                        "try_acquire" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let semaphore = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Semaphore(semaphore) => semaphore.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
+
+                            let acquired =
+                                Scheduler::try_acquire_semaphore(&scheduler, task_id, &semaphore)?;
+                            self.push(Value::Boolean(acquired));
+                        }
+
+                        "release" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let semaphore = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Semaphore(semaphore) => semaphore.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler = self
+                                .scheduler
+                                .upgrade()
+                                .ok_or(RuntimeError::TaskNotFound)?;
+
+                            Scheduler::release_semaphore(&scheduler, task_id, &semaphore)?;
+                            self.push(Value::None);
+                        }
+
+                        "available" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let semaphore = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Semaphore(semaphore) => semaphore.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Integer(semaphore.borrow().available() as i64));
+                        }
+
+                        "capacity" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let semaphore = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Semaphore(semaphore) => semaphore.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Integer(semaphore.borrow().capacity() as i64));
                         }
 
                         _ => {

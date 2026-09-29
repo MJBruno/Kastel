@@ -48,6 +48,12 @@ pub enum Object {
     /// Mutex coopératif non réentrant.
     Mutex(Rc<RefCell<crate::runtime::mutex::MutexState>>),
 
+    /// Sémaphore coopératif à compteur.
+    Semaphore(Rc<RefCell<crate::runtime::semaphore::SemaphoreState>>),
+
+    /// Compteur de coordination coopératif.
+    WaitGroup(Rc<RefCell<crate::runtime::wait_group::WaitGroupState>>),
+
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
     /// le GC), mais aucune méthode de mutation ne l'expose : voir
@@ -190,6 +196,14 @@ impl Object {
                 let mut mutex = mutex.borrow_mut();
                 mutex.owner = None;
                 mutex.waiters.clear();
+            }
+
+            Object::Semaphore(semaphore) => {
+                semaphore.borrow_mut().waiters.clear();
+            }
+
+            Object::WaitGroup(wait_group) => {
+                wait_group.borrow_mut().waiters.clear();
             }
 
             Object::Tuple(elements) => {

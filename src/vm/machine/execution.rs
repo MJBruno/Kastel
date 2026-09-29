@@ -74,10 +74,9 @@ impl VirtualMachine {
             }
 
             if let Some(budget) = instruction_budget
-                && instructions >= budget
-            {
-                return Ok(super::RunStatus::Yielded);
-            }
+                && instructions >= budget {
+                    return Ok(super::RunStatus::Yielded);
+                }
             instructions += 1;
             if cfg!(feature = "debug_trace") {
                 self.debug_machine()?;
@@ -267,7 +266,11 @@ impl VirtualMachine {
             | RuntimeError::TaskNestingTooDeep
             | RuntimeError::ChannelClosed
             | RuntimeError::MutexDeadlock
-            | RuntimeError::MutexNotOwner => {
+            | RuntimeError::MutexNotOwner
+            | RuntimeError::SemaphoreNonPositive
+            | RuntimeError::SemaphoreNotOwner
+            | RuntimeError::WaitGroupUnderflow
+            | RuntimeError::WaitGroupNegativeCount => {
                 Ok(Value::new_error(error.kind_name(), error.to_string()))
             }
 
@@ -290,14 +293,15 @@ impl VirtualMachine {
         match value {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::Error { kind, .. } => {
-                    expected.eq_ignore_ascii_case("Err") || expected.eq_ignore_ascii_case(kind)
+                    expected.eq_ignore_ascii_case("Err")
+                        || expected.eq_ignore_ascii_case(kind)
                 }
-                Object::Instance { class, .. } => {
-                    class.as_ref().is_some_and(|class| match &*class.borrow() {
+                Object::Instance { class, .. } => class.as_ref().is_some_and(|class| {
+                    match &*class.borrow() {
                         Object::Class { name, .. } => name.eq_ignore_ascii_case(expected),
                         _ => false,
-                    })
-                }
+                    }
+                }),
                 _ => value.type_name().eq_ignore_ascii_case(expected),
             },
             _ => value.type_name().eq_ignore_ascii_case(expected),
@@ -321,7 +325,8 @@ impl VirtualMachine {
             let current_frame_index = self.frames.len() - 1;
 
             let Some(handler_index) = self.exception_handlers.iter().rposition(|handler| {
-                handler.frame_index >= min_frame_len && handler.frame_index <= current_frame_index
+                handler.frame_index >= min_frame_len
+                    && handler.frame_index <= current_frame_index
             }) else {
                 self.close_current_frame_for_exception()?;
                 continue;

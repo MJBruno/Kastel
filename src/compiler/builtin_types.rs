@@ -59,6 +59,8 @@ pub fn all() -> HashMap<String, Type> {
         arguments: vec![Dynamic],
     }));
     types.insert("mutex".into(), function(&[], Named("Mutex".into())));
+    types.insert("semaphore".into(), function(&[Type::Int], Named("Semaphore".into())));
+    types.insert("wait_group".into(), function(&[], Named("WaitGroup".into())));
     types.insert("yield".into(), function(&[], None));
     types.insert("sleep".into(), function(&[Type::Int], Type::None));
     types.insert("select".into(), Dynamic);

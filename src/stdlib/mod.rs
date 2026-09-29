@@ -54,6 +54,8 @@ pub mod iterator;
 pub mod json;
 pub mod math;
 pub mod mutex;
+pub mod semaphore;
+pub mod wait_group;
 pub mod option;
 pub mod os;
 pub mod path;
@@ -82,6 +84,8 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     file::register(globals);
     channel::register(globals);
     mutex::register(globals);
+    semaphore::register(globals);
+    wait_group::register(globals);
     path::register(globals);
     os::register(globals);
     process::register(globals);
@@ -106,6 +110,8 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     file::register_compiler(compiler);
     channel::register_compiler(compiler);
     mutex::register_compiler(compiler);
+    semaphore::register_compiler(compiler);
+    wait_group::register_compiler(compiler);
     path::register_compiler(compiler);
     os::register_compiler(compiler);
     process::register_compiler(compiler);

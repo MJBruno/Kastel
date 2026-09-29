@@ -189,6 +189,18 @@ impl Value {
         ))))
     }
 
+    pub fn new_wait_group() -> Self {
+        Self::new_heap_object(Object::WaitGroup(Rc::new(RefCell::new(
+            crate::runtime::wait_group::WaitGroupState::new(),
+        ))))
+    }
+
+    pub fn new_semaphore(capacity: usize) -> Self {
+        Self::new_heap_object(Object::Semaphore(Rc::new(RefCell::new(
+            crate::runtime::semaphore::SemaphoreState::new(capacity),
+        ))))
+    }
+
     pub fn new_error(kind: impl Into<String>, message: impl Into<String>) -> Self {
         Self::new_heap_object(Object::Error {
             kind: kind.into(),
@@ -1210,6 +1222,12 @@ impl std::fmt::Display for Value {
                         write!(f, "Channel(size={})", channel.borrow().size())
                     }
                     Object::Mutex(_) => write!(f, "Mutex"),
+                    Object::Semaphore(semaphore) => {
+                        write!(f, "Semaphore(available={})", semaphore.borrow().available())
+                    }
+                    Object::WaitGroup(wait_group) => {
+                        write!(f, "WaitGroup(count={})", wait_group.borrow().count())
+                    }
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1366,6 +1384,8 @@ impl Value {
                 Object::Task(_) => "Task",
                 Object::Channel(_) => "Channel",
                 Object::Mutex(_) => "Mutex",
+                Object::Semaphore(_) => "Semaphore",
+                Object::WaitGroup(_) => "WaitGroup",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",

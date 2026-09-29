@@ -337,6 +337,8 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
         }
 
         Object::Mutex(_) => {}
+        Object::Semaphore(_) => {}
+        Object::WaitGroup(_) => {}
 
         Object::Tuple(elements) => {
             for value in elements {

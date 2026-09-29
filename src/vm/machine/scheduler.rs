@@ -1,17 +1,19 @@
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::rc::{Rc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
-use std::rc::{Rc, Weak};
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
 use crate::runtime::channel::ChannelState;
-use crate::runtime::mutex::MutexState;
 use crate::runtime::gc_handle::Gc;
+use crate::runtime::mutex::MutexState;
 use crate::runtime::object::Object;
+use crate::runtime::semaphore::SemaphoreState;
 use crate::runtime::value::Value;
+use crate::runtime::wait_group::WaitGroupState;
 
 use super::{RunStatus, VirtualMachine};
 
@@ -112,6 +114,11 @@ pub(crate) struct Scheduler {
     /// pour pouvoir libérer automatiquement les verrous si une tâche termine,
     /// échoue ou est annulée.
     pub(crate) owned_mutexes: HashMap<usize, Vec<Rc<RefCell<MutexState>>>>,
+    pub(crate) waiting_wait_groups: HashMap<usize, Rc<RefCell<WaitGroupState>>>,
+    /// Sémaphore attendu par chaque tâche.
+    pub(crate) waiting_semaphores: HashMap<usize, Rc<RefCell<SemaphoreState>>>,
+    /// Permis de sémaphore détenus par chaque tâche.
+    pub(crate) owned_semaphores: HashMap<usize, Vec<Rc<RefCell<SemaphoreState>>>>,
 }
 
 impl Scheduler {
@@ -129,6 +136,9 @@ impl Scheduler {
             timers: BinaryHeap::new(),
             waiting_mutexes: HashMap::new(),
             owned_mutexes: HashMap::new(),
+            waiting_wait_groups: HashMap::new(),
+            waiting_semaphores: HashMap::new(),
+            owned_semaphores: HashMap::new(),
         }
     }
 
@@ -283,8 +293,11 @@ impl Scheduler {
             task.error = None;
             Self::unregister_channel_waits(&mut scheduler, id);
             scheduler.unregister_mutex_wait(id);
+            scheduler.unregister_wait_group_wait(id);
+            scheduler.unregister_semaphore_wait(id);
             scheduler.unregister_timer(id);
             scheduler.release_owned_mutexes(id);
+            scheduler.release_owned_semaphores(id);
             task.vm.release_task_resources();
         } else {
             match outcome {
@@ -313,10 +326,13 @@ impl Scheduler {
 
         if finished {
             scheduler.release_owned_mutexes(id);
+            scheduler.release_owned_semaphores(id);
         }
 
         if finished && !cancel_now {
             scheduler.unregister_timer(id);
+            scheduler.unregister_wait_group_wait(id);
+            scheduler.unregister_semaphore_wait(id);
             task.vm.release_task_resources();
         }
 
@@ -358,7 +374,9 @@ impl Scheduler {
     fn report_unobserved(id: usize, error: Option<&RuntimeError>) {
         match error {
             Some(error) => {
-                eprintln!("Erreur : la tâche {id} a échoué sans que personne ne l'attende : {error}")
+                eprintln!(
+                    "Erreur : la tâche {id} a échoué sans que personne ne l'attende : {error}"
+                )
             }
             None => eprintln!("Erreur : la tâche {id} a échoué sans que personne ne l'attende"),
         }
@@ -417,17 +435,22 @@ impl Scheduler {
 
         for (id, slot) in scheduler.tasks.iter_mut().enumerate() {
             if let Some(task) = slot
-                && task.status == TaskStateStatus::Failed && !task.observed {
-                    task.observed = true;
-                    Self::report_unobserved(id, task.error.as_ref());
-                }
+                && task.status == TaskStateStatus::Failed
+                && !task.observed
+            {
+                task.observed = true;
+                Self::report_unobserved(id, task.error.as_ref());
+            }
         }
     }
 
     fn has_live_tasks(&self) -> bool {
         !self.running.is_empty()
             || self.tasks.iter().flatten().any(|task| {
-                matches!(task.status, TaskStateStatus::Ready | TaskStateStatus::Waiting)
+                matches!(
+                    task.status,
+                    TaskStateStatus::Ready | TaskStateStatus::Waiting
+                )
             })
     }
 
@@ -491,7 +514,11 @@ impl Scheduler {
             .ok_or(RuntimeError::InvalidFunction)?;
 
         let mut scheduler = shared.borrow_mut();
-        if scheduler.tasks.get(task_id).and_then(Option::as_ref).is_none()
+        if scheduler
+            .tasks
+            .get(task_id)
+            .and_then(Option::as_ref)
+            .is_none()
             && !scheduler.running.contains(&task_id)
         {
             return Err(RuntimeError::TaskNotFound);
@@ -563,31 +590,28 @@ impl Scheduler {
     }
 
     /// Tente d'acquérir le mutex sans mettre la tâche en attente.
-   pub(crate) fn try_lock_mutex(
-    shared: &Rc<RefCell<Self>>,
-    task_id: usize,
-    mutex: &Rc<RefCell<MutexState>>,
-) -> Result<bool, RuntimeError> {
-    let mut scheduler = shared.borrow_mut();
-
-    let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
-    if state.is_none() && !scheduler.running.contains(&task_id) {
-        return Err(RuntimeError::TaskNotFound);
-    }
-
-    // Important : terminer le borrow() avant tout borrow_mut().
-    let owner = mutex.borrow().owner;
-
-    match owner {
-        None => {
-            mutex.borrow_mut().owner = Some(task_id);
-            scheduler.add_owned_mutex(task_id, mutex.clone());
-            Ok(true)
+    pub(crate) fn try_lock_mutex(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        mutex: &Rc<RefCell<MutexState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
+        if state.is_none() && !scheduler.running.contains(&task_id) {
+            return Err(RuntimeError::TaskNotFound);
         }
 
-        Some(_) => Ok(false),
+        let owner = mutex.borrow().owner;
+
+        match owner {
+            None => {
+                mutex.borrow_mut().owner = Some(task_id);
+                scheduler.add_owned_mutex(task_id, mutex.clone());
+                Ok(true)
+            }
+            Some(_) => Ok(false),
+        }
     }
-}
 
     fn wake_next_mutex_waiter(&mut self, mutex: &Rc<RefCell<MutexState>>) {
         loop {
@@ -607,10 +631,9 @@ impl Scheduler {
                 .and_then(Option::as_ref)
                 .is_some_and(|task| {
                     task.status == TaskStateStatus::Waiting
-                        && self
-                            .waiting_mutexes
-                            .get(&next_id)
-                            .is_some_and(|waiting| Self::mutex_key(waiting) == Self::mutex_key(mutex))
+                        && self.waiting_mutexes.get(&next_id).is_some_and(|waiting| {
+                            Self::mutex_key(waiting) == Self::mutex_key(mutex)
+                        })
                 });
 
             self.waiting_mutexes.remove(&next_id);
@@ -669,6 +692,292 @@ impl Scheduler {
                 self.wake_next_mutex_waiter(&mutex);
             }
         }
+    }
+
+    fn semaphore_key(semaphore: &Rc<RefCell<SemaphoreState>>) -> usize {
+        Rc::as_ptr(semaphore) as usize
+    }
+
+    fn add_owned_semaphore(&mut self, task_id: usize, semaphore: Rc<RefCell<SemaphoreState>>) {
+        self.owned_semaphores
+            .entry(task_id)
+            .or_default()
+            .push(semaphore);
+    }
+
+    fn remove_owned_semaphore(
+        &mut self,
+        task_id: usize,
+        semaphore: &Rc<RefCell<SemaphoreState>>,
+    ) -> bool {
+        let key = Self::semaphore_key(semaphore);
+        let Some(owned) = self.owned_semaphores.get_mut(&task_id) else {
+            return false;
+        };
+
+        let position = owned
+            .iter()
+            .position(|value| Self::semaphore_key(value) == key);
+        let Some(position) = position else {
+            return false;
+        };
+
+        owned.remove(position);
+        if owned.is_empty() {
+            self.owned_semaphores.remove(&task_id);
+        }
+        true
+    }
+
+    pub(crate) fn acquire_semaphore(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        semaphore: &Rc<RefCell<SemaphoreState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
+        if state.is_none() && !scheduler.running.contains(&task_id) {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let can_acquire = {
+            let state = semaphore.borrow();
+            state.permits > 0 && state.waiters.is_empty()
+        };
+
+        if can_acquire {
+            semaphore.borrow_mut().permits -= 1;
+            scheduler.add_owned_semaphore(task_id, semaphore.clone());
+            return Ok(true);
+        }
+
+        {
+            let mut state = semaphore.borrow_mut();
+            if !state.waiters.contains(&task_id) {
+                state.waiters.push_back(task_id);
+            }
+        }
+        scheduler
+            .waiting_semaphores
+            .insert(task_id, semaphore.clone());
+        Ok(false)
+    }
+
+    pub(crate) fn try_acquire_semaphore(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        semaphore: &Rc<RefCell<SemaphoreState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
+        if state.is_none() && !scheduler.running.contains(&task_id) {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        let can_acquire = {
+            let state = semaphore.borrow();
+            state.permits > 0 && state.waiters.is_empty()
+        };
+
+        if !can_acquire {
+            return Ok(false);
+        }
+
+        semaphore.borrow_mut().permits -= 1;
+        scheduler.add_owned_semaphore(task_id, semaphore.clone());
+        Ok(true)
+    }
+
+    fn wake_next_semaphore_waiter(&mut self, semaphore: &Rc<RefCell<SemaphoreState>>) {
+        loop {
+            let next_id = semaphore.borrow_mut().waiters.pop_front();
+            let Some(next_id) = next_id else {
+                let mut state = semaphore.borrow_mut();
+                state.permits = state.permits.saturating_add(1);
+                return;
+            };
+
+            let should_wake = self
+                .tasks
+                .get(next_id)
+                .and_then(Option::as_ref)
+                .is_some_and(|task| {
+                    task.status == TaskStateStatus::Waiting
+                        && self
+                            .waiting_semaphores
+                            .get(&next_id)
+                            .is_some_and(|waiting| {
+                                Self::semaphore_key(waiting) == Self::semaphore_key(semaphore)
+                            })
+                });
+
+            self.waiting_semaphores.remove(&next_id);
+
+            if !should_wake {
+                continue;
+            }
+
+            let resumed = {
+                let Some(task) = self.tasks.get_mut(next_id).and_then(Option::as_mut) else {
+                    continue;
+                };
+
+                if task.vm.resume_from_semaphore().is_err() {
+                    false
+                } else {
+                    task.status = TaskStateStatus::Ready;
+                    true
+                }
+            };
+
+            if !resumed {
+                continue;
+            }
+
+            self.add_owned_semaphore(next_id, semaphore.clone());
+            self.ready.push_back(next_id);
+            return;
+        }
+    }
+
+    pub(crate) fn release_semaphore(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        semaphore: &Rc<RefCell<SemaphoreState>>,
+    ) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        if !scheduler.remove_owned_semaphore(task_id, semaphore) {
+            return Err(RuntimeError::SemaphoreNotOwner);
+        }
+
+        scheduler.wake_next_semaphore_waiter(semaphore);
+        Ok(())
+    }
+
+    fn unregister_semaphore_wait(&mut self, task_id: usize) {
+        let Some(semaphore) = self.waiting_semaphores.remove(&task_id) else {
+            return;
+        };
+
+        semaphore.borrow_mut().waiters.retain(|id| *id != task_id);
+    }
+
+    fn release_owned_semaphores(&mut self, task_id: usize) {
+        let semaphores = self.owned_semaphores.remove(&task_id).unwrap_or_default();
+
+        for semaphore in semaphores {
+            self.wake_next_semaphore_waiter(&semaphore);
+        }
+    }
+
+    fn wait_group_key(wait_group: &Rc<RefCell<WaitGroupState>>) -> usize {
+        Rc::as_ptr(wait_group) as usize
+    }
+
+    pub(crate) fn wait_group_add(
+        shared: &Rc<RefCell<Self>>,
+        wait_group: &Rc<RefCell<WaitGroupState>>,
+        amount: usize,
+    ) -> Result<(), RuntimeError> {
+        let _scheduler = shared.borrow();
+        let mut state = wait_group.borrow_mut();
+        state.count = state
+            .count
+            .checked_add(amount)
+            .ok_or(RuntimeError::InvalidFunction)?;
+        Ok(())
+    }
+
+    pub(crate) fn wait_group_done(
+        shared: &Rc<RefCell<Self>>,
+        wait_group: &Rc<RefCell<WaitGroupState>>,
+    ) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        {
+            let mut state = wait_group.borrow_mut();
+            if state.count == 0 {
+                return Err(RuntimeError::WaitGroupUnderflow);
+            }
+            state.count -= 1;
+        }
+
+        if wait_group.borrow().is_done() {
+            Self::wake_wait_group_waiters(&mut scheduler, wait_group);
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn wait_on_wait_group(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        wait_group: Rc<RefCell<WaitGroupState>>,
+    ) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
+        if state.is_none() && !scheduler.running.contains(&task_id) {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        if wait_group.borrow().is_done() {
+            return Ok(());
+        }
+
+        let mut group = wait_group.borrow_mut();
+        if !group.waiters.contains(&task_id) {
+            group.waiters.push_back(task_id);
+        }
+        drop(group);
+        scheduler.waiting_wait_groups.insert(task_id, wait_group);
+        Ok(())
+    }
+
+    fn wake_wait_group_waiters(scheduler: &mut Self, wait_group: &Rc<RefCell<WaitGroupState>>) {
+        let waiters = {
+            let mut group = wait_group.borrow_mut();
+            std::mem::take(&mut group.waiters)
+        };
+
+        for task_id in waiters {
+            let should_wake = scheduler
+                .tasks
+                .get(task_id)
+                .and_then(Option::as_ref)
+                .is_some_and(|task| {
+                    task.status == TaskStateStatus::Waiting
+                        && scheduler
+                            .waiting_wait_groups
+                            .get(&task_id)
+                            .is_some_and(|waiting| {
+                                Self::wait_group_key(waiting) == Self::wait_group_key(wait_group)
+                            })
+                });
+
+            scheduler.waiting_wait_groups.remove(&task_id);
+
+            if !should_wake {
+                continue;
+            }
+
+            let Some(task) = scheduler.tasks.get_mut(task_id).and_then(Option::as_mut) else {
+                continue;
+            };
+
+            if task.vm.resume_from_wait_group().is_err() {
+                continue;
+            }
+
+            task.status = TaskStateStatus::Ready;
+            scheduler.ready.push_back(task_id);
+        }
+    }
+
+    fn unregister_wait_group_wait(&mut self, task_id: usize) {
+        let Some(wait_group) = self.waiting_wait_groups.remove(&task_id) else {
+            return;
+        };
+
+        wait_group.borrow_mut().waiters.retain(|id| *id != task_id);
     }
 
     fn channel_key(channel: &Rc<RefCell<ChannelState>>) -> usize {
@@ -743,17 +1052,21 @@ impl Scheduler {
     }
 
     fn select_index_for_channel(task: &TaskState, channel_key: usize) -> Option<usize> {
-        task.vm.waiting_select_channels.as_ref()?.iter().position(|value| {
-            let Value::Object(handle) = value else {
-                return false;
-            };
+        task.vm
+            .waiting_select_channels
+            .as_ref()?
+            .iter()
+            .position(|value| {
+                let Value::Object(handle) = value else {
+                    return false;
+                };
 
-            let object = handle.borrow();
-            match &*object {
-                Object::Channel(channel) => Self::channel_key(channel) == channel_key,
-                _ => false,
-            }
-        })
+                let object = handle.borrow();
+                match &*object {
+                    Object::Channel(channel) => Self::channel_key(channel) == channel_key,
+                    _ => false,
+                }
+            })
     }
 
     pub(crate) fn close_channel(
@@ -767,10 +1080,7 @@ impl Scheduler {
 
         let key = Self::channel_key(channel);
         let mut scheduler = shared.borrow_mut();
-        let waiters = scheduler
-            .waiting_channels
-            .remove(&key)
-            .unwrap_or_default();
+        let waiters = scheduler.waiting_channels.remove(&key).unwrap_or_default();
 
         for task_id in waiters {
             let is_select = scheduler.waiting_selects.contains_key(&task_id);
@@ -793,8 +1103,7 @@ impl Scheduler {
                         .get(task_id)
                         .and_then(Option::as_ref)
                         .ok_or(RuntimeError::TaskNotFound)?;
-                    Self::select_index_for_channel(task, key)
-                        .ok_or(RuntimeError::TaskNotFound)?
+                    Self::select_index_for_channel(task, key).ok_or(RuntimeError::TaskNotFound)?
                 };
 
                 let task = scheduler
@@ -813,7 +1122,8 @@ impl Scheduler {
                     .get_mut(task_id)
                     .and_then(Option::as_mut)
                     .ok_or(RuntimeError::TaskNotFound)?;
-                task.vm.resume_from_channel_error(RuntimeError::ChannelClosed)?;
+                task.vm
+                    .resume_from_channel_error(RuntimeError::ChannelClosed)?;
                 task.status = TaskStateStatus::Ready;
                 scheduler.ready.push_back(task_id);
             }
@@ -867,8 +1177,7 @@ impl Scheduler {
                         .get(task_id)
                         .and_then(Option::as_ref)
                         .ok_or(RuntimeError::TaskNotFound)?;
-                    Self::select_index_for_channel(task, key)
-                        .ok_or(RuntimeError::TaskNotFound)?
+                    Self::select_index_for_channel(task, key).ok_or(RuntimeError::TaskNotFound)?
                 };
 
                 let value = pending_value.take().ok_or(RuntimeError::NativeError)?;
@@ -901,6 +1210,9 @@ impl Scheduler {
     pub(crate) fn cancel(shared: &Rc<RefCell<Self>>, id: usize) -> Result<(), RuntimeError> {
         let mut scheduler = shared.borrow_mut();
 
+        // Si la tâche est actuellement en cours d'exécution, on ne peut pas
+        // modifier directement son TaskState : il est temporairement sorti
+        // de `scheduler.tasks` pendant son quantum.
         if scheduler.running.contains(&id) {
             scheduler.cancel_requested.insert(id);
             return Ok(());
@@ -915,27 +1227,47 @@ impl Scheduler {
 
         match status {
             TaskStateStatus::Ready | TaskStateStatus::Waiting => {
+                // Modifier l'état de la tâche dans un bloc séparé afin que
+                // l'emprunt mutable de `scheduler.tasks` soit terminé avant
+                // toutes les opérations qui modifient le scheduler.
+                {
+                    let task = scheduler
+                        .tasks
+                        .get_mut(id)
+                        .and_then(Option::as_mut)
+                        .ok_or(RuntimeError::TaskNotFound)?;
+
+                    task.status = TaskStateStatus::Cancelled;
+                    task.result = None;
+                    task.error = None;
+                }
+
+                // Une tâche annulée ne doit plus être sélectionnée.
+                scheduler.ready.retain(|queued_id| *queued_id != id);
+
+                // Supprimer toute attente enregistrée.
+                Self::unregister_channel_waits(&mut scheduler, id);
+                scheduler.unregister_mutex_wait(id);
+                scheduler.unregister_wait_group_wait(id);
+                scheduler.unregister_semaphore_wait(id);
+                scheduler.unregister_timer(id);
+
+                // Une annulation immédiate doit libérer toutes les ressources
+                // de synchronisation détenues par la tâche.
+                scheduler.release_owned_mutexes(id);
+                scheduler.release_owned_semaphores(id);
+
+                // Nettoyage de la VM après le nettoyage du scheduler.
                 let task = scheduler
                     .tasks
                     .get_mut(id)
                     .and_then(Option::as_mut)
                     .ok_or(RuntimeError::TaskNotFound)?;
 
-                task.status = TaskStateStatus::Cancelled;
-                task.result = None;
-                task.error = None;
                 task.vm.release_task_resources();
-
-                scheduler.ready.retain(|queued_id| *queued_id != id);
-
-                Self::unregister_channel_waits(&mut scheduler, id);
-                scheduler.unregister_mutex_wait(id);
-                scheduler.unregister_timer(id);
-                scheduler.release_owned_mutexes(id);
             }
-            TaskStateStatus::Completed
-            | TaskStateStatus::Failed
-            | TaskStateStatus::Cancelled => {}
+
+            TaskStateStatus::Completed | TaskStateStatus::Failed | TaskStateStatus::Cancelled => {}
         }
 
         Ok(())
@@ -1004,7 +1336,10 @@ impl Scheduler {
     }
 
     pub(crate) fn is_done(shared: &Rc<RefCell<Self>>, id: usize) -> Result<bool, RuntimeError> {
-        Ok(matches!(Self::status(shared, id)?, "done" | "failed" | "cancelled"))
+        Ok(matches!(
+            Self::status(shared, id)?,
+            "done" | "failed" | "cancelled"
+        ))
     }
 
     pub(crate) fn append_gc_roots(
@@ -1017,6 +1352,12 @@ impl Scheduler {
             values.extend(task.vm.temp_roots.iter().cloned());
             if let Some(channel) = &task.vm.waiting_channel {
                 values.push(channel.clone());
+            }
+            if let Some(semaphore) = &task.vm.waiting_semaphore {
+                values.push(semaphore.clone());
+            }
+            if let Some(wait_group) = &task.vm.waiting_wait_group {
+                values.push(wait_group.clone());
             }
             if let Some(channels) = &task.vm.waiting_select_channels {
                 values.extend(channels.iter().cloned());

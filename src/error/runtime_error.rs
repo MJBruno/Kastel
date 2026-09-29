@@ -154,6 +154,10 @@ pub enum RuntimeError {
     ChannelClosed,
     MutexDeadlock,
     MutexNotOwner,
+    SemaphoreNonPositive,
+    SemaphoreNotOwner,
+    WaitGroupUnderflow,
+    WaitGroupNegativeCount,
     YieldOutsideTask,
 
     /// Résultat hors de l'intervalle des entiers 64 bits signés
@@ -247,6 +251,22 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::MutexNotOwner => {
                 write!(f, "Mutex can only be unlocked by its owner.")
+            }
+
+            RuntimeError::SemaphoreNonPositive => {
+                write!(f, "Semaphore capacity must be greater than zero.")
+            }
+
+            RuntimeError::SemaphoreNotOwner => {
+                write!(f, "Semaphore can only be released by a task that holds a permit.")
+            }
+
+            RuntimeError::WaitGroupUnderflow => {
+                write!(f, "WaitGroup counter cannot become negative.")
+            }
+
+            RuntimeError::WaitGroupNegativeCount => {
+                write!(f, "WaitGroup count cannot be negative.")
             }
 
             RuntimeError::YieldOutsideTask => {
@@ -453,6 +473,10 @@ impl RuntimeError {
             RuntimeError::ChannelClosed => "ChannelClosed",
             RuntimeError::MutexDeadlock => "MutexDeadlock",
             RuntimeError::MutexNotOwner => "MutexNotOwner",
+            RuntimeError::SemaphoreNonPositive => "SemaphoreNonPositive",
+            RuntimeError::SemaphoreNotOwner => "SemaphoreNotOwner",
+            RuntimeError::WaitGroupUnderflow => "WaitGroupUnderflow",
+            RuntimeError::WaitGroupNegativeCount => "WaitGroupNegativeCount",
             RuntimeError::YieldOutsideTask => "YieldOutsideTask",
         }
     }

@@ -128,6 +128,8 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
             Object::Task(_) => "Task".to_string(),
             Object::Channel(_) => "Channel".to_string(),
             Object::Mutex(_) => "Mutex".to_string(),
+            Object::Semaphore(_) => "Semaphore".to_string(),
+            Object::WaitGroup(_) => "WaitGroup".to_string(),
             Object::Module(_) => "module".to_string(),
 
             Object::BoundMethod { .. } => "function".to_string(),

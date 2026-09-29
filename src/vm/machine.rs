@@ -197,6 +197,8 @@ pub struct VirtualMachine {
     pub(crate) waiting_select_channels: Option<Vec<Value>>,
     pub(crate) waiting_timer: Option<Instant>,
     pub(crate) waiting_mutex: Option<Value>,
+    pub(crate) waiting_semaphore: Option<Value>,
+    pub(crate) waiting_wait_group: Option<Value>,
     pub(crate) waiting_error: Option<RuntimeError>,
     pub(crate) last_result: Option<Value>,
     pub(crate) scheduler: Weak<RefCell<scheduler::Scheduler>>,
@@ -277,6 +279,8 @@ impl VirtualMachine {
             waiting_select_channels: None,
             waiting_timer: None,
             waiting_mutex: None,
+            waiting_semaphore: None,
+            waiting_wait_group: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -337,6 +341,8 @@ impl VirtualMachine {
             waiting_select_channels: None,
             waiting_timer: None,
             waiting_mutex: None,
+            waiting_semaphore: None,
+            waiting_wait_group: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -414,6 +420,8 @@ impl VirtualMachine {
             waiting_select_channels: None,
             waiting_timer: None,
             waiting_mutex: None,
+            waiting_semaphore: None,
+            waiting_wait_group: None,
             waiting_error: None,
             last_result: None,
             scheduler,
@@ -576,6 +584,30 @@ impl VirtualMachine {
         Ok(())
     }
 
+    pub(crate) fn resume_from_wait_group(&mut self) -> Result<(), RuntimeError> {
+        if self.waiting_wait_group.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_wait_group = None;
+        self.waiting_error = None;
+        self.waiting_requested = false;
+        self.push(Value::None);
+        Ok(())
+    }
+
+    pub(crate) fn resume_from_semaphore(&mut self) -> Result<(), RuntimeError> {
+        if self.waiting_semaphore.is_none() {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        self.waiting_semaphore = None;
+        self.waiting_error = None;
+        self.waiting_requested = false;
+        self.push(Value::None);
+        Ok(())
+    }
+
     pub(crate) fn resume_from_channel(&mut self, value: Value) -> Result<(), RuntimeError> {
         if self.waiting_channel.is_none() {
             return Err(RuntimeError::TaskNotFound);
@@ -712,6 +744,8 @@ impl VirtualMachine {
         self.waiting_select_channels = None;
         self.waiting_timer = None;
         self.waiting_mutex = None;
+        self.waiting_semaphore = None;
+        self.waiting_wait_group = None;
         self.last_result = None;
         self.open_upvalues.clear();
     }
@@ -752,6 +786,8 @@ impl VirtualMachine {
         self.waiting_select_channels = None;
         self.waiting_timer = None;
         self.waiting_mutex = None;
+        self.waiting_semaphore = None;
+        self.waiting_wait_group = None;
         self.last_result = None;
 
         // Les upvalues ont maintenant été fermées correctement.

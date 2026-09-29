@@ -690,6 +690,49 @@ impl Type {
         }
     }
 
+    /// Signatures statiques de `Semaphore`.
+    pub fn semaphore_member_type(&self, name: &str) -> Option<Type> {
+        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("Semaphore")) {
+            return None;
+        }
+
+        let function = |result: Type| Type::Function(FunctionType {
+            generic_params: Vec::new(),
+            generic_constraints: Vec::new(),
+            params: Vec::new(),
+            return_type: Box::new(result),
+        });
+
+        match name {
+            "acquire" | "release" => Some(function(Type::None)),
+            "try_acquire" => Some(function(Type::Bool)),
+            "available" | "capacity" => Some(function(Type::Int)),
+            _ => None,
+        }
+    }
+
+    /// Signatures statiques de `WaitGroup`.
+    pub fn wait_group_member_type(&self, name: &str) -> Option<Type> {
+        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("WaitGroup")) {
+            return None;
+        }
+
+        let function = |params: Vec<Type>, result: Type| Type::Function(FunctionType {
+            generic_params: Vec::new(),
+            generic_constraints: Vec::new(),
+            params,
+            return_type: Box::new(result),
+        });
+
+        match name {
+            "add" => Some(function(vec![Type::Int], Type::None)),
+            "done" | "wait" => Some(function(vec![], Type::None)),
+            "count" => Some(function(vec![], Type::Int)),
+            "is_done" => Some(function(vec![], Type::Bool)),
+            _ => None,
+        }
+    }
+
     /// Signatures statiques de `Task<T>`.
     pub fn task_member_type(&self, name: &str) -> Option<Type> {
         let result_type = match self {
