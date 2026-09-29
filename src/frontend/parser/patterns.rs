@@ -293,7 +293,8 @@ impl Parser {
                     if has_rest {
                         let token = self.previous().clone();
                         return Err(ParserError {
-                            message: "Un seul '..' est autorisé dans un pattern tableau".to_string(),
+                            message: "Un seul '..' est autorisé dans un pattern tableau"
+                                .to_string(),
                             line: token.line,
                             column: token.column,
                         });
@@ -307,7 +308,8 @@ impl Parser {
                     if !self.check(TokenKind::RightBracket) && !self.check(TokenKind::Comma) {
                         let token = self.peek().clone();
                         return Err(ParserError {
-                            message: "Le pattern '..' doit être le dernier élément de '[...]'".to_string(),
+                            message: "Le pattern '..' doit être le dernier élément de '[...]'"
+                                .to_string(),
                             line: token.line,
                             column: token.column,
                         });
@@ -335,7 +337,10 @@ impl Parser {
             }
         }
 
-        self.consume(TokenKind::RightBracket, "']' attendu après le pattern tableau")?;
+        self.consume(
+            TokenKind::RightBracket,
+            "']' attendu après le pattern tableau",
+        )?;
 
         if has_rest {
             Ok(Pattern::ArrayRest(patterns))

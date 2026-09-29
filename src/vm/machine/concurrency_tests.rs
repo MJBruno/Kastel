@@ -15,22 +15,14 @@ fn run_script(
     VirtualMachine,
     Result<(), crate::error::runtime_error::RuntimeError>,
 ) {
-    let tokens = Lexer::new(source.to_string())
-        .scan_token()
-        .unwrap();
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
 
-    let statements = Parser::new(tokens)
-        .parse()
-        .unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
 
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
 
-    let function = Rc::new(
-        compiler
-            .compile(&statements)
-            .unwrap(),
-    );
+    let function = Rc::new(compiler.compile(&statements).unwrap());
 
     let mut vm = VirtualMachine::new(function, None);
     let result = vm.run();
@@ -39,13 +31,9 @@ fn run_script(
 }
 
 fn compile_only(source: &str) -> Result<(), CompileError> {
-    let tokens = Lexer::new(source.to_string())
-        .scan_token()
-        .unwrap();
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
 
-    let statements = Parser::new(tokens)
-        .parse()
-        .unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
 
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
@@ -57,9 +45,7 @@ fn is_wrong_argument_type(error: &CompileError) -> bool {
     match error {
         CompileError::WrongArgumentType { .. } => true,
 
-        CompileError::WithLocation { source, .. } => {
-            is_wrong_argument_type(source)
-        }
+        CompileError::WithLocation { source, .. } => is_wrong_argument_type(source),
 
         _ => false,
     }
@@ -342,9 +328,7 @@ fn task_capture_is_rejected() {
     "#,
     );
 
-    let error = result.expect_err(
-        "captured task must be rejected",
-    );
+    let error = result.expect_err("captured task must be rejected");
 
     assert!(matches!(
         error,
@@ -431,9 +415,7 @@ fn yield_outside_task_is_rejected() {
     "#,
     );
 
-    let error = result.expect_err(
-        "yield outside a task must fail",
-    );
+    let error = result.expect_err("yield outside a task must fail");
 
     assert!(matches!(
         error,
@@ -843,10 +825,12 @@ fn finished_tasks_release_their_stack_and_detached_ones_their_slot() {
 
     // Les tâches sans handle ont libéré leur slot (la dernière peut encore être
     // référencée par le dernier résultat d'expression de la VM).
-    let still_held = scheduler.tasks[1..].iter().filter(|slot| slot.is_some()).count();
+    let still_held = scheduler.tasks[1..]
+        .iter()
+        .filter(|slot| slot.is_some())
+        .count();
     assert!(still_held <= 1, "{still_held} slots non libérés");
 }
-
 
 #[test]
 fn task_can_be_cancelled_before_it_runs() {
@@ -959,7 +943,6 @@ fn cancellation_requested_by_another_task_stops_the_target() {
     ));
 }
 
-
 #[test]
 fn channel_close_is_idempotent_and_send_is_rejected() {
     let (vm, result) = run_script(
@@ -1065,7 +1048,6 @@ fn closing_channel_wakes_waiting_consumer_with_catchable_error() {
         Some(Value::Boolean(true))
     ));
 }
-
 
 #[test]
 fn select_returns_first_ready_channel_in_deterministic_order() {
@@ -1634,7 +1616,6 @@ fn cancellation_requested_before_blocking_leaves_no_ghost_waiter() {
     assert!(scheduler.cancel_requested.is_empty());
 }
 
-
 #[test]
 fn select_with_timeout_returns_timeout_tuple() {
     on_big_stack(|| {
@@ -2057,7 +2038,6 @@ fn cancelling_mutex_owner_releases_the_lock() {
     });
 }
 
-
 #[test]
 fn bounded_channel_blocks_send_until_recv() {
     on_big_stack(|| {
@@ -2233,6 +2213,181 @@ fn channel_rejects_non_positive_capacity() {
         result.unwrap();
         assert_global_true(&vm, "ok");
     });
+}
+
+#[test]
+fn select_supports_receive_and_send_cases() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let incoming = channel<int>();
+            incoming.send(10);
+            let outgoing = channel<int>();
+
+            let selected = select([(outgoing, 42), incoming]);
+            let sent = outgoing.try_recv();
+            let received = incoming.try_recv();
+
+            let ok = selected[0] == 0
+                && selected[1] == None
+                && selected[2] == false
+                && sent == Some(42)
+                && received == Some(10);
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn select_send_blocks_on_full_bounded_channel_until_recv() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(1);
+            let started = channel<int>();
+            ch.send(1);
+
+            func sender() -> int {
+                started.send(1);
+                let selected = select([(ch, 2)]);
+                if selected[0] == 0 && selected[1] == None && selected[2] == false {
+                    return 1;
+                }
+                return -1;
+            }
+
+            let task = spawn(sender);
+            started.recv();
+
+            let waiting = task.status() == "waiting";
+            let first = ch.recv();
+            let result = task.join();
+            let second = ch.recv();
+
+            let ok = waiting
+                && first == 1
+                && result == 1
+                && second == 2
+                && task.status() == "done";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_select_send_cleans_sender_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(1);
+            let started = channel<int>();
+            ch.send(1);
+
+            func sender() {
+                started.send(1);
+                select([(ch, 2)]);
+            }
+
+            let task = spawn(sender);
+            started.recv();
+            task.cancel();
+
+            let first = ch.recv();
+            let second = ch.try_recv();
+            let ok = task.status() == "cancelled"
+                && first == 1
+                && second == None;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_channel_senders.is_empty());
+        assert!(scheduler.waiting_selects.is_empty());
+    });
+}
+
+#[test]
+fn closing_select_send_resumes_as_closed_case() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(1);
+            let started = channel<int>();
+            ch.send(1);
+
+            func sender() -> int {
+                started.send(1);
+                let selected = select([(ch, 2)]);
+                if selected[0] == 0 && selected[1] == None && selected[2] == true {
+                    return 1;
+                }
+                return -1;
+            }
+
+            let task = spawn(sender);
+            started.recv();
+            ch.close();
+
+            let result = task.join();
+            let buffered = ch.recv();
+            let ok = result == 1 && buffered == 1 && task.status() == "done";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn select_send_timeout_cleans_sender_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let ch = channel<int>(1);
+            ch.send(1);
+
+            func sender() -> int {
+                let selected = select([(ch, 2)], 5);
+                return selected[0];
+            }
+
+            let task = spawn(sender);
+            let result = task.join();
+            let ok = result == -1 && task.status() == "done";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_channel_senders.is_empty());
+        assert!(scheduler.waiting_selects.is_empty());
+        assert!(scheduler.sleeping_tasks.is_empty());
+    });
+}
+
+#[test]
+fn select_rejects_non_channel_send_cases_statically() {
+    let error = compile_only(
+        r#"
+        let value = 1;
+        select([(value, 2)]);
+    "#,
+    )
+    .unwrap_err();
+
+    assert!(is_wrong_argument_type(&error));
 }
 
 #[test]
@@ -2574,7 +2729,6 @@ fn multiple_wait_group_waiters_resume_fifo() {
         assert_global_true(&vm, "ok");
     });
 }
-
 
 #[test]
 fn mutex_wait_group_and_timer_coordinate_contended_work() {

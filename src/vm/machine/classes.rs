@@ -699,7 +699,6 @@ impl VirtualMachine {
     }
 }
 
-
 impl VirtualMachine {
     // ========================================================
     // ENUM
@@ -803,11 +802,8 @@ impl VirtualMachine {
                 });
             }
 
-            let value = Value::new_enum_variant(
-                enum_name.clone(),
-                variant_name.clone(),
-                methods.clone(),
-            );
+            let value =
+                Value::new_enum_variant(enum_name.clone(), variant_name.clone(), methods.clone());
 
             variants.insert(variant_name, value);
         }

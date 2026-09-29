@@ -24,11 +24,7 @@ impl VirtualMachine {
             None
         } else {
             let value = self.read_constant(catch_type_raw)?;
-            Some(
-                value
-                    .as_string_value()
-                    .ok_or(RuntimeError::TypeError)?,
-            )
+            Some(value.as_string_value().ok_or(RuntimeError::TypeError)?)
         };
 
         self.register_exception_handler(catch_ip, finally_ip, catch_type)

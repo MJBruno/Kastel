@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler,
-    error::runtime_error::RuntimeError,
-    runtime::value::Value,
+    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 /// Construit un sémaphore coopératif avec `capacity` permis.

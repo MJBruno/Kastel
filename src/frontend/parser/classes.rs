@@ -215,7 +215,10 @@ impl Parser {
 
             let lexeme = self.peek().lexeme.clone();
 
-            if !matches!(lexeme.as_str(), "public" | "protected" | "private" | "static") {
+            if !matches!(
+                lexeme.as_str(),
+                "public" | "protected" | "private" | "static"
+            ) {
                 break;
             }
 
@@ -462,10 +465,7 @@ impl Parser {
     pub(super) fn parse_enum_statement(&mut self) -> Result<Statement, ParserError> {
         let name = self.consume(TokenKind::Identifier, "Nom d'enum attendu après 'enum'")?;
         let generic_params = self.parse_generic_parameters()?;
-        self.consume(
-            TokenKind::LeftBrace,
-            "'{' attendu après le nom de l'enum",
-        )?;
+        self.consume(TokenKind::LeftBrace, "'{' attendu après le nom de l'enum")?;
 
         let mut variants = Vec::new();
         let mut methods = Vec::new();
@@ -484,7 +484,8 @@ impl Parser {
 
                 if !self.check(TokenKind::RightParen) {
                     loop {
-                        let param = self.consume(TokenKind::Identifier, "Nom de paramètre attendu")?;
+                        let param =
+                            self.consume(TokenKind::Identifier, "Nom de paramètre attendu")?;
                         params.push(param.lexeme);
                         param_types.push(self.parse_optional_type_annotation()?);
 
@@ -609,5 +610,4 @@ impl Parser {
             methods,
         })
     }
-
 }

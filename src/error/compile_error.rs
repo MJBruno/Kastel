@@ -286,7 +286,10 @@ impl std::fmt::Display for CompileError {
                 write!(f, "Pattern invalide : {message}")
             }
 
-            CompileError::NonExhaustiveMatch { matched_type, missing } => {
+            CompileError::NonExhaustiveMatch {
+                matched_type,
+                missing,
+            } => {
                 write!(
                     f,
                     "Match non exhaustif pour '{matched_type}' : cas manquants : {missing}"
@@ -489,14 +492,21 @@ impl std::fmt::Display for CompileError {
                 )
             }
 
-            CompileError::InvalidGenericArity { name, expected, found } => {
+            CompileError::InvalidGenericArity {
+                name,
+                expected,
+                found,
+            } => {
                 write!(
                     f,
                     "Le type générique '{name}' attend {expected} argument(s) de type, mais {found} ont été fournis"
                 )
             }
 
-            CompileError::CannotInferGenericType { parameter, function } => {
+            CompileError::CannotInferGenericType {
+                parameter,
+                function,
+            } => {
                 write!(
                     f,
                     "Impossible d'inférer le paramètre générique '{parameter}' lors de l'appel à '{function}'"
@@ -515,7 +525,10 @@ impl std::fmt::Display for CompileError {
                 )
             }
 
-            CompileError::InvalidGenericConstraint { parameter, constraint } => {
+            CompileError::InvalidGenericConstraint {
+                parameter,
+                constraint,
+            } => {
                 write!(
                     f,
                     "La contrainte générique '{parameter}: {constraint}' n'est pas une interface valide"

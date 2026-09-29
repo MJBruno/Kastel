@@ -106,14 +106,16 @@ impl VirtualMachine {
             return Ok(None);
         };
 
-        let method = {
-            let object = handle.borrow();
-            match &*object {
-                Object::Instance { class: Some(class), .. } => {
-                    Self::find_class_method_from(class.clone(), method_name, 1)
-                }
-                Object::EnumVariant { methods, .. } => methods.get(method_name).and_then(|overloads| {
-                    overloads.iter().find(|value| {
+        let method =
+            {
+                let object = handle.borrow();
+                match &*object {
+                    Object::Instance {
+                        class: Some(class), ..
+                    } => Self::find_class_method_from(class.clone(), method_name, 1),
+                    Object::EnumVariant { methods, .. } => {
+                        methods.get(method_name).and_then(|overloads| {
+                            overloads.iter().find(|value| {
                         matches!(
                             value,
                             Value::Object(method_handle)
@@ -123,10 +125,11 @@ impl VirtualMachine {
                                 )
                         )
                     }).cloned()
-                }),
-                _ => None,
-            }
-        };
+                        })
+                    }
+                    _ => None,
+                }
+            };
 
         let Some(method) = method else {
             return Ok(None);
@@ -142,10 +145,7 @@ impl VirtualMachine {
 
         self.ensure_member_access(receiver, method_name)?;
 
-        let result = self.invoke_sync(
-            method,
-            &[receiver.clone(), argument],
-        )?;
+        let result = self.invoke_sync(method, &[receiver.clone(), argument])?;
 
         Ok(Some(result))
     }

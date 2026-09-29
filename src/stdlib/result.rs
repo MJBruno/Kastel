@@ -1,11 +1,9 @@
 //! Runtime support for `Result<T, E>`.
 
-use std::collections::HashMap;
 use crate::{
-    compiler::compiler::Compiler,
-    error::runtime_error::RuntimeError,
-    runtime::value::Value,
+    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
 };
+use std::collections::HashMap;
 
 pub fn native_ok(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 1 {

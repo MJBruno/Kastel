@@ -195,27 +195,28 @@ pub fn native_pow(args: &[Value]) -> Result<Value, RuntimeError> {
     // nul donnent un résultat entier (8, pas 8.0). Dès qu'un flottant
     // ou un exposant négatif entre en jeu, le résultat est un Float.
     if let (Value::Integer(base), Value::Integer(exponent)) = (&args[0], &args[1])
-        && *exponent >= 0 {
-            let overflow = RuntimeError::IntegerOverflow {
-                operation: "puissance",
-            };
+        && *exponent >= 0
+    {
+        let overflow = RuntimeError::IntegerOverflow {
+            operation: "puissance",
+        };
 
-            return match u32::try_from(*exponent) {
-                Ok(exponent) => base
-                    .checked_pow(exponent)
-                    .map(Value::Integer)
-                    .ok_or(overflow),
+        return match u32::try_from(*exponent) {
+            Ok(exponent) => base
+                .checked_pow(exponent)
+                .map(Value::Integer)
+                .ok_or(overflow),
 
-                // Exposant > u32::MAX : seuls 0, 1 et -1 restent
-                // représentables.
-                Err(_) => match *base {
-                    0 => Ok(Value::Integer(0)),
-                    1 => Ok(Value::Integer(1)),
-                    -1 => Ok(Value::Integer(if exponent % 2 == 0 { 1 } else { -1 })),
-                    _ => Err(overflow),
-                },
-            };
-        }
+            // Exposant > u32::MAX : seuls 0, 1 et -1 restent
+            // représentables.
+            Err(_) => match *base {
+                0 => Ok(Value::Integer(0)),
+                1 => Ok(Value::Integer(1)),
+                -1 => Ok(Value::Integer(if exponent % 2 == 0 { 1 } else { -1 })),
+                _ => Err(overflow),
+            },
+        };
+    }
 
     let base = expect_number(&args[0])?;
     let exponent = expect_number(&args[1])?;

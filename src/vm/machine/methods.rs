@@ -1,10 +1,12 @@
+use std::{cell::RefCell, rc::Rc};
+
 use super::VirtualMachine;
 use super::bytecode::frame_closure;
 
 use crate::{
     error::runtime_error::RuntimeError,
     frontend::ast::CONSTRUCTOR_NAME,
-    runtime::{gc_handle::Gc, object::Object, value::Value},
+    runtime::{channel::ChannelState, gc_handle::Gc, object::Object, value::Value},
     stdlib::{array, dict},
     vm::machine::scheduler::{PollOutcome, Scheduler},
 };
@@ -25,54 +27,115 @@ impl VirtualMachine {
             return Err(RuntimeError::InvalidFunction);
         }
 
-        let mut channels = Vec::with_capacity(count);
+        // Syntax des cas :
+        //   channel             => réception
+        //   (channel, value)    => envoi
+        // `waiting_select_channels` conserve uniquement les channels ; la
+        // seconde liste parallèle indique les valeurs d'envoi éventuelles.
+        let mut channels: Vec<(Rc<RefCell<ChannelState>>, Value)> = Vec::with_capacity(count);
+        let mut send_values: Vec<Option<Value>> = Vec::with_capacity(count);
+
         for index in 0..count {
-            let value = collection.array_get(index)?;
-            let channel = match &value {
-                Value::Object(handle) => {
-                    let object = handle.borrow();
-                    match &*object {
-                        Object::Channel(channel) => channel.clone(),
-                        _ => return Err(RuntimeError::TypeError),
-                    }
-                }
-                _ => return Err(RuntimeError::TypeError),
+            let case = collection.array_get(index)?;
+
+            let Value::Object(handle) = &case else {
+                return Err(RuntimeError::TypeError);
             };
 
-            channels.push((channel, value));
+            let (channel, channel_value, send_value) = {
+                let object = handle.borrow();
+                match &*object {
+                    Object::Channel(channel) => (channel.clone(), case.clone(), None),
+                    Object::Tuple(elements) if elements.len() == 2 => {
+                        let channel_value = elements[0].clone();
+                        let send_value = elements[1].clone();
+                        let Value::Object(channel_handle) = &channel_value else {
+                            return Err(RuntimeError::TypeError);
+                        };
+                        let channel = {
+                            let channel_object = channel_handle.borrow();
+                            match &*channel_object {
+                                Object::Channel(channel) => channel.clone(),
+                                _ => return Err(RuntimeError::TypeError),
+                            }
+                        };
+                        (channel, channel_value, Some(send_value))
+                    }
+                    Object::Tuple(_) => return Err(RuntimeError::TypeError),
+                    _ => return Err(RuntimeError::TypeError),
+                }
+            };
+
+            channels.push((channel, channel_value));
+            send_values.push(send_value);
         }
 
-        let deadline = timeout_ms.map(|milliseconds| {
-            std::time::Instant::now()
-                .checked_add(std::time::Duration::from_millis(milliseconds))
-                .ok_or(RuntimeError::InvalidFunction)
-        }).transpose()?;
+        let deadline = timeout_ms
+            .map(|milliseconds| {
+                std::time::Instant::now()
+                    .checked_add(std::time::Duration::from_millis(milliseconds))
+                    .ok_or(RuntimeError::InvalidFunction)
+            })
+            .transpose()?;
+
+        let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
         loop {
             for (index, (channel, _)) in channels.iter().enumerate() {
-                let received = { channel.borrow_mut().try_recv() };
-                if let Some(value) = received {
-                    self.push(Value::new_tuple(vec![
-                        Value::Integer(index as i64),
-                        value,
-                        Value::Boolean(false),
-                    ]));
+                match &send_values[index] {
+                    None => {
+                        let received = { channel.borrow_mut().try_recv() };
+                        if let Some(value) = received {
+                            self.push(Value::new_tuple(vec![
+                                Value::Integer(index as i64),
+                                value,
+                                Value::Boolean(false),
+                            ]));
+                            Scheduler::wake_one_channel_sender_for_public(&scheduler, channel);
+                            return Ok(());
+                        }
 
-                    let scheduler = self
-                        .scheduler
-                        .upgrade()
-                        .ok_or(RuntimeError::TaskNotFound)?;
-                    Scheduler::wake_one_channel_sender_for_public(&scheduler, channel);
-                    return Ok(());
-                }
+                        if channel.borrow().is_closed() {
+                            self.push(Value::new_tuple(vec![
+                                Value::Integer(index as i64),
+                                Value::None,
+                                Value::Boolean(true),
+                            ]));
+                            return Ok(());
+                        }
+                    }
 
-                if channel.borrow().is_closed() {
-                    self.push(Value::new_tuple(vec![
-                        Value::Integer(index as i64),
-                        Value::None,
-                        Value::Boolean(true),
-                    ]));
-                    return Ok(());
+                    Some(value) => {
+                        if channel.borrow().is_closed() {
+                            self.push(Value::new_tuple(vec![
+                                Value::Integer(index as i64),
+                                Value::None,
+                                Value::Boolean(true),
+                            ]));
+                            return Ok(());
+                        }
+
+                        // Un send est immédiatement prêt s'il peut réveiller
+                        // un receveur, ou s'il reste de la place dans le buffer.
+                        if Scheduler::wake_one_channel(&scheduler, channel, value.clone())? {
+                            self.push(Value::new_tuple(vec![
+                                Value::Integer(index as i64),
+                                Value::None,
+                                Value::Boolean(false),
+                            ]));
+                            return Ok(());
+                        }
+
+                        if !channel.borrow().is_full() {
+                            channel.borrow_mut().send(value.clone());
+                            self.push(Value::new_tuple(vec![
+                                Value::Integer(index as i64),
+                                Value::None,
+                                Value::Boolean(false),
+                            ]));
+                            return Ok(());
+                        }
+                    }
                 }
             }
 
@@ -88,15 +151,11 @@ impl VirtualMachine {
             }
 
             if self.task_id.is_some() {
-                self.wait_on_select(channels.clone())?;
+                self.wait_on_select(channels.clone(), send_values.clone())?;
 
                 if let Some(stop_at) = deadline {
                     let remaining = stop_at.saturating_duration_since(std::time::Instant::now());
                     let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
-                    let scheduler = self
-                        .scheduler
-                        .upgrade()
-                        .ok_or(RuntimeError::TaskNotFound)?;
                     let timer_deadline = Scheduler::sleep_task(&scheduler, task_id, remaining)?;
                     self.waiting_timer = Some(timer_deadline);
                 }
@@ -104,13 +163,14 @@ impl VirtualMachine {
                 return Ok(());
             }
 
-            let _pinned = self.pin_roots_with(
-                &channels.iter().map(|(_, value)| value.clone()).collect::<Vec<_>>(),
-            );
-            let scheduler = self
-                .scheduler
-                .upgrade()
-                .ok_or(RuntimeError::TaskNotFound)?;
+            let mut roots = Vec::with_capacity(channels.len() * 2);
+            for (index, (_, value)) in channels.iter().enumerate() {
+                roots.push(value.clone());
+                if let Some(send_value) = &send_values[index] {
+                    roots.push(send_value.clone());
+                }
+            }
+            let _pinned = self.pin_roots_with(&roots);
 
             match Scheduler::poll_until(&scheduler, deadline)? {
                 PollOutcome::Progressed => {}
@@ -155,8 +215,7 @@ impl VirtualMachine {
                 return None;
             };
 
-            (closure.function.arity.checked_sub(1) == Some(arg_count))
-                .then(|| method.clone())
+            (closure.function.arity.checked_sub(1) == Some(arg_count)).then(|| method.clone())
         })
     }
 
@@ -248,18 +307,16 @@ impl VirtualMachine {
     /// de classe afin de conserver les règles de visibilité.
     pub(crate) fn caller_owner_class(&self) -> Option<Gc<Object>> {
         let frame = self.frames.last()?;
-        
 
         frame_closure(&frame.closure).owner_class.clone()
     }
 
     /// Il n'existe plus de sous-classes en Kastel. Le mot-clé `protected`,
     /// conservé pour compatibilité, est donc limité à la classe déclarante.
-    fn is_same_class(
-        caller: Option<Gc<Object>>,
-        owner: &Gc<Object>,
-    ) -> bool {
-        caller.as_ref().is_some_and(|current| Gc::ptr_eq(current, owner))
+    fn is_same_class(caller: Option<Gc<Object>>, owner: &Gc<Object>) -> bool {
+        caller
+            .as_ref()
+            .is_some_and(|current| Gc::ptr_eq(current, owner))
     }
 
     /// `new C(...)` : le constructeur est toujours celui de `C`. Il n'existe
@@ -514,11 +571,7 @@ impl VirtualMachine {
                             found: args.len() - 1,
                         });
                     }
-                    Some(
-                        args[1]
-                            .as_string_value()
-                            .ok_or(RuntimeError::TypeError)?,
-                    )
+                    Some(args[1].as_string_value().ok_or(RuntimeError::TypeError)?)
                 } else {
                     if args.len() != 1 {
                         return Err(RuntimeError::WrongArgumentCount {
@@ -551,10 +604,9 @@ impl VirtualMachine {
                 }
 
                 match value {
-                    Some(inner) => Ok(Value::new_some(self.invoke_sync(
-                        args[1].clone(),
-                        &[inner],
-                    )?)),
+                    Some(inner) => Ok(Value::new_some(
+                        self.invoke_sync(args[1].clone(), &[inner])?,
+                    )),
                     None => Ok(Value::None),
                 }
             }
@@ -683,11 +735,7 @@ impl VirtualMachine {
                             found: args.len() - 1,
                         });
                     }
-                    Some(
-                        args[1]
-                            .as_string_value()
-                            .ok_or(RuntimeError::TypeError)?,
-                    )
+                    Some(args[1].as_string_value().ok_or(RuntimeError::TypeError)?)
                 } else {
                     if args.len() != 1 {
                         return Err(RuntimeError::WrongArgumentCount {
@@ -716,11 +764,7 @@ impl VirtualMachine {
                             found: args.len() - 1,
                         });
                     }
-                    Some(
-                        args[1]
-                            .as_string_value()
-                            .ok_or(RuntimeError::TypeError)?,
-                    )
+                    Some(args[1].as_string_value().ok_or(RuntimeError::TypeError)?)
                 } else {
                     if args.len() != 1 {
                         return Err(RuntimeError::WrongArgumentCount {
@@ -759,10 +803,7 @@ impl VirtualMachine {
                     });
                 }
                 if ok {
-                    Ok(Value::new_ok(self.invoke_sync(
-                        args[1].clone(),
-                        &[value],
-                    )?))
+                    Ok(Value::new_ok(self.invoke_sync(args[1].clone(), &[value])?))
                 } else {
                     Ok(Value::new_err(value))
                 }
@@ -778,10 +819,7 @@ impl VirtualMachine {
                 if ok {
                     Ok(Value::new_ok(value))
                 } else {
-                    Ok(Value::new_err(self.invoke_sync(
-                        args[1].clone(),
-                        &[value],
-                    )?))
+                    Ok(Value::new_err(self.invoke_sync(args[1].clone(), &[value])?))
                 }
             }
 
@@ -1002,10 +1040,7 @@ impl VirtualMachine {
                         }
                     };
 
-                    let scheduler = task
-                        .scheduler
-                        .upgrade()
-                        .ok_or(RuntimeError::TaskNotFound)?;
+                    let scheduler = task.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
                     let result = match method_name.as_str() {
                         "cancel" => {
@@ -1021,12 +1056,10 @@ impl VirtualMachine {
 
                             Scheduler::join(&scheduler, task.id)?
                         }
-                        "status" => Value::new_string(
-                            Scheduler::status(&scheduler, task.id)?.to_string(),
-                        ),
-                        "is_done" => Value::Boolean(
-                            Scheduler::is_done(&scheduler, task.id)?,
-                        ),
+                        "status" => {
+                            Value::new_string(Scheduler::status(&scheduler, task.id)?.to_string())
+                        }
+                        "is_done" => Value::Boolean(Scheduler::is_done(&scheduler, task.id)?),
                         _ => {
                             return Err(RuntimeError::ObjectFieldNotFound {
                                 name: method_name,
@@ -1062,10 +1095,8 @@ impl VirtualMachine {
                                 return Err(RuntimeError::ChannelClosed);
                             }
 
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
                             if Scheduler::wake_one_channel(&scheduler, &channel, value.clone())? {
                                 self.push(Value::None);
@@ -1134,21 +1165,15 @@ impl VirtualMachine {
                             let received = { channel.borrow_mut().try_recv() };
                             if let Some(value) = received {
                                 self.push(value);
-                                let scheduler = self
-                                    .scheduler
-                                    .upgrade()
-                                    .ok_or(RuntimeError::TaskNotFound)?;
+                                let scheduler =
+                                    self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
                                 Scheduler::wake_one_channel_sender_for_public(&scheduler, &channel);
                             } else if channel.borrow().is_closed() {
                                 return Err(RuntimeError::ChannelClosed);
                             } else if self.task_id.is_some() {
-                                self.wait_on_channel(
-                                    channel,
-                                    Value::Object(handle.clone()),
-                                )?;
+                                self.wait_on_channel(channel, Value::Object(handle.clone()))?;
                             } else {
-                                let _pinned =
-                                    self.pin_roots_with(&[Value::Object(handle.clone())]);
+                                let _pinned = self.pin_roots_with(&[Value::Object(handle.clone())]);
 
                                 loop {
                                     let received = { channel.borrow_mut().try_recv() };
@@ -1159,8 +1184,7 @@ impl VirtualMachine {
                                             .upgrade()
                                             .ok_or(RuntimeError::TaskNotFound)?;
                                         Scheduler::wake_one_channel_sender_for_public(
-                                            &scheduler,
-                                            &channel,
+                                            &scheduler, &channel,
                                         );
                                         break;
                                     }
@@ -1199,10 +1223,8 @@ impl VirtualMachine {
 
                             let value = { channel.borrow_mut().try_recv() };
                             if value.is_some() {
-                                let scheduler = self
-                                    .scheduler
-                                    .upgrade()
-                                    .ok_or(RuntimeError::TaskNotFound)?;
+                                let scheduler =
+                                    self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
                                 Scheduler::wake_one_channel_sender_for_public(&scheduler, &channel);
                             }
                             self.push(match value {
@@ -1265,10 +1287,8 @@ impl VirtualMachine {
                                 }
                             };
 
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
                             Scheduler::close_channel(&scheduler, &channel)?;
                             self.push(Value::None);
                         }
@@ -1326,13 +1346,10 @@ impl VirtualMachine {
                             }
 
                             let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
-                            let acquired =
-                                Scheduler::lock_mutex(&scheduler, task_id, &mutex)?;
+                            let acquired = Scheduler::lock_mutex(&scheduler, task_id, &mutex)?;
 
                             if acquired {
                                 self.push(Value::None);
@@ -1359,13 +1376,10 @@ impl VirtualMachine {
                             };
 
                             let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
-                            let acquired =
-                                Scheduler::try_lock_mutex(&scheduler, task_id, &mutex)?;
+                            let acquired = Scheduler::try_lock_mutex(&scheduler, task_id, &mutex)?;
                             self.push(Value::Boolean(acquired));
                         }
 
@@ -1386,10 +1400,8 @@ impl VirtualMachine {
                             };
 
                             let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
                             Scheduler::unlock_mutex(&scheduler, task_id, &mutex)?;
                             self.push(Value::None);
@@ -1451,10 +1463,8 @@ impl VirtualMachine {
                                 }
                             };
 
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
                             Scheduler::wait_group_add(&scheduler, &wait_group, amount)?;
                             self.push(Value::None);
@@ -1476,10 +1486,8 @@ impl VirtualMachine {
                                 }
                             };
 
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
                             Scheduler::wait_group_done(&scheduler, &wait_group)?;
                             self.push(Value::None);
@@ -1510,10 +1518,8 @@ impl VirtualMachine {
                             }
 
                             if let Some(task_id) = self.task_id {
-                                let scheduler = self
-                                    .scheduler
-                                    .upgrade()
-                                    .ok_or(RuntimeError::TaskNotFound)?;
+                                let scheduler =
+                                    self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
                                 Scheduler::wait_on_wait_group(
                                     &scheduler,
@@ -1523,8 +1529,7 @@ impl VirtualMachine {
                                 self.waiting_wait_group = Some(Value::Object(handle.clone()));
                                 self.waiting_requested = true;
                             } else {
-                                let _pinned = self
-                                    .pin_roots_with(&[Value::Object(handle.clone())]);
+                                let _pinned = self.pin_roots_with(&[Value::Object(handle.clone())]);
 
                                 loop {
                                     if wait_group.borrow().is_done() {
@@ -1612,10 +1617,8 @@ impl VirtualMachine {
                             };
 
                             let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
                             let acquired =
                                 Scheduler::acquire_semaphore(&scheduler, task_id, &semaphore)?;
@@ -1645,10 +1648,8 @@ impl VirtualMachine {
                             };
 
                             let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
                             let acquired =
                                 Scheduler::try_acquire_semaphore(&scheduler, task_id, &semaphore)?;
@@ -1672,10 +1673,8 @@ impl VirtualMachine {
                             };
 
                             let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
-                            let scheduler = self
-                                .scheduler
-                                .upgrade()
-                                .ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
                             Scheduler::release_semaphore(&scheduler, task_id, &semaphore)?;
                             self.push(Value::None);
@@ -1785,10 +1784,8 @@ impl VirtualMachine {
                                     let mut iterator_args = args.clone();
                                     iterator_args[0] = iterator;
 
-                                    let result = self.invoke_iterator_method(
-                                        &method_name,
-                                        &iterator_args,
-                                    )?;
+                                    let result =
+                                        self.invoke_iterator_method(&method_name, &iterator_args)?;
 
                                     self.push(result);
                                     return Ok(());
@@ -1996,20 +1993,21 @@ impl VirtualMachine {
                                         })
                                     }).cloned();
 
-                                    let expected = methods.get(&method_name).and_then(|overloads| {
-                                        overloads.first().and_then(|value| match value {
-                                            Value::Object(method_handle) => {
-                                                let method_object = method_handle.borrow();
-                                                match &*method_object {
-                                                    Object::Closure(closure) => {
-                                                        closure.function.arity.checked_sub(1)
+                                    let expected =
+                                        methods.get(&method_name).and_then(|overloads| {
+                                            overloads.first().and_then(|value| match value {
+                                                Value::Object(method_handle) => {
+                                                    let method_object = method_handle.borrow();
+                                                    match &*method_object {
+                                                        Object::Closure(closure) => {
+                                                            closure.function.arity.checked_sub(1)
+                                                        }
+                                                        _ => None,
                                                     }
-                                                    _ => None,
                                                 }
-                                            }
-                                            _ => None,
-                                        })
-                                    });
+                                                _ => None,
+                                            })
+                                        });
 
                                     (method, expected)
                                 }
@@ -2066,8 +2064,9 @@ impl VirtualMachine {
                                 Object::Class { static_methods, .. } => {
                                     let overloads = static_methods.get(&method_name);
 
-                                    let method = overloads.and_then(|overloads| {
-                                        overloads.iter().find(|value| {
+                                    let method = overloads
+                                        .and_then(|overloads| {
+                                            overloads.iter().find(|value| {
                                             matches!(
                                                 value,
                                                 Value::Object(method_handle)
@@ -2078,7 +2077,8 @@ impl VirtualMachine {
                                                     )
                                             )
                                         })
-                                    }).cloned();
+                                        })
+                                        .cloned();
 
                                     let declared_arity = overloads.and_then(|overloads| {
                                         overloads.first().and_then(|value| match value {

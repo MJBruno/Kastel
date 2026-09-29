@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 use std::rc::{Rc, Weak};
+use std::time::{Duration, Instant};
 
 use crate::error::runtime_error::RuntimeError;
 use crate::module::module::ModuleLoader;
@@ -15,15 +15,15 @@ use crate::runtime::value::Value;
 use crate::stdlib::register_natives;
 
 #[cfg(test)]
+mod concurrency_tests;
+#[cfg(test)]
+mod exception_tests;
+#[cfg(test)]
 mod option_result_tests;
 #[cfg(test)]
 mod pattern_matching_tests;
 #[cfg(test)]
-mod exception_tests;
-#[cfg(test)]
 mod robustness_tests;
-#[cfg(test)]
-mod concurrency_tests;
 
 pub mod arithmetic;
 pub mod arrays;
@@ -44,10 +44,10 @@ pub mod objects;
 pub mod patterns;
 pub mod profiling;
 pub mod properties;
+pub mod scheduler;
 pub mod stack;
 pub mod tuples;
 pub mod variables;
-pub mod scheduler;
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) enum HotLoopCache {
@@ -196,6 +196,8 @@ pub struct VirtualMachine {
     pub(crate) waiting_channel: Option<Value>,
     pub(crate) waiting_channel_send: Option<Value>,
     pub(crate) waiting_select_channels: Option<Vec<Value>>,
+    /// Pour chaque cas de `select`, `None` = réception, `Some(v)` = envoi de `v`.
+    pub(crate) waiting_select_send_values: Option<Vec<Option<Value>>>,
     pub(crate) waiting_timer: Option<Instant>,
     pub(crate) waiting_mutex: Option<Value>,
     pub(crate) waiting_semaphore: Option<Value>,
@@ -279,6 +281,7 @@ impl VirtualMachine {
             waiting_channel: None,
             waiting_channel_send: None,
             waiting_select_channels: None,
+            waiting_select_send_values: None,
             waiting_timer: None,
             waiting_mutex: None,
             waiting_semaphore: None,
@@ -342,6 +345,7 @@ impl VirtualMachine {
             waiting_channel: None,
             waiting_channel_send: None,
             waiting_select_channels: None,
+            waiting_select_send_values: None,
             waiting_timer: None,
             waiting_mutex: None,
             waiting_semaphore: None,
@@ -422,6 +426,7 @@ impl VirtualMachine {
             waiting_channel: None,
             waiting_channel_send: None,
             waiting_select_channels: None,
+            waiting_select_send_values: None,
             waiting_timer: None,
             waiting_mutex: None,
             waiting_semaphore: None,
@@ -452,14 +457,9 @@ impl VirtualMachine {
         channel: Rc<RefCell<ChannelState>>,
         channel_value: Value,
     ) -> Result<(), RuntimeError> {
-        let task_id = self
-            .task_id
-            .ok_or(RuntimeError::TaskNotFound)?;
+        let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
 
-        let scheduler = self
-            .scheduler
-            .upgrade()
-            .ok_or(RuntimeError::TaskNotFound)?;
+        let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
         scheduler::Scheduler::wait_on_channel(&scheduler, task_id, channel.clone())?;
 
@@ -476,10 +476,7 @@ impl VirtualMachine {
     ) -> Result<(), RuntimeError> {
         let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
 
-        let scheduler = self
-            .scheduler
-            .upgrade()
-            .ok_or(RuntimeError::TaskNotFound)?;
+        let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
         scheduler::Scheduler::wait_on_channel_send(&scheduler, task_id, channel)?;
 
@@ -500,10 +497,7 @@ impl VirtualMachine {
                 .ok_or(RuntimeError::InvalidFunction)?;
 
             let _pinned = self.pin_roots();
-            let scheduler = self
-                .scheduler
-                .upgrade()
-                .ok_or(RuntimeError::TaskNotFound)?;
+            let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
             while Instant::now() < deadline {
                 match scheduler::Scheduler::poll(&scheduler) {
@@ -522,10 +516,7 @@ impl VirtualMachine {
             return Ok(());
         };
 
-        let scheduler = self
-            .scheduler
-            .upgrade()
-            .ok_or(RuntimeError::TaskNotFound)?;
+        let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
         let deadline = scheduler::Scheduler::sleep_task(&scheduler, task_id, duration)?;
         self.waiting_timer = Some(deadline);
@@ -536,18 +527,21 @@ impl VirtualMachine {
     pub(crate) fn wait_on_select(
         &mut self,
         channels: Vec<(Rc<RefCell<ChannelState>>, Value)>,
+        send_values: Vec<Option<Value>>,
     ) -> Result<(), RuntimeError> {
         let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
 
-        let scheduler = self
-            .scheduler
-            .upgrade()
-            .ok_or(RuntimeError::TaskNotFound)?;
+        if channels.len() != send_values.len() {
+            return Err(RuntimeError::InvalidFunction);
+        }
+
+        let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
         let values: Vec<Value> = channels.iter().map(|(_, value)| value.clone()).collect();
-        scheduler::Scheduler::wait_on_select(&scheduler, task_id, &channels)?;
+        scheduler::Scheduler::wait_on_select(&scheduler, task_id, &channels, &send_values)?;
 
         self.waiting_select_channels = Some(values);
+        self.waiting_select_send_values = Some(send_values);
         self.waiting_channel = None;
         self.waiting_requested = true;
         Ok(())
@@ -564,6 +558,7 @@ impl VirtualMachine {
         }
 
         self.waiting_select_channels = None;
+        self.waiting_select_send_values = None;
         self.waiting_channel = None;
         self.waiting_error = None;
         self.waiting_requested = false;
@@ -587,6 +582,7 @@ impl VirtualMachine {
 
         if select_timeout {
             self.waiting_select_channels = None;
+            self.waiting_select_send_values = None;
             self.push(Value::new_tuple(vec![
                 Value::Integer(-1),
                 Value::None,
@@ -709,7 +705,10 @@ impl VirtualMachine {
 
                         match selected {
                             Some(Value::Object(closure))
-                                if matches!(&*closure.borrow(), Object::Closure(_)) => closure,
+                                if matches!(&*closure.borrow(), Object::Closure(_)) =>
+                            {
+                                closure
+                            }
 
                             _ => {
                                 let expected = functions
@@ -781,6 +780,7 @@ impl VirtualMachine {
         self.waiting_channel = None;
         self.waiting_channel_send = None;
         self.waiting_select_channels = None;
+        self.waiting_select_send_values = None;
         self.waiting_timer = None;
         self.waiting_mutex = None;
         self.waiting_semaphore = None;
@@ -824,6 +824,7 @@ impl VirtualMachine {
         self.waiting_channel = None;
         self.waiting_channel_send = None;
         self.waiting_select_channels = None;
+        self.waiting_select_send_values = None;
         self.waiting_timer = None;
         self.waiting_mutex = None;
         self.waiting_semaphore = None;
@@ -926,10 +927,12 @@ impl VirtualMachine {
         for upvalue in &self.open_upvalues {
             let upvalue_ref = upvalue.borrow();
 
-            if upvalue_ref.slot >= last && upvalue_ref.closed.is_none()
-                && upvalue_ref.slot >= self.stack.len() {
-                    return Err(RuntimeError::InvalidFunction);
-                }
+            if upvalue_ref.slot >= last
+                && upvalue_ref.closed.is_none()
+                && upvalue_ref.slot >= self.stack.len()
+            {
+                return Err(RuntimeError::InvalidFunction);
+            }
         }
 
         // Fermer les upvalues qui appartiennent au frame supprimé.
@@ -954,7 +957,6 @@ impl VirtualMachine {
 
         Ok(())
     }
-
 
     pub(crate) fn register_exception_handler(
         &mut self,
@@ -1033,7 +1035,6 @@ impl VirtualMachine {
 
         Ok(())
     }
-
 
     // ============================================================
     // FRAME CLEANUP

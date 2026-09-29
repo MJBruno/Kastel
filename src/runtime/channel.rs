@@ -39,7 +39,8 @@ impl ChannelState {
 
     pub fn send(&mut self, value: Value) {
         debug_assert!(
-            self.capacity.map_or(true, |capacity| self.queue.len() < capacity),
+            self.capacity
+                .map_or(true, |capacity| self.queue.len() < capacity),
             "send() appelé sur un canal borné déjà plein"
         );
         self.queue.push_back(value);

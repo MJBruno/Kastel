@@ -497,12 +497,8 @@ impl Parser {
 
             if self.match_token(TokenKind::LeftParen) {
                 let (line, column) = (self.previous().line, self.previous().column);
-                expression = self.parse_call(
-                    expression,
-                    generic_args.unwrap_or_default(),
-                    line,
-                    column,
-                )?;
+                expression =
+                    self.parse_call(expression, generic_args.unwrap_or_default(), line, column)?;
                 continue;
             }
 
@@ -598,9 +594,7 @@ impl Parser {
                     }
                 }
 
-                TokenKind::Colon
-                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
-                {
+                TokenKind::Colon if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
                     return true;
                 }
 

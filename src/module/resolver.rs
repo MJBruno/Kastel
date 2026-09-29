@@ -201,9 +201,10 @@ impl ModuleResolver {
             .and_then(|exe| exe.parent().map(|dir| dir.join("std")));
 
         if let Some(path) = &exe_sibling
-            && path.is_dir() {
-                return path.clone();
-            }
+            && path.is_dir()
+        {
+            return path.clone();
+        }
 
         let manifest_std = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("std");
 

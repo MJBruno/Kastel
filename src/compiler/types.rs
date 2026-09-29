@@ -9,7 +9,6 @@ use std::fmt;
 
 use crate::frontend::ast::TypeExpr;
 
-
 /// Type sémantique utilisé par le vérificateur statique.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -645,12 +644,14 @@ impl Type {
             _ => return None,
         };
 
-        let function = |params: Vec<Type>, result: Type| Type::Function(FunctionType {
-            generic_params: Vec::new(),
-            generic_constraints: Vec::new(),
-            params,
-            return_type: Box::new(result),
-        });
+        let function = |params: Vec<Type>, result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                generic_constraints: Vec::new(),
+                params,
+                return_type: Box::new(result),
+            })
+        };
 
         match name {
             "send" => Some(function(vec![element_type], Type::None)),
@@ -676,12 +677,14 @@ impl Type {
             return None;
         }
 
-        let function = |result: Type| Type::Function(FunctionType {
-            generic_params: Vec::new(),
-            generic_constraints: Vec::new(),
-            params: Vec::new(),
-            return_type: Box::new(result),
-        });
+        let function = |result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                generic_constraints: Vec::new(),
+                params: Vec::new(),
+                return_type: Box::new(result),
+            })
+        };
 
         match name {
             "lock" | "unlock" => Some(function(Type::None)),
@@ -696,12 +699,14 @@ impl Type {
             return None;
         }
 
-        let function = |result: Type| Type::Function(FunctionType {
-            generic_params: Vec::new(),
-            generic_constraints: Vec::new(),
-            params: Vec::new(),
-            return_type: Box::new(result),
-        });
+        let function = |result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                generic_constraints: Vec::new(),
+                params: Vec::new(),
+                return_type: Box::new(result),
+            })
+        };
 
         match name {
             "acquire" | "release" => Some(function(Type::None)),
@@ -717,12 +722,14 @@ impl Type {
             return None;
         }
 
-        let function = |params: Vec<Type>, result: Type| Type::Function(FunctionType {
-            generic_params: Vec::new(),
-            generic_constraints: Vec::new(),
-            params,
-            return_type: Box::new(result),
-        });
+        let function = |params: Vec<Type>, result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                generic_constraints: Vec::new(),
+                params,
+                return_type: Box::new(result),
+            })
+        };
 
         match name {
             "add" => Some(function(vec![Type::Int], Type::None)),
@@ -737,18 +744,21 @@ impl Type {
     pub fn task_member_type(&self, name: &str) -> Option<Type> {
         let result_type = match self {
             Type::Generic { name, arguments }
-                if name.eq_ignore_ascii_case("Task") && arguments.len() == 1 => {
-                    arguments[0].clone()
-                }
+                if name.eq_ignore_ascii_case("Task") && arguments.len() == 1 =>
+            {
+                arguments[0].clone()
+            }
             _ => return None,
         };
 
-        let function = |result: Type| Type::Function(FunctionType {
-            generic_params: Vec::new(),
-            generic_constraints: Vec::new(),
-            params: Vec::new(),
-            return_type: Box::new(result),
-        });
+        let function = |result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                generic_constraints: Vec::new(),
+                params: Vec::new(),
+                return_type: Box::new(result),
+            })
+        };
 
         match name {
             "join" => Some(function(result_type)),
@@ -763,7 +773,10 @@ impl Type {
     pub fn option_result_member_type(&self, name: &str) -> Option<Type> {
         let function = |generic_params: &[&str], params: Vec<Type>, result: Type| {
             Type::Function(FunctionType {
-                generic_params: generic_params.iter().map(|name| (*name).to_string()).collect(),
+                generic_params: generic_params
+                    .iter()
+                    .map(|name| (*name).to_string())
+                    .collect(),
                 generic_constraints: Vec::new(),
                 params,
                 return_type: Box::new(result),

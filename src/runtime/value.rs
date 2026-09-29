@@ -861,142 +861,139 @@ impl Value {
 
     pub fn get_property(&self, name: &str) -> Result<Value, RuntimeError> {
         match self {
-            Value::Object(handle) => match &*handle.borrow() {
-                Object::Module(_) => self.module_get(name),
+            Value::Object(handle) => {
+                match &*handle.borrow() {
+                    Object::Module(_) => self.module_get(name),
 
-                Object::Instance { class, fields } => {
-                    if let Some(value) = fields.get(name) {
-                        return Ok(value.clone());
-                    }
-
-                    let class_handle = class
-                        .clone()
-                        .ok_or(RuntimeError::TypeError)?;
-
-                    let class_object = class_handle.borrow();
-                    let Object::Class { methods, .. } = &*class_object else {
-                        return Err(RuntimeError::TypeError);
-                    };
-
-                    if let Some(overloads) = methods.get(name) {
-                        if overloads.len() == 1 {
-                            let method_handle = match &overloads[0] {
-                                Value::Object(handle) => handle.clone(),
-                                _ => return Err(RuntimeError::TypeError),
-                            };
-
-                            return Ok(Value::new_bound_method(
-                                method_handle,
-                                self.clone(),
-                            ));
+                    Object::Instance { class, fields } => {
+                        if let Some(value) = fields.get(name) {
+                            return Ok(value.clone());
                         }
 
-                        return Err(RuntimeError::AmbiguousMethod {
-                            name: name.to_string(),
-                        });
-                    }
+                        let class_handle = class.clone().ok_or(RuntimeError::TypeError)?;
 
-                    Err(RuntimeError::ObjectFieldNotFound {
-                        name: name.to_string(),
-                        suggestion: None,
-                    })
-                }
+                        let class_object = class_handle.borrow();
+                        let Object::Class { methods, .. } = &*class_object else {
+                            return Err(RuntimeError::TypeError);
+                        };
 
-                Object::Enum { variants, .. } => {
-                    variants.get(name).cloned().ok_or_else(|| RuntimeError::ObjectFieldNotFound {
-                        name: name.to_string(),
-                        suggestion: None,
-                    })
-                }
+                        if let Some(overloads) = methods.get(name) {
+                            if overloads.len() == 1 {
+                                let method_handle = match &overloads[0] {
+                                    Value::Object(handle) => handle.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                };
 
-                // `NomClasse.champ` (champ statique) / `NomClasse.methode`
-                // (méthode statique, sans appel : la valeur EST la closure,
-                // il n'y a pas de receveur à lier contrairement à une
-                // méthode d'instance). Ni l'un ni l'autre n'est hérité.
-                Object::Class {
-                    statics,
-                    static_methods,
-                    ..
-                } => {
-                    if let Some(value) = statics.get(name) {
-                        return Ok(value.clone());
-                    }
+                                return Ok(Value::new_bound_method(method_handle, self.clone()));
+                            }
 
-                    if let Some(overloads) = static_methods.get(name) {
-                        if overloads.len() == 1 {
-                            return Ok(overloads[0].clone());
+                            return Err(RuntimeError::AmbiguousMethod {
+                                name: name.to_string(),
+                            });
                         }
 
-                        return Err(RuntimeError::AmbiguousMethod {
+                        Err(RuntimeError::ObjectFieldNotFound {
                             name: name.to_string(),
-                        });
+                            suggestion: None,
+                        })
                     }
 
-                    Err(RuntimeError::ObjectFieldNotFound {
-                        name: name.to_string(),
-                        suggestion: None,
-                    })
-                }
-
-                Object::EnumVariant { methods, .. } => {
-                    if let Some(overloads) = methods.get(name) {
-                        if overloads.len() == 1 {
-                            let method_handle = match &overloads[0] {
-                                Value::Object(handle) => handle.clone(),
-                                _ => return Err(RuntimeError::TypeError),
-                            };
-
-                            return Ok(Value::new_bound_method(method_handle, self.clone()));
+                    Object::Enum { variants, .. } => variants.get(name).cloned().ok_or_else(|| {
+                        RuntimeError::ObjectFieldNotFound {
+                            name: name.to_string(),
+                            suggestion: None,
                         }
-
-                        return Err(RuntimeError::AmbiguousMethod {
-                            name: name.to_string(),
-                        });
-                    }
-
-                    Err(RuntimeError::ObjectFieldNotFound {
-                        name: name.to_string(),
-                        suggestion: None,
-                    })
-                }
-
-                // Un dict se lit par clé (`d["name"]`, `d.get("name")`),
-                // PAS par `d.name` : les champs nommés sont ceux d'un record.
-                Object::Dict(_) => Err(RuntimeError::ObjectFieldNotFound {
-                    name: name.to_string(),
-                    suggestion: Some(format!("[\"{name}\"]")),
-                }),
-
-                Object::Record(fields) => fields
-                    .iter()
-                    .find(|(field, _)| field.as_str() == name)
-                    .map(|(_, value)| value.clone())
-                    .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
-                        name: name.to_string(),
-                        suggestion: None,
                     }),
 
-                Object::Error { kind, message } => match name {
-                    "kind" => Ok(Value::new_string(kind.clone())),
-                    "message" => Ok(Value::new_string(message.clone())),
-                    _ => Err(RuntimeError::ObjectFieldNotFound {
+                    // `NomClasse.champ` (champ statique) / `NomClasse.methode`
+                    // (méthode statique, sans appel : la valeur EST la closure,
+                    // il n'y a pas de receveur à lier contrairement à une
+                    // méthode d'instance). Ni l'un ni l'autre n'est hérité.
+                    Object::Class {
+                        statics,
+                        static_methods,
+                        ..
+                    } => {
+                        if let Some(value) = statics.get(name) {
+                            return Ok(value.clone());
+                        }
+
+                        if let Some(overloads) = static_methods.get(name) {
+                            if overloads.len() == 1 {
+                                return Ok(overloads[0].clone());
+                            }
+
+                            return Err(RuntimeError::AmbiguousMethod {
+                                name: name.to_string(),
+                            });
+                        }
+
+                        Err(RuntimeError::ObjectFieldNotFound {
+                            name: name.to_string(),
+                            suggestion: None,
+                        })
+                    }
+
+                    Object::EnumVariant { methods, .. } => {
+                        if let Some(overloads) = methods.get(name) {
+                            if overloads.len() == 1 {
+                                let method_handle = match &overloads[0] {
+                                    Value::Object(handle) => handle.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                };
+
+                                return Ok(Value::new_bound_method(method_handle, self.clone()));
+                            }
+
+                            return Err(RuntimeError::AmbiguousMethod {
+                                name: name.to_string(),
+                            });
+                        }
+
+                        Err(RuntimeError::ObjectFieldNotFound {
+                            name: name.to_string(),
+                            suggestion: None,
+                        })
+                    }
+
+                    // Un dict se lit par clé (`d["name"]`, `d.get("name")`),
+                    // PAS par `d.name` : les champs nommés sont ceux d'un record.
+                    Object::Dict(_) => Err(RuntimeError::ObjectFieldNotFound {
                         name: name.to_string(),
-                        suggestion: None,
+                        suggestion: Some(format!("[\"{name}\"]")),
                     }),
-                },
 
-                // `x.length` (propriété) a été remplacé par `x.size()`.
-                Object::Array(_) | Object::Tuple(_) | Object::Set(_) | Object::String(_)
-                    if name == "length" =>
-                {
-                    Err(RuntimeError::ObjectFieldNotFound {
-                        name: name.to_string(),
-                        suggestion: Some("size()".to_string()),
-                    })
+                    Object::Record(fields) => fields
+                        .iter()
+                        .find(|(field, _)| field.as_str() == name)
+                        .map(|(_, value)| value.clone())
+                        .ok_or_else(|| RuntimeError::ObjectFieldNotFound {
+                            name: name.to_string(),
+                            suggestion: None,
+                        }),
+
+                    Object::Error { kind, message } => match name {
+                        "kind" => Ok(Value::new_string(kind.clone())),
+                        "message" => Ok(Value::new_string(message.clone())),
+                        _ => Err(RuntimeError::ObjectFieldNotFound {
+                            name: name.to_string(),
+                            suggestion: None,
+                        }),
+                    },
+
+                    // `x.length` (propriété) a été remplacé par `x.size()`.
+                    Object::Array(_) | Object::Tuple(_) | Object::Set(_) | Object::String(_)
+                        if name == "length" =>
+                    {
+                        Err(RuntimeError::ObjectFieldNotFound {
+                            name: name.to_string(),
+                            suggestion: Some("size()".to_string()),
+                        })
+                    }
+
+                    _ => Err(RuntimeError::NotObject),
                 }
-
-                _ => Err(RuntimeError::NotObject),
-            },
+            }
 
             _ => Err(RuntimeError::NotObject),
         }
@@ -1327,7 +1324,11 @@ impl std::fmt::Display for Value {
                     Object::Enum { name, .. } => {
                         write!(f, "<enum '{}'>", name)
                     }
-                    Object::EnumVariant { enum_name, variant_name, .. } => {
+                    Object::EnumVariant {
+                        enum_name,
+                        variant_name,
+                        ..
+                    } => {
                         write!(f, "{enum_name}.{variant_name}")
                     }
                     Object::BoundMethod { .. } => {

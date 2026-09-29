@@ -102,11 +102,20 @@ fn option_core_api() {
     assert_eq!(integer(&vm, "mapped"), 42);
     assert_eq!(integer(&vm, "chained"), 82);
     assert_eq!(integer(&vm, "fallback"), 7);
-    assert_eq!(global(&vm, "missing").as_string_value().as_deref(), Some("missing"));
+    assert_eq!(
+        global(&vm, "missing").as_string_value().as_deref(),
+        Some("missing")
+    );
     assert!(boolean(&vm, "some_state"));
     assert!(boolean(&vm, "none_state"));
-    assert_eq!(global(&vm, "text").as_string_value().as_deref(), Some("Some(41)"));
-    assert_eq!(global(&vm, "empty_text").as_string_value().as_deref(), Some("None"));
+    assert_eq!(
+        global(&vm, "text").as_string_value().as_deref(),
+        Some("Some(41)")
+    );
+    assert_eq!(
+        global(&vm, "empty_text").as_string_value().as_deref(),
+        Some("None")
+    );
     assert!(
         global(&vm, "cyclic_text")
             .as_string_value()
@@ -160,7 +169,10 @@ fn result_core_api() {
     );
     assert!(boolean(&vm, "ok_state"));
     assert!(boolean(&vm, "err_state"));
-    assert_eq!(global(&vm, "text").as_string_value().as_deref(), Some("Ok(41)"));
+    assert_eq!(
+        global(&vm, "text").as_string_value().as_deref(),
+        Some("Ok(41)")
+    );
     assert_eq!(
         global(&vm, "err_text").as_string_value().as_deref(),
         Some("Err(bad)")
@@ -170,7 +182,10 @@ fn result_core_api() {
 #[test]
 fn option_and_result_fail_explicitly_when_unwrapped_wrongly() {
     let (_, option_error) = run_script("let value: Option<int> = None; value.unwrap();");
-    assert!(matches!(option_error, Err(RuntimeError::OptionUnwrap { .. })));
+    assert!(matches!(
+        option_error,
+        Err(RuntimeError::OptionUnwrap { .. })
+    ));
 
     let (_, result_error) = run_script(
         r#"
@@ -178,36 +193,45 @@ fn option_and_result_fail_explicitly_when_unwrapped_wrongly() {
         value.expect("expected a success");
         "#,
     );
-    assert!(matches!(result_error, Err(RuntimeError::ResultUnwrap { expected: "Ok", .. })));
+    assert!(matches!(
+        result_error,
+        Err(RuntimeError::ResultUnwrap { expected: "Ok", .. })
+    ));
 }
 
 #[test]
 fn option_and_result_types_are_checked_statically() {
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         let a: Option<int> = None;
         let b: Option<int> = Some(1);
         let c: Result<int, str> = Ok(1);
         let d: Result<int, str> = Err("error");
         "#,
-    )
-    .is_ok());
+        )
+        .is_ok()
+    );
 
     assert!(compile_only("let value: int = None;").is_err());
 
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         let value: Option<int> = Some("wrong");
         "#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         let value: Result<int, str> = Err(42);
         "#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -352,18 +376,21 @@ fn question_mark_runs_finally_before_propagation() {
 
 #[test]
 fn question_mark_checks_return_family_and_result_error_type() {
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         func invalid() -> Result<int, str> {
             let value = Some(42)?;
             return Ok(value);
         }
         "#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         func source() -> Result<int, int> {
             return Err(42);
         }
@@ -373,18 +400,21 @@ fn question_mark_checks_return_family_and_result_error_type() {
             return Ok(value);
         }
         "#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         func invalid() -> Result<int, str> {
             let value = 42?;
             return Ok(value);
         }
         "#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 
     assert!(compile_only("let value = Some(1)?;").is_err());
 }

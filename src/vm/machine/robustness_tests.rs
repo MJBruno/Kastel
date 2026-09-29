@@ -1104,7 +1104,6 @@ class Derived: Base {}
     });
 
     assert!(rejected);
-
 }
 
 #[test]

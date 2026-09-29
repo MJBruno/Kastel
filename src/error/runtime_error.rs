@@ -223,7 +223,10 @@ impl std::fmt::Display for RuntimeError {
             }
 
             RuntimeError::TaskCaptureNotAllowed => {
-                write!(f, "spawn() requires a closure without captured local variables.")
+                write!(
+                    f,
+                    "spawn() requires a closure without captured local variables."
+                )
             }
 
             RuntimeError::TaskNotFound => {
@@ -263,7 +266,10 @@ impl std::fmt::Display for RuntimeError {
             }
 
             RuntimeError::SemaphoreNotOwner => {
-                write!(f, "Semaphore can only be released by a task that holds a permit.")
+                write!(
+                    f,
+                    "Semaphore can only be released by a task that holds a permit."
+                )
             }
 
             RuntimeError::WaitGroupUnderflow => {

@@ -481,9 +481,21 @@ mod tests {
             arguments: vec![Type::Int],
         };
 
-        assert!(Capability::Eq.intrinsic_result(&option_int, &Type::None).is_some());
-        assert!(Capability::Eq.intrinsic_result(&Type::None, &option_int).is_some());
-        assert!(Capability::Eq.intrinsic_result(&Type::Int, &Type::None).is_none());
+        assert!(
+            Capability::Eq
+                .intrinsic_result(&option_int, &Type::None)
+                .is_some()
+        );
+        assert!(
+            Capability::Eq
+                .intrinsic_result(&Type::None, &option_int)
+                .is_some()
+        );
+        assert!(
+            Capability::Eq
+                .intrinsic_result(&Type::Int, &Type::None)
+                .is_none()
+        );
     }
 
     #[test]

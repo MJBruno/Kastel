@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler,
-    error::runtime_error::RuntimeError,
-    runtime::value::Value,
+    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 /// Construit un compteur coopératif de tâches.
@@ -19,7 +17,10 @@ pub fn native_wait_group(args: &[Value]) -> Result<Value, RuntimeError> {
 }
 
 pub fn register(globals: &mut HashMap<String, Value>) {
-    globals.insert("wait_group".into(), Value::NativeFunction(native_wait_group));
+    globals.insert(
+        "wait_group".into(),
+        Value::NativeFunction(native_wait_group),
+    );
 }
 
 pub fn register_compiler(compiler: &mut Compiler) {

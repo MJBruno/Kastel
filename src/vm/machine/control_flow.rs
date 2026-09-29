@@ -108,5 +108,4 @@ impl VirtualMachine {
         self.push(Value::Boolean(success));
         Ok(())
     }
-
 }

@@ -93,10 +93,11 @@ impl FormatSpec {
 
         // [sign]
         if let Some(&character) = chars.get(index)
-            && matches!(character, '+' | '-' | ' ') {
-                result.sign = Some(character);
-                index += 1;
-            }
+            && matches!(character, '+' | '-' | ' ')
+        {
+            result.sign = Some(character);
+            index += 1;
+        }
 
         // [#]
         if chars.get(index) == Some(&'#') {
@@ -446,9 +447,10 @@ fn format_float(value: f64, spec: FormatSpec) -> Result<String, RuntimeError> {
     }
 
     if let Some(separator) = spec.grouping
-        && matches!(kind, 'f' | 'F' | 'g' | 'G' | '%') {
-            rendered = group_decimal(&rendered, separator);
-        }
+        && matches!(kind, 'f' | 'F' | 'g' | 'G' | '%')
+    {
+        rendered = group_decimal(&rendered, separator);
+    }
 
     if kind == '%' {
         rendered.push('%');

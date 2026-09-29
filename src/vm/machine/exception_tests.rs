@@ -64,11 +64,26 @@ fn typed_catch_catches_runtime_errors_as_err() {
 
     result.expect("catch(e: Err) doit intercepter une erreur runtime");
     assert!(boolean(&vm, "caught"));
-    assert_eq!(global(&vm, "kind").as_string_value().as_deref(), Some("DivisionByZero"));
-    assert_eq!(global(&vm, "message").as_string_value().as_deref(), Some("Division by zero."));
-    assert_eq!(global(&vm, "kind_method").as_string_value().as_deref(), Some("DivisionByZero"));
-    assert_eq!(global(&vm, "message_method").as_string_value().as_deref(), Some("Division by zero."));
-    assert_eq!(global(&vm, "rendered").as_string_value().as_deref(), Some("Err<DivisionByZero>(Division by zero.)"));
+    assert_eq!(
+        global(&vm, "kind").as_string_value().as_deref(),
+        Some("DivisionByZero")
+    );
+    assert_eq!(
+        global(&vm, "message").as_string_value().as_deref(),
+        Some("Division by zero.")
+    );
+    assert_eq!(
+        global(&vm, "kind_method").as_string_value().as_deref(),
+        Some("DivisionByZero")
+    );
+    assert_eq!(
+        global(&vm, "message_method").as_string_value().as_deref(),
+        Some("Division by zero.")
+    );
+    assert_eq!(
+        global(&vm, "rendered").as_string_value().as_deref(),
+        Some("Err<DivisionByZero>(Division by zero.)")
+    );
 }
 
 #[test]
@@ -95,7 +110,10 @@ fn typed_catch_does_not_swallow_other_thrown_values() {
     result.expect("une exception non typée doit remonter au catch général");
     assert!(!boolean(&vm, "typed"));
     assert!(boolean(&vm, "generic"));
-    assert_eq!(global(&vm, "value").as_string_value().as_deref(), Some("boom"));
+    assert_eq!(
+        global(&vm, "value").as_string_value().as_deref(),
+        Some("boom")
+    );
 }
 
 #[test]

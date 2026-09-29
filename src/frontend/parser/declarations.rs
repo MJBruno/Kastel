@@ -192,14 +192,18 @@ impl Parser {
         let mut parameters = Vec::new();
 
         loop {
-            let parameter = self.consume(
-                TokenKind::Identifier,
-                "Nom de paramètre générique attendu",
-            )?;
+            let parameter =
+                self.consume(TokenKind::Identifier, "Nom de paramètre générique attendu")?;
 
-            if parameters.iter().any(|existing: &GenericParam| existing.name == parameter.lexeme) {
+            if parameters
+                .iter()
+                .any(|existing: &GenericParam| existing.name == parameter.lexeme)
+            {
                 return Err(ParserError {
-                    message: format!("Le paramètre générique '{}' est déjà déclaré", parameter.lexeme),
+                    message: format!(
+                        "Le paramètre générique '{}' est déjà déclaré",
+                        parameter.lexeme
+                    ),
                     line: parameter.line,
                     column: parameter.column,
                 });

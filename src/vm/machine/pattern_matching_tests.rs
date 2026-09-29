@@ -230,8 +230,9 @@ fn match_supports_tuple_and_list_rest_patterns() {
 
 #[test]
 fn match_or_bindings_must_have_the_same_names() {
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         func value(input: Option<int>) -> int {
             match input {
                 Some(x) | Some(y) => { return x; }
@@ -239,11 +240,13 @@ fn match_or_bindings_must_have_the_same_names() {
             }
         }
         "#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         func value(input: Option<int>) -> int {
             match input {
                 Some(x) | Some(x) => { return x; }
@@ -251,14 +254,16 @@ fn match_or_bindings_must_have_the_same_names() {
             }
         }
         "#,
-    )
-    .is_ok());
+        )
+        .is_ok()
+    );
 }
 
 #[test]
 fn match_requires_exhaustiveness_for_closed_types() {
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         func value(input: Option<int>) -> int {
             match input {
                 Some(x) => { return x; }
@@ -266,11 +271,13 @@ fn match_requires_exhaustiveness_for_closed_types() {
             return 0;
         }
         "#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         func value(input: bool) -> int {
             match input {
                 true => { return 1; }
@@ -278,14 +285,16 @@ fn match_requires_exhaustiveness_for_closed_types() {
             return 0;
         }
         "#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn guarded_arms_do_not_make_a_match_exhaustive() {
-    assert!(compile_only(
-        r#"
+    assert!(
+        compile_only(
+            r#"
         func value(input: Option<int>) -> int {
             match input {
                 Some(x) if x > 10 => { return x; }
@@ -294,8 +303,9 @@ fn guarded_arms_do_not_make_a_match_exhaustive() {
             return -1;
         }
         "#,
-    )
-    .is_err());
+        )
+        .is_err()
+    );
 }
 
 #[test]

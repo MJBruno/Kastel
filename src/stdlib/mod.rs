@@ -54,18 +54,18 @@ pub mod iterator;
 pub mod json;
 pub mod math;
 pub mod mutex;
-pub mod semaphore;
-pub mod wait_group;
 pub mod option;
 pub mod os;
 pub mod path;
 pub mod process;
 pub mod record;
 pub mod result;
+pub mod semaphore;
 pub mod set;
 pub mod string;
 pub mod system;
 pub mod tuple;
+pub mod wait_group;
 
 /// Enregistre toutes les fonctions natives dans les globals du runtime.
 pub fn register_natives(globals: &mut HashMap<String, Value>) {

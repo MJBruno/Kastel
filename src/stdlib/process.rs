@@ -77,7 +77,10 @@ pub fn native_process_run(args: &[Value]) -> Result<Value, RuntimeError> {
         ("stdout".to_string(), Value::new_string(stdout)),
         ("stderr".to_string(), Value::new_string(stderr)),
         ("code".to_string(), Value::Integer(code)),
-        ("success".to_string(), Value::Boolean(output.status.success())),
+        (
+            "success".to_string(),
+            Value::Boolean(output.status.success()),
+        ),
     ]))
 }
 
