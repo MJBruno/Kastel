@@ -9,6 +9,7 @@ use crate::error::runtime_error::RuntimeError;
 use crate::runtime::barrier::BarrierState;
 use crate::module::module::ModuleLoader;
 use crate::runtime::channel::ChannelState;
+use crate::runtime::condvar::CondvarState;
 use crate::runtime::mutex::MutexState;
 use crate::runtime::rwlock::{RwLockMode, RwLockState};
 use crate::runtime::event::EventState;
@@ -118,6 +119,8 @@ pub(crate) struct Scheduler {
     /// RwLock attendu par chaque tâche.
     pub(crate) waiting_rwlocks: HashMap<usize, Rc<RefCell<RwLockState>>>,
     pub(crate) waiting_events: HashMap<usize, Rc<RefCell<EventState>>>,
+    /// Variables de condition attendues par les tâches.
+    pub(crate) waiting_condvars: HashMap<usize, Rc<RefCell<CondvarState>>>,
     /// RwLocks actuellement détenus par chaque tâche.
     pub(crate) owned_rwlocks: HashMap<usize, Vec<Rc<RefCell<RwLockState>>>>,
     /// Mutex actuellement détenus par chaque tâche. Le scheduler les conserve
@@ -149,6 +152,7 @@ impl Scheduler {
             waiting_mutexes: HashMap::new(),
             waiting_rwlocks: HashMap::new(),
             waiting_events: HashMap::new(),
+            waiting_condvars: HashMap::new(),
             owned_rwlocks: HashMap::new(),
             owned_mutexes: HashMap::new(),
             waiting_wait_groups: HashMap::new(),
@@ -311,6 +315,7 @@ impl Scheduler {
             scheduler.unregister_mutex_wait(id);
             scheduler.unregister_rwlock_wait(id);
             scheduler.unregister_event_wait(id);
+            scheduler.unregister_condvar_wait(id);
             scheduler.unregister_wait_group_wait(id);
             if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
                 scheduler.break_barrier(barrier);
@@ -320,6 +325,21 @@ impl Scheduler {
             scheduler.release_owned_mutexes(id);
             scheduler.release_owned_rwlocks(id);
             scheduler.release_owned_semaphores(id);
+
+            // Même invariant que pour l'annulation immédiate : les releases
+            // peuvent modifier les files de verrous, donc le nettoyage des
+            // inscriptions d'attente doit être idempotent et final.
+            Self::unregister_channel_waits(&mut scheduler, id);
+            scheduler.unregister_mutex_wait(id);
+            scheduler.unregister_rwlock_wait(id);
+            scheduler.unregister_event_wait(id);
+            scheduler.unregister_condvar_wait(id);
+            scheduler.unregister_wait_group_wait(id);
+            if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
+                scheduler.break_barrier(barrier);
+            }
+            scheduler.unregister_semaphore_wait(id);
+            scheduler.unregister_timer(id);
             task.vm.release_task_resources();
         } else {
             match outcome {
@@ -356,6 +376,7 @@ impl Scheduler {
             scheduler.unregister_timer(id);
             scheduler.unregister_rwlock_wait(id);
             scheduler.unregister_event_wait(id);
+            scheduler.unregister_condvar_wait(id);
             scheduler.unregister_wait_group_wait(id);
             scheduler.unregister_semaphore_wait(id);
             task.vm.release_task_resources();
@@ -649,6 +670,7 @@ impl Scheduler {
                             .waiting_mutexes
                             .get(&next_id)
                             .is_some_and(|waiting| Self::mutex_key(waiting) == Self::mutex_key(mutex))
+                        && (task.vm.waiting_mutex.is_some() || task.vm.waiting_condvar.is_some())
                 });
 
             self.waiting_mutexes.remove(&next_id);
@@ -1088,6 +1110,145 @@ impl Scheduler {
             return;
         };
         event.borrow_mut().waiters.retain(|id| *id != task_id);
+    }
+
+    fn condvar_key(condvar: &Rc<RefCell<CondvarState>>) -> usize {
+        Rc::as_ptr(condvar) as usize
+    }
+
+    pub(crate) fn wait_on_condvar(
+        shared: &Rc<RefCell<Self>>,
+        task_id: usize,
+        condvar: Rc<RefCell<CondvarState>>,
+    ) -> Result<bool, RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let task_exists = scheduler.tasks.get(task_id).and_then(Option::as_ref).is_some();
+        if !task_exists && !scheduler.running.contains(&task_id) {
+            return Err(RuntimeError::TaskNotFound);
+        }
+
+        if scheduler.waiting_condvars.contains_key(&task_id) {
+            return Err(RuntimeError::CondvarDeadlock);
+        }
+
+        let mutex = condvar.borrow().mutex.clone();
+        if mutex.borrow().owner != Some(task_id) {
+            return Err(RuntimeError::CondvarNotOwner);
+        }
+
+        {
+            let mut state = condvar.borrow_mut();
+            if !state.waiters.contains(&task_id) {
+                state.waiters.push_back(task_id);
+            }
+        }
+
+        scheduler.waiting_condvars.insert(task_id, condvar);
+
+        scheduler.remove_owned_mutex(task_id, &mutex);
+        scheduler.wake_next_mutex_waiter(&mutex);
+
+        Ok(false)
+    }
+
+    fn enqueue_condvar_waiter_for_mutex(
+        &mut self,
+        task_id: usize,
+        condvar: &Rc<RefCell<CondvarState>>,
+    ) {
+        let mutex = condvar.borrow().mutex.clone();
+        self.waiting_mutexes.insert(task_id, mutex.clone());
+        mutex.borrow_mut().waiters.push_back(task_id);
+
+        if mutex.borrow().owner.is_none() {
+            self.wake_next_mutex_waiter(&mutex);
+        }
+    }
+
+    pub(crate) fn notify_one_condvar(
+        shared: &Rc<RefCell<Self>>,
+        condvar: &Rc<RefCell<CondvarState>>,
+    ) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let key = Self::condvar_key(condvar);
+
+        loop {
+            let task_id = {
+                let mut state = condvar.borrow_mut();
+                state.waiters.pop_front()
+            };
+
+            let Some(task_id) = task_id else {
+                return Ok(());
+            };
+
+            let valid = scheduler
+                .tasks
+                .get(task_id)
+                .and_then(Option::as_ref)
+                .is_some_and(|task| {
+                    task.status == TaskStateStatus::Waiting
+                        && scheduler
+                            .waiting_condvars
+                            .get(&task_id)
+                            .is_some_and(|waiting| Self::condvar_key(waiting) == key)
+                        && task.vm.waiting_condvar.is_some()
+                });
+
+            scheduler.waiting_condvars.remove(&task_id);
+            if !valid {
+                continue;
+            }
+
+            let condvar = condvar.clone();
+            scheduler.enqueue_condvar_waiter_for_mutex(task_id, &condvar);
+            return Ok(());
+        }
+    }
+
+    pub(crate) fn notify_all_condvar(
+        shared: &Rc<RefCell<Self>>,
+        condvar: &Rc<RefCell<CondvarState>>,
+    ) -> Result<(), RuntimeError> {
+        let mut scheduler = shared.borrow_mut();
+        let waiters = {
+            let mut state = condvar.borrow_mut();
+            std::mem::take(&mut state.waiters)
+        };
+        let key = Self::condvar_key(condvar);
+
+        for task_id in waiters {
+            let valid = scheduler
+                .tasks
+                .get(task_id)
+                .and_then(Option::as_ref)
+                .is_some_and(|task| {
+                    task.status == TaskStateStatus::Waiting
+                        && scheduler
+                            .waiting_condvars
+                            .get(&task_id)
+                            .is_some_and(|waiting| Self::condvar_key(waiting) == key)
+                        && task.vm.waiting_condvar.is_some()
+                });
+
+            scheduler.waiting_condvars.remove(&task_id);
+            if !valid {
+                continue;
+            }
+
+            let condvar = condvar.clone();
+            scheduler.enqueue_condvar_waiter_for_mutex(task_id, &condvar);
+        }
+
+        Ok(())
+    }
+
+    fn unregister_condvar_wait(&mut self, task_id: usize) {
+        let Some(condvar) = self.waiting_condvars.remove(&task_id) else {
+            return;
+        };
+
+        condvar.borrow_mut().waiters.retain(|id| *id != task_id);
     }
 
     fn semaphore_key(semaphore: &Rc<RefCell<SemaphoreState>>) -> usize {
@@ -2097,6 +2258,23 @@ impl Scheduler {
                 scheduler.release_owned_rwlocks(id);
                 scheduler.release_owned_semaphores(id);
 
+                // La libération automatique d'un verrou peut réveiller d'autres
+                // tâches et modifier les files d'attente. Rejoue le nettoyage
+                // après ces effets de bord afin qu'une annulation soit une
+                // barrière de cohérence : aucune inscription d'attente ne peut
+                // rester attachée à la tâche annulée.
+                Self::unregister_channel_waits(&mut scheduler, id);
+                scheduler.unregister_mutex_wait(id);
+                scheduler.unregister_rwlock_wait(id);
+                scheduler.unregister_event_wait(id);
+                scheduler.unregister_condvar_wait(id);
+                scheduler.unregister_wait_group_wait(id);
+                if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
+                    scheduler.break_barrier(barrier);
+                }
+                scheduler.unregister_semaphore_wait(id);
+                scheduler.unregister_timer(id);
+
                 let task = scheduler
                     .tasks
                     .get_mut(id)
@@ -2208,6 +2386,9 @@ impl Scheduler {
             }
             if let Some(event) = &task.vm.waiting_event {
                 values.push(event.clone());
+            }
+            if let Some(condvar) = &task.vm.waiting_condvar {
+                values.push(condvar.clone());
             }
             if let Some(channels) = &task.vm.waiting_select_channels {
                 values.extend(channels.iter().cloned());

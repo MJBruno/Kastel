@@ -48,6 +48,7 @@ pub mod array;
 pub mod barrier;
 pub mod rwlock;
 pub mod channel;
+pub mod condvar;
 pub mod debug;
 pub mod dict;
 pub mod event;
@@ -87,6 +88,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     json::register(globals);
     file::register(globals);
     channel::register(globals);
+    condvar::register(globals);
     mutex::register(globals);
     semaphore::register(globals);
     wait_group::register(globals);
@@ -116,6 +118,7 @@ pub fn register_compiler_natives(compiler: &mut Compiler) {
     json::register_compiler(compiler);
     file::register_compiler(compiler);
     channel::register_compiler(compiler);
+    condvar::register_compiler(compiler);
     mutex::register_compiler(compiler);
     semaphore::register_compiler(compiler);
     wait_group::register_compiler(compiler);

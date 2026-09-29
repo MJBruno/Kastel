@@ -342,6 +342,7 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
         Object::Barrier(_) => {}
         Object::RwLock(_) => {}
         Object::Event(_) => {}
+        Object::Condvar(_) => {}
 
         Object::Tuple(elements) => {
             for value in elements {

@@ -162,6 +162,8 @@ pub enum RuntimeError {
     BarrierBroken,
     RwLockDeadlock,
     RwLockNotOwner,
+    CondvarDeadlock,
+    CondvarNotOwner,
     WaitGroupNegativeCount,
     YieldOutsideTask,
 
@@ -298,6 +300,14 @@ impl std::fmt::Display for RuntimeError {
 
             RuntimeError::RwLockNotOwner => {
                 write!(f, "RwLock is not owned by this task.")
+            }
+
+            RuntimeError::CondvarDeadlock => {
+                write!(f, "Condition variable wait would deadlock because this task is already waiting on it.")
+            }
+
+            RuntimeError::CondvarNotOwner => {
+                write!(f, "Condition variable wait requires owning its associated mutex.")
             }
 
             RuntimeError::YieldOutsideTask => {
@@ -513,6 +523,8 @@ impl RuntimeError {
             RuntimeError::BarrierBroken => "BarrierBroken",
             RuntimeError::RwLockDeadlock => "RwLockDeadlock",
             RuntimeError::RwLockNotOwner => "RwLockNotOwner",
+            RuntimeError::CondvarDeadlock => "CondvarDeadlock",
+            RuntimeError::CondvarNotOwner => "CondvarNotOwner",
             RuntimeError::YieldOutsideTask => "YieldOutsideTask",
         }
     }

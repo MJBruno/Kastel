@@ -994,6 +994,7 @@ impl VirtualMachine {
                         Object::Barrier(_) => 20,
                         Object::RwLock(_) => 21,
                         Object::Event(_) => 22,
+                        Object::Condvar(_) => 23,
                         _ => 5,
                     }
                 };
@@ -2219,6 +2220,108 @@ impl VirtualMachine {
                             };
 
                             self.push(Value::Boolean(rwlock.borrow().is_write_locked()));
+                        }
+
+                        _ => {
+                            return Err(RuntimeError::ObjectFieldNotFound {
+                                name: method_name,
+                                suggestion: None,
+                            });
+                        }
+                    }
+
+                    return Ok(());
+                }
+
+
+                if object_kind == 23 {
+                    match method_name.as_str() {
+                        "wait" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let condvar = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Condvar(condvar) => condvar.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+
+                            Scheduler::wait_on_condvar(&scheduler, task_id, condvar)?;
+                            self.waiting_condvar = Some(Value::Object(handle.clone()));
+                            self.waiting_requested = true;
+                        }
+
+                        "notify_one" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let condvar = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Condvar(condvar) => condvar.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            Scheduler::notify_one_condvar(&scheduler, &condvar)?;
+                            self.push(Value::None);
+                        }
+
+                        "notify_all" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let condvar = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Condvar(condvar) => condvar.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            let scheduler =
+                                self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
+                            Scheduler::notify_all_condvar(&scheduler, &condvar)?;
+                            self.push(Value::None);
+                        }
+
+                        "waiter_count" => {
+                            if arg_count != 0 {
+                                return Err(RuntimeError::WrongArgumentCount {
+                                    expected: 0,
+                                    found: arg_count,
+                                });
+                            }
+
+                            let condvar = {
+                                let object = handle.borrow();
+                                match &*object {
+                                    Object::Condvar(condvar) => condvar.clone(),
+                                    _ => return Err(RuntimeError::TypeError),
+                                }
+                            };
+
+                            self.push(Value::Integer(condvar.borrow().waiter_count() as i64));
                         }
 
                         _ => {

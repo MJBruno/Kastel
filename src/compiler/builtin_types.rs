@@ -79,6 +79,10 @@ pub fn all() -> HashMap<String, Type> {
     );
     types.insert("rwlock".into(), function(&[], Named("RwLock".into())));
     types.insert("event".into(), function(&[], Named("Event".into())));
+    types.insert(
+        "condvar".into(),
+        function(&[Named("Mutex".into())], Named("Condvar".into())),
+    );
     types.insert("yield".into(), function(&[], None));
     types.insert("sleep".into(), function(&[Type::Int], Type::None));
     types.insert("select".into(), Dynamic);

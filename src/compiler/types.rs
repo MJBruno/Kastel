@@ -821,6 +821,28 @@ impl Type {
         }
     }
 
+    /// Signatures statiques de `Condvar`.
+    pub fn condvar_member_type(&self, name: &str) -> Option<Type> {
+        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("Condvar")) {
+            return None;
+        }
+
+        let function = |result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                generic_constraints: Vec::new(),
+                params: Vec::new(),
+                return_type: Box::new(result),
+            })
+        };
+
+        match name {
+            "wait" | "notify_one" | "notify_all" => Some(function(Type::None)),
+            "waiter_count" => Some(function(Type::Int)),
+            _ => None,
+        }
+    }
+
     /// Signatures statiques de `Task<T>`.
     pub fn task_member_type(&self, name: &str) -> Option<Type> {
         let result_type = match self {

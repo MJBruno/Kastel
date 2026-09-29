@@ -4207,6 +4207,453 @@ fn waiting_event_is_kept_alive_by_the_scheduler() {
     });
 }
 
+
+#[test]
+fn condvar_constructor_requires_a_mutex() {
+    let error = compile_only(
+        r#"
+        let c = condvar(1);
+    "#,
+    )
+    .unwrap_err();
+
+    assert!(is_wrong_argument_type(&error));
+}
+
+#[test]
+fn condvar_wait_requires_owning_the_associated_mutex() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let c = condvar(m);
+
+            func worker() -> str {
+                try {
+                    c.wait();
+                    return "bad";
+                } catch (e: Err) {
+                    return e.kind;
+                }
+            }
+
+            let ok = spawn(worker).join() == "CondvarNotOwner";
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn condvar_wait_releases_mutex_and_reacquires_before_returning() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let c = condvar(m);
+            let events = channel<int>();
+
+            func waiter() {
+                m.lock();
+                events.send(1);
+                c.wait();
+                events.send(4);
+                m.unlock();
+            }
+
+            func holder() {
+                events.send(2);
+                m.lock();
+                events.send(3);
+                c.notify_one();
+                yield();
+                m.unlock();
+            }
+
+            let task = spawn(waiter);
+            events.recv();
+
+            let holder_task = spawn(holder);
+            let holder_started = events.recv();
+            let holder_locked = events.recv();
+            let still_waiting = task.status() == "waiting";
+            holder_task.join();
+            let resumed = events.recv();
+            task.join();
+
+            let ok = holder_started == 2
+                && holder_locked == 3
+                && still_waiting
+                && resumed == 4
+                && !m.is_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn condvar_notification_is_not_sticky() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let c = condvar(m);
+            c.notify_one();
+            c.notify_all();
+
+            func waiter() {
+                m.lock();
+                c.wait();
+                m.unlock();
+            }
+
+            let task = spawn(waiter);
+            while task.status() != "waiting" {
+                sleep(1);
+            }
+
+            let blocked = task.status() == "waiting" && c.waiter_count() == 1;
+            c.notify_one();
+            task.join();
+
+            let ok = blocked && c.waiter_count() == 0 && !m.is_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn condvar_notify_one_preserves_waiter_fifo() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let c = condvar(m);
+            let entered = channel<int>();
+            let events = channel<int>(2);
+
+            func waiter(id) {
+                m.lock();
+                entered.send(id);
+                c.wait();
+                events.send(id);
+                m.unlock();
+            }
+
+            let first = spawn(waiter, 1);
+            entered.recv();
+            while c.waiter_count() != 1 {
+                sleep(1);
+            }
+
+            let second = spawn(waiter, 2);
+            entered.recv();
+            while c.waiter_count() != 2 {
+                sleep(1);
+            }
+
+            c.notify_one();
+            let first_event = events.recv();
+            first.join();
+
+            c.notify_one();
+            let second_event = events.recv();
+            second.join();
+
+            let ok = first_event == 1 && second_event == 2 && c.waiter_count() == 0;
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn condvar_notify_all_reacquires_mutex_and_preserves_fifo() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let c = condvar(m);
+            let entered = channel<int>();
+            let events = channel<int>(3);
+
+            func waiter(id) {
+                m.lock();
+                entered.send(id);
+                c.wait();
+                events.send(id);
+                m.unlock();
+            }
+
+            let first = spawn(waiter, 1);
+            entered.recv();
+            while c.waiter_count() != 1 {
+                sleep(1);
+            }
+
+            let second = spawn(waiter, 2);
+            entered.recv();
+            while c.waiter_count() != 2 {
+                sleep(1);
+            }
+
+            let third = spawn(waiter, 3);
+            entered.recv();
+            while c.waiter_count() != 3 {
+                sleep(1);
+            }
+
+            c.notify_all();
+
+            let a = events.recv();
+            let b = events.recv();
+            let c_value = events.recv();
+            first.join();
+            second.join();
+            third.join();
+
+            let ok = a == 1 && b == 2 && c_value == 3 && c.waiter_count() == 0 && !m.is_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn condvar_waiter_count_tracks_waiters() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let c = condvar(m);
+            let entered = channel<int>();
+
+            func waiter(id) {
+                m.lock();
+                entered.send(id);
+                c.wait();
+                m.unlock();
+            }
+
+            let a = spawn(waiter, 1);
+            entered.recv();
+            while c.waiter_count() != 1 {
+                sleep(1);
+            }
+
+            let b = spawn(waiter, 2);
+            entered.recv();
+            while c.waiter_count() != 2 {
+                sleep(1);
+            }
+
+            let before = c.waiter_count();
+            c.notify_one();
+            let after_one = c.waiter_count();
+            a.join();
+            c.notify_one();
+            b.join();
+
+            let ok = before == 2 && after_one == 1 && c.waiter_count() == 0;
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_condvar_waiter_cleans_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let c = condvar(m);
+            let started = channel<int>();
+
+            func waiter() {
+                m.lock();
+                started.send(1);
+                c.wait();
+                m.unlock();
+            }
+
+            let task = spawn(waiter);
+            started.recv();
+            while task.status() != "waiting" {
+                sleep(1);
+            }
+
+            task.cancel();
+
+            let ok = task.status() == "cancelled" && c.waiter_count() == 0 && !m.is_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_condvars.is_empty());
+        assert!(scheduler.waiting_mutexes.is_empty());
+    });
+}
+
+#[test]
+fn self_cancellation_while_waiting_on_condvar_cleans_registration() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let c = condvar(m);
+            let handle = [];
+            let started = channel<int>();
+
+            func worker() {
+                m.lock();
+                started.send(1);
+                handle[0].cancel();
+                c.wait();
+                m.unlock();
+            }
+
+            let task = spawn(worker);
+            handle.add(task);
+            started.recv();
+
+            let cancelled = false;
+            try {
+                task.join();
+            } catch (err: Err) {
+                cancelled = err.kind == "TaskCancelled";
+            }
+
+            let ok = cancelled
+                && task.status() == "cancelled"
+                && c.waiter_count() == 0
+                && !m.is_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_condvars.is_empty());
+        assert!(scheduler.waiting_mutexes.is_empty());
+    });
+}
+
+#[test]
+fn cancelling_condvar_waiter_during_mutex_reacquire_cleans_both_queues() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let c = condvar(m);
+            let started = channel<int>();
+            let notified = channel<int>();
+
+            func waiter() {
+                m.lock();
+                started.send(1);
+                c.wait();
+                m.unlock();
+            }
+
+            func holder(target) {
+                m.lock();
+                c.notify_one();
+                notified.send(1);
+                yield();
+                target.cancel();
+                m.unlock();
+            }
+
+            let task = spawn(waiter);
+            started.recv();
+            while c.waiter_count() != 1 {
+                sleep(1);
+            }
+
+            let holder_task = spawn(holder, task);
+            notified.recv();
+            task.cancel();
+            holder_task.join();
+
+            let ok = task.status() == "cancelled"
+                && c.waiter_count() == 0
+                && !m.is_locked();
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_condvars.is_empty());
+        assert!(scheduler.waiting_mutexes.is_empty());
+    });
+}
+
+#[test]
+fn waiting_condvar_is_kept_alive_by_the_scheduler() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m: dynamic = mutex();
+            let c: dynamic = condvar(m);
+            let started = channel<int>();
+
+            func waiter(c_arg, m_arg) {
+                m_arg.lock();
+                started.send(1);
+                c_arg.wait();
+                m_arg.unlock();
+            }
+
+            let task = spawn(waiter, c, m);
+            started.recv();
+            while task.status() != "waiting" {
+                sleep(1);
+            }
+            c = None;
+            m = None;
+
+            for i in range(0, 2000) {
+                let junk = [i, i + 1, i + 2];
+            }
+
+            task.cancel();
+            let ok = task.status() == "cancelled";
+        "#,
+        );
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+
+        let scheduler = vm.scheduler_owner.as_ref().unwrap().borrow();
+        assert!(scheduler.waiting_condvars.is_empty());
+    });
+}
+
+#[test]
+fn condvar_methods_are_checked_statically() {
+    let error = compile_only(
+        r#"
+        let m = mutex();
+        let c = condvar(m);
+        let value: str = c.waiter_count();
+    "#,
+    )
+    .unwrap_err();
+
+    assert!(is_type_mismatch(&error));
+}
+
 #[test]
 fn event_methods_are_checked_statically() {
     let error = compile_only(

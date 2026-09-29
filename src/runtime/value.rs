@@ -213,6 +213,14 @@ impl Value {
         ))))
     }
 
+    pub fn new_condvar(
+        mutex: Rc<RefCell<crate::runtime::mutex::MutexState>>,
+    ) -> Self {
+        Self::new_heap_object(Object::Condvar(Rc::new(RefCell::new(
+            crate::runtime::condvar::CondvarState::new(mutex),
+        ))))
+    }
+
     pub fn new_barrier(parties: usize) -> Self {
         Self::new_heap_object(Object::Barrier(Rc::new(RefCell::new(
             crate::runtime::barrier::BarrierState::new(parties),
@@ -1261,6 +1269,9 @@ impl std::fmt::Display for Value {
                     Object::Event(event) => {
                         write!(f, "Event(set={})", event.borrow().is_set())
                     }
+                    Object::Condvar(condvar) => {
+                        write!(f, "Condvar(waiters={})", condvar.borrow().waiter_count())
+                    }
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1426,6 +1437,7 @@ impl Value {
                 Object::Barrier(_) => "Barrier",
                 Object::RwLock(_) => "RwLock",
                 Object::Event(_) => "Event",
+                Object::Condvar(_) => "Condvar",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",
