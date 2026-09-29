@@ -243,9 +243,7 @@ impl Compiler {
             None => self.emit_opcode(OpCode::None),
         }
 
-        self.compile_active_finally()?;
-
-        self.emit_opcode(OpCode::Return);
+        self.emit_return_through_finally(false)?;
 
         Ok(())
     }

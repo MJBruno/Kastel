@@ -4949,3 +4949,273 @@ fn mutual_async_await_is_reported_as_a_deadlock() {
     result.unwrap();
     assert_global_true(&vm, "ok");
 }
+
+// ---------- exceptions et annulation ----------
+
+#[test]
+fn cancelling_a_task_runs_its_finally_blocks() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let log = [];
+            let gate = channel<int>();
+
+            func worker() {
+                try {
+                    gate.send(1);
+                    while true {
+                        yield();
+                    }
+                } finally {
+                    log.add("cleanup");
+                }
+            }
+
+            let task = spawn(worker);
+            gate.recv();
+            task.cancel();
+
+            let caught = false;
+
+            try {
+                task.join();
+            } catch (e: Err) {
+                caught = e.kind == "TaskCancelled";
+            }
+
+            let ok = caught && log.size() == 1 && task.status() == "cancelled";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancellation_is_not_swallowed_by_catch() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let log = [];
+            let gate = channel<int>();
+
+            func worker() {
+                try {
+                    gate.send(1);
+                    while true {
+                        yield();
+                    }
+                } catch (e) {
+                    log.add("caught");
+                } finally {
+                    log.add("finally");
+                }
+            }
+
+            let task = spawn(worker);
+            gate.recv();
+            task.cancel();
+
+            try {
+                task.join();
+            } catch (e) {
+            }
+
+            let ok = log.size() == 1 && log[0] == "finally" && task.status() == "cancelled";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancellation_unwinds_finally_blocks_across_function_calls() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let log = [];
+            let gate = channel<int>();
+
+            func inner() {
+                try {
+                    gate.send(1);
+                    while true {
+                        yield();
+                    }
+                } finally {
+                    log.add("inner");
+                }
+            }
+
+            func outer() {
+                try {
+                    inner();
+                } finally {
+                    log.add("outer");
+                }
+            }
+
+            let task = spawn(outer);
+            gate.recv();
+            task.cancel();
+
+            try {
+                task.join();
+            } catch (e) {
+            }
+
+            let ok = log.size() == 2 && log[0] == "inner" && log[1] == "outer";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_a_waiting_task_runs_its_finally_and_releases_the_mutex() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let m = mutex();
+            let log = [];
+            let gate = channel<int>();
+            let never = channel<int>();
+
+            func holder() {
+                m.lock();
+                try {
+                    gate.send(1);
+                    never.recv();
+                } finally {
+                    log.add("unlock");
+                    m.unlock();
+                }
+            }
+
+            let task = spawn(holder);
+            gate.recv();
+            task.cancel();
+
+            try {
+                task.join();
+            } catch (e) {
+            }
+
+            let ok = log.size() == 1 && !m.is_locked() && task.status() == "cancelled";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn cancelling_twice_while_unwinding_is_idempotent() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let log = [];
+            let gate = channel<int>();
+
+            func worker() {
+                try {
+                    gate.send(1);
+                    while true {
+                        yield();
+                    }
+                } finally {
+                    log.add("f");
+                }
+            }
+
+            let task = spawn(worker);
+            gate.recv();
+            task.cancel();
+            task.cancel();
+
+            try {
+                task.join();
+            } catch (e) {
+            }
+
+            let ok = log.size() == 1 && task.status() == "cancelled";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn failed_task_runs_finally_and_join_rethrows_the_thrown_value() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let log = [];
+
+            func worker() {
+                try {
+                    throw "boom";
+                } finally {
+                    log.add("f");
+                }
+            }
+
+            let task = spawn(worker);
+            let caught = "";
+
+            try {
+                task.join();
+            } catch (e) {
+                caught = e;
+            }
+
+            let ok = caught == "boom" && log.size() == 1;
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}
+
+#[test]
+fn join_error_is_catchable_and_finally_still_runs_in_the_joiner() {
+    on_big_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            let log = [];
+
+            func failing() {
+                throw "bad";
+            }
+
+            func joiner(target) {
+                try {
+                    target.join();
+                } catch (e) {
+                    log.add(e);
+                } finally {
+                    log.add("done");
+                }
+            }
+
+            let a = spawn(failing);
+            let b = spawn(joiner, a);
+            b.join();
+
+            let ok = log.size() == 2 && log[0] == "bad" && log[1] == "done";
+        "#,
+        );
+
+        result.unwrap();
+        assert_global_true(&vm, "ok");
+    });
+}

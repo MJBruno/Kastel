@@ -784,6 +784,8 @@ impl Compiler {
             ));
         }
 
+        let has_finally = finally_body.is_some();
+
         self.emit_opcode(OpCode::PushExceptionHandler);
 
         let catch_operand = self.chunk.code.len();
@@ -803,9 +805,10 @@ impl Compiler {
         };
         self.emit_u16(catch_type_constant);
 
-        if let Some(body) = finally_body {
-            self.push_finally_block(body);
-        }
+        // Le `try` est « ouvert » pendant son corps et son `catch` : un
+        // `return`/`break`/`continue` qui en sort dépile le handler et inline
+        // le `finally`.
+        self.push_try_context(finally_body);
 
         self.begin_scope();
 
@@ -817,6 +820,14 @@ impl Compiler {
 
         self.end_scope();
 
+        // Fin normale du `try` : le `finally` reçoit l'état `[None, false]`
+        // (pas d'exception en attente). Le `finally` atteint par exception
+        // reçoit `[valeur, true]`, empilé par la VM.
+        if has_finally {
+            self.emit_opcode(OpCode::None);
+            self.emit_opcode(OpCode::False);
+        }
+
         let normal_end_jump = self.emit_jump(OpCode::Jump);
 
         let mut catch_end_jump = None;
@@ -826,17 +837,27 @@ impl Compiler {
         if let Some(body) = catch_body {
             catch_ip = self.chunk.code.len();
 
+            // Dans le `catch`, la VM a retiré le handler s'il n'y a pas de
+            // `finally` ; sinon il reste actif pour garder ce `finally`.
+            self.set_try_handler_active(has_finally);
+
             self.begin_scope();
 
-            if let Some(name) = catch_name {
-                self.declare_existing_local(name, true)?;
-            }
+            // La VM empile TOUJOURS la valeur interceptée : elle doit avoir une
+            // locale, même quand le `catch` n'est pas nommé.
+            self.declare_existing_local(catch_name.unwrap_or("__catch_value"), true)?;
 
             for statement in body {
                 self.compile_statement(statement)?;
             }
 
             self.end_scope();
+
+            if has_finally {
+                self.emit_opcode(OpCode::PopExceptionHandler);
+                self.emit_opcode(OpCode::None);
+                self.emit_opcode(OpCode::False);
+            }
 
             let jump = self.emit_jump(OpCode::Jump);
             catch_end_jump = Some(jump);
@@ -844,12 +865,16 @@ impl Compiler {
             catch_ip = self.chunk.code.len();
         }
 
-        if finally_body.is_some() {
-            self.pop_finally_block();
-        }
+        // Le corps du `finally` est compilé hors du contexte de son `try`.
+        self.pop_try_context();
 
         let finally_ip = if let Some(body) = finally_body {
             let ip = self.chunk.code.len();
+
+            // Deux locales cachées : l'état `[valeur, drapeau]` du `finally`.
+            self.begin_scope();
+            self.declare_existing_local("__finally_value", true)?;
+            self.declare_existing_local("__finally_flag", true)?;
 
             self.begin_scope();
 
@@ -859,7 +884,9 @@ impl Compiler {
 
             self.end_scope();
 
+            // `FinallyEnd` consomme lui-même les deux valeurs : aucun `Pop`.
             self.emit_opcode(OpCode::FinallyEnd);
+            self.discard_scope();
 
             Some(ip)
         } else {

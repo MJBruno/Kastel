@@ -23,7 +23,6 @@ impl VirtualMachine {
             modules: &modules,
             frames: &self.frames,
             open_upvalues: &self.open_upvalues,
-            pending_exception: &self.pending_exception,
             extra_values: &scheduler_values,
             extra_upvalues: &scheduler_upvalues,
         })
@@ -55,8 +54,10 @@ impl VirtualMachine {
             values.push(Value::Object(frame.closure.clone()));
         }
 
-        if let Some(exception) = &self.pending_exception {
-            values.push(exception.value.clone());
+        // Valeur lancée par une autre tâche (join/recv...) et pas encore
+        // livrée : elle n'est plus qu'ici jusqu'à la prochaine exécution.
+        if let Some(error) = &self.waiting_error {
+            super::scheduler::Scheduler::root_runtime_error(error, &mut values);
         }
 
         gc::pin_roots(gc::ExternalRoots {

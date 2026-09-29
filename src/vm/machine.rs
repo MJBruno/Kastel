@@ -88,7 +88,9 @@ pub(crate) struct ExceptionHandler {
     pub(crate) frame_index: usize,
 
     /*
-     * Adresse absolue dans le chunk du catch.
+     * Adresse absolue dans le chunk du catch. `None` une fois le `catch`
+     * consommé (le handler ne garde alors que son `finally`) ou s'il n'y a
+     * pas de `catch`.
      */
     pub(crate) catch_ip: Option<usize>,
 
@@ -107,27 +109,6 @@ pub(crate) struct ExceptionHandler {
      * `None` = catch général.
      */
     pub(crate) catch_type: Option<String>,
-}
-
-// ============================================================
-// PENDING EXCEPTION
-// ============================================================
-
-#[derive(Debug, Clone)]
-pub(crate) struct PendingException {
-    /*
-     * Valeur lancée par throw.
-     */
-    pub(crate) value: Value,
-
-    /*
-     * true :
-     * l'exception doit continuer sa propagation après finally.
-     *
-     * false :
-     * finally termine simplement l'exécution normale.
-     */
-    pub(crate) rethrow: bool,
 }
 
 // ============================================================
@@ -170,9 +151,10 @@ pub struct VirtualMachine {
     pub(crate) exception_handlers: Vec<ExceptionHandler>,
 
     /*
-     * Exception temporairement suspendue pendant finally.
+     * true quand la tâche est en cours d'ANNULATION : `TaskCancelled` se
+     * propage alors en n'exécutant que les `finally` (jamais les `catch`).
      */
-    pub(crate) pending_exception: Option<PendingException>,
+    pub(crate) cancelling: bool,
 
     pub(crate) open_upvalues: Vec<Rc<RefCell<ObjUpvalue>>>,
 
@@ -277,7 +259,7 @@ impl VirtualMachine {
             }],
 
             exception_handlers: Vec::new(),
-            pending_exception: None,
+            cancelling: false,
             open_upvalues: Vec::new(),
             temp_roots: Vec::new(),
             native_depth: 0,
@@ -346,7 +328,7 @@ impl VirtualMachine {
                 hot_loop_cache: None,
             }],
             exception_handlers: Vec::new(),
-            pending_exception: None,
+            cancelling: false,
             open_upvalues: Vec::new(),
             temp_roots: Vec::new(),
             native_depth: 0,
@@ -432,7 +414,7 @@ impl VirtualMachine {
                 hot_loop_cache: None,
             }],
             exception_handlers: Vec::new(),
-            pending_exception: None,
+            cancelling: false,
             open_upvalues: Vec::new(),
             temp_roots: Vec::new(),
             native_depth: 0,
@@ -860,7 +842,7 @@ impl VirtualMachine {
         self.stack.clear();
         self.frames.clear();
         self.exception_handlers.clear();
-        self.pending_exception = None;
+        self.cancelling = false;
         self.temp_roots.clear();
         self.waiting_channel = None;
         self.waiting_channel_send = None;
@@ -905,7 +887,7 @@ impl VirtualMachine {
         });
 
         self.exception_handlers.clear();
-        self.pending_exception = None;
+        self.cancelling = false;
         self.temp_roots.clear();
         self.native_depth = 0;
         self.yield_requested = false;
@@ -1125,6 +1107,10 @@ impl VirtualMachine {
         if stack_height > self.stack.len() {
             return Err(RuntimeError::InvalidFunction);
         }
+
+        // Une closure qui a capturé une locale du `try` ne doit pas pointer
+        // vers un slot de pile qui va être supprimé puis réutilisé.
+        self.close_upvalues(stack_height)?;
 
         self.stack.truncate(stack_height);
 

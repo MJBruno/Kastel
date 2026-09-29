@@ -34,9 +34,9 @@ Channels
 Scheduler robustness
         │
         ├── deadlock detection   ✅
-        ├── nested tasks         ⬜
-        ├── cancellation edges   ⬜
-        └── stress tests         ⬜
+        ├── nested tasks         ✅
+        ├── cancellation edges   ✅
+        └── stress tests         ✅
                 ↓
 ```
 
@@ -54,7 +54,7 @@ select
 ```markdown
 Timers
         │
-        └── sleep/timeout        ⬜
+        └── sleep/timeout        ✅
                 ↓
 ```
 
@@ -63,16 +63,43 @@ Timers
 ```markdown
 Synchronization
         │
-        ├── Mutex                ⬜
-        └── WaitGroup            ⬜
+        ├── Mutex                ✅
+        └── WaitGroup            ✅
                 ↓
 ```
 
 # PHASE 7
+
 ```markdown
 
 Blocking I/O architecture
         │
-        └── worker pool          ⬜
+        └── worker pool          ✅
 
 ```
+
+## État actuel de Kastel
+
+| Fonction                         | État          |
+| -------------------------------- | ------------- |
+| Scheduler                        | ✅            |
+| Tasks / `yield`                  | ✅            |
+| `sleep`                          | ✅            |
+| `join`                           | ✅            |
+| Cancellation                     | ✅            |
+| Channel                          | ✅            |
+| Select                           | ✅            |
+| Mutex                            | ✅            |
+| RwLock                           | ✅            |
+| Semaphore                        | ✅            |
+| Barrier                          | ✅            |
+| Event                            | ✅            |
+| Condvar                          | ✅            |
+| WaitGroup                        | ✅            |
+| Async functions                  | ✅            |
+| `await`                          | ✅            |
+| `await` coopératif               | ✅            |
+| Détection deadlock `await`       | ✅            |
+| Nettoyage des wait registrations | ✅            |
+| GC avec tâches en attente        | ✅            |
+| **Tests globaux**                | **344/344 ✅**|

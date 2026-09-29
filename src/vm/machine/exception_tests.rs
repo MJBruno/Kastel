@@ -160,3 +160,288 @@ fn result_err_is_not_a_runtime_exception_by_itself() {
     result.expect("construire Result.Err ne doit pas lever d'exception");
     assert!(!boolean(&vm, "caught"));
 }
+
+// ============================================================
+// STABILISATION try / catch / finally
+// ============================================================
+
+fn integer(vm: &VirtualMachine, name: &str) -> i64 {
+    match global(vm, name) {
+        Value::Integer(value) => value,
+        other => panic!("{name}: entier attendu, reçu {other:?}"),
+    }
+}
+
+#[test]
+fn handler_is_removed_after_a_catch_completes() {
+    // Avant : le handler restait empilé après le `catch`, et le `throw "b"`
+    // suivant était « intercepté » par ce handler périmé, qui fermait le
+    // frame au lieu de rejoindre le `catch` externe.
+    let (vm, result) = run_script(
+        r#"
+        let outer = false;
+        let inner = 0;
+
+        try {
+            try {
+                throw "a";
+            } catch (e) {
+                inner = inner + 1;
+            }
+            throw "b";
+        } catch (e2) {
+            outer = true;
+        }
+        "#,
+    );
+
+    result.expect("le second throw doit atteindre le catch externe");
+    assert!(boolean(&vm, "outer"));
+    assert_eq!(integer(&vm, "inner"), 1);
+}
+
+#[test]
+fn finally_runs_exactly_once_after_a_catch() {
+    // Avant : le handler périmé (catch consommé, finally conservé) rejouait
+    // le `finally` sur l'exception suivante.
+    let (vm, result) = run_script(
+        r#"
+        let count = 0;
+
+        try {
+            try {
+                throw "x";
+            } catch (e) {
+            } finally {
+                count = count + 1;
+            }
+            throw "y";
+        } catch (e) {
+        }
+        "#,
+    );
+
+    result.expect("aucune exception ne doit s'échapper");
+    assert_eq!(integer(&vm, "count"), 1);
+}
+
+#[test]
+fn nested_finally_does_not_steal_the_pending_exception() {
+    // Avant : `pending_exception` était un emplacement unique ; le `finally`
+    // de `cleanup()` (terminé normalement) consommait l'exception en attente
+    // du `finally` englobant et la relançait trop tôt.
+    let (vm, result) = run_script(
+        r#"
+        let order = [];
+        let caught = "";
+
+        func cleanup() {
+            try {
+                order.add("c");
+            } finally {
+                order.add("cf");
+            }
+        }
+
+        try {
+            try {
+                throw "boom";
+            } finally {
+                cleanup();
+                order.add("after");
+            }
+        } catch (e) {
+            caught = e;
+        }
+
+        let ok = order.size() == 3 && order[2] == "after" && caught == "boom";
+        "#,
+    );
+
+    result.expect("l'exception doit survivre au finally imbriqué");
+    assert!(boolean(&vm, "ok"));
+}
+
+#[test]
+fn exception_thrown_in_finally_replaces_the_pending_one() {
+    let (vm, result) = run_script(
+        r#"
+        let caught = "";
+
+        try {
+            try {
+                throw "first";
+            } finally {
+                throw "second";
+            }
+        } catch (e) {
+            caught = e;
+        }
+        "#,
+    );
+
+    result.expect("le throw du finally doit être intercepté");
+    assert_eq!(
+        global(&vm, "caught").as_string_value().as_deref(),
+        Some("second")
+    );
+}
+
+#[test]
+fn break_and_continue_run_finally_and_pop_the_handler() {
+    let (vm, result) = run_script(
+        r#"
+        let runs = 0;
+        let i = 0;
+
+        while i < 3 {
+            i = i + 1;
+            try {
+                if i == 2 { continue; }
+                if i == 3 { break; }
+            } finally {
+                runs = runs + 1;
+            }
+        }
+
+        let leaked = false;
+
+        try {
+            let j = 0;
+            while j < 2 {
+                j = j + 1;
+                try {
+                    break;
+                } catch (e) {
+                    leaked = true;
+                }
+            }
+            throw "later";
+        } catch (e) {
+        }
+
+        let ok = runs == 3 && i == 3 && !leaked;
+        "#,
+    );
+
+    result.expect("break/continue dans un try doivent rester cohérents");
+    assert!(boolean(&vm, "ok"));
+}
+
+#[test]
+fn return_inside_try_runs_finally_once_and_keeps_the_value() {
+    let (vm, result) = run_script(
+        r#"
+        let log = [];
+
+        func f() -> int {
+            try {
+                return 1;
+            } finally {
+                log.add("f");
+            }
+            return 0;
+        }
+
+        func g() -> int {
+            try {
+                return 5;
+            } finally {
+                let x = 10;
+                log.add(x);
+            }
+            return 0;
+        }
+
+        let a = f();
+        let b = g();
+        let ok = a == 1 && b == 5 && log.size() == 2 && log[0] == "f" && log[1] == 10;
+        "#,
+    );
+
+    result.expect("return dans un try doit exécuter le finally une seule fois");
+    assert!(boolean(&vm, "ok"));
+}
+
+#[test]
+fn return_inside_finally_overrides_and_compiles() {
+    // Avant : `return` dans un `finally` ré-inlinait son propre `finally`
+    // sans fin (récursion infinie du compilateur).
+    let (vm, result) = run_script(
+        r#"
+        func h() -> int {
+            try {
+                return 1;
+            } finally {
+                return 2;
+            }
+        }
+
+        let value = h();
+        "#,
+    );
+
+    result.expect("return dans finally");
+    assert_eq!(integer(&vm, "value"), 2);
+}
+
+#[test]
+fn integer_overflow_in_a_hot_loop_is_catchable() {
+    // Avant : les opcodes « chauds » (AddLocalConst...) renvoyaient leur
+    // erreur avec `?` hors de la boucle d'exécution, sans passer par les
+    // handlers : le `catch` ne voyait jamais le dépassement d'entier.
+    let (vm, result) = run_script(
+        r#"
+        func overflow() -> bool {
+            let i = 9223372036854775807;
+
+            try {
+                i = i + 1;
+            } catch (e: Err) {
+                return true;
+            }
+
+            return false;
+        }
+
+        let caught = overflow();
+        "#,
+    );
+
+    result.expect("le dépassement doit être intercepté");
+    assert!(boolean(&vm, "caught"));
+}
+
+#[test]
+fn closure_captured_in_try_survives_a_caught_exception() {
+    // Avant : la pile était tronquée sans fermer les upvalues des locales du
+    // `try` ; la closure lisait ensuite un slot supprimé puis réutilisé.
+    let (vm, result) = run_script(
+        r#"
+        let saved = [];
+
+        func run() {
+            try {
+                let x = 41;
+
+                func f() -> int {
+                    return x + 1;
+                }
+
+                saved.add(f);
+                throw "a";
+            } catch (e) {
+                let y = 1000;
+                let z = 2000;
+            }
+        }
+
+        run();
+        let g = saved[0];
+        let value = g();
+        "#,
+    );
+
+    result.expect("la closure doit garder sa valeur capturée");
+    assert_eq!(integer(&vm, "value"), 42);
+}

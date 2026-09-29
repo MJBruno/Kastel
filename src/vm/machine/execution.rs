@@ -111,40 +111,19 @@ impl VirtualMachine {
                 // ========================================================
                 // HOT DISPATCH
                 // ========================================================
-                x if x == OpCode::Loop as u8 => {
-                    self.loop_back()?;
-                    Ok(false)
-                }
+                x if x == OpCode::Loop as u8 => self.loop_back().map(|_| false),
 
-                x if x == OpCode::AddLocalConst as u8 => {
-                    self.add_local_const()?;
-                    Ok(false)
-                }
+                x if x == OpCode::AddLocalConst as u8 => self.add_local_const().map(|_| false),
 
-                x if x == OpCode::LessLocalConst as u8 => {
-                    self.less_local_const()?;
-                    Ok(false)
-                }
+                x if x == OpCode::LessLocalConst as u8 => self.less_local_const().map(|_| false),
 
-                x if x == OpCode::JumpIfFalsePop as u8 => {
-                    self.jump_if_false_pop()?;
-                    Ok(false)
-                }
+                x if x == OpCode::JumpIfFalsePop as u8 => self.jump_if_false_pop().map(|_| false),
 
-                x if x == OpCode::LessLocalConstJump as u8 => {
-                    self.less_local_const_jump()?;
-                    Ok(false)
-                }
+                x if x == OpCode::LessLocalConstJump as u8 => self.less_local_const_jump().map(|_| false),
 
-                x if x == OpCode::LoopLessAddLocalConst as u8 => {
-                    self.loop_less_add_local_const()?;
-                    Ok(false)
-                }
+                x if x == OpCode::LoopLessAddLocalConst as u8 => self.loop_less_add_local_const().map(|_| false),
 
-                x if x == OpCode::AddLocalLocal as u8 => {
-                    self.add_local_local()?;
-                    Ok(false)
-                }
+                x if x == OpCode::AddLocalLocal as u8 => self.add_local_local().map(|_| false),
 
                 // ========================================================
                 // GENERAL DISPATCH
@@ -189,18 +168,14 @@ impl VirtualMachine {
         &mut self,
         error: RuntimeError,
     ) -> Result<bool, RuntimeError> {
+        self.propagate_runtime_error_until(error, 0)
+    }
+
+    pub(crate) fn is_cancellation_error(error: &RuntimeError) -> bool {
         match error {
-            RuntimeError::Thrown(value) => self.propagate_thrown(value),
-
-            error => {
-                let value = self.runtime_error_value(&error)?;
-
-                if self.propagate_thrown(value)? {
-                    Ok(true)
-                } else {
-                    Err(error)
-                }
-            }
+            RuntimeError::TaskCancelled => true,
+            RuntimeError::WithLocation { source, .. } => Self::is_cancellation_error(source),
+            _ => false,
         }
     }
 
@@ -209,6 +184,13 @@ impl VirtualMachine {
         error: RuntimeError,
         min_frame_len: usize,
     ) -> Result<bool, RuntimeError> {
+        // Tâche en cours d'annulation : l'annulation n'est PAS interceptable
+        // par `catch`, mais les `finally` doivent s'exécuter (libération de
+        // verrous, `wait_group.done()`, fermeture de canaux...).
+        if self.cancelling && Self::is_cancellation_error(&error) {
+            return self.propagate_cancellation_until(min_frame_len);
+        }
+
         match error {
             RuntimeError::Thrown(value) => self.propagate_thrown_until(value, min_frame_len),
 
@@ -315,10 +297,6 @@ impl VirtualMachine {
         }
     }
 
-    pub(crate) fn propagate_thrown(&mut self, value: Value) -> Result<bool, RuntimeError> {
-        self.propagate_thrown_until(value, 0)
-    }
-
     pub(crate) fn propagate_thrown_until(
         &mut self,
         value: Value,
@@ -349,64 +327,103 @@ impl VirtualMachine {
                 return Ok(false);
             }
 
-            let matches = Self::exception_matches_catch_type(
-                self.exception_handlers[handler_index].catch_type.as_deref(),
-                &value,
-            );
             let catch_ip = self.exception_handlers[handler_index].catch_ip;
             let finally_ip = self.exception_handlers[handler_index].finally_ip;
             let stack_height = self.exception_handlers[handler_index].stack_height;
 
+            // `catch_ip == None` : le handler garde seulement son `finally`
+            // (l'exception a été levée DANS le `catch`, ou il n'y a pas de
+            // `catch`). Il ne peut alors plus rien intercepter.
+            let can_catch = catch_ip.is_some()
+                && Self::exception_matches_catch_type(
+                    self.exception_handlers[handler_index].catch_type.as_deref(),
+                    &value,
+                );
+
             self.restore_exception_stack(stack_height)?;
 
-            if matches {
-                if let Some(catch_ip) = catch_ip {
+            if can_catch && let Some(catch_ip) = catch_ip {
+                if finally_ip.is_some() {
+                    // Le handler reste actif pendant le corps du `catch` pour
+                    // que son `finally` s'exécute si le `catch` lève à son tour.
                     self.exception_handlers[handler_index].catch_ip = None;
-
-                    self.push(value);
-
-                    self.current_frame_mut()?.ip = catch_ip;
-
-                    return Ok(true);
+                } else {
+                    // Sans `finally`, plus rien à protéger : ne pas laisser un
+                    // handler périmé intercepter les exceptions SUIVANTES.
+                    self.exception_handlers.remove(handler_index);
                 }
 
-                self.exception_handlers.remove(handler_index);
+                self.push(value);
+                self.current_frame_mut()?.ip = catch_ip;
 
-                if let Some(finally_ip) = finally_ip {
-                    self.pending_exception = Some(super::PendingException {
-                        value,
-                        rethrow: true,
-                    });
-
-                    self.current_frame_mut()?.ip = finally_ip;
-
-                    return Ok(true);
-                }
-
-                self.close_current_frame_for_exception()?;
-                continue;
+                return Ok(true);
             }
 
-            // Le type du catch ne correspond pas. Le handler ne doit pas
-            // bloquer la propagation : on le retire et on cherche un handler
-            // extérieur. Son `finally`, s'il existe, doit toutefois toujours
-            // être exécuté avant de poursuivre la propagation.
+            // Ce handler ne peut pas intercepter : il ne doit plus bloquer la
+            // propagation. Son `finally`, s'il existe, s'exécute d'abord.
             self.exception_handlers.remove(handler_index);
 
             if let Some(finally_ip) = finally_ip {
-                self.pending_exception = Some(super::PendingException {
-                    value,
-                    rethrow: true,
-                });
-
+                self.push(value);
+                self.push(Value::Boolean(true));
                 self.current_frame_mut()?.ip = finally_ip;
 
                 return Ok(true);
             }
 
-            // Pas de finally : chercher le prochain handler dans ce frame ou
-            // dans un frame appelant.
-            continue;
+            // Pas de `finally` : chercher le handler suivant, dans ce frame ou
+            // dans un frame appelant (le frame n'est fermé que s'il n'en reste
+            // aucun).
+        }
+    }
+
+    /// Propagation d'une annulation : seuls les handlers avec `finally` sont
+    /// entrés, les `catch` sont ignorés.
+    fn propagate_cancellation_until(
+        &mut self,
+        min_frame_len: usize,
+    ) -> Result<bool, RuntimeError> {
+        loop {
+            if self.frames.len() <= min_frame_len {
+                return Ok(false);
+            }
+
+            let current_frame_index = self.frames.len() - 1;
+
+            let Some(handler_index) = self.exception_handlers.iter().rposition(|handler| {
+                handler.finally_ip.is_some()
+                    && handler.frame_index >= min_frame_len
+                    && handler.frame_index <= current_frame_index
+            }) else {
+                self.close_current_frame_for_exception()?;
+                continue;
+            };
+
+            let handler_frame = self.exception_handlers[handler_index].frame_index;
+
+            while self.frames.len() > handler_frame + 1 {
+                self.close_current_frame_for_exception()?;
+            }
+
+            if self.frames.len() <= min_frame_len {
+                return Ok(false);
+            }
+
+            let finally_ip = self.exception_handlers[handler_index]
+                .finally_ip
+                .ok_or(RuntimeError::InvalidFunction)?;
+            let stack_height = self.exception_handlers[handler_index].stack_height;
+
+            // Les handlers plus internes (catch seuls) sont abandonnés avec
+            // celui-ci : on quitte leur région protégée.
+            self.exception_handlers.truncate(handler_index);
+            self.restore_exception_stack(stack_height)?;
+
+            self.push(Self::cancellation_value());
+            self.push(Value::Boolean(true));
+            self.current_frame_mut()?.ip = finally_ip;
+
+            return Ok(true);
         }
     }
 }

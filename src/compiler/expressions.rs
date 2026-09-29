@@ -312,8 +312,7 @@ impl Compiler {
                 // Échec : retirer le booléen, conserver None/Err(...).
                 self.patch_jump(failure_jump)?;
                 self.emit_opcode(OpCode::Pop);
-                self.compile_active_finally()?;
-                self.emit_opcode(OpCode::Return);
+                self.emit_return_through_finally(true)?;
 
                 self.patch_jump(end_jump)?;
             }

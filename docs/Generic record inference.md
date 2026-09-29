@@ -1,3 +1,6 @@
+
+```Typescript
+
 type Wrapper<U> = { value: U };
 
 func unwrap<T>(box: Wrapper<T>) -> T {
@@ -19,3 +22,4 @@ class RecordBox<T> {
 let boxed: RecordBox<int> = new RecordBox({ value: 7 });
 
 println(boxed.get())
+```

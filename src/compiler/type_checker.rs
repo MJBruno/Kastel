@@ -4619,6 +4619,25 @@ impl TypeChecker {
             Type::Tuple(expected) => {
                 matches!(actual, Type::Tuple(actual) if expected.len() == actual.len() && expected.iter().zip(actual).all(|(expected, actual)| Self::infer_generic_bindings(expected, actual, bindings, generic_params)))
             }
+            Type::Record(expected) => {
+                let Type::Record(actual) = actual else {
+                    return false;
+                };
+
+                expected.iter().all(|(expected_name, expected_type)| {
+                    actual
+                        .iter()
+                        .find(|(actual_name, _)| actual_name == expected_name)
+                        .is_some_and(|(_, actual_type)| {
+                            Self::infer_generic_bindings(
+                                expected_type,
+                                actual_type,
+                                bindings,
+                                generic_params,
+                            )
+                        })
+                })
+            }
             Type::Generic {
                 name: expected_name,
                 arguments: expected_arguments,
@@ -7229,6 +7248,53 @@ let b: str = holder.echo<str>("kastel");
         assert!(ok.is_ok(), "{:?}", ok.err());
 
         assert!(check("class Holder { func echo<T>(value: T) -> T { return value; } } let x: int = new Holder().echo<int, str>(1);").is_err());
+    }
+
+    #[test]
+    fn generic_functions_and_classes_infer_from_structural_record_parameters() {
+        let valid = check(
+            r#"
+func unwrap<T>(box: { value: T }) -> T {
+    return box.value;
+}
+
+let number: int = unwrap({ value: 42 });
+
+type Wrapper<U> = { value: U };
+func unwrap_alias<T>(box: Wrapper<T>) -> T {
+    return box.value;
+}
+
+let text: str = unwrap_alias({ value: "kastel" });
+
+class RecordBox<T> {
+    let value: T;
+
+    func initialize(box: { value: T }) {
+        self.value = box.value;
+    }
+
+    func get() -> T {
+        return self.value;
+    }
+}
+
+let boxed: RecordBox<int> = new RecordBox({ value: 7 });
+let boxed_value: int = boxed.get();
+"#,
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let invalid = check(
+            r#"
+func unwrap<T>(box: { value: T }) -> T {
+    return box.value;
+}
+
+let bad: int = unwrap({ other: 42 });
+"#,
+        );
+        assert!(invalid.is_err(), "un champ absent doit empêcher l'inférence générique");
     }
 
     #[test]

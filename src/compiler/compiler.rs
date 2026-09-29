@@ -21,6 +21,24 @@ use super::variables::Global;
 /// débordement de la pile native.
 pub const MAX_EXPRESSION_DEPTH: usize = 5_000;
 
+/// Un `try` ouvert autour du code compilé. Sert à `return`, `?`, `break` et
+/// `continue`, qui doivent dépiler les handlers et exécuter les `finally` des
+/// `try` qu'ils quittent.
+#[derive(Clone)]
+pub(crate) struct TryContext {
+    /// Corps du `finally` (`None` : `try/catch` sans `finally`).
+    pub(crate) finally: Option<Vec<Statement>>,
+
+    /// Le handler d'exceptions est-il encore empilé à cet endroit du code ?
+    /// Vrai dans le corps du `try`, et dans le `catch` seulement s'il existe
+    /// un `finally` (sinon la VM retire le handler à l'entrée du `catch`).
+    pub(crate) handler_active: bool,
+
+    /// Nombre de boucles ouvertes à l'entrée du `try` : distingue les `try`
+    /// qu'un `break`/`continue` quitte de ceux qui entourent la boucle.
+    pub(crate) loops_len: usize,
+}
+
 #[allow(dead_code)]
 pub struct Compiler {
     pub(crate) globals: Rc<RefCell<HashMap<String, Global>>>,
@@ -54,7 +72,9 @@ pub struct Compiler {
     /// aucun bytecode n'est émis pour lui.
     pub(crate) type_context: Option<TypeCheckContext>,
 
-    pub(crate) finally_blocks: Vec<Vec<Statement>>,
+    /// `try` actuellement ouverts autour du code en cours de compilation
+    /// (du plus externe au plus interne), dans la fonction courante.
+    pub(crate) try_contexts: Vec<TryContext>,
 
     pub(crate) current_line: usize,
     pub(crate) current_column: usize,
@@ -80,7 +100,7 @@ impl Compiler {
             predeclared_functions: HashSet::new(),
             function_arities: HashMap::new(),
             type_context: None,
-            finally_blocks: Vec::new(),
+            try_contexts: Vec::new(),
             current_line: 0,
             current_column: 0,
             expression_depth: 0,
@@ -103,7 +123,7 @@ impl Compiler {
             predeclared_functions: HashSet::new(),
             function_arities: HashMap::new(),
             type_context: None,
-            finally_blocks: Vec::new(),
+            try_contexts: Vec::new(),
             current_line: 0,
             current_column: 0,
             expression_depth: 0,
@@ -130,7 +150,7 @@ impl Compiler {
             predeclared_functions: HashSet::new(),
             function_arities: HashMap::new(),
             type_context: None,
-            finally_blocks: Vec::new(),
+            try_contexts: Vec::new(),
             current_line: 0,
             current_column: 0,
             expression_depth: 0,
@@ -314,26 +334,117 @@ impl Compiler {
     // FINALLY
     // ============================================================
 
-    pub(crate) fn push_finally_block(&mut self, body: &[Statement]) {
-        self.finally_blocks.push(body.to_vec());
+    pub(crate) fn push_try_context(&mut self, finally: Option<&[Statement]>) {
+        self.try_contexts.push(TryContext {
+            finally: finally.map(<[Statement]>::to_vec),
+            handler_active: true,
+            loops_len: self.loops.len(),
+        });
     }
 
-    pub(crate) fn pop_finally_block(&mut self) {
-        self.finally_blocks.pop();
+    pub(crate) fn pop_try_context(&mut self) {
+        self.try_contexts.pop();
     }
 
-    pub(crate) fn compile_active_finally(&mut self) -> Result<(), CompileError> {
-        let finally_blocks = self.finally_blocks.clone();
+    pub(crate) fn set_try_handler_active(&mut self, active: bool) {
+        if let Some(context) = self.try_contexts.last_mut() {
+            context.handler_active = active;
+        }
+    }
 
-        for body in finally_blocks.iter().rev() {
-            self.begin_scope();
+    /// Quitte les `try` d'indice >= `down_to` (du plus interne au plus
+    /// externe) : dépile leur handler s'il est encore actif, puis inline leur
+    /// `finally`. Le corps d'un `finally` est compilé HORS de son propre
+    /// `try` : un `return`/`break` qu'il contient ne le ré-inline pas
+    /// (récursion infinie du compilateur) et ne dépile pas un handler déjà
+    /// dépilé (double exécution du `finally`).
+    pub(crate) fn unwind_try_contexts(&mut self, down_to: usize) -> Result<(), CompileError> {
+        let mut index = self.try_contexts.len();
 
-            for statement in body {
-                self.compile_statement(statement)?;
+        while index > down_to {
+            index -= 1;
+
+            let context = self.try_contexts[index].clone();
+
+            if context.handler_active {
+                self.emit_opcode(OpCode::PopExceptionHandler);
             }
 
-            self.end_scope();
+            if let Some(body) = &context.finally {
+                let saved = self.try_contexts.split_off(index);
+
+                self.begin_scope();
+
+                let mut result = Ok(());
+                for statement in body {
+                    result = self.compile_statement(statement);
+                    if result.is_err() {
+                        break;
+                    }
+                }
+
+                self.end_scope();
+                self.try_contexts.extend(saved);
+
+                result?;
+            }
         }
+
+        Ok(())
+    }
+
+    /// `break` / `continue` : quitte uniquement les `try` ouverts DANS la
+    /// boucle courante.
+    pub(crate) fn unwind_try_contexts_in_loop(&mut self) -> Result<(), CompileError> {
+        let loops_len = self.loops.len();
+
+        let first = self
+            .try_contexts
+            .iter()
+            .position(|context| context.loops_len >= loops_len)
+            .unwrap_or(self.try_contexts.len());
+
+        self.unwind_try_contexts(first)
+    }
+
+    /// Émet un `return` dont la valeur est déjà sur la pile, en exécutant
+    /// d'abord les `finally` actifs. La valeur devient une locale cachée : les
+    /// `finally` inlinés déclarent leurs propres locales juste au-dessus, avec
+    /// des numéros de slot corrects (avant, la valeur temporaire décalait les
+    /// slots et un `finally` avec `let` lisait la valeur de retour).
+    ///
+    /// `in_expression` : `return` déclenché au milieu d'une expression (opérateur
+    /// `?`), donc avec d'éventuelles valeurs temporaires sous la valeur de
+    /// retour. Le numéro de slot d'une locale cachée serait alors faux : la
+    /// valeur est simplement laissée au sommet de la pile pendant les
+    /// `finally` (limite connue : un `finally` inliné qui déclare une locale
+    /// dans ce cas précis garde l'ancien décalage de slots).
+    pub(crate) fn emit_return_through_finally(
+        &mut self,
+        in_expression: bool,
+    ) -> Result<(), CompileError> {
+        if self.try_contexts.is_empty() {
+            self.emit_opcode(OpCode::Return);
+            return Ok(());
+        }
+
+        if in_expression {
+            self.unwind_try_contexts(0)?;
+            self.emit_opcode(OpCode::Return);
+            return Ok(());
+        }
+
+        self.begin_scope();
+
+        let slot = self.declare_existing_local("__return_value", true)?;
+
+        self.unwind_try_contexts(0)?;
+
+        self.emit_bytes(OpCode::GetLocal, slot);
+        self.emit_opcode(OpCode::Return);
+
+        // Le `Return` termine le frame : aucun `Pop` à émettre.
+        self.discard_scope();
 
         Ok(())
     }

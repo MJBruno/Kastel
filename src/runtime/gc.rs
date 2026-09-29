@@ -9,7 +9,7 @@ use crate::runtime::gc_handle::Gc;
 use crate::runtime::object::Object;
 use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
-use crate::vm::machine::{CallFrame, PendingException};
+use crate::vm::machine::CallFrame;
 
 fn trace_enabled() -> bool {
     cfg!(feature = "trace_gc")
@@ -109,7 +109,6 @@ pub struct GcRoots<'a> {
     pub frames: &'a [CallFrame],
     pub open_upvalues: &'a [Rc<RefCell<ObjUpvalue>>],
 
-    pub(crate) pending_exception: &'a Option<PendingException>,
     pub(crate) extra_values: &'a [Value],
     pub(crate) extra_upvalues: &'a [Rc<RefCell<ObjUpvalue>>],
 }
@@ -183,11 +182,6 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
     // Upvalues ouvertes
     for upvalue in roots.open_upvalues {
         mark_upvalue(upvalue, &mut state);
-    }
-
-    // Exception suspendue pendant finally
-    if let Some(exception) = roots.pending_exception {
-        mark_value(&exception.value, &mut state);
     }
 
     for value in roots.extra_values {

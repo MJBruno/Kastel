@@ -401,6 +401,8 @@ impl Compiler {
             }
         };
 
+        self.unwind_try_contexts_in_loop()?;
+
         self.emit_scope_cleanup(loop_depth);
 
         let jump = self.emit_jump(OpCode::Jump);
@@ -424,6 +426,8 @@ impl Compiler {
                 return Err(CompileError::ContinueOutsideLoop);
             }
         };
+
+        self.unwind_try_contexts_in_loop()?;
 
         self.emit_scope_cleanup(loop_depth);
 

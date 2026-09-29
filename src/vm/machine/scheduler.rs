@@ -316,10 +316,28 @@ impl Scheduler {
 
         let cancellation_requested = scheduler.cancel_requested.remove(&id);
 
-        let cancel_now = cancellation_requested
-            && matches!(outcome, Ok(RunStatus::Yielded) | Ok(RunStatus::Waiting));
+        let cancellable_outcome = matches!(outcome, Ok(RunStatus::Yielded) | Ok(RunStatus::Waiting));
 
-        if cancel_now {
+        // Une tâche qui a des `finally` en attente n'est pas détruite d'un
+        // coup : elle est réveillée avec `TaskCancelled` (non interceptable)
+        // pour exécuter ses `finally` (déverrouillage, `wait_group.done()`...).
+        let unwind_for_finally = cancellation_requested
+            && cancellable_outcome
+            && !task.vm.cancelling
+            && task.vm.has_finally_handlers();
+
+        // Déjà en cours d'annulation : on laisse le déroulement se terminer.
+        let cancel_now = cancellation_requested
+            && cancellable_outcome
+            && !unwind_for_finally
+            && !task.vm.cancelling;
+
+        if unwind_for_finally {
+            Self::unregister_all_waits(&mut scheduler, id);
+            task.vm.begin_cancellation();
+            task.status = TaskStateStatus::Ready;
+            scheduler.ready.push_back(id);
+        } else if cancel_now {
             task.status = TaskStateStatus::Cancelled;
             task.result = None;
             task.error = None;
@@ -367,6 +385,14 @@ impl Scheduler {
                 Ok(RunStatus::Completed) => {
                     task.status = TaskStateStatus::Completed;
                     task.result = Some(task.vm.last_result_value());
+                }
+                Err(error)
+                    if task.vm.cancelling && VirtualMachine::is_cancellation_error(&error) =>
+                {
+                    // Annulation menée à son terme (finally exécutés).
+                    task.status = TaskStateStatus::Cancelled;
+                    task.result = None;
+                    task.error = None;
                 }
                 Err(error) => {
                     task.status = TaskStateStatus::Failed;
@@ -422,6 +448,25 @@ impl Scheduler {
         }
 
         Ok(PollOutcome::Progressed)
+    }
+
+    /// Retire toutes les inscriptions d'attente d'une tâche (canaux, verrous,
+    /// événements, timers...). Les verrous DÉJÀ détenus ne sont pas rendus ici :
+    /// une tâche annulée qui exécute ses `finally` doit encore pouvoir les
+    /// libérer elle-même ; ils sont rendus à la fin de la tâche.
+    fn unregister_all_waits(scheduler: &mut Scheduler, id: usize) {
+        Self::unregister_channel_waits(scheduler, id);
+        scheduler.unregister_mutex_wait(id);
+        scheduler.unregister_rwlock_wait(id);
+        scheduler.unregister_event_wait(id);
+        scheduler.unregister_condvar_wait(id);
+        scheduler.unregister_task_wait(id);
+        scheduler.unregister_wait_group_wait(id);
+        if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
+            scheduler.break_barrier(barrier);
+        }
+        scheduler.unregister_semaphore_wait(id);
+        scheduler.unregister_timer(id);
     }
 
     /// Appelé quand le dernier handle d'une tâche est détruit.
@@ -2264,6 +2309,45 @@ impl Scheduler {
 
         match status {
             TaskStateStatus::Ready | TaskStateStatus::Waiting => {
+                let (already_cancelling, has_finally) = {
+                    let task = scheduler
+                        .tasks
+                        .get(id)
+                        .and_then(Option::as_ref)
+                        .ok_or(RuntimeError::TaskNotFound)?;
+
+                    (task.vm.cancelling, task.vm.has_finally_handlers())
+                };
+
+                // Annulation déjà en cours : idempotent.
+                if already_cancelling {
+                    return Ok(());
+                }
+
+                // Des `finally` à exécuter : annulation coopérative.
+                if has_finally {
+                    Self::unregister_all_waits(&mut scheduler, id);
+
+                    {
+                        let task = scheduler
+                            .tasks
+                            .get_mut(id)
+                            .and_then(Option::as_mut)
+                            .ok_or(RuntimeError::TaskNotFound)?;
+
+                        task.vm.begin_cancellation();
+                        task.status = TaskStateStatus::Ready;
+                    }
+
+                    // Une tâche Ready est déjà dans la file ; une tâche
+                    // Waiting doit y être remise pour se dérouler.
+                    if status == TaskStateStatus::Waiting {
+                        scheduler.ready.push_back(id);
+                    }
+
+                    return Ok(());
+                }
+
                 {
                     let task = scheduler
                         .tasks
@@ -2599,8 +2683,8 @@ impl Scheduler {
                     .map(|frame| Value::Object(frame.closure.clone())),
             );
 
-            if let Some(exception) = &task.vm.pending_exception {
-                values.push(exception.value.clone());
+            if let Some(error) = &task.vm.waiting_error {
+                Self::root_runtime_error(error, values);
             }
 
             if let Some(result) = &task.result {
@@ -2615,7 +2699,7 @@ impl Scheduler {
         }
     }
 
-    fn root_runtime_error(error: &RuntimeError, values: &mut Vec<Value>) {
+    pub(crate) fn root_runtime_error(error: &RuntimeError, values: &mut Vec<Value>) {
         match error {
             RuntimeError::Thrown(value) => values.push(value.clone()),
             RuntimeError::WithLocation { source, .. } => Self::root_runtime_error(source, values),
