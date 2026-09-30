@@ -7,3 +7,6 @@ pub mod module;
 pub mod runtime;
 pub mod stdlib;
 pub mod vm;
+
+#[cfg(test)]
+mod regression_tests;

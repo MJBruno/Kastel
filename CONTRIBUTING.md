@@ -264,7 +264,7 @@ Do not remove an existing test simply because it fails after a code change. Dete
 
 ## Examples
 
-Language examples are kept in the `examples/` directory.
+Language examples are kept in the `demo/` directory.
 
 When a language feature changes user-visible syntax or behavior, update affected examples when appropriate.
 
@@ -426,4 +426,4 @@ Contributors are encouraged to propose alternatives and improvements, especially
 
 ## License
 
-By contributing to Kastel, you agree that your contributions may be distributed under the project's license.
+By contributing to Kastel, you agree that your contributions may be distributed under the project's license

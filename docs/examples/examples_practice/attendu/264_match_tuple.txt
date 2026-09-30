@@ -1,0 +1,4 @@
+origine
+sur l'axe x en 5
+sur l'axe y en 7
+point 2,3

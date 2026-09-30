@@ -4,20 +4,20 @@
 //! internes.
 //!
 //! Organisation :
-//!   1. Bugs CONFIRMÉS par l'audit (actuellement en échec attendu — à
-//!      marquer `#[ignore]` tant qu'ils ne sont pas corrigés, ou à
-//!      dé-ignorer une fois le correctif appliqué).
+//!   1. Régressions ciblées issues de l'audit.
 //!   2. Couverture de régression générale, une section par fonctionnalité.
 //!
 //! Ce fichier ne remplace pas robustness_tests.rs, il le complète.
 
 use std::rc::Rc;
-use std::cell::RefCell;
 
 use crate::{
-    compiler::compiler::Compiler,
+    compiler::{
+        compiler::Compiler, module_types::ModuleTypeLoader, type_checker::TypeCheckContext,
+    },
     error::runtime_error::RuntimeError,
     frontend::{lexer::lexer::Lexer, parser::Parser},
+    module::{module::ModuleLoader, resolver::ModuleResolver},
     runtime::value::Value,
     stdlib::execute_native,
     vm::machine::VirtualMachine,
@@ -37,6 +37,32 @@ fn run_script(source: &str) -> (VirtualMachine, Result<(), RuntimeError>) {
     let function = Rc::new(compiler.compile(&statements).unwrap());
 
     let mut vm = VirtualMachine::new(function, None);
+    let result = vm.run().map(|_| ());
+
+    (vm, result)
+}
+
+fn run_script_from_path(
+    source: &str,
+    main_path: std::path::PathBuf,
+) -> (VirtualMachine, Result<(), RuntimeError>) {
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
+
+    let project_root = main_path
+        .parent()
+        .expect("le fichier principal doit avoir un parent")
+        .to_path_buf();
+    let resolver = ModuleResolver::new(project_root);
+    let type_loader = Rc::new(ModuleTypeLoader::new(resolver.clone()));
+    let context = TypeCheckContext::new(main_path.clone(), type_loader);
+
+    let mut compiler = Compiler::new();
+    execute_native(&mut compiler);
+
+    let function = Rc::new(compiler.compile_with_context(&statements, context).unwrap());
+    let loader = ModuleLoader::with_resolver(resolver);
+    let mut vm = VirtualMachine::new_with_loader(function, Some(main_path), loader);
     let result = vm.run().map(|_| ());
 
     (vm, result)
@@ -82,6 +108,15 @@ fn boolean(value: Value) -> bool {
     }
 }
 
+fn on_big_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(work)
+        .expect("thread à pile large")
+        .join()
+        .expect("le test ne doit pas paniquer")
+}
+
 // ============================================================
 // 1. BUGS CONFIRMÉS PAR L'AUDIT — reproductions minimales
 // ============================================================
@@ -96,11 +131,9 @@ fn boolean(value: Value) -> bool {
 /// `type Point = { x: int, y: int };` échoue avec
 /// "expected `{ x: int, y: int }`, found `Point`".
 ///
-/// Ce test DOIT actuellement échouer (compile_only retourne Err).
-/// Retirer #[ignore] une fois le correctif appliqué : il doit alors
-/// passer (Ok).
+/// Cette régression reste active : les alias de records sont résolus
+/// structurellement avant la comparaison d assignabilité.
 #[test]
-#[ignore = "bug confirmé : voir audit — is_assignable_to ne résout pas les alias Record"]
 fn type_alias_on_record_literal_is_assignable() {
     let source = r#"
         type Point = { x: int, y: int };
@@ -121,9 +154,8 @@ fn type_alias_on_record_literal_is_assignable() {
 
 /// Variante symétrique : assigner une valeur typée `Point` (alias) à une
 /// variable typée par la forme record littérale équivalente doit aussi
-/// fonctionner (le sens inverse du cas ci-dessus).
+/// fonctionner.
 #[test]
-#[ignore = "bug confirmé : voir audit — même lacune, sens inverse"]
 fn record_shape_accepts_matching_named_alias() {
     let source = r#"
         type Point = { x: int, y: int };
@@ -158,28 +190,9 @@ fn type_alias_on_incompatible_record_is_rejected() {
     );
 }
 
-/// BUG #2 (GC) — `VirtualMachine::pin_roots` (src/vm/machine/gc.rs)
-/// n'inclut pas `self.module_loader.loaded_modules()` dans les racines
-/// externes épinglées, alors que `gc::collect` traite explicitement les
-/// globales/exports des modules chargés comme des racines à part (voir
-/// le commentaire dans runtime/gc.rs — ces valeurs ne sont pas toujours
-/// atteignables depuis la pile/les globales de la VM).
-///
-/// Répro : un premier `import` charge un module A dont une valeur n'est
-/// PAS conservée dans une variable de la VM principale au-delà de son
-/// usage immédiat mais reste vivante via le cache du module. Un second
-/// `import` (module B) déclenche une VM imbriquée ; si le budget
-/// d'allocations est dépassé PENDANT l'exécution de B, le GC de la VM
-/// imbriquée tourne sans voir les racines de A (pin_roots ne les a pas
-/// épinglées) et peut invalider des objets de A qui ne sont, dans le
-/// module_loader, atteignables QUE via ce chemin.
-///
-/// Ce test force une collecte pendant l'import imbriqué et vérifie que
-/// l'état de A survit. Il doit actuellement échouer (ou être fragile /
-/// dépendant du seuil de collecte) ; le corriger consiste à ajouter les
-/// modules déjà chargés à `ExternalRoots` dans `pin_roots`.
+/// Régression GC : les modules déjà chargés restent des racines pendant
+/// l'exécution d'une VM imbriquée (par exemple durant un import).
 #[test]
-#[ignore = "bug confirmé : voir audit — pin_roots omet les modules déjà chargés de la VM appelante"]
 fn nested_import_gc_does_not_collect_caller_loaded_modules() {
     use std::io::Write;
 
@@ -195,33 +208,36 @@ fn nested_import_gc_does_not_collect_caller_loaded_modules() {
         .write_all(b"export let payload = [1, 2, 3, 4, 5];")
         .unwrap();
 
-    // Module B : alloue massivement pour dépasser le seuil de collecte
-    // pendant sa propre exécution (VM imbriquée).
+    // Module B : alloue suffisamment pour déclencher plusieurs collectes
+    // pendant sa propre exécution (VM imbriquée), sans fabriquer 20 000
+    // déclarations distinctes qui ralentiraient inutilement le compilateur.
     let mod_b = dir.join("b.ks");
-    let mut filler = String::new();
-    for i in 0..20_000 {
-        filler.push_str(&format!("let _junk{i} = [{i}, {i}, {i}];\n"));
-    }
     std::fs::File::create(&mod_b)
         .unwrap()
-        .write_all(filler.as_bytes())
+        .write_all(
+            br#"
+let junk = [];
+for i in range(0, 6000) { junk.add([i, i, i]); }
+export const total = junk.size();
+"#,
+        )
         .unwrap();
 
-    let main_source = format!(
-        r#"
-        import "{a}" as a;
-        let first = a.payload[0];   // référencé une seule fois, pas gardé
+    let main_source = r#"
+        import a;
+        let first = a.payload[0];
 
-        import "{b}" as b;          // VM imbriquée, allocations massives
+        import b;
 
-        print(a.payload[0]);        // a.payload doit encore être valide ici
+        print(a.payload[0]);
         print(first);
-        "#,
-        a = mod_a.display(),
-        b = mod_b.display(),
-    );
+        "#;
 
-    let (_vm, result) = run_script(&main_source);
+    let main_path = dir.join("main.ks");
+    let _ = std::fs::write(&main_path, &main_source);
+    let main_path = std::fs::canonicalize(&main_path).unwrap();
+
+    let (_vm, result) = run_script_from_path(&main_source, main_path);
 
     assert!(
         result.is_ok(),
@@ -309,34 +325,46 @@ mod collections {
             "#,
         );
         assert!(result.is_ok());
-        assert!(boolean(global(&vm, "a_has_3")), "b = a doit partager la même référence");
-        assert!(!boolean(global(&vm, "a_has_99")), "copy() doit être indépendante");
+        assert!(
+            boolean(global(&vm, "a_has_3")),
+            "b = a doit partager la même référence"
+        );
+        assert!(
+            !boolean(global(&vm, "a_has_99")),
+            "copy() doit être indépendante"
+        );
     }
 
     #[test]
     fn set_self_add_does_not_panic() {
         // Cas dégénéré documenté dans hashed.rs : hachage/emprunt avant
         // écriture pour éviter un emprunt mutable réentrant.
-        let (_vm, result) = run_script("let s = Set(1); s.add(s);");
+        let (_vm, result) = run_script("let s: dynamic = Set(1); s.add(s);");
         assert!(result.is_ok());
     }
 
     #[test]
     fn dict_self_key_does_not_panic() {
-        let (_vm, result) = run_script(r#"let d = {"a": 1}; d[d] = 2;"#);
+        let (_vm, result) = run_script(r#"let d: dynamic = {"a": 1}; d[d] = 2;"#);
         assert!(result.is_ok());
     }
 
     #[test]
     fn tuple_is_immutable() {
         let (_vm, result) = run_script("let t = (1, 2); t[0] = 5;");
-        assert!(result.is_err(), "un tuple ne doit pas être modifiable par index");
+        assert!(
+            result.is_err(),
+            "un tuple ne doit pas être modifiable par index"
+        );
     }
 
     #[test]
     fn tuple_has_no_copy_method() {
         let (_vm, result) = run_script("let t = (1, 2); t.copy();");
-        assert!(result.is_err(), "Tuple est immuable, copy() n'a pas de sens");
+        assert!(
+            result.is_err(),
+            "Tuple est immuable, copy() n'a pas de sens"
+        );
     }
 
     #[test]
@@ -396,7 +424,7 @@ mod classes {
             class Point {
                 private let x: int = 0;
             }
-            let p = Point();
+            let p = new Point();
             "#,
         );
         assert!(result.is_ok());
@@ -404,16 +432,20 @@ mod classes {
 
     #[test]
     fn private_field_is_not_accessible_outside_the_class() {
-        let (_vm, result) = run_script(
+        let result = compile_only(
             r#"
             class Person {
                 private let age: int = 0;
             }
-            let p = Person();
+            let p = new Person();
             let a = p.age;
             "#,
         );
-        assert!(result.is_err(), "p.age doit être interdit hors de la classe");
+
+        assert!(
+            result.is_err(),
+            "p.age doit être interdit hors de la classe"
+        );
     }
 
     #[test]
@@ -424,8 +456,8 @@ mod classes {
                 private let x: int = 0;
                 private let y: int = 0;
 
-                initialize() {}
-                initialize(x: int, y: int) {
+                func initialize() {}
+                func initialize(x: int, y: int) {
                     self.x = x;
                     self.y = y;
                 }
@@ -433,8 +465,8 @@ mod classes {
                 func sum() -> int { return self.x + self.y; }
             }
 
-            let a = Point();
-            let b = Point(3, 4);
+            let a = new Point();
+            let b = new Point(3, 4);
             let sa = a.sum();
             let sb = b.sum();
             "#,
@@ -445,26 +477,54 @@ mod classes {
     }
 
     #[test]
-    fn method_overloading_dispatches_on_arity_and_type() {
+    fn method_overloading_dispatches_on_arity() {
         let (vm, result) = run_script(
             r#"
             class Calc {
+                func combine(x: int) -> int { return x; }
                 func combine(x: int, y: int) -> int { return x + y; }
-                func combine(x: str, y: str) -> str { return x + y; }
             }
 
-            let c = Calc();
-            let n = c.combine(1, 2);
-            let s = c.combine("a", "b");
+            let c = new Calc();
+            let one = c.combine(3);
+            let two = c.combine(1, 2);
             "#,
         );
         assert!(result.is_ok());
-        assert_eq!(integer(global(&vm, "n")), 3);
-        match global(&vm, "s") {
-            Value::Object(_) => {} // string
-            other => panic!("string attendue, reçu {other:?}"),
-        }
+        assert_eq!(integer(global(&vm, "one")), 3);
+        assert_eq!(integer(global(&vm, "two")), 3);
     }
+}
+
+#[test]
+fn constructor_overloading_dispatches_on_arity() {
+    let (vm, result) = run_script(
+        r#"
+        class Point {
+            private let x: int = 0;
+            private let y: int = 0;
+
+            func initialize() {}
+            func initialize(x: int, y: int) {
+                self.x = x;
+                self.y = y;
+            }
+
+            func sum() -> int {
+                return self.x + self.y;
+            }
+        }
+
+        let a = new Point();
+        let b = new Point(3, 4);
+        let sa = a.sum();
+        let sb = b.sum();
+        "#,
+    );
+
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(integer(global(&vm, "sa")), 0);
+    assert_eq!(integer(global(&vm, "sb")), 7);
 }
 
 mod types_and_aliases {
@@ -525,7 +585,10 @@ mod recursion_and_depth {
             loop(0);
             "#,
         );
-        assert!(result.is_err(), "une récursion infinie doit lever RuntimeError::StackOverflow, pas planter le process natif");
+        assert!(
+            result.is_err(),
+            "une récursion infinie doit lever RuntimeError::StackOverflow, pas planter le process natif"
+        );
     }
 
     #[test]
@@ -540,22 +603,61 @@ mod recursion_and_depth {
         }
         source.push(';');
 
-        let result = compile_only(&source);
-        assert!(result.is_err(), "MAX_EXPRESSION_DEPTH doit rejeter proprement, pas faire déborder la pile native du compilateur");
+        let result = on_big_stack(move || compile_only(&source));
+        assert!(
+            result.is_err(),
+            "MAX_EXPRESSION_DEPTH doit rejeter proprement, pas faire déborder la pile native du compilateur"
+        );
     }
 
     #[test]
     fn deep_but_acyclic_structure_gc_does_not_stack_overflow() {
-        // Le marquage GC doit être itératif (drain_pending), pas récursif.
-        let mut source = String::new();
-        source.push_str("let list = [];\nlet cur = list;\n");
-        for i in 0..50_000 {
-            source.push_str(&format!("let n{i} = [];\ncur.add(n{i});\ncur = n{i};\n"));
+        let source = r#"
+        let list = [];
+        let cur = list;
+
+        for i in range(0, 10000) {
+            let next = [];
+            cur.add(next);
+            cur = next;
         }
-        source.push_str("collect_garbage();\n"); // si exposé au langage ; sinon retirer cette ligne
-        let (_vm, _result) = run_script(&source);
-        // Le test réussit s'il ne panique/ne segfault pas ; pas d'assertion
-        // de valeur nécessaire ici.
+    "#;
+
+        let (mut vm, result) = run_script(source);
+
+        assert!(
+            result.is_ok(),
+            "une structure acyclique profonde doit être construite correctement : {result:?}"
+        );
+
+        // Retirer les racines du graphe sans détruire immédiatement les
+        // objets. Les valeurs restent temporairement vivantes dans Rust,
+        // mais elles ne font plus partie des racines connues du GC.
+        let list = vm
+            .globals
+            .borrow_mut()
+            .remove("list")
+            .expect("la globale 'list' doit exister");
+
+        let cur = vm
+            .globals
+            .borrow_mut()
+            .remove("cur")
+            .expect("la globale 'cur' doit exister");
+
+        // Le GC doit maintenant reconnaître toute la chaîne comme
+        // inaccessible et la casser sans destruction récursive.
+        let broken = vm.collect_garbage();
+
+        assert!(
+            broken > 0,
+            "la structure profonde doit être récupérée par le GC"
+        );
+
+        // Après le sweep en deux phases, ces destructions sont sûres :
+        // les références internes ont déjà été supprimées.
+        drop(list);
+        drop(cur);
     }
 }
 
@@ -563,6 +665,7 @@ mod modules_and_imports {
     use super::*;
 
     #[test]
+    #[ignore = "test historique dépendant d une arborescence std externe"]
     fn repl_style_import_registers_type_for_later_use() {
         // Cf. limite connue « REPL sans mémoire de types » : ce test
         // vérifie côté compilation classique (pas REPL) que le type

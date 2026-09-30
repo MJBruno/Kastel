@@ -1,0 +1,2 @@
+Ok((2.0, 1.0))
+Err(pas de racine réelle)

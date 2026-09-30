@@ -11,6 +11,7 @@ use super::types::{FunctionType, Type};
 fn function(params: &[Type], return_type: Type) -> Type {
     Type::Function(FunctionType {
         generic_params: Vec::new(),
+        is_async: false,
         generic_constraints: Vec::new(),
         params: params.to_vec(),
         return_type: Box::new(return_type),
@@ -31,6 +32,7 @@ fn generic_function(params: &[Type], return_type: Type, generic_params: &[&str])
             .iter()
             .map(|name| (*name).to_string())
             .collect(),
+        is_async: false,
         generic_constraints: Vec::new(),
         params: params.to_vec(),
         return_type: Box::new(return_type),
@@ -227,6 +229,7 @@ mod tests {
             types.get("sin"),
             Some(&Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: vec![Type::Float],
                 return_type: Box::new(Type::Float),
@@ -237,6 +240,7 @@ mod tests {
             types.get("floor"),
             Some(&Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: vec![Type::Dynamic],
                 return_type: Box::new(Type::Int),

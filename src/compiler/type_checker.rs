@@ -697,6 +697,7 @@ impl TypeChecker {
             ),
             Type::Function(function) => Type::Function(FunctionType {
                 generic_params: function.generic_params.clone(),
+                is_async: function.is_async,
                 generic_constraints: function.generic_constraints.clone(),
                 params: function
                     .params
@@ -710,6 +711,7 @@ impl TypeChecker {
                     .iter()
                     .map(|signature| FunctionType {
                         generic_params: signature.generic_params.clone(),
+                        is_async: signature.is_async,
                         generic_constraints: signature.generic_constraints.clone(),
                         params: signature
                             .params
@@ -825,6 +827,7 @@ impl TypeChecker {
                     "next".to_string(),
                     FunctionType {
                         generic_params: Vec::new(),
+                        is_async: false,
                         generic_constraints: Vec::new(),
                         params: Vec::new(),
                         return_type: Box::new(element.clone()),
@@ -834,6 +837,7 @@ impl TypeChecker {
                     "has_next".to_string(),
                     FunctionType {
                         generic_params: Vec::new(),
+                        is_async: false,
                         generic_constraints: Vec::new(),
                         params: Vec::new(),
                         return_type: Box::new(Type::Bool),
@@ -844,6 +848,7 @@ impl TypeChecker {
                 "iter".to_string(),
                 FunctionType {
                     generic_params: Vec::new(),
+                    is_async: false,
                     generic_constraints: Vec::new(),
                     params: Vec::new(),
                     return_type: Box::new(Type::Generic {
@@ -937,6 +942,7 @@ impl TypeChecker {
         let method = |params: Vec<Type>, result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params,
                 return_type: Box::new(result),
@@ -960,6 +966,7 @@ impl TypeChecker {
             "any" | "all" => Some(method(
                 vec![Type::Function(FunctionType {
                     generic_params: Vec::new(),
+                    is_async: false,
                     generic_constraints: Vec::new(),
                     params: vec![element.clone()],
                     return_type: Box::new(Type::Bool),
@@ -972,9 +979,11 @@ impl TypeChecker {
             // est déduit de son type de retour concret.
             "map" => Some(Type::Function(FunctionType {
                 generic_params: vec!["U".to_string()],
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: vec![Type::Function(FunctionType {
                     generic_params: Vec::new(),
+                    is_async: false,
                     generic_constraints: Vec::new(),
                     params: vec![element.clone()],
                     return_type: Box::new(Type::TypeParam("U".to_string())),
@@ -986,6 +995,7 @@ impl TypeChecker {
             "filter" => Some(method(
                 vec![Type::Function(FunctionType {
                     generic_params: Vec::new(),
+                    is_async: false,
                     generic_constraints: Vec::new(),
                     params: vec![element.clone()],
                     return_type: Box::new(Type::Bool),
@@ -2655,6 +2665,7 @@ impl TypeChecker {
 
                     let signature = FunctionType {
                         generic_params: generic_names,
+                        is_async: *is_async,
                         generic_constraints,
                         params: parameters,
                         return_type: Box::new(return_type),
@@ -2809,6 +2820,7 @@ impl TypeChecker {
 
                         let signature = FunctionType {
                             generic_params: method_generic_names,
+                            is_async: false,
                             generic_constraints,
                             params,
                             return_type: Box::new(return_type),
@@ -2922,6 +2934,7 @@ impl TypeChecker {
 
                         let signature = FunctionType {
                             generic_params: method_generic_names,
+                            is_async: false,
                             generic_constraints,
                             params,
                             return_type: Box::new(return_type),
@@ -3040,6 +3053,7 @@ impl TypeChecker {
 
                         let signature = FunctionType {
                             generic_params: method_generic_names,
+                            is_async: false,
                             generic_constraints,
                             params,
                             return_type: Box::new(return_type),
@@ -3799,6 +3813,7 @@ impl TypeChecker {
 
         let declared_signature = FunctionType {
             generic_params: generic_params.iter().map(|p| p.name.clone()).collect(),
+            is_async,
             generic_constraints: self.generic_constraints(generic_params)?,
             params: params
                 .iter()
@@ -4313,6 +4328,7 @@ impl TypeChecker {
 
                 Ok(Type::Function(FunctionType {
                     generic_params: Vec::new(),
+                    is_async: false,
                     generic_constraints: Vec::new(),
                     params: vec![Type::Dynamic; params.len()],
                     return_type: Box::new(return_type),
@@ -4410,11 +4426,58 @@ impl TypeChecker {
                             )
                     };
 
+                    let channel_element_type = |ty: &Type| match ty {
+                        Type::Generic { name, arguments }
+                            if name.eq_ignore_ascii_case("Channel") && arguments.len() == 1 =>
+                        {
+                            Some(arguments[0].clone())
+                        }
+                        _ => None,
+                    };
+
                     let is_select_case = |ty: &Type| match ty {
                         Type::Dynamic => true,
                         _ if is_channel(ty) => true,
-                        Type::Tuple(elements) if elements.len() == 2 => is_channel(&elements[0]),
+                        Type::Tuple(elements) if elements.len() == 2 => {
+                            is_channel(&elements[0])
+                        }
                         _ => false,
+                    };
+
+                    let validate_select_case = |checker: &Self, case_type: &Type| -> Result<(), CompileError> {
+                        match case_type {
+                            Type::Dynamic => Ok(()),
+                            _ if is_channel(case_type) => Ok(()),
+                            Type::Tuple(types) if types.len() == 2 => {
+                                if !is_channel(&types[0]) {
+                                    return Err(CompileError::WrongArgumentType {
+                                        function: "select".into(),
+                                        index: 0,
+                                        expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
+                                        found: types[0].to_string(),
+                                    });
+                                }
+
+                                if let Some(element_type) = channel_element_type(&types[0])
+                                    && !checker.are_assignable(&types[1], &element_type)
+                                {
+                                    return Err(CompileError::WrongArgumentType {
+                                        function: "select".into(),
+                                        index: 0,
+                                        expected: format!("List<(Channel<{element_type}>, {element_type})>"),
+                                        found: case_type.to_string(),
+                                    });
+                                }
+
+                                Ok(())
+                            }
+                            _ => Err(CompileError::WrongArgumentType {
+                                function: "select".into(),
+                                index: 0,
+                                expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
+                                found: case_type.to_string(),
+                            }),
+                        }
                     };
 
                     match &channels_type {
@@ -4427,6 +4490,7 @@ impl TypeChecker {
                                     found: channels_type.to_string(),
                                 });
                             }
+                            validate_select_case(self, element_type)?;
                         }
                         Type::ArrayDynamic | Type::Dynamic => {}
                         _ => {
@@ -4441,36 +4505,12 @@ impl TypeChecker {
                         }
                     }
 
-                    // Quand la liste est littérale, vérifier chaque cas avant
-                    // la fusion des types d'éléments (un mélange réception +
-                    // envoi devient volontairement `Dynamic` au niveau de la
-                    // liste).
-                    if let Expression::Array(elements) = &arguments[0] {
-                        for element in elements {
-                            let case_type = self.check_expression(element)?;
-                            if !is_select_case(&case_type) {
-                                return Err(CompileError::WrongArgumentType {
-                                    function: "select".into(),
-                                    index: 0,
-                                    expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
-                                    found: case_type.to_string(),
-                                });
-                            }
-
-                            if let Type::Tuple(types) = case_type
-                                && types.len() == 2
-                                && !is_channel(&types[0])
-                            {
-                                return Err(CompileError::WrongArgumentType {
-                                    function: "select".into(),
-                                    index: 0,
-                                    expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
-                                    found: types[0].to_string(),
-                                });
-                            }
-                        }
-                    }
-
+                    // Le deuxième élément reste dynamique : `select` peut
+                    // renvoyer une valeur de canal, `None` en cas de fermeture
+                    // ou `None` après expiration du timeout. Ce contrat est
+                    // volontairement dynamique et correspond à l'API runtime
+                    // existante. La valeur des cas d'envoi est néanmoins
+                    // vérifiée statiquement par `validate_select_case` ci-dessus.
                     return Ok(Type::Tuple(vec![Type::Int, Type::Dynamic, Type::Bool]));
                 }
 
@@ -4529,7 +4569,7 @@ impl TypeChecker {
                     let task_arguments = &arguments[1..];
                     let function_name = format!("spawn({})", self.expression_name(&arguments[0]));
 
-                    let result_type = match callee_type {
+                    let (result_type, is_async) = match callee_type {
                         Type::Function(signature) => {
                             let instantiated = self.instantiate_call_signature(
                                 &signature,
@@ -4537,7 +4577,7 @@ impl TypeChecker {
                                 task_arguments,
                                 &function_name,
                             )?;
-                            *instantiated.return_type
+                            (*instantiated.return_type, instantiated.is_async)
                         }
 
                         Type::Overloads(signatures) => {
@@ -4547,14 +4587,14 @@ impl TypeChecker {
                                 task_arguments,
                                 &function_name,
                             )?;
-                            *signature.return_type
+                            (*signature.return_type, signature.is_async)
                         }
 
                         Type::Dynamic => {
                             for argument in task_arguments {
                                 self.check_expression(argument)?;
                             }
-                            Type::Dynamic
+                            (Type::Dynamic, false)
                         }
 
                         other => {
@@ -4563,6 +4603,13 @@ impl TypeChecker {
                             });
                         }
                     };
+
+                    if is_async {
+                        // `async func` expose déjà `Task<T>`. `spawn` exécute
+                        // directement la fermeture dans une tâche, donc le
+                        // résultat est le même `Task<T>`, pas `Task<Task<T>>`.
+                        return Ok(result_type);
+                    }
 
                     return Ok(Type::Generic {
                         name: "Task".into(),
@@ -5514,6 +5561,7 @@ impl TypeChecker {
         {
             return Ok(Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: Vec::new(),
                 return_type: Box::new(Type::Str),
@@ -5794,6 +5842,7 @@ impl TypeChecker {
     fn substitute_self_in_function(signature: &FunctionType, concrete: &Type) -> FunctionType {
         FunctionType {
             generic_params: signature.generic_params.clone(),
+            is_async: signature.is_async,
             generic_constraints: signature
                 .generic_constraints
                 .iter()
@@ -5854,6 +5903,7 @@ impl TypeChecker {
             ),
             Type::Function(function) => Type::Function(FunctionType {
                 generic_params: function.generic_params.clone(),
+                is_async: function.is_async,
                 generic_constraints: function
                     .generic_constraints
                     .iter()
@@ -5908,6 +5958,7 @@ impl TypeChecker {
     ) -> FunctionType {
         FunctionType {
             generic_params: signature.generic_params.clone(),
+            is_async: signature.is_async,
             generic_constraints: signature
                 .generic_constraints
                 .iter()
@@ -6135,6 +6186,7 @@ impl TypeChecker {
 
         Ok(Type::Function(FunctionType {
             generic_params: expected.generic_params.clone(),
+            is_async: false,
             generic_constraints: expected.generic_constraints.clone(),
             params: expected.params.clone(),
             return_type: Box::new(return_type),

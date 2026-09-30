@@ -70,6 +70,10 @@ impl GenericConstraint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionType {
     pub generic_params: Vec<String>,
+    /// `true` pour une fonction `async`. Cette information est distincte
+    /// du type de retour : une fonction synchrone peut explicitement
+    /// retourner un `Task<T>`, ce qui doit rester distingué de `async func`.
+    pub is_async: bool,
     /// Contraintes sémantiques des paramètres génériques.
     /// Elles peuvent représenter une capability intrinsèque ou une interface
     /// Kastel utilisateur.
@@ -337,7 +341,8 @@ impl Type {
             (Type::Tuple(_), Type::TupleDynamic) => true,
 
             (Type::Function(actual), Type::Function(expected)) => {
-                actual.generic_params == expected.generic_params
+                actual.is_async == expected.is_async
+                    && actual.generic_params == expected.generic_params
                     && actual.generic_constraints == expected.generic_constraints
                     && actual.params.len() == expected.params.len()
                     && actual
@@ -553,6 +558,7 @@ impl Type {
         let method = |params: Vec<Type>, result: Type| {
             Some(Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params,
                 return_type: Box::new(result),
@@ -647,6 +653,7 @@ impl Type {
         let function = |params: Vec<Type>, result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params,
                 return_type: Box::new(result),
@@ -689,6 +696,7 @@ impl Type {
         let function = |result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: Vec::new(),
                 return_type: Box::new(result),
@@ -711,6 +719,7 @@ impl Type {
         let function = |result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: Vec::new(),
                 return_type: Box::new(result),
@@ -734,6 +743,7 @@ impl Type {
         let function = |params: Vec<Type>, result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params,
                 return_type: Box::new(result),
@@ -758,6 +768,7 @@ impl Type {
         let function = |result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: Vec::new(),
                 return_type: Box::new(result),
@@ -781,6 +792,7 @@ impl Type {
         let function = |result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: Vec::new(),
                 return_type: Box::new(result),
@@ -808,6 +820,7 @@ impl Type {
         let function = |result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: Vec::new(),
                 return_type: Box::new(result),
@@ -830,6 +843,7 @@ impl Type {
         let function = |result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: Vec::new(),
                 return_type: Box::new(result),
@@ -857,6 +871,7 @@ impl Type {
         let function = |result: Type| {
             Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params: Vec::new(),
                 return_type: Box::new(result),
@@ -880,6 +895,7 @@ impl Type {
                     .iter()
                     .map(|name| (*name).to_string())
                     .collect(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params,
                 return_type: Box::new(result),
@@ -910,6 +926,7 @@ impl Type {
                     let mapped = Type::TypeParam("U".into());
                     let callback = Type::Function(FunctionType {
                         generic_params: Vec::new(),
+                        is_async: false,
                         generic_constraints: Vec::new(),
                         params: vec![element.clone()],
                         return_type: Box::new(mapped.clone()),
@@ -929,6 +946,7 @@ impl Type {
                     let mapped = Type::TypeParam("U".into());
                     let callback = Type::Function(FunctionType {
                         generic_params: Vec::new(),
+                        is_async: false,
                         generic_constraints: Vec::new(),
                         params: vec![element.clone()],
                         return_type: Box::new(Type::Generic {
@@ -993,6 +1011,7 @@ impl Type {
                 let mapped = Type::TypeParam("U".into());
                 let callback = Type::Function(FunctionType {
                     generic_params: Vec::new(),
+                    is_async: false,
                     generic_constraints: Vec::new(),
                     params: vec![ok_type.clone()],
                     return_type: Box::new(mapped.clone()),
@@ -1012,6 +1031,7 @@ impl Type {
                 let mapped = Type::TypeParam("U".into());
                 let callback = Type::Function(FunctionType {
                     generic_params: Vec::new(),
+                    is_async: false,
                     generic_constraints: Vec::new(),
                     params: vec![err_type.clone()],
                     return_type: Box::new(mapped.clone()),
@@ -1031,6 +1051,7 @@ impl Type {
                 let mapped = Type::TypeParam("U".into());
                 let callback = Type::Function(FunctionType {
                     generic_params: Vec::new(),
+                    is_async: false,
                     generic_constraints: Vec::new(),
                     params: vec![ok_type.clone()],
                     return_type: Box::new(Type::Generic {
@@ -1085,6 +1106,7 @@ impl Type {
         let method = |params: Vec<Type>, result: Type| {
             Some(Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params,
                 return_type: Box::new(result),
@@ -1127,6 +1149,7 @@ impl Type {
         let method = |params: Vec<Type>, result: Type| {
             Some(Type::Function(FunctionType {
                 generic_params: Vec::new(),
+                is_async: false,
                 generic_constraints: Vec::new(),
                 params,
                 return_type: Box::new(result),

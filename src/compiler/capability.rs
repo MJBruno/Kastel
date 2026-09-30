@@ -130,6 +130,7 @@ impl Capability {
 
         Some(FunctionType {
             generic_params: Vec::new(),
+            is_async: false,
             generic_constraints: Vec::new(),
             params: vec![parameter],
             return_type: Box::new(output),

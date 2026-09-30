@@ -250,3 +250,28 @@ select
 async/await
 cancel()
 ```
+                  KASTEL
+                     │
+             ┌───────┴───────┐
+             │               │
+          Compiler          REPL
+             │               │
+             └───────┬───────┘
+                     ↓
+               Kastel Bytecode
+                     ↓
+              Kastel Runtime
+                     │
+       ┌─────────────┼──────────────┐
+       ↓             ↓              ↓
+      VM             GC          Module System
+       │
+       ├── Interpreter
+       └── JIT
+                     │
+       ┌─────────────┼──────────────┐
+       ↓             ↓              ↓
+   std library    Scheduler       Native API
+                     │
+                     ↓
+                    OS

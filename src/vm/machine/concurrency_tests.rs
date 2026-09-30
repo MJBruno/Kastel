@@ -2531,6 +2531,36 @@ fn select_rejects_non_channel_send_cases_statically() {
 }
 
 #[test]
+fn select_rejects_send_value_that_does_not_match_channel_type_statically() {
+    let error = compile_only(
+        r#"
+        let ch: Channel<int> = channel();
+        select([(ch, "wrong type")]);
+    "#,
+    )
+    .unwrap_err();
+
+    assert!(is_wrong_argument_type(&error), "expected WrongArgumentType, got: {error:?}");
+}
+
+#[test]
+fn select_infers_received_value_type_from_channel() {
+    let (vm, result) = run_script(
+        r#"
+        let ch: Channel<int> = channel();
+        ch.send(42);
+
+        let selected = select([ch]);
+        let value: int = selected[1];
+        let ok = selected[0] == 0 && value == 42 && selected[2] == false;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
 fn semaphore_try_acquire_and_release() {
     on_big_stack(|| {
         let (vm, result) = run_script(
@@ -4748,6 +4778,48 @@ fn await_rejects_non_task_statically() {
     .unwrap_err();
 
     assert!(is_wrong_argument_type(&error));
+}
+
+#[test]
+fn spawn_of_async_function_returns_a_flat_task() {
+    let (vm, result) = run_script(
+        r#"
+        async func compute(value: int) -> int {
+            sleep(1);
+            return value * 2;
+        }
+
+        let task: Task<int> = spawn(compute, 21);
+        let value: int = await task;
+        let ok = value == 42 && task.status() == "done";
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
+}
+
+#[test]
+fn spawn_keeps_nested_task_for_sync_function_returning_task() {
+    let (vm, result) = run_script(
+        r#"
+        async func compute() -> int {
+            return 42;
+        }
+
+        func make_task() -> Task<int> {
+            return compute();
+        }
+
+        let outer: Task<Task<int>> = spawn(make_task);
+        let inner: Task<int> = await outer;
+        let value: int = await inner;
+        let ok = value == 42;
+    "#,
+    );
+
+    result.unwrap();
+    assert_global_true(&vm, "ok");
 }
 
 #[test]

@@ -447,6 +447,40 @@ let value: int = unwrap({ value: 9 });
     }
 
     #[test]
+    fn imported_async_function_preserves_async_kind_for_spawn() {
+        let root = temp_dir("kastel_typecheck_imported_async_spawn_test");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("workers.ks"),
+            r#"
+export async func compute(value: int) -> int {
+    return value * 2;
+}
+"#,
+        )
+        .unwrap();
+
+        let main = project.join("main.ks");
+        fs::write(&main, "").unwrap();
+
+        let resolver = ModuleResolver::new(project);
+        let loader = Rc::new(ModuleTypeLoader::new(resolver));
+        let result = TypeChecker::check_with_context(
+            &parse(
+                r#"
+from workers import compute;
+let task: Task<int> = spawn(compute, 21);
+"#,
+            ),
+            TypeCheckContext::new(main, loader),
+        );
+
+        assert!(result.is_ok(), "une fonction async importée doit rester async: {result:?}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn imported_generic_function_carries_transitive_interface_constraints() {
         let root = temp_dir("kastel_typecheck_imported_generic_constraint_test");
         let project = root.join("project");

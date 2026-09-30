@@ -1,0 +1,2 @@
+finally interne
+attrapé plus haut : erreur interne

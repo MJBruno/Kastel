@@ -1,0 +1,3 @@
+valeur 3
+vide à l'intérieur
+rien
