@@ -412,7 +412,7 @@ export func make<T>(value: T) -> Box<T> {
         // `register_imported_types` doit avoir rendu l'alias disponible
         // pendant `collect_declarations`, avant `check_statements`.
         let source = r#"
-func unwrap<T>(box: Box<T>) -> T {
+func unwrap<T>(box: Wrapper<T>) -> T {
     return box.value;
 }
 
@@ -420,7 +420,7 @@ from box import Box as Wrapper, make;
 
 let b: Wrapper<int> = { value: 42 };
 let x: int = unwrap({ value: 7 });
-let y: int = make(12);
+let y: Wrapper<int> = make(12);
 "#;
 
         let result = TypeChecker::check_with_context(
@@ -534,7 +534,7 @@ export func make<T: Base>(value: T) -> Box<T> {
         let main = project.join("main.ks");
         fs::write(&main, "").unwrap();
 
-        let resolver = ModuleResolver::new(project);
+        let resolver = ModuleResolver::new(project.clone());
         let loader = Rc::new(ModuleTypeLoader::new(resolver));
 
         // Seul `make` et `Good` sont importés. Le type `Box<T>` apparaît
@@ -572,6 +572,125 @@ make(new Bad());
             TypeCheckContext::new(bad_main, bad_loader),
         );
         assert!(bad_result.is_err(), "Bad ne respecte pas T: Base");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn imported_generic_type_alias_preserves_its_own_constraints() {
+        let root = temp_dir("kastel_typecheck_imported_generic_alias_constraint_test");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("contracts.ks"),
+            r#"
+export interface Addable {}
+export class Number: Addable {}
+export class Bad {}
+
+// Le corps est structurel/dynamique ; seule la contrainte de l'alias doit
+// empêcher `Bag<Bad>`.
+export type Bag<T: Addable> = List<T>;
+"#,
+        )
+        .unwrap();
+
+        let main = project.join("main.ks");
+        fs::write(&main, "").unwrap();
+
+        let resolver = ModuleResolver::new(project);
+        let loader = Rc::new(ModuleTypeLoader::new(resolver));
+
+        let valid = TypeChecker::check_with_context(
+            &parse(
+                r#"
+from contracts import Bag, Number;
+let bag: Bag<Number> = [];
+"#,
+            ),
+            TypeCheckContext::new(main.clone(), Rc::clone(&loader)),
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let invalid = TypeChecker::check_with_context(
+            &parse(
+                r#"
+from contracts import Bag, Bad;
+let bag: Bag<Bad> = [];
+"#,
+            ),
+            TypeCheckContext::new(main, loader),
+        );
+        assert!(invalid.is_err(), "la contrainte de Bag doit être conservée à l'import");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn imported_parameterized_interface_constraints_are_substituted() {
+        let root = temp_dir("kastel_typecheck_imported_parameterized_constraint_test");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("contracts.ks"),
+            r#"
+export interface Comparable<T> {
+    func compare(other: T) -> int;
+}
+
+export class Number: Comparable<int> {
+    func compare(other: int) -> int {
+        return 0;
+    }
+}
+
+export func compare_with<T: Comparable<U>, U>(value: T, other: U) -> int {
+    return value.compare(other);
+}
+"#,
+        )
+        .unwrap();
+
+        let main = project.join("main.ks");
+        fs::write(&main, "").unwrap();
+
+        let resolver = ModuleResolver::new(project);
+        let loader = Rc::new(ModuleTypeLoader::new(resolver));
+
+        let valid = TypeChecker::check_with_context(
+            &parse(
+                r#"
+from contracts import compare_with, Number;
+let result: int = compare_with(new Number(), 42);
+"#,
+            ),
+            TypeCheckContext::new(main.clone(), Rc::clone(&loader)),
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let invalid = TypeChecker::check_with_context(
+            &parse(
+                r#"
+from contracts import compare_with, Number;
+compare_with(new Number(), "not-an-int");
+"#,
+            ),
+            TypeCheckContext::new(main.clone(), Rc::clone(&loader)),
+        );
+        assert!(invalid.is_err(), "Comparable<int> doit être substitué en Comparable<str> et refusé");
+
+        let forwarded = TypeChecker::check_with_context(
+            &parse(
+                r#"
+from contracts import compare_with, Number;
+func forward<U>(other: U) -> int {
+    return compare_with(new Number(), other);
+}
+"#,
+            ),
+            TypeCheckContext::new(main, loader),
+        );
+        assert!(forwarded.is_err(), "une contrainte paramétrée doit rester vérifiée dans un contexte générique");
 
         let _ = fs::remove_dir_all(root);
     }

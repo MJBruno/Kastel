@@ -117,33 +117,48 @@ impl Parser {
             return false;
         }
 
-        index += 1;
+        // À ce stade, on ne valide pas encore la syntaxe détaillée des
+        // paramètres génériques : `parse_generic_parameters` s'en charge
+        // ensuite et produit le diagnostic précis. Ici, on doit seulement
+        // déterminer si le `<...>` appartient à une déclaration d'alias.
+        // Les bornes peuvent elles-mêmes être paramétrées :
+        // `type X<T: Comparable<U>> = ...`.
+        //
+        // On recherche donc le `>` qui ferme le `<` de la déclaration, en
+        // tenant compte des `>>` utilisés par le lexer pour des génériques
+        // imbriqués. Le token suivant doit être `=`.
+        let mut angle_depth = 0usize;
 
-        // Les paramètres génériques d'une déclaration sont de simples noms:
-        // `<A>`, `<A, B>`, etc. Ils ne contiennent pas de types imbriqués.
-        loop {
-            if !self
-                .tokens
-                .get(index)
-                .is_some_and(|token| token.kind == TokenKind::Identifier)
-            {
-                return false;
+        while let Some(token) = self.tokens.get(index) {
+            match &token.kind {
+                TokenKind::Less => angle_depth += 1,
+                TokenKind::Greater => {
+                    if angle_depth == 0 {
+                        return false;
+                    }
+                    angle_depth -= 1;
+                }
+                TokenKind::RightShift => {
+                    if angle_depth < 2 {
+                        return false;
+                    }
+                    angle_depth -= 2;
+                }
+                TokenKind::Semicolon => return false,
+                _ => {}
             }
+
             index += 1;
 
-            match self.tokens.get(index).map(|token| &token.kind) {
-                Some(TokenKind::Comma) => index += 1,
-                Some(TokenKind::Greater) => {
-                    index += 1;
-                    break;
-                }
-                _ => return false,
+            if angle_depth == 0 {
+                return self
+                    .tokens
+                    .get(index)
+                    .is_some_and(|next| next.kind == TokenKind::Equal);
             }
         }
 
-        self.tokens
-            .get(index)
-            .is_some_and(|token| token.kind == TokenKind::Equal)
+        false
     }
 
     /// `type Person = { name: str, age: int };`

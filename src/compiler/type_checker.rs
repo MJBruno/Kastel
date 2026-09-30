@@ -37,13 +37,17 @@ struct Binding {
 
 #[derive(Debug, Clone)]
 struct LocalTypeAlias {
-    generic_params: Vec<String>,
+    generic_params: Vec<GenericParam>,
     body: TypeExpr,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct TypeAliasInfo {
     pub(crate) generic_params: Vec<String>,
+    /// Contraintes des paramètres génériques de l'alias. Elles sont conservées
+    /// séparément du corps résolu, car l'expansion d'un alias peut faire
+    /// disparaître son identité et donc son contrat propre.
+    pub(crate) generic_constraints: Vec<(String, Vec<GenericConstraint>)>,
     pub(crate) ty: Type,
 }
 
@@ -216,6 +220,29 @@ impl TypeChecker {
                     .iter()
                     .map(|p| p.name.clone())
                     .collect::<Vec<_>>();
+                let alias_environment = generic_params
+                    .iter()
+                    .map(|parameter| {
+                        (
+                            parameter.name.clone(),
+                            Type::TypeParam(parameter.name.clone()),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+                let generic_constraints =
+                    checker.generic_constraints_in_environment(generic_params, &alias_environment)?;
+                let generic_constraints = generic_params
+                    .iter()
+                    .map(|parameter| {
+                        (
+                            parameter.name.clone(),
+                            generic_constraints
+                                .get(&parameter.name)
+                                .cloned()
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 let resolved = checker.resolve_type_with_generic_names(type_expr, &generic_names);
 
                 if type_aliases
@@ -223,6 +250,7 @@ impl TypeChecker {
                         name.clone(),
                         TypeAliasInfo {
                             generic_params: generic_names,
+                            generic_constraints,
                             ty: resolved,
                         },
                     )
@@ -308,6 +336,8 @@ impl TypeChecker {
         self.register_interfaces(statements);
         self.register_imported_types(statements)?;
         self.collect_declarations(statements)?;
+        self.validate_alias_constraints_in_statements(statements)?;
+        self.validate_declared_type_constraints()?;
         self.validate_interface_implementations()
     }
 
@@ -332,7 +362,7 @@ impl TypeChecker {
                 self.aliases.insert(
                     name.clone(),
                     LocalTypeAlias {
-                        generic_params: generic_params.iter().map(|p| p.name.clone()).collect(),
+                        generic_params: generic_params.clone(),
                         body: type_expr.clone(),
                     },
                 );
@@ -382,6 +412,12 @@ impl TypeChecker {
                             interface,
                         } => {
                             self.import_type_dependencies(&interface, &resolved.ty);
+                            for (_, constraints) in &resolved.generic_constraints {
+                                for constraint in constraints {
+                                    let GenericConstraint::Interface(interface_type) = constraint;
+                                    self.import_type_dependencies(&interface, interface_type);
+                                }
+                            }
                             if let Some(binding_name) = path.last() {
                                 self.imported_type_aliases
                                     .insert(binding_name.clone(), resolved);
@@ -414,6 +450,12 @@ impl TypeChecker {
                         // la collecte des signatures.
                         for (name, resolved) in &interface.type_aliases {
                             self.import_type_dependencies(&interface, &resolved.ty);
+                            for (_, constraints) in &resolved.generic_constraints {
+                                for constraint in constraints {
+                                    let GenericConstraint::Interface(interface_type) = constraint;
+                                    self.import_type_dependencies(&interface, interface_type);
+                                }
+                            }
                             self.imported_type_aliases
                                 .insert(name.clone(), resolved.clone());
                         }
@@ -444,6 +486,12 @@ impl TypeChecker {
                             // disponible avant la collecte des déclarations.
                             if let Some(resolved) = interface.type_aliases.get(&item.name) {
                                 self.import_type_dependencies(&interface, &resolved.ty);
+                                for (_, constraints) in &resolved.generic_constraints {
+                                    for constraint in constraints {
+                                        let GenericConstraint::Interface(interface_type) = constraint;
+                                        self.import_type_dependencies(&interface, interface_type);
+                                    }
+                                }
                                 let binding_name = item.alias.as_deref().unwrap_or(&item.name);
                                 self.imported_type_aliases
                                     .insert(binding_name.to_string(), resolved.clone());
@@ -559,10 +607,9 @@ impl TypeChecker {
                     let alias_environment = alias
                         .generic_params
                         .iter()
-                        .cloned()
                         .map(|parameter| {
-                            let ty = Type::TypeParam(parameter.clone());
-                            (parameter, ty)
+                            let ty = Type::TypeParam(parameter.name.clone());
+                            (parameter.name.clone(), ty)
                         })
                         .collect::<HashMap<_, _>>();
                     let resolved = self.resolve_type_in_environment(
@@ -573,7 +620,7 @@ impl TypeChecker {
                     let substitutions = alias
                         .generic_params
                         .iter()
-                        .cloned()
+                        .map(|parameter| parameter.name.clone())
                         .zip(resolved_arguments.iter().cloned())
                         .collect::<HashMap<_, _>>();
                     return Self::substitute_type(&resolved, &substitutions);
@@ -1205,7 +1252,10 @@ impl TypeChecker {
             };
 
             for constraint in constraints {
-                let instantiated = Self::substitute_generic_constraint(constraint, substitutions);
+                let instantiated = Self::substitute_generic_constraint(
+                    constraint,
+                    substitutions,
+                );
 
                 if !self.type_satisfies_constraint(actual, &instantiated) {
                     return Err(CompileError::GenericConstraintNotSatisfied {
@@ -1242,6 +1292,1116 @@ impl TypeChecker {
             return Err(CompileError::VariableAlreadyDeclared(name.clone()));
         }
         Ok(names)
+    }
+
+    fn generic_constraints_in_environment(
+        &self,
+        params: &[GenericParam],
+        environment: &HashMap<String, Type>,
+    ) -> Result<HashMap<String, Vec<GenericConstraint>>, CompileError> {
+        let mut result = HashMap::with_capacity(params.len());
+
+        for parameter in params {
+            let self_type = Type::TypeParam(parameter.name.clone());
+            let mut constraints = Vec::with_capacity(parameter.bounds.len());
+
+            for bound in &parameter.bounds {
+                let interface = self.normalize_intrinsic_interface(
+                    self.resolve_type_in_environment(bound, environment, 0),
+                    &self_type,
+                );
+
+                if !self.is_interface_type(&interface) {
+                    return Err(CompileError::InvalidGenericConstraint {
+                        parameter: parameter.name.clone(),
+                        constraint: format!("{bound:?}"),
+                    });
+                }
+
+                let constraint = GenericConstraint::Interface(Box::new(interface));
+                if !constraints.contains(&constraint) {
+                    constraints.push(constraint);
+                }
+            }
+
+            result.insert(parameter.name.clone(), constraints);
+        }
+
+        Ok(result)
+    }
+
+    fn extend_generic_environment(
+        outer: &HashMap<String, Type>,
+        params: &[GenericParam],
+    ) -> HashMap<String, Type> {
+        let mut environment = outer.clone();
+        for parameter in params {
+            environment.insert(
+                parameter.name.clone(),
+                Type::TypeParam(parameter.name.clone()),
+            );
+        }
+        environment
+    }
+
+    /// Vérifie le contrat propre des alias génériques au moment où ils sont
+    /// réellement utilisés. Une expansion comme `Alias<Bad> -> List<Bad>`
+    /// fait disparaître le nom de l'alias ; il faut donc contrôler ici ses
+    /// propres contraintes avant cette expansion.
+    fn validate_alias_constraints_in_type_expr(
+        &self,
+        expr: &TypeExpr,
+        environment: &HashMap<String, Type>,
+        active_constraints: &HashMap<String, Vec<GenericConstraint>>,
+        subject_name: &str,
+    ) -> Result<(), CompileError> {
+        match expr {
+            TypeExpr::Named(_) => Ok(()),
+            TypeExpr::Union(members) => {
+                for member in members {
+                    self.validate_alias_constraints_in_type_expr(
+                        member,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                Ok(())
+            }
+            TypeExpr::Record(fields) => {
+                for (_, field_type) in fields {
+                    self.validate_alias_constraints_in_type_expr(
+                        field_type,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                Ok(())
+            }
+            TypeExpr::Generic { name, arguments } => {
+                for argument in arguments {
+                    self.validate_alias_constraints_in_type_expr(
+                        argument,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+
+                let resolved_arguments = arguments
+                    .iter()
+                    .map(|argument| {
+                        self.resolve_type_in_environment(argument, environment, 0)
+                    })
+                    .collect::<Vec<_>>();
+
+                if let Some(alias) = self.aliases.get(name) {
+                    if alias.generic_params.len() != resolved_arguments.len() {
+                        return Err(CompileError::InvalidGenericArity {
+                            name: name.clone(),
+                            expected: alias.generic_params.len(),
+                            found: resolved_arguments.len(),
+                        });
+                    }
+
+                    let alias_environment = alias
+                        .generic_params
+                        .iter()
+                        .map(|parameter| {
+                            (
+                                parameter.name.clone(),
+                                Type::TypeParam(parameter.name.clone()),
+                            )
+                        })
+                        .collect::<HashMap<_, _>>();
+                    let alias_constraints = self
+                        .generic_constraints_in_environment(&alias.generic_params, &alias_environment)?;
+                    let substitutions = alias
+                        .generic_params
+                        .iter()
+                        .map(|parameter| parameter.name.clone())
+                        .zip(resolved_arguments.iter().cloned())
+                        .collect::<HashMap<_, _>>();
+
+                    self.validate_constraint_set_with_context(
+                        &alias_constraints
+                            .iter()
+                            .map(|(parameter, constraints)| {
+                                (parameter.clone(), constraints.clone())
+                            })
+                            .collect::<Vec<_>>(),
+                        &substitutions,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                } else if let Some(alias) = self.imported_type_aliases.get(name) {
+                    if alias.generic_params.len() != resolved_arguments.len() {
+                        return Err(CompileError::InvalidGenericArity {
+                            name: name.clone(),
+                            expected: alias.generic_params.len(),
+                            found: resolved_arguments.len(),
+                        });
+                    }
+
+                    let substitutions = alias
+                        .generic_params
+                        .iter()
+                        .cloned()
+                        .zip(resolved_arguments)
+                        .collect::<HashMap<_, _>>();
+                    self.validate_constraint_set_with_context(
+                        &alias.generic_constraints,
+                        &substitutions,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+
+                Ok(())
+            }
+        }
+    }
+
+    fn validate_alias_constraints_in_expression(
+        &self,
+        expression: &Expression,
+        environment: &HashMap<String, Type>,
+        active_constraints: &HashMap<String, Vec<GenericConstraint>>,
+        subject_name: &str,
+    ) -> Result<(), CompileError> {
+        match expression {
+            Expression::Unary { right, .. } => self.validate_alias_constraints_in_expression(
+                right,
+                environment,
+                active_constraints,
+                subject_name,
+            ),
+            Expression::Binary { left, right, .. } => {
+                self.validate_alias_constraints_in_expression(
+                    left,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )?;
+                self.validate_alias_constraints_in_expression(
+                    right,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )
+            }
+            Expression::Function { body, .. } => {
+                self.validate_alias_constraints_in_statements_with_context(
+                    body,
+                    environment,
+                    active_constraints,
+                )
+            }
+            Expression::Call {
+                callee,
+                generic_args,
+                arguments,
+                ..
+            } => {
+                self.validate_alias_constraints_in_expression(
+                    callee,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )?;
+                for generic_arg in generic_args {
+                    self.validate_alias_constraints_in_type_expr(
+                        generic_arg,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                for argument in arguments {
+                    self.validate_alias_constraints_in_expression(
+                        argument,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                Ok(())
+            }
+            Expression::Member { object, .. } => self.validate_alias_constraints_in_expression(
+                object,
+                environment,
+                active_constraints,
+                subject_name,
+            ),
+            Expression::Index { object, index, .. } => {
+                self.validate_alias_constraints_in_expression(
+                    object,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )?;
+                self.validate_alias_constraints_in_expression(
+                    index,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )
+            }
+            Expression::New {
+                generic_args,
+                arguments,
+                ..
+            } => {
+                for generic_arg in generic_args {
+                    self.validate_alias_constraints_in_type_expr(
+                        generic_arg,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                for argument in arguments {
+                    self.validate_alias_constraints_in_expression(
+                        argument,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                Ok(())
+            }
+            Expression::Array(elements) | Expression::Tuple(elements) => {
+                for element in elements {
+                    self.validate_alias_constraints_in_expression(
+                        element,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                Ok(())
+            }
+            Expression::Dict(entries) | Expression::Record(entries) => {
+                for (_, value) in entries {
+                    self.validate_alias_constraints_in_expression(
+                        value,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                Ok(())
+            }
+            Expression::Try(inner) | Expression::Await(inner) => {
+                self.validate_alias_constraints_in_expression(
+                    inner,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )
+            }
+            Expression::Ternary {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                self.validate_alias_constraints_in_expression(
+                    condition,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )?;
+                self.validate_alias_constraints_in_expression(
+                    then_expr,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )?;
+                self.validate_alias_constraints_in_expression(
+                    else_expr,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )
+            }
+            Expression::Literal(_) | Expression::Variable(_) | Expression::SelfValue => Ok(()),
+        }
+    }
+
+    fn validate_alias_constraints_in_statements(
+        &self,
+        statements: &[Statement],
+    ) -> Result<(), CompileError> {
+        self.validate_alias_constraints_in_statements_with_context(
+            statements,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+    }
+
+    fn validate_alias_constraints_in_statements_with_context(
+        &self,
+        statements: &[Statement],
+        environment: &HashMap<String, Type>,
+        active_constraints: &HashMap<String, Vec<GenericConstraint>>,
+    ) -> Result<(), CompileError> {
+        for statement in statements {
+            let statement = Self::strip_position(statement);
+            match statement {
+                Statement::Positioned { statement, .. }
+                | Statement::Export { statement } => {
+                    self.validate_alias_constraints_in_statements_with_context(
+                        std::slice::from_ref(statement),
+                        environment,
+                        active_constraints,
+                    )?;
+                }
+                Statement::Let {
+                    name,
+                    value,
+                    type_annotation,
+                    ..
+                } => {
+                    if let Some(annotation) = type_annotation {
+                        self.validate_alias_constraints_in_type_expr(
+                            annotation,
+                            environment,
+                            active_constraints,
+                            name,
+                        )?;
+                    }
+                    self.validate_alias_constraints_in_expression(
+                        value,
+                        environment,
+                        active_constraints,
+                        name,
+                    )?;
+                }
+                Statement::Assignment { target, value } => {
+                    self.validate_alias_constraints_in_expression(
+                        value,
+                        environment,
+                        active_constraints,
+                        "assignment",
+                    )?;
+                    match target {
+                        AssignmentTarget::Variable(_) => {}
+                        AssignmentTarget::Index { object, index } => {
+                            self.validate_alias_constraints_in_expression(
+                                object,
+                                environment,
+                                active_constraints,
+                                "assignment",
+                            )?;
+                            self.validate_alias_constraints_in_expression(
+                                index,
+                                environment,
+                                active_constraints,
+                                "assignment",
+                            )?;
+                        }
+                        AssignmentTarget::Member { object, .. } => {
+                            self.validate_alias_constraints_in_expression(
+                                object,
+                                environment,
+                                active_constraints,
+                                "assignment",
+                            )?;
+                        }
+                    }
+                }
+                Statement::Expression { expression } => {
+                    self.validate_alias_constraints_in_expression(
+                        expression,
+                        environment,
+                        active_constraints,
+                        "expression",
+                    )?;
+                }
+                Statement::Block(body) => {
+                    self.validate_alias_constraints_in_statements_with_context(
+                        body,
+                        environment,
+                        active_constraints,
+                    )?;
+                }
+                Statement::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    self.validate_alias_constraints_in_expression(
+                        condition,
+                        environment,
+                        active_constraints,
+                        "if",
+                    )?;
+                    self.validate_alias_constraints_in_statements_with_context(
+                        then_branch,
+                        environment,
+                        active_constraints,
+                    )?;
+                    if let Some(else_branch) = else_branch {
+                        self.validate_alias_constraints_in_statements_with_context(
+                            else_branch,
+                            environment,
+                            active_constraints,
+                        )?;
+                    }
+                }
+                Statement::While { condition, body } => {
+                    self.validate_alias_constraints_in_expression(
+                        condition,
+                        environment,
+                        active_constraints,
+                        "while",
+                    )?;
+                    self.validate_alias_constraints_in_statements_with_context(
+                        body,
+                        environment,
+                        active_constraints,
+                    )?;
+                }
+                Statement::ForIn { iterable, body, .. } => {
+                    self.validate_alias_constraints_in_expression(
+                        iterable,
+                        environment,
+                        active_constraints,
+                        "for",
+                    )?;
+                    self.validate_alias_constraints_in_statements_with_context(
+                        body,
+                        environment,
+                        active_constraints,
+                    )?;
+                }
+                Statement::Match { value, arms } => {
+                    self.validate_alias_constraints_in_expression(
+                        value,
+                        environment,
+                        active_constraints,
+                        "match",
+                    )?;
+                    for arm in arms {
+                        if let Some(guard) = &arm.guard {
+                            self.validate_alias_constraints_in_expression(
+                                guard,
+                                environment,
+                                active_constraints,
+                                "match",
+                            )?;
+                        }
+                        self.validate_alias_constraints_in_statements_with_context(
+                            &arm.body,
+                            environment,
+                            active_constraints,
+                        )?;
+                    }
+                }
+                Statement::Try {
+                    try_body,
+                    catch_type,
+                    catch_body,
+                    finally_body,
+                    ..
+                } => {
+                    self.validate_alias_constraints_in_statements_with_context(
+                        try_body,
+                        environment,
+                        active_constraints,
+                    )?;
+                    if let Some(catch_type) = catch_type {
+                        self.validate_alias_constraints_in_type_expr(
+                            catch_type,
+                            environment,
+                            active_constraints,
+                            "catch",
+                        )?;
+                    }
+                    if let Some(catch_body) = catch_body {
+                        self.validate_alias_constraints_in_statements_with_context(
+                            catch_body,
+                            environment,
+                            active_constraints,
+                        )?;
+                    }
+                    if let Some(finally_body) = finally_body {
+                        self.validate_alias_constraints_in_statements_with_context(
+                            finally_body,
+                            environment,
+                            active_constraints,
+                        )?;
+                    }
+                }
+                Statement::Function {
+                    name,
+                    generic_params,
+                    param_types,
+                    return_type,
+                    body,
+                    ..
+                } => {
+                    let function_environment =
+                        Self::extend_generic_environment(environment, generic_params);
+                    let function_constraints = self
+                        .generic_constraints_in_environment(generic_params, &function_environment)?;
+                    let merged = Self::merge_constraint_maps(active_constraints, &function_constraints);
+                    self.validate_generic_param_bounds(
+                        generic_params,
+                        environment,
+                        &merged,
+                        &format!("function '{name}'"),
+                    )?;
+                    for annotation in param_types.iter().flatten() {
+                        self.validate_alias_constraints_in_type_expr(
+                            annotation,
+                            &function_environment,
+                            &merged,
+                            name,
+                        )?;
+                    }
+                    if let Some(annotation) = return_type {
+                        self.validate_alias_constraints_in_type_expr(
+                            annotation,
+                            &function_environment,
+                            &merged,
+                            name,
+                        )?;
+                    }
+                    self.validate_alias_constraints_in_statements_with_context(
+                        body,
+                        &function_environment,
+                        &merged,
+                    )?;
+                }
+                Statement::Return { value: Some(value) }
+                | Statement::Throw { value } => {
+                    self.validate_alias_constraints_in_expression(
+                        value,
+                        environment,
+                        active_constraints,
+                        "return",
+                    )?;
+                }
+                Statement::Return { value: None }
+                | Statement::Break
+                | Statement::Continue
+                | Statement::Import { .. }
+                | Statement::FromImport { .. } => {}
+                Statement::TypeAlias {
+                    name,
+                    generic_params,
+                    type_expr,
+                } => {
+                    let alias_environment =
+                        Self::extend_generic_environment(environment, generic_params);
+                    let alias_constraints = self
+                        .generic_constraints_in_environment(generic_params, &alias_environment)?;
+                    self.validate_generic_param_bounds(
+                        generic_params,
+                        environment,
+                        &alias_constraints,
+                        &format!("type alias '{name}'"),
+                    )?;
+                    self.validate_alias_constraints_in_type_expr(
+                        type_expr,
+                        &alias_environment,
+                        &alias_constraints,
+                        &format!("type alias '{name}'"),
+                    )?;
+                }
+                Statement::Class {
+                    name,
+                    generic_params,
+                    bases,
+                    fields,
+                    methods,
+                } => {
+                    let class_environment =
+                        Self::extend_generic_environment(environment, generic_params);
+                    let class_constraints = self
+                        .generic_constraints_in_environment(generic_params, &class_environment)?;
+                    let merged = Self::merge_constraint_maps(active_constraints, &class_constraints);
+                    self.validate_generic_param_bounds(
+                        generic_params,
+                        environment,
+                        &merged,
+                        &format!("class '{name}'"),
+                    )?;
+                    for base in bases {
+                        self.validate_alias_constraints_in_type_expr(
+                            base,
+                            &class_environment,
+                            &merged,
+                            name,
+                        )?;
+                    }
+                    for field in fields {
+                        if let Some(annotation) = &field.type_annotation {
+                            self.validate_alias_constraints_in_type_expr(
+                                annotation,
+                                &class_environment,
+                                &merged,
+                                name,
+                            )?;
+                        }
+                    }
+                    for method in methods {
+                        self.validate_method_alias_constraints(
+                            method,
+                            &class_environment,
+                            &merged,
+                            name,
+                        )?;
+                    }
+                }
+                Statement::Enum {
+                    name,
+                    generic_params,
+                    methods,
+                    ..
+                } => {
+                    let enum_environment =
+                        Self::extend_generic_environment(environment, generic_params);
+                    let enum_constraints = self
+                        .generic_constraints_in_environment(generic_params, &enum_environment)?;
+                    let merged = Self::merge_constraint_maps(active_constraints, &enum_constraints);
+                    self.validate_generic_param_bounds(
+                        generic_params,
+                        environment,
+                        &merged,
+                        &format!("enum '{name}'"),
+                    )?;
+                    for method in methods {
+                        self.validate_method_alias_constraints(
+                            method,
+                            &enum_environment,
+                            &merged,
+                            name,
+                        )?;
+                    }
+                }
+                Statement::Interface {
+                    name,
+                    generic_params,
+                    bases,
+                    methods,
+                } => {
+                    let interface_environment =
+                        Self::extend_generic_environment(environment, generic_params);
+                    let interface_constraints = self
+                        .generic_constraints_in_environment(generic_params, &interface_environment)?;
+                    let merged = Self::merge_constraint_maps(active_constraints, &interface_constraints);
+                    self.validate_generic_param_bounds(
+                        generic_params,
+                        environment,
+                        &merged,
+                        &format!("interface '{name}'"),
+                    )?;
+                    for base in bases {
+                        self.validate_alias_constraints_in_type_expr(
+                            base,
+                            &interface_environment,
+                            &merged,
+                            name,
+                        )?;
+                    }
+                    for method in methods {
+                        self.validate_method_alias_constraints(
+                            &FunctionMethod {
+                                name: method.name.clone(),
+                                generic_params: method.generic_params.clone(),
+                                visibility: Visibility::Public,
+                                is_static: false,
+                                params: method.params.clone(),
+                                param_types: method.param_types.clone(),
+                                return_type: method.return_type.clone(),
+                                body: Vec::new(),
+                            },
+                            &interface_environment,
+                            &merged,
+                            name,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_method_alias_constraints(
+        &self,
+        method: &FunctionMethod,
+        outer_environment: &HashMap<String, Type>,
+        outer_constraints: &HashMap<String, Vec<GenericConstraint>>,
+        subject_name: &str,
+    ) -> Result<(), CompileError> {
+        let method_environment = Self::extend_generic_environment(
+            outer_environment,
+            &method.generic_params,
+        );
+        let method_constraints = self
+            .generic_constraints_in_environment(&method.generic_params, &method_environment)?;
+        let merged = Self::merge_constraint_maps(outer_constraints, &method_constraints);
+        self.validate_generic_param_bounds(
+            &method.generic_params,
+            outer_environment,
+            &merged,
+            subject_name,
+        )?;
+        for annotation in method.param_types.iter().flatten() {
+            self.validate_alias_constraints_in_type_expr(
+                annotation,
+                &method_environment,
+                &merged,
+                subject_name,
+            )?;
+        }
+        if let Some(annotation) = &method.return_type {
+            self.validate_alias_constraints_in_type_expr(
+                annotation,
+                &method_environment,
+                &merged,
+                subject_name,
+            )?;
+        }
+        self.validate_alias_constraints_in_statements_with_context(
+            &method.body,
+            &method_environment,
+            &merged,
+        )
+    }
+
+    fn validate_generic_param_bounds(
+        &self,
+        params: &[GenericParam],
+        outer_environment: &HashMap<String, Type>,
+        active_constraints: &HashMap<String, Vec<GenericConstraint>>,
+        subject_name: &str,
+    ) -> Result<(), CompileError> {
+        let environment = Self::extend_generic_environment(outer_environment, params);
+        for parameter in params {
+            for bound in &parameter.bounds {
+                self.validate_alias_constraints_in_type_expr(
+                    bound,
+                    &environment,
+                    active_constraints,
+                    subject_name,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn merge_constraint_maps(
+        outer: &HashMap<String, Vec<GenericConstraint>>,
+        inner: &HashMap<String, Vec<GenericConstraint>>,
+    ) -> HashMap<String, Vec<GenericConstraint>> {
+        let mut merged = outer.clone();
+        for (name, constraints) in inner {
+            merged.insert(name.clone(), constraints.clone());
+        }
+        merged
+    }
+
+    /// Vérifie les contraintes des classes/interfaces génériques partout où
+    /// un type concret peut apparaître dans un contrat déjà collecté.
+    ///
+    /// Exemple : `Box<T>` exige `T: Base`. Cette règle doit être vraie dans
+    /// une annotation (`Box<int>`), une signature, un champ ou un type
+    /// imbriqué (`List<Box<int>>`). Les `TypeParam` sont vérifiés contre les
+    /// contraintes actives du contexte générique.
+    fn validate_declared_type_constraints(&self) -> Result<(), CompileError> {
+        for (name, signature) in &self.functions {
+            self.validate_function_signature_constraints(signature, name)?;
+        }
+
+        // Une fonction surchargée est retirée de `self.functions` dès qu'une
+        // seconde arité apparaît. Il faut donc valider aussi toutes les
+        // signatures conservées dans `function_overloads`.
+        for (name, overloads) in &self.function_overloads {
+            // Les fonctions non surchargées sont déjà présentes dans
+            // `self.functions`; la table d'overloads est nécessaire ici pour
+            // les fonctions dont le nom est réellement surchargé.
+            if self.functions.contains_key(name) {
+                continue;
+            }
+
+            for signature in overloads {
+                self.validate_function_signature_constraints(signature, name)?;
+            }
+        }
+
+        for (class_name, class) in &self.classes {
+            let active_constraints = class
+                .generic_constraints
+                .iter()
+                .cloned()
+                .collect::<HashMap<_, _>>();
+
+            for signatures in class.methods.values() {
+                for signature in signatures {
+                    let method_constraints =
+                        Self::merge_generic_constraint_maps(&active_constraints, signature);
+                    let subject = format!("{class_name}.method");
+                    self.validate_function_signature_constraints_in_context(
+                        signature,
+                        &method_constraints,
+                        &subject,
+                    )?;
+                }
+            }
+
+            for signatures in class.static_methods.values() {
+                for signature in signatures {
+                    let method_constraints =
+                        Self::merge_generic_constraint_maps(&active_constraints, signature);
+                    let subject = format!("{class_name}.static method");
+                    self.validate_function_signature_constraints_in_context(
+                        signature,
+                        &method_constraints,
+                        &subject,
+                    )?;
+                }
+            }
+
+            for field_type in class.fields.values() {
+                self.validate_type_constraints_in_context(
+                    field_type,
+                    &active_constraints,
+                    class_name,
+                )?;
+            }
+            for field_type in class.static_fields.values() {
+                self.validate_type_constraints_in_context(
+                    field_type,
+                    &active_constraints,
+                    class_name,
+                )?;
+            }
+
+            for interface_type in &class.interface_types {
+                self.validate_type_constraints_in_context(
+                    interface_type,
+                    &active_constraints,
+                    class_name,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn merge_generic_constraint_maps(
+        outer: &HashMap<String, Vec<GenericConstraint>>,
+        signature: &FunctionType,
+    ) -> HashMap<String, Vec<GenericConstraint>> {
+        let mut merged = outer.clone();
+        for (parameter, constraints) in &signature.generic_constraints {
+            merged.insert(parameter.clone(), constraints.clone());
+        }
+        merged
+    }
+
+    fn validate_function_signature_constraints(
+        &self,
+        signature: &FunctionType,
+        subject_name: &str,
+    ) -> Result<(), CompileError> {
+        let active_constraints = signature
+            .generic_constraints
+            .iter()
+            .cloned()
+            .collect::<HashMap<_, _>>();
+        self.validate_function_signature_constraints_in_context(
+            signature,
+            &active_constraints,
+            subject_name,
+        )
+    }
+
+    fn validate_function_signature_constraints_in_context(
+        &self,
+        signature: &FunctionType,
+        active_constraints: &HashMap<String, Vec<GenericConstraint>>,
+        subject_name: &str,
+    ) -> Result<(), CompileError> {
+        for parameter in &signature.params {
+            self.validate_type_constraints_in_context(parameter, active_constraints, subject_name)?;
+        }
+        self.validate_type_constraints_in_context(
+            &signature.return_type,
+            active_constraints,
+            subject_name,
+        )
+    }
+
+    fn validate_type_constraints_in_context(
+        &self,
+        ty: &Type,
+        active_constraints: &HashMap<String, Vec<GenericConstraint>>,
+        subject_name: &str,
+    ) -> Result<(), CompileError> {
+        match ty {
+            Type::Generic { name, arguments } => {
+                if let Some(info) = self.classes.get(name) {
+                    if arguments.len() != info.generic_params.len() {
+                        return Err(CompileError::InvalidGenericArity {
+                            name: name.clone(),
+                            expected: info.generic_params.len(),
+                            found: arguments.len(),
+                        });
+                    }
+
+                    let substitutions = info
+                        .generic_params
+                        .iter()
+                        .cloned()
+                        .zip(arguments.iter().cloned())
+                        .collect::<HashMap<_, _>>();
+                    self.validate_constraint_set_with_context(
+                        &info.generic_constraints,
+                        &substitutions,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+
+                for argument in arguments {
+                    self.validate_type_constraints_in_context(
+                        argument,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+            }
+            Type::Array(element) | Type::Set(element) => {
+                self.validate_type_constraints_in_context(
+                    element,
+                    active_constraints,
+                    subject_name,
+                )?;
+            }
+            Type::Dict(key, value) => {
+                self.validate_type_constraints_in_context(
+                    key,
+                    active_constraints,
+                    subject_name,
+                )?;
+                self.validate_type_constraints_in_context(
+                    value,
+                    active_constraints,
+                    subject_name,
+                )?;
+            }
+            Type::Tuple(elements) | Type::Union(elements) => {
+                for element in elements {
+                    self.validate_type_constraints_in_context(
+                        element,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+            }
+            Type::Record(fields) => {
+                for (_, field_type) in fields {
+                    self.validate_type_constraints_in_context(
+                        field_type,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+            }
+            Type::Function(signature) => {
+                let nested_constraints =
+                    Self::merge_generic_constraint_maps(active_constraints, signature);
+                self.validate_function_signature_constraints_in_context(
+                    signature,
+                    &nested_constraints,
+                    subject_name,
+                )?;
+            }
+            Type::Overloads(signatures) => {
+                for signature in signatures {
+                    let nested_constraints =
+                        Self::merge_generic_constraint_maps(active_constraints, signature);
+                    self.validate_function_signature_constraints_in_context(
+                        signature,
+                        &nested_constraints,
+                        subject_name,
+                    )?;
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn validate_constraint_set_with_context(
+        &self,
+        constraints: &[(String, Vec<GenericConstraint>)],
+        substitutions: &HashMap<String, Type>,
+        active_constraints: &HashMap<String, Vec<GenericConstraint>>,
+        subject_name: &str,
+    ) -> Result<(), CompileError> {
+        for (parameter, constraints) in constraints {
+            let Some(actual) = substitutions.get(parameter) else {
+                continue;
+            };
+
+            for constraint in constraints {
+                let instantiated = Self::substitute_generic_constraint(constraint, substitutions);
+                if !self.type_satisfies_constraint_with_context(
+                    actual,
+                    &instantiated,
+                    active_constraints,
+                ) {
+                    return Err(CompileError::GenericConstraintNotSatisfied {
+                        parameter: parameter.clone(),
+                        constraint: instantiated.name(),
+                        found: actual.to_string(),
+                        function: subject_name.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn type_satisfies_constraint_with_context(
+        &self,
+        ty: &Type,
+        constraint: &GenericConstraint,
+        active_constraints: &HashMap<String, Vec<GenericConstraint>>,
+    ) -> bool {
+        match ty {
+            Type::Dynamic => true,
+            Type::TypeParam(name) => active_constraints
+                .get(name)
+                .is_some_and(|constraints| {
+                    constraints
+                        .iter()
+                        .any(|active| self.constraints_imply(active, constraint))
+                }),
+            Type::Union(members) => members
+                .iter()
+                .all(|member| {
+                    self.type_satisfies_constraint_with_context(
+                        member,
+                        constraint,
+                        active_constraints,
+                    )
+                }),
+            _ => match constraint {
+                GenericConstraint::Interface(interface) => {
+                    self.type_implements_interface(ty, interface)
+                }
+            },
+        }
     }
 
     fn validate_interface_implementations(&self) -> Result<(), CompileError> {
@@ -1994,6 +3154,11 @@ impl TypeChecker {
                     .map(|annotation| self.resolve_type(annotation))
                     .unwrap_or_else(|| actual.clone());
 
+                self.validate_type_constraints_in_context(
+                    &declared,
+                    &self.generic_constraints,
+                    name,
+                )?;
                 self.ensure_assignable(&actual, &declared)?;
 
                 self.declare(
@@ -2217,7 +3382,7 @@ impl TypeChecker {
                 self.aliases
                     .entry(name.clone())
                     .or_insert_with(|| LocalTypeAlias {
-                        generic_params: generic_params.iter().map(|p| p.name.clone()).collect(),
+                        generic_params: generic_params.clone(),
                         body: type_expr.clone(),
                     });
 
@@ -2481,6 +3646,12 @@ impl TypeChecker {
         } = imported
         {
             self.import_type_dependencies(&interface, &resolved.ty);
+            for (_, constraints) in &resolved.generic_constraints {
+                for constraint in constraints {
+                    let GenericConstraint::Interface(interface_type) = constraint;
+                    self.import_type_dependencies(&interface, interface_type);
+                }
+            }
             self.imported_type_aliases
                 .insert(binding_name.to_string(), resolved);
 
@@ -2641,6 +3812,19 @@ impl TypeChecker {
                 .collect(),
             return_type: Box::new(exposed_return_type),
         };
+
+        for parameter in &declared_signature.params {
+            self.validate_type_constraints_in_context(
+                parameter,
+                &self.generic_constraints,
+                name,
+            )?;
+        }
+        self.validate_type_constraints_in_context(
+            &declared_signature.return_type,
+            &self.generic_constraints,
+            name,
+        )?;
 
         let nested = self.scopes.len() > 1;
         let parent_scope_index = self.scopes.len() - 1;
@@ -6374,10 +7558,10 @@ enum Status {
         assert!(
             check(
                 r#"
-interface Add {
+interface SelfAddable {
     func add(other: Self) -> Self;
 }
-class Money : Add {
+class Money : SelfAddable {
     let amount: int;
     func initialize(amount: int) { self.amount = amount; }
     func add(other: Self) -> Self { return new Money(self.amount + other.amount); }
@@ -7190,11 +8374,11 @@ func combine<T: Add, U: Add>(a: T, b: U) -> T {
     fn class_operator_requires_declared_interface() {
         let ok = check(
             r#"
-interface Add {
+interface Addable {
     func add(other: Self) -> Self;
 }
 
-class Money : Add {
+class Money : Addable {
     let amount: int;
 
     func initialize(amount: int) {
@@ -7279,11 +8463,11 @@ let total = new Money(100) + "50";
         assert!(
             check(
                 r#"
-interface Add {
+interface Addable {
     func add(other: Self) -> Self;
 }
 
-class Money: Add {
+class Money: Addable {
     func add(other: int) -> Money {
         return new Money();
     }
@@ -7462,6 +8646,116 @@ let text: str = explicit.get();
     }
 
     #[test]
+    fn generic_class_constraints_are_checked_in_type_annotations() {
+        let valid = check(
+            r#"
+interface Addable {}
+
+class Box<T: Addable> {
+    func initialize(value: T) { }
+}
+
+class Number: Addable {
+}
+
+let good: Box<Number> = new Box<Number>(new Number());
+let nested: List<Box<Number>> = [new Box<Number>(new Number())];
+"#,
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        // `dynamic` rend l'affectation elle-même valide : l'erreur doit donc
+        // venir de la contrainte de `Box<T>`, pas d'un simple mismatch.
+        let invalid = check(
+            r#"
+interface Addable {}
+
+class Box<T: Addable> {
+    func initialize(value: T) { }
+}
+
+class Bad {
+}
+
+let source: dynamic = 1;
+let bad: Box<Bad> = source;
+"#,
+        );
+        assert!(invalid.is_err(), "une annotation doit respecter la contrainte de Box<T>");
+
+        let invalid_nested = check(
+            r#"
+interface Addable {}
+
+class Box<T: Addable> {
+}
+
+class Bad {
+}
+
+let source: dynamic = [];
+let bad: List<Box<Bad>> = source;
+"#,
+        );
+        assert!(
+            invalid_nested.is_err(),
+            "une contrainte doit aussi être vérifiée dans un type imbriqué"
+        );
+    }
+
+    #[test]
+    fn generic_class_constraints_are_inherited_by_outer_generic_parameters() {
+        let valid = check(
+            r#"
+interface Addable {}
+
+class Box<T: Addable> {
+}
+
+class Holder<T: Addable> {
+    let box: Box<T>;
+}
+"#,
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let invalid = check(
+            r#"
+interface Addable {}
+
+class Box<T: Addable> {
+}
+
+class Holder<T> {
+    let box: Box<T>;
+}
+"#,
+        );
+        assert!(
+            invalid.is_err(),
+            "T sans la contrainte requise ne doit pas pouvoir devenir Box<T>"
+        );
+
+        let invalid_function = check(
+            r#"
+interface Addable {}
+
+class Box<T: Addable> {
+}
+
+func wrap<T>(value: T) -> Box<T> {
+    let dynamic_value: dynamic = value;
+    return dynamic_value;
+}
+"#,
+        );
+        assert!(
+            invalid_function.is_err(),
+            "une signature de fonction doit également imposer la contrainte de Box<T>"
+        );
+    }
+
+    #[test]
     fn generic_class_constraints_are_checked_and_available_in_methods() {
         let ok = check(
             r#"
@@ -7561,6 +8855,55 @@ let bad: int = unwrap({ other: 42 });
     }
 
     #[test]
+    fn generic_type_alias_constraints_are_preserved_at_use_site() {
+        let valid = check(
+            r#"
+interface Addable {}
+
+class Number: Addable {}
+class Bad {}
+
+type Bag<T: Addable> = List<T>;
+
+let good: Bag<Number> = [];
+"#,
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let invalid = check(
+            r#"
+interface Addable {}
+
+class Bad {}
+
+type Bag<T: Addable> = List<T>;
+
+let bad: Bag<Bad> = [];
+"#,
+        );
+        assert!(invalid.is_err(), "la contrainte de l'alias ne doit pas disparaître après expansion");
+
+        // La contrainte reste aussi active lorsqu'un paramètre générique
+        // extérieur est utilisé comme argument de l'alias.
+        let forwarded = check(
+            r#"
+interface Addable {}
+class Number: Addable {}
+
+type Bag<T: Addable> = List<T>;
+
+func keep<T: Addable>(value: Bag<T>) -> Bag<T> {
+    return value;
+}
+
+let bag: Bag<Number> = [];
+let same: Bag<Number> = keep(bag);
+"#,
+        );
+        assert!(forwarded.is_ok(), "{forwarded:?}");
+    }
+
+    #[test]
     fn generic_aliases_can_be_instantiated() {
         let ok = check(
             r#"
@@ -7613,6 +8956,74 @@ let other: Result<float, str> = Result.Ok;
         assert!(ok.is_ok(), "{:?}", ok.err());
 
         assert!(check("interface Comparable<T> { func compare(other: T) -> int; } class Number: Comparable<int> { func compare(other: int) -> int { return 0; } } let bad: Comparable<str> = new Number();").is_err());
+    }
+
+    #[test]
+    fn parameterized_interface_constraints_support_type_parameter_substitution() {
+        let valid = check(
+            r#"
+interface Comparable<T> {
+    func compare(other: T) -> int;
+}
+
+class Number: Comparable<int> {
+    func compare(other: int) -> int {
+        return 0;
+    }
+}
+
+func compare_with<T: Comparable<U>, U>(value: T, other: U) -> int {
+    return value.compare(other);
+}
+
+let result: int = compare_with(new Number(), 42);
+"#,
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let invalid = check(
+            r#"
+interface Comparable<T> {
+    func compare(other: T) -> int;
+}
+
+class Number: Comparable<int> {
+    func compare(other: int) -> int {
+        return 0;
+    }
+}
+
+func compare_with<T: Comparable<U>, U>(value: T, other: U) -> int {
+    return value.compare(other);
+}
+
+let result: int = compare_with(new Number(), "not-an-int");
+"#,
+        );
+        assert!(invalid.is_err(), "Comparable<int> ne doit pas satisfaire Comparable<str>");
+
+        let outer = check(
+            r#"
+interface Comparable<T> {
+    func compare(other: T) -> int;
+}
+
+class Number: Comparable<int> {
+    func compare(other: int) -> int {
+        return 0;
+    }
+}
+
+func use<T: Comparable<U>, U>(value: T, other: U) -> int {
+    return value.compare(other);
+}
+
+func forward<U>(value: Number, other: U) -> int {
+    return use(value, other);
+}
+"#,
+        );
+        assert!(outer.is_err(), "U doit rester vérifié contre Comparable<int> dans une fonction générique");
     }
 
     #[test]

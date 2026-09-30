@@ -521,7 +521,7 @@ impl std::fmt::Display for CompileError {
             } => {
                 write!(
                     f,
-                    "Le type '{found}' ne satisfait pas la contrainte '{parameter}: {constraint}' lors de l'appel à '{function}'"
+                    "Le type '{found}' ne satisfait pas la contrainte '{parameter}: {constraint}' dans le contexte '{function}'"
                 )
             }
 
@@ -749,7 +749,7 @@ impl CompileError {
                 0,
                 0,
             )
-            .with_help(format!("la fonction '{function}' exige cette interface")),
+            .with_help(format!("le contrat générique '{function}' exige cette interface")),
 
             CompileError::InvalidGenericConstraint { parameter, constraint } => Diagnostic::new(
                 format!("contrainte générique invalide : '{parameter}: {constraint}'"),
