@@ -50,6 +50,9 @@ pub(crate) enum ImportedType {
     /// valeur à l'exécution, seulement un type déjà résolu.
     TypeAlias {
         resolved: TypeAliasInfo,
+        /// Interface du module exporteur, nécessaire pour importer les
+        /// dépendances nominales référencées par le corps de l'alias.
+        interface: Rc<ModuleTypeInterface>,
     },
 }
 
@@ -173,7 +176,10 @@ impl ModuleTypeLoader {
                 }
 
                 if let Some(resolved) = interface.type_aliases.get(&name).cloned() {
-                    return Ok(ImportedType::TypeAlias { resolved });
+                    return Ok(ImportedType::TypeAlias {
+                        resolved,
+                        interface,
+                    });
                 }
 
                 Err(CompileError::ExportNotFound {
@@ -375,6 +381,197 @@ let n: Number = "x";
             check("from shapes import Internal;").is_err(),
             "un alias non exporté ne doit pas être importable"
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn imported_generic_type_alias_is_available_during_declaration_collection() {
+        let root = temp_dir("kastel_typecheck_imported_generic_alias_test");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("box.ks"),
+            r#"
+export type Box<T> = { value: T };
+
+export func make<T>(value: T) -> Box<T> {
+    return { value: value };
+}
+"#,
+        )
+        .unwrap();
+
+        let main = project.join("main.ks");
+        fs::write(&main, "").unwrap();
+
+        let resolver = ModuleResolver::new(project);
+        let loader = Rc::new(ModuleTypeLoader::new(resolver));
+
+        // L'import est volontairement APRÈS la fonction :
+        // `register_imported_types` doit avoir rendu l'alias disponible
+        // pendant `collect_declarations`, avant `check_statements`.
+        let source = r#"
+func unwrap<T>(box: Box<T>) -> T {
+    return box.value;
+}
+
+from box import Box as Wrapper, make;
+
+let b: Wrapper<int> = { value: 42 };
+let x: int = unwrap({ value: 7 });
+let y: int = make(12);
+"#;
+
+        let result = TypeChecker::check_with_context(
+            &parse(source),
+            TypeCheckContext::new(main.clone(), Rc::clone(&loader)),
+        );
+        assert!(result.is_ok(), "{result:?}");
+
+        // La forme qualifiée d'import d'un alias doit suivre le même chemin.
+        let qualified = r#"
+import box.Box;
+func unwrap<T>(box: Box<T>) -> T {
+    return box.value;
+}
+let value: int = unwrap({ value: 9 });
+"#;
+        let qualified_result = TypeChecker::check_with_context(
+            &parse(qualified),
+            TypeCheckContext::new(main, loader),
+        );
+        assert!(qualified_result.is_ok(), "{qualified_result:?}");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn imported_generic_function_carries_transitive_interface_constraints() {
+        let root = temp_dir("kastel_typecheck_imported_generic_constraint_test");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("contracts.ks"),
+            r#"
+export interface Base {}
+export interface Marker: Base {}
+
+export class Good: Marker {}
+export class Bad {}
+
+export func identity<T: Base>(value: T) -> T {
+    return value;
+}
+"#,
+        )
+        .unwrap();
+
+        let main = project.join("main.ks");
+        fs::write(&main, "").unwrap();
+
+        let resolver = ModuleResolver::new(project);
+        let loader = Rc::new(ModuleTypeLoader::new(resolver));
+
+        // Base/Marker ne sont volontairement PAS importées par le consommateur.
+        // Le contrat de `identity` doit néanmoins importer transitivement les
+        // métadonnées des interfaces nécessaires à la validation de `T: Base`.
+        let valid = TypeChecker::check_with_context(
+            &parse(
+                r#"
+from contracts import identity, Good;
+let value: Good = identity(new Good());
+"#,
+            ),
+            TypeCheckContext::new(main.clone(), Rc::clone(&loader)),
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let invalid = TypeChecker::check_with_context(
+            &parse(
+                r#"
+from contracts import identity, Bad;
+identity(new Bad());
+"#,
+            ),
+            TypeCheckContext::new(main, loader),
+        );
+        assert!(invalid.is_err(), "un type sans Base doit être rejeté");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn imported_export_signature_carries_nominal_class_dependencies() {
+        let root = temp_dir("kastel_typecheck_imported_nominal_dependency_test");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("boxes.ks"),
+            r#"
+export interface Base {}
+export class Good: Base {}
+
+export class Box<T: Base> {
+    let value: T;
+
+    func initialize(value: T) {
+        self.value = value;
+    }
+
+    func get() -> T {
+        return self.value;
+    }
+}
+
+export func make<T: Base>(value: T) -> Box<T> {
+    return new Box<T>(value);
+}
+"#,
+        )
+        .unwrap();
+
+        let main = project.join("main.ks");
+        fs::write(&main, "").unwrap();
+
+        let resolver = ModuleResolver::new(project);
+        let loader = Rc::new(ModuleTypeLoader::new(resolver));
+
+        // Seul `make` et `Good` sont importés. Le type `Box<T>` apparaît
+        // uniquement dans la signature exportée de `make`; son ClassInfo et
+        // la contrainte `T: Base` doivent pourtant être disponibles pour
+        // résoudre `.get()` après l'appel.
+        let valid = TypeChecker::check_with_context(
+            &parse(
+                r#"
+from boxes import make, Good;
+let value: Good = make(new Good()).get();
+"#,
+            ),
+            TypeCheckContext::new(main.clone(), Rc::clone(&loader)),
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        // Une autre classe importée qui n'implémente pas Base doit échouer sur
+        // la contrainte générique de `make`, même si Box est correctement
+        // résolue comme type de retour.
+        fs::write(
+            project.join("bad.ks"),
+            r#"
+from boxes import make;
+class Bad {}
+make(new Bad());
+"#,
+        )
+        .unwrap();
+        let bad_main = project.join("bad.ks");
+        let bad_loader = Rc::clone(&loader);
+        let source = fs::read_to_string(&bad_main).unwrap();
+        let bad_result = TypeChecker::check_with_context(
+            &parse(&source),
+            TypeCheckContext::new(bad_main, bad_loader),
+        );
+        assert!(bad_result.is_err(), "Bad ne respecte pas T: Base");
 
         let _ = fs::remove_dir_all(root);
     }

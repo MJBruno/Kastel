@@ -361,20 +361,34 @@ impl TypeChecker {
         for statement in statements {
             match Self::strip_position(statement) {
                 Statement::Import { path } => {
-                    if let ImportedType::Export {
-                        ty: _,
-                        name,
-                        interface,
-                    } = module_loader.resolve_import(&current_module, path)?
-                    {
-                        self.import_class_info(&interface, &name);
-                        if interface
-                            .classes
-                            .get(&name)
-                            .is_some_and(|info| info.is_interface)
-                        {
-                            self.known_interfaces.insert(name.clone());
+                    match module_loader.resolve_import(&current_module, path)? {
+                        ImportedType::Export {
+                            ty,
+                            name,
+                            interface,
+                        } => {
+                            self.import_type_dependencies(&interface, &ty);
+                            self.import_class_info(&interface, &name);
                         }
+
+                        // Les alias de type n'ont aucune valeur runtime,
+                        // mais doivent être enregistrés AVANT
+                        // `collect_declarations` : une fonction, une classe
+                        // ou une interface peut référencer l'alias dans sa
+                        // signature avant que `check_from_import`/`check_import`
+                        // ne soit exécuté.
+                        ImportedType::TypeAlias {
+                            resolved,
+                            interface,
+                        } => {
+                            self.import_type_dependencies(&interface, &resolved.ty);
+                            if let Some(binding_name) = path.last() {
+                                self.imported_type_aliases
+                                    .insert(binding_name.clone(), resolved);
+                            }
+                        }
+
+                        ImportedType::Module(_) => {}
                     }
                 }
 
@@ -385,12 +399,30 @@ impl TypeChecker {
                     let interface = module_loader.interface(&module_path)?;
 
                     if items.len() == 1 && items[0].name == "*" {
+                        let exports = interface.exports.values().cloned().collect::<Vec<_>>();
+                        for ty in exports {
+                            self.import_type_dependencies(&interface, &ty);
+                        }
+
                         let names = interface.classes.keys().cloned().collect::<Vec<_>>();
                         for name in names {
                             self.import_class_info(&interface, &name);
                         }
+
+                        // Même règle que dans `check_from_import` : `*`
+                        // rend aussi les alias de type disponibles pendant
+                        // la collecte des signatures.
+                        for (name, resolved) in &interface.type_aliases {
+                            self.import_type_dependencies(&interface, &resolved.ty);
+                            self.imported_type_aliases
+                                .insert(name.clone(), resolved.clone());
+                        }
                     } else {
                         for item in items {
+                            if let Some(ty) = interface.exports.get(&item.name).cloned() {
+                                self.import_type_dependencies(&interface, &ty);
+                            }
+
                             if let Some(info) = interface.classes.get(&item.name).cloned() {
                                 let canonical_name = item.name.clone();
                                 self.import_class_info(&interface, &canonical_name);
@@ -405,6 +437,16 @@ impl TypeChecker {
                                 if info.is_interface {
                                     self.known_interfaces.insert(canonical_name);
                                 }
+                            }
+
+                            // Alias de type importé : respecte l'alias local
+                            // (`from box import Box as Wrapper`) et devient
+                            // disponible avant la collecte des déclarations.
+                            if let Some(resolved) = interface.type_aliases.get(&item.name) {
+                                self.import_type_dependencies(&interface, &resolved.ty);
+                                let binding_name = item.alias.as_deref().unwrap_or(&item.name);
+                                self.imported_type_aliases
+                                    .insert(binding_name.to_string(), resolved.clone());
                             }
                         }
                     }
@@ -2223,6 +2265,7 @@ impl TypeChecker {
                     name,
                     ImportedType::TypeAlias {
                         resolved: resolved.clone(),
+                        interface: Rc::clone(&interface),
                     },
                 )?;
             }
@@ -2252,7 +2295,13 @@ impl TypeChecker {
             // `from m import Person;` : Person n'est qu'un alias de type,
             // sans valeur à l'exécution (voir `declare_import_binding`).
             if let Some(resolved) = interface.type_aliases.get(&item.name).cloned() {
-                self.declare_import_binding(binding_name, ImportedType::TypeAlias { resolved })?;
+                self.declare_import_binding(
+                    binding_name,
+                    ImportedType::TypeAlias {
+                        resolved,
+                        interface: Rc::clone(&interface),
+                    },
+                )?;
                 continue;
             }
 
@@ -2272,31 +2321,140 @@ impl TypeChecker {
             .resolve_import(&context.current_module, path)
     }
 
-    /// Enregistre le type nominal `exported_name` d'un module importé, et ses
-    /// interfaces parentes/implémentées (transitivement), sous leurs noms
-    /// d'origine. Un type déjà connu
-    /// localement sous ce nom n'est pas remplacée.
-    fn import_class_info(&mut self, interface: &ModuleTypeInterface, exported_name: &str) {
-        let mut pending = vec![exported_name.to_string()];
+    /// Importe les métadonnées de tous les types utilisés par un contrat
+    /// exporté : paramètres/retours de fonctions, contraintes génériques,
+    /// arguments de types et membres de classes/interfaces. Le module
+    /// consommateur doit disposer des mêmes métadonnées nominales que le
+    /// module exporteur pour vérifier les appels et les accès membres.
+    fn import_type_dependencies(&mut self, interface: &ModuleTypeInterface, ty: &Type) {
         let mut visited = HashSet::new();
+        self.import_type_dependencies_inner(interface, ty, &mut visited);
+    }
 
-        while let Some(name) = pending.pop() {
-            if !visited.insert(name.clone()) {
-                continue;
+    fn import_type_dependencies_inner(
+        &mut self,
+        interface: &ModuleTypeInterface,
+        ty: &Type,
+        visited: &mut HashSet<String>,
+    ) {
+        match ty {
+            Type::Named(name) => {
+                self.import_class_info_inner(interface, name, visited);
             }
+            Type::Generic { name, arguments } => {
+                self.import_class_info_inner(interface, name, visited);
+                for argument in arguments {
+                    self.import_type_dependencies_inner(interface, argument, visited);
+                }
+            }
+            Type::Array(element) | Type::Set(element) => {
+                self.import_type_dependencies_inner(interface, element, visited);
+            }
+            Type::Dict(key, value) => {
+                self.import_type_dependencies_inner(interface, key, visited);
+                self.import_type_dependencies_inner(interface, value, visited);
+            }
+            Type::Tuple(elements) | Type::Union(elements) => {
+                for element in elements {
+                    self.import_type_dependencies_inner(interface, element, visited);
+                }
+            }
+            Type::Record(fields) => {
+                for (_, field_type) in fields {
+                    self.import_type_dependencies_inner(interface, field_type, visited);
+                }
+            }
+            Type::Function(signature) => {
+                self.import_function_dependencies(interface, signature, visited);
+            }
+            Type::Overloads(signatures) => {
+                for signature in signatures {
+                    self.import_function_dependencies(interface, signature, visited);
+                }
+            }
+            _ => {}
+        }
+    }
 
-            let Some(info) = interface.classes.get(&name) else {
-                continue;
-            };
+    fn import_function_dependencies(
+        &mut self,
+        interface: &ModuleTypeInterface,
+        signature: &FunctionType,
+        visited: &mut HashSet<String>,
+    ) {
+        for parameter in &signature.params {
+            self.import_type_dependencies_inner(interface, parameter, visited);
+        }
+        self.import_type_dependencies_inner(interface, &signature.return_type, visited);
 
-            self.classes
-                .entry(name.clone())
-                .or_insert_with(|| info.clone());
-            self.nominal_parents
-                .entry(name.clone())
-                .or_insert_with(|| info.interfaces.clone());
+        for (_, constraints) in &signature.generic_constraints {
+            for constraint in constraints {
+                let GenericConstraint::Interface(interface_type) = constraint;
+                self.import_type_dependencies_inner(interface, interface_type, visited);
+            }
+        }
+    }
 
-            pending.extend(info.interfaces.iter().cloned());
+    /// Enregistre le type nominal `exported_name` d'un module importé, et ses
+    /// interfaces parentes/implémentées (transitivement), ainsi que les types
+    /// nominaux référencés dans ses contrats. Un type déjà connu localement
+    /// sous ce nom n'est pas remplacé.
+    fn import_class_info(&mut self, interface: &ModuleTypeInterface, exported_name: &str) {
+        let mut visited = HashSet::new();
+        self.import_class_info_inner(interface, exported_name, &mut visited);
+    }
+
+    fn import_class_info_inner(
+        &mut self,
+        interface: &ModuleTypeInterface,
+        name: &str,
+        visited: &mut HashSet<String>,
+    ) {
+        if !visited.insert(name.to_string()) {
+            return;
+        }
+
+        let Some(info) = interface.classes.get(name).cloned() else {
+            return;
+        };
+
+        self.classes
+            .entry(name.to_string())
+            .or_insert_with(|| info.clone());
+        self.nominal_parents
+            .entry(name.to_string())
+            .or_insert_with(|| info.interfaces.clone());
+
+        if info.is_interface {
+            self.known_interfaces.insert(name.to_string());
+        }
+
+        for parent in &info.interfaces {
+            self.import_class_info_inner(interface, parent, visited);
+        }
+
+        for (_, constraints) in &info.generic_constraints {
+            for constraint in constraints {
+                let GenericConstraint::Interface(interface_type) = constraint;
+                self.import_type_dependencies_inner(interface, interface_type, visited);
+            }
+        }
+
+        for field_type in info.fields.values() {
+            self.import_type_dependencies_inner(interface, field_type, visited);
+        }
+        for field_type in info.static_fields.values() {
+            self.import_type_dependencies_inner(interface, field_type, visited);
+        }
+        for signatures in info.methods.values() {
+            for signature in signatures {
+                self.import_function_dependencies(interface, signature, visited);
+            }
+        }
+        for signatures in info.static_methods.values() {
+            for signature in signatures {
+                self.import_function_dependencies(interface, signature, visited);
+            }
         }
     }
 
@@ -2317,7 +2475,12 @@ impl TypeChecker {
         // Un alias de type n'a AUCUNE existence à l'exécution : pas de
         // liaison-valeur à déclarer, juste le type rendu disponible sous
         // `binding_name` (voir `resolve_type_at`).
-        if let ImportedType::TypeAlias { resolved } = imported {
+        if let ImportedType::TypeAlias {
+            resolved,
+            interface,
+        } = imported
+        {
+            self.import_type_dependencies(&interface, &resolved.ty);
             self.imported_type_aliases
                 .insert(binding_name.to_string(), resolved);
 
@@ -2334,8 +2497,11 @@ impl TypeChecker {
                 name,
                 interface,
             } => {
-                // Une classe importée est connue en détail (constructeurs,
-                // méthodes, champs, membres privés), pas seulement par son nom.
+                // Le binding doit transporter tout le contrat de l'export :
+                // types nominaux des signatures, contraintes génériques et
+                // métadonnées des classes nécessaires aux accès membres.
+                self.import_type_dependencies(&interface, &ty);
+
                 if interface.classes.contains_key(&name) {
                     self.import_class_info(&interface, &name);
 
@@ -4662,7 +4828,7 @@ impl TypeChecker {
                         let exact_match = expected_member == actual;
                         let new_bindings = candidate
                             .iter()
-                            .filter(|(name, value)| bindings.get(*name) != Some(*value))
+                            .filter(|(name, value)| bindings.get(name.as_str()) != Some(*value))
                             .count();
                         candidates.push((exact_match, new_bindings, candidate));
                     }
@@ -6672,25 +6838,34 @@ let comparison: bool = left < right;
     fn generic_functions_infer_through_unions() {
         let valid = check(
             r#"
-func unwrap_or_none<T>(value: T | None) -> T {
+func keep<T>(value: T | None) -> T | None {
     return value;
 }
 
-let number: int = unwrap_or_none(42);
+let number: int | None = keep(42);
 "#,
         );
         assert!(valid.is_ok(), "{valid:?}");
 
-        let invalid = check(
+        let invalid_return = check(
             r#"
-func unwrap_or_none<T>(value: T | None) -> T {
+func invalid<T>(value: T | None) -> T {
+    return value;
+}
+"#,
+        );
+        assert!(invalid_return.is_err(), "une union ne doit pas être retournable comme T");
+
+        let invalid_inference = check(
+            r#"
+func keep<T>(value: T | None) -> T | None {
     return value;
 }
 
-let text: str = unwrap_or_none(None);
+let text: str | None = keep(None);
 "#,
         );
-        assert!(invalid.is_err(), "None seul ne permet pas d'inférer T");
+        assert!(invalid_inference.is_err(), "None seul ne doit pas permettre d'inférer T");
     }
 
     #[test]

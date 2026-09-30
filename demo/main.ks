@@ -1,5 +1,3 @@
-func keep<T>(value: T | None) -> T | None {
-    return value;
-}
+from contracts import identity, Good;
 
-let number: int | None = keep(42);
+let value: Good = identity(new Good());
