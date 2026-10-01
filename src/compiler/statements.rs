@@ -897,6 +897,17 @@ impl Compiler {
             None
         };
 
+        // `u16::MAX` code « pas de catch / pas de finally » dans l'opérande :
+        // une adresse réelle égale à cette valeur serait lue comme absente
+        // par la VM (le handler perdrait silencieusement son catch/finally).
+        if catch_body.is_some() && catch_ip >= u16::MAX as usize {
+            return Err(CompileError::JumpTooLarge);
+        }
+
+        if finally_ip.is_some_and(|ip| ip >= u16::MAX as usize) {
+            return Err(CompileError::JumpTooLarge);
+        }
+
         if catch_body.is_some() {
             self.patch_u16(catch_operand, catch_ip)?;
         } else {

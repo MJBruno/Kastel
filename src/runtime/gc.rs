@@ -208,10 +208,10 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
         let objects_before = registry.objects.len();
         let mut objects_broken = 0usize;
 
-        // Conserver temporairement une référence forte vers tous les objets
-        // inaccessibles. Sans cette étape, libérer un objet racine d'une
-        // chaîne profonde peut laisser Rc détruire récursivement toute la
-        // chaîne sur la pile native.
+        // Garder des références fortes vers TOUS les objets inaccessibles
+        // pendant la première phase du sweep. Sans cela, casser la chaîne
+        // objet par objet peut libérer récursivement tout un graphe profond
+        // via Rc avant que les autres nœuds aient eux-mêmes été nettoyés.
         let mut unreachable_objects: Vec<Rc<RefCell<Object>>> = Vec::new();
 
         registry.objects.retain(|weak| match weak.upgrade() {
@@ -229,15 +229,12 @@ pub fn collect(roots: GcRoots<'_>) -> usize {
             None => false,
         });
 
-        // Première phase du sweep : casser les références internes de TOUS
-        // les objets inaccessibles avant d'en relâcher un seul. La destruction
-        // finale ne peut ainsi plus parcourir récursivement un graphe profond.
+        // Casser toutes les références internes avant de libérer les Rc
+        // temporaires. La destruction finale ne parcourt ainsi plus le graphe
+        // en profondeur sur la pile native.
         for object in &unreachable_objects {
             object.borrow_mut().break_cycle();
         }
-
-        // Deuxième phase : les références internes sont maintenant cassées,
-        // on peut libérer les Rc temporaires sans récursion profonde.
         drop(unreachable_objects);
 
         let upvalues_before = registry.upvalues.len();

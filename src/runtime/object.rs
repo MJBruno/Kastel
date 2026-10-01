@@ -166,6 +166,32 @@ pub enum Object {
     },
 }
 
+/// Destruction ITÉRATIVE : sans cela, libérer une chaîne profonde d'objets
+/// (`a.add(b)`, `b.add(c)`, ... sur des dizaines de milliers de niveaux) fait
+/// récurser `drop` sur la pile native jusqu'au débordement
+/// (STATUS_STACK_OVERFLOW). Les enfants UNIQUEMENT détenus par cet objet sont
+/// vidés avant d'être libérés, de sorte que chaque libération reste peu
+/// profonde.
+impl Drop for Object {
+    fn drop(&mut self) {
+        let mut pending: Vec<Gc<Object>> = Vec::new();
+
+        self.detach_children(&mut pending);
+
+        while let Some(child) = pending.pop() {
+            // Un enfant encore partagé sera libéré par son dernier
+            // propriétaire ; seul un enfant unique est vidé ici.
+            if child.strong_count() == 1
+                && let Ok(mut object) = child.try_borrow_mut()
+            {
+                object.detach_children(&mut pending);
+            }
+
+            // `child` est libéré ici, ses propres enfants déjà détachés.
+        }
+    }
+}
+
 impl Object {
     pub fn new_closure(
         function: Rc<Function>,
@@ -182,6 +208,85 @@ impl Object {
         crate::runtime::gc::register_object(&handle);
 
         handle
+    }
+
+    /// Détache de `self` ses enfants directs `Gc<Object>` (éléments de
+    /// tableaux/tuples/sets/dicts/records, champs d'instance, ...) et les
+    /// confie à `out`. À n'appeler que sur un objet en cours de destruction.
+    ///
+    /// Les poignées sont d'abord CLONÉES dans `out`, puis le conteneur est
+    /// vidé : les enfants repassent à un seul propriétaire (`out`) sans être
+    /// détruits ici.
+    fn detach_children(&mut self, out: &mut Vec<Gc<Object>>) {
+        fn collect(value: &Value, out: &mut Vec<Gc<Object>>) {
+            if let Value::Object(handle) = value {
+                out.push(handle.clone());
+            }
+        }
+
+        match self {
+            Object::Array(elements) | Object::Tuple(elements) => {
+                for value in elements.iter() {
+                    collect(value, out);
+                }
+                elements.clear();
+            }
+
+            Object::Option(value) => {
+                if let Some(inner) = value.as_ref() {
+                    collect(inner, out);
+                }
+                *value = None;
+            }
+
+            Object::Result { value, .. } => {
+                collect(value, out);
+                *value = Value::None;
+            }
+
+            Object::Record(fields) => {
+                for (_, value) in fields.iter() {
+                    collect(value, out);
+                }
+                fields.clear();
+            }
+
+            Object::Dict(entries) => {
+                for (key, value) in entries.iter() {
+                    collect(key, out);
+                    collect(value, out);
+                }
+                entries.clear();
+            }
+
+            Object::Set(elements) => {
+                for value in elements.iter() {
+                    collect(value, out);
+                }
+                elements.clear();
+            }
+
+            Object::Overloads { functions, .. } => {
+                for value in functions.iter() {
+                    collect(value, out);
+                }
+                functions.clear();
+            }
+
+            Object::Instance { fields, .. } => {
+                for value in fields.values() {
+                    collect(value, out);
+                }
+                fields.clear();
+            }
+
+            Object::BoundMethod { receiver, .. } => {
+                collect(receiver, out);
+                *receiver = Value::None;
+            }
+
+            _ => {}
+        }
     }
 
     pub(crate) fn break_cycle(&mut self) {

@@ -445,3 +445,39 @@ fn closure_captured_in_try_survives_a_caught_exception() {
     result.expect("la closure doit garder sa valeur capturée");
     assert_eq!(integer(&vm, "value"), 42);
 }
+
+#[test]
+fn typed_catch_other_than_err_is_rejected_at_compile_time() {
+    // Seul `catch (e: Err)` est supporté pour l'instant : le type-checker
+    // refuse tout autre type nommé (classe ou interface comprises) avec un
+    // message qui invite à utiliser `Err`.
+    let tokens = Lexer::new(
+        r#"
+        class MyError { }
+
+        try {
+            throw new MyError();
+        } catch (e: MyError) {
+            let x = 1;
+        }
+        "#
+        .to_string(),
+    )
+    .scan_token()
+    .unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
+
+    let mut compiler = Compiler::new();
+    execute_native(&mut compiler);
+
+    match compiler.compile(&statements) {
+        Ok(_) => panic!("catch (e: MyError) doit être refusé à la compilation"),
+        Err(error) => {
+            let message = format!("{error:?}");
+            assert!(
+                message.contains("Err"),
+                "le message doit orienter vers `Err` : {message}"
+            );
+        }
+    }
+}

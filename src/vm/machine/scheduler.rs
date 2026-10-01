@@ -97,6 +97,8 @@ pub(crate) enum AwaitOutcome {
     Failed(RuntimeError),
 }
 
+pub(crate) const MAIN_TASK_ID: usize = usize::MAX;
+
 pub(crate) struct Scheduler {
     pub(crate) tasks: Vec<Option<TaskState>>,
     pub(crate) ready: VecDeque<usize>,
@@ -688,7 +690,7 @@ impl Scheduler {
     ) -> Result<bool, RuntimeError> {
         let mut scheduler = shared.borrow_mut();
         let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
-        if state.is_none() && !scheduler.running.contains(&task_id) {
+        if task_id != MAIN_TASK_ID && state.is_none() && !scheduler.running.contains(&task_id) {
             return Err(RuntimeError::TaskNotFound);
         }
 
@@ -720,7 +722,7 @@ impl Scheduler {
     ) -> Result<bool, RuntimeError> {
         let mut scheduler = shared.borrow_mut();
         let state = scheduler.tasks.get(task_id).and_then(Option::as_ref);
-        if state.is_none() && !scheduler.running.contains(&task_id) {
+        if task_id != MAIN_TASK_ID && state.is_none() && !scheduler.running.contains(&task_id) {
             return Err(RuntimeError::TaskNotFound);
         }
 
@@ -2363,10 +2365,16 @@ impl Scheduler {
 
                 scheduler.ready.retain(|queued_id| *queued_id != id);
 
+                // Une tâche annulée pendant un `await`/`join` d'une autre
+                // tâche doit aussi quitter `waiting_tasks`/`task_waiters` ;
+                // sinon l'inscription périmée subsiste jusqu'à la fin de la
+                // cible (ou indéfiniment si elle ne se termine jamais).
+                scheduler.unregister_task_wait(id);
                 Self::unregister_channel_waits(&mut scheduler, id);
                 scheduler.unregister_mutex_wait(id);
                 scheduler.unregister_rwlock_wait(id);
                 scheduler.unregister_event_wait(id);
+                scheduler.unregister_condvar_wait(id);
                 scheduler.unregister_wait_group_wait(id);
                 if let Some(barrier) = scheduler.unregister_barrier_wait(id) {
                     scheduler.break_barrier(barrier);

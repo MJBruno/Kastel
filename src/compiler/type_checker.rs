@@ -3878,10 +3878,15 @@ impl TypeChecker {
         self.check_statements(body)?;
 
         let inferred_return = self.infer_return_type();
+        // Une fonction annotée `-> None` peut naturellement tomber en fin
+        // de corps sans `return`. L'absence de valeur est précisément son
+        // résultat normal. Les autres retours annotés restent obligatoires
+        // lorsqu'aucun `return` n'est présent, afin de conserver la vérification
+        // statique existante.
         let missing_annotated_return = self
             .current_return_type
             .clone()
-            .filter(|_| self.return_types.is_empty());
+            .filter(|expected| *expected != Type::None && self.return_types.is_empty());
 
         if let Some(expected) = missing_annotated_return
             && self.return_types.is_empty()
@@ -4079,10 +4084,15 @@ impl TypeChecker {
         self.check_statements(&method.body)?;
 
         let inferred_return = self.infer_return_type();
+        // Une fonction annotée `-> None` peut naturellement tomber en fin
+        // de corps sans `return`. L'absence de valeur est précisément son
+        // résultat normal. Les autres retours annotés restent obligatoires
+        // lorsqu'aucun `return` n'est présent, afin de conserver la vérification
+        // statique existante.
         let missing_annotated_return = self
             .current_return_type
             .clone()
-            .filter(|_| self.return_types.is_empty());
+            .filter(|expected| *expected != Type::None && self.return_types.is_empty());
 
         if let Some(expected) = missing_annotated_return
             && self.return_types.is_empty()
@@ -4633,134 +4643,11 @@ impl TypeChecker {
                     return Ok(Type::Set(Box::new(element.unwrap_or(Type::Dynamic))));
                 }
 
-                // `std.thread` expose les trois intrinsèques du scheduler
-                // sans dupliquer leur implémentation dans le runtime.
-                // L'import `std.thread` lie le module au nom `thread`.
+                // Pour une méthode de classe, l'arité fait partie de la
+                // résolution. Cela permet `obj.foo()` et `obj.foo(x)`
+                // d'aboutir à deux signatures différentes.
                 if let Expression::Member { object, name, .. } = callee.as_ref() {
                     let object_type = self.check_expression(object)?;
-
-                    let is_thread_module = match &object_type {
-                        Type::Module(path) => {
-                            std::path::Path::new(path)
-                                .file_stem()
-                                .and_then(|name| name.to_str())
-                                == Some("thread")
-                        }
-                        _ => false,
-                    };
-
-                    if is_thread_module {
-                        match name.as_str() {
-                            "yield" => {
-                                if !arguments.is_empty() {
-                                    return Err(CompileError::WrongArgumentCount {
-                                        expected: 0,
-                                        found: arguments.len(),
-                                    });
-                                }
-                                return Ok(Type::None);
-                            }
-
-                            "sleep" => {
-                                if arguments.len() != 1 {
-                                    return Err(CompileError::WrongArgumentCount {
-                                        expected: 1,
-                                        found: arguments.len(),
-                                    });
-                                }
-
-                                let duration_type = self.check_expression(&arguments[0])?;
-                                if !matches!(duration_type, Type::Int | Type::Dynamic) {
-                                    return Err(CompileError::WrongArgumentType {
-                                        function: "thread.sleep".into(),
-                                        index: 0,
-                                        expected: "int".into(),
-                                        found: duration_type.to_string(),
-                                    });
-                                }
-
-                                return Ok(Type::None);
-                            }
-
-                            "spawn" => {
-                                if arguments.is_empty() {
-                                    return Err(CompileError::WrongArgumentCount {
-                                        expected: 1,
-                                        found: 0,
-                                    });
-                                }
-
-                                let callee_type = self.check_expression(&arguments[0])?;
-                                let task_arguments = &arguments[1..];
-                                let function_name = format!(
-                                    "thread.spawn({})",
-                                    self.expression_name(&arguments[0])
-                                );
-
-                                let result_type = match callee_type {
-                                    Type::Function(signature) => {
-                                        let instantiated = self.instantiate_call_signature(
-                                            &signature,
-                                            generic_args,
-                                            task_arguments,
-                                            &function_name,
-                                        )?;
-                                        let result = *instantiated.return_type;
-                                        if instantiated.is_async {
-                                            result
-                                        } else {
-                                            Type::Generic {
-                                                name: "Task".into(),
-                                                arguments: vec![result],
-                                            }
-                                        }
-                                    }
-
-                                    Type::Overloads(signatures) => {
-                                        let signature = self.resolve_overload(
-                                            &signatures,
-                                            generic_args,
-                                            task_arguments,
-                                            &function_name,
-                                        )?;
-                                        let result = *signature.return_type;
-                                        if signature.is_async {
-                                            result
-                                        } else {
-                                            Type::Generic {
-                                                name: "Task".into(),
-                                                arguments: vec![result],
-                                            }
-                                        }
-                                    }
-
-                                    Type::Dynamic => {
-                                        for argument in task_arguments {
-                                            self.check_expression(argument)?;
-                                        }
-                                        Type::Generic {
-                                            name: "Task".into(),
-                                            arguments: vec![Type::Dynamic],
-                                        }
-                                    }
-
-                                    other => {
-                                        return Err(CompileError::NotCallable {
-                                            found: other.to_string(),
-                                        });
-                                    }
-                                };
-
-                                return Ok(result_type);
-                            }
-
-                            _ => {}
-                        }
-                    }
-
-                    // Pour une méthode de classe, l'arité fait partie de la
-                    // résolution. Cela permet `obj.foo()` et `obj.foo(x)`
-                    // d'aboutir à deux signatures différentes.
 
                     if let Some(class_name) = Self::type_name(&object_type) {
                         self.check_member_visibility(&class_name, name)?;
@@ -7400,6 +7287,14 @@ let result = add(10, 20);
 "#,
         );
         assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn explicitly_typed_none_function_may_fall_through_without_return() {
+        assert!(check(r#"func ping() -> None { }
+let value = ping();"#).is_ok());
+
+        assert!(check(r#"func must_return() -> int { }"#).is_err());
     }
 
     #[test]

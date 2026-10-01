@@ -42,15 +42,7 @@ impl VirtualMachine {
     /// uniquement par une variable Rust (récepteur dépilé, par exemple)
     /// pendant qu'une AUTRE VM (tâche) s'exécute et peut collecter.
     pub(crate) fn pin_roots_with(&self, extra: &[Value]) -> gc::PinnedRoots {
-        let modules = self.module_loader.loaded_modules();
-
-        let mut values = Vec::with_capacity(
-            self.stack.len()
-                + self.temp_roots.len()
-                + self.frames.len()
-                + modules.len()
-                + extra.len(),
-        );
+        let mut values = Vec::with_capacity(self.stack.len() + self.temp_roots.len() + extra.len());
 
         values.extend(extra.iter().cloned());
 
@@ -58,21 +50,12 @@ impl VirtualMachine {
         values.extend(self.temp_roots.iter().cloned());
         values.extend(self.globals.borrow().values().cloned());
 
-        // Les modules déjà chargés par la VM appelante doivent rester des
-        // racines pendant l'exécution d'une VM imbriquée.
-        //
-        // Sans cela, un GC déclenché dans un module importé peut récupérer
-        // prématurément un module conservé uniquement dans le cache du
-        // ModuleLoader de la VM appelante.
-        for module in modules {
-            values.push(Value::new_module(module));
-        }
-
         for frame in &self.frames {
             values.push(Value::Object(frame.closure.clone()));
         }
 
-        // Erreur provenant d'une tâche et encore en attente de livraison.
+        // Valeur lancée par une autre tâche (join/recv...) et pas encore
+        // livrée : elle n'est plus qu'ici jusqu'à la prochaine exécution.
         if let Some(error) = &self.waiting_error {
             super::scheduler::Scheduler::root_runtime_error(error, &mut values);
         }

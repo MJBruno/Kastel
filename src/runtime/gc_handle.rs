@@ -36,6 +36,16 @@ impl<T> Gc<T> {
         self.0.borrow_mut()
     }
 
+    /// Emprunt mutable non paniquant (utilisé par le `Drop` itératif d'`Object`).
+    pub(crate) fn try_borrow_mut(&self) -> Result<RefMut<'_, T>, std::cell::BorrowMutError> {
+        self.0.try_borrow_mut()
+    }
+
+    /// Nombre de poignées fortes vers cette allocation.
+    pub(crate) fn strong_count(&self) -> usize {
+        Rc::strong_count(&self.0)
+    }
+
     /// Égalité par IDENTITÉ (même allocation), pas par valeur — c'est ce
     /// que le mark & sweep utilise pour savoir si un objet déjà visité a
     /// été rencontré à nouveau (protection contre les cycles pendant le

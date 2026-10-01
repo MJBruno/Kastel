@@ -8,7 +8,7 @@ use crate::{
     frontend::ast::CONSTRUCTOR_NAME,
     runtime::{channel::ChannelState, gc_handle::Gc, object::Object, value::Value},
     stdlib::{array, dict},
-    vm::machine::scheduler::{PollOutcome, Scheduler},
+    vm::machine::scheduler::{MAIN_TASK_ID, PollOutcome, Scheduler},
 };
 
 impl VirtualMachine {
@@ -1421,21 +1421,32 @@ impl VirtualMachine {
                                 }
                             };
 
-                            if self.task_id.is_none() {
-                                return Err(RuntimeError::TaskNotFound);
-                            }
-
-                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let task_id = self.task_id.unwrap_or(MAIN_TASK_ID);
                             let scheduler =
                                 self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
-                            let acquired = Scheduler::lock_mutex(&scheduler, task_id, &mutex)?;
+                            if task_id == MAIN_TASK_ID {
+                                let _pinned = self.pin_roots_with(&[Value::Object(handle.clone())]);
 
-                            if acquired {
-                                self.push(Value::None);
+                                loop {
+                                    if Scheduler::try_lock_mutex(&scheduler, task_id, &mutex)? {
+                                        self.push(Value::None);
+                                        break;
+                                    }
+
+                                    if !Scheduler::poll(&scheduler)? {
+                                        return Err(RuntimeError::TaskDeadlock);
+                                    }
+                                }
                             } else {
-                                self.waiting_mutex = Some(Value::Object(handle.clone()));
-                                self.waiting_requested = true;
+                                let acquired = Scheduler::lock_mutex(&scheduler, task_id, &mutex)?;
+
+                                if acquired {
+                                    self.push(Value::None);
+                                } else {
+                                    self.waiting_mutex = Some(Value::Object(handle.clone()));
+                                    self.waiting_requested = true;
+                                }
                             }
                         }
 
@@ -1455,7 +1466,7 @@ impl VirtualMachine {
                                 }
                             };
 
-                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let task_id = self.task_id.unwrap_or(MAIN_TASK_ID);
                             let scheduler =
                                 self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
@@ -1479,7 +1490,7 @@ impl VirtualMachine {
                                 }
                             };
 
-                            let task_id = self.task_id.ok_or(RuntimeError::TaskNotFound)?;
+                            let task_id = self.task_id.unwrap_or(MAIN_TASK_ID);
                             let scheduler =
                                 self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
