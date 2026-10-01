@@ -124,9 +124,10 @@ impl Compiler {
                 column,
                 ..
             } => {
-                // Une seule source de vérité pour la cardinalité des natives
-                // et des intrinsèques. Les types dynamiques restent permissifs,
-                // mais une arité connue est toujours validée avant le bytecode.
+                // Une déclaration utilisateur visible masque toujours une
+                // native ou une intrinsèque homonyme. La résolution doit donc
+                // être faite avant d'appliquer l'arité et le comportement
+                // spécial du symbole.
                 let builtin_call_kind = if let Expression::Variable(name) = callee.as_ref() {
                     self.visible_builtin_call_kind(name)?
                 } else {

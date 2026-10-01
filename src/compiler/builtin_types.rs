@@ -21,6 +21,25 @@ pub enum NativeKind {
     Intrinsic(Intrinsic),
 }
 
+/// Sémantique spéciale d'appel d'une native.
+///
+/// La plupart des natives suivent leur `Type::Function` tel quel. Quelques
+/// fonctions historiques ont toutefois une surface à arité variable ou un
+/// résultat dépendant des arguments. Leur comportement particulier est déclaré
+/// ici afin d'éviter que le TypeChecker ne traite leurs noms comme des exceptions
+/// indépendantes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeCallBehavior {
+    /// Appel standard : la signature/les règles générales suffisent.
+    Standard,
+    /// `Set(a, b, ...)` déduit `Set<T>` à partir des éléments fournis.
+    SetConstructor,
+    /// `channel()` et `channel(capacity)` déduisent `Channel<T>`.
+    ChannelConstructor,
+    /// `range(...)` retourne toujours le type statique `Range`.
+    RangeConstructor,
+}
+
 /// Cardinalité d'appel d'une fonction native ou intrinsèque.
 ///
 /// `FunctionType` décrit les types des paramètres lorsqu'une signature fixe
@@ -106,6 +125,7 @@ pub struct NativeSpec {
     pub ty: Type,
     pub kind: NativeKind,
     pub arity: Arity,
+    pub behavior: NativeCallBehavior,
 }
 
 fn function(params: &[Type], return_type: Type) -> Type {
@@ -152,6 +172,7 @@ fn runtime(name: &'static str, ty: Type) -> NativeSpec {
         ty,
         kind: NativeKind::Runtime,
         arity,
+        behavior: NativeCallBehavior::Standard,
     }
 }
 
@@ -161,6 +182,22 @@ fn runtime_with_arity(name: &'static str, ty: Type, arity: Arity) -> NativeSpec 
         ty,
         kind: NativeKind::Runtime,
         arity,
+        behavior: NativeCallBehavior::Standard,
+    }
+}
+
+fn runtime_with_behavior(
+    name: &'static str,
+    ty: Type,
+    arity: Arity,
+    behavior: NativeCallBehavior,
+) -> NativeSpec {
+    NativeSpec {
+        name,
+        ty,
+        kind: NativeKind::Runtime,
+        arity,
+        behavior,
     }
 }
 
@@ -178,6 +215,7 @@ fn intrinsic(kind: Intrinsic, ty: Type) -> NativeSpec {
         ty,
         kind: NativeKind::Intrinsic(kind),
         arity,
+        behavior: NativeCallBehavior::Standard,
     }
 }
 
@@ -187,6 +225,7 @@ fn intrinsic_with_arity(kind: Intrinsic, ty: Type, arity: Arity) -> NativeSpec {
         ty,
         kind: NativeKind::Intrinsic(kind),
         arity,
+        behavior: NativeCallBehavior::Standard,
     }
 }
 
@@ -207,14 +246,19 @@ pub fn specs() -> Vec<NativeSpec> {
 
     // `Set(a, b, c)` : arité variable. Le TypeChecker déduit le type
     // `Set<T>` du résultat à partir des arguments.
-    specs.push(runtime_with_arity("Set", Dynamic, Arity::AtLeast(0)));
+    specs.push(runtime_with_behavior(
+        "Set",
+        Dynamic,
+        Arity::AtLeast(0),
+        NativeCallBehavior::SetConstructor,
+    ));
 
     // Concurrence. Ces quatre symboles sont des intrinsèques du VM et ne sont
     // donc pas enregistrés comme NativeFunction dans les globals runtime.
     specs.push(intrinsic_with_arity(Intrinsic::Spawn, Dynamic, Arity::AtLeast(1)));
     // `channel()` est non borné, `channel(n)` est borné à `n` places : l'arité
     // est donc une plage, pas `Exact(0)` déduit de la signature sans paramètre.
-    specs.push(runtime_with_arity(
+    specs.push(runtime_with_behavior(
         "channel",
         function(
             &[],
@@ -224,6 +268,7 @@ pub fn specs() -> Vec<NativeSpec> {
             },
         ),
         Arity::Range { min: 0, max: 1 },
+        NativeCallBehavior::ChannelConstructor,
     ));
     specs.push(runtime("mutex", function(&[], Named("Mutex".into()))));
     specs.push(runtime(
@@ -335,10 +380,11 @@ pub fn specs() -> Vec<NativeSpec> {
     ));
     // `range` accepte 1, 2 ou 3 arguments. Son type d'élément reste dynamique
     // ici, mais sa cardinalité est entièrement connue statiquement.
-    specs.push(runtime_with_arity(
+    specs.push(runtime_with_behavior(
         "range",
         Dynamic,
         Arity::Range { min: 1, max: 3 },
+        NativeCallBehavior::RangeConstructor,
     ));
     specs.push(runtime("list", unary(Dynamic, ArrayDynamic)));
 
@@ -427,11 +473,6 @@ pub fn compiler_native_names() -> impl Iterator<Item = &'static str> {
         .map(|spec| spec.name)
 }
 
-/// Noms attendus dans les globals runtime après `stdlib::register_natives`.
-pub fn runtime_native_names() -> impl Iterator<Item = &'static str> {
-    compiler_native_names()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,6 +525,26 @@ mod tests {
         for intrinsic in Intrinsic::all() {
             assert_eq!(intrinsic_kind(intrinsic.name()), Some(intrinsic));
         }
+    }
+
+    #[test]
+    fn native_call_behaviors_are_centralized() {
+        assert_eq!(
+            spec("Set").map(|native| native.behavior),
+            Some(NativeCallBehavior::SetConstructor)
+        );
+        assert_eq!(
+            spec("channel").map(|native| native.behavior),
+            Some(NativeCallBehavior::ChannelConstructor)
+        );
+        assert_eq!(
+            spec("range").map(|native| native.behavior),
+            Some(NativeCallBehavior::RangeConstructor)
+        );
+        assert_eq!(
+            spec("println").map(|native| native.behavior),
+            Some(NativeCallBehavior::Standard)
+        );
     }
 
     #[test]

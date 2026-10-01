@@ -179,6 +179,7 @@ impl Type {
             "dict" => Type::DictDynamic,
             "tuple" => Type::TupleDynamic,
             "set" => Type::SetDynamic,
+            "range" => Type::Range,
             "dynamic" | "any" => Type::Dynamic,
             _ => Type::Named(name.to_string()),
         }

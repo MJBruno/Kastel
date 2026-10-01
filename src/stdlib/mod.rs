@@ -130,7 +130,7 @@ mod registry_tests {
             })
             .collect::<BTreeSet<_>>();
 
-        let expected = crate::compiler::builtin_types::runtime_native_names()
+        let expected = crate::compiler::builtin_types::compiler_native_names()
             .collect::<BTreeSet<_>>();
 
         assert_eq!(actual, expected);

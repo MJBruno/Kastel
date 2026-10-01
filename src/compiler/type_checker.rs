@@ -4348,47 +4348,62 @@ impl TypeChecker {
                 arguments,
                 ..
             } => {
-                // Les natives dynamiques conservent leur flexibilité de types,
-                // mais leur cardinalité est un contrat statique. Cela couvre
-                // notamment `range(1..=3)`, `input(0..=1)`, `exit(0..=1)`,
-                // `print/println/format` et `Set(...)` sans transformer leur
-                // résultat en faux `FunctionType`.
-                if let Expression::Variable(name) = callee.as_ref()
-                    && let Some(binding) = self.lookup(name)
-                    && binding.native
-                    && let Some(arity) = builtin_types::native_arity(name)
-                    && !arity.accepts(arguments.len())
-                {
-                    return Err(CompileError::WrongArgumentCount {
-                        expected: arity.expected_for(arguments.len()) as i32,
-                        found: arguments.len(),
-                    });
-                }
+                // Résolution unique du contrat natif : portée native → contrat
+                // canonique → arité → comportement d'appel. Un binding utilisateur
+                // portant le même nom n'entre jamais dans ce chemin.
+                let native_spec = match callee.as_ref() {
+                    Expression::Variable(name)
+                        if self.lookup(name).is_some_and(|binding| binding.native) =>
+                    {
+                        builtin_types::spec(name)
+                    }
+                    _ => None,
+                };
 
-                if let Expression::Variable(name) = callee.as_ref()
-                    && self.intrinsic_for_call(name) == Some(builtin_types::Intrinsic::Yield)
-                {
-                    return Ok(Type::None);
-                }
-
-                if let Expression::Variable(name) = callee.as_ref()
-                    && self.intrinsic_for_call(name) == Some(builtin_types::Intrinsic::Sleep)
-                {
-                    let duration_type = self.check_expression(&arguments[0])?;
-                    if !matches!(duration_type, Type::Int | Type::Dynamic) {
-                        return Err(CompileError::WrongArgumentType {
-                            function: "sleep".into(),
-                            index: 0,
-                            expected: "int".into(),
-                            found: duration_type.to_string(),
+                if let Some(spec) = native_spec.as_ref() {
+                    if !spec.arity.accepts(arguments.len()) {
+                        return Err(CompileError::WrongArgumentCount {
+                            expected: spec.arity.expected_for(arguments.len()) as i32,
+                            found: arguments.len(),
                         });
                     }
 
-                    return Ok(Type::None);
+                    match spec.kind {
+                        builtin_types::NativeKind::Intrinsic(
+                            builtin_types::Intrinsic::Yield,
+                        ) => return Ok(Type::None),
+
+                        builtin_types::NativeKind::Intrinsic(
+                            builtin_types::Intrinsic::Sleep,
+                        ) => {
+                            let duration_type = self.check_expression(&arguments[0])?;
+                            if !matches!(duration_type, Type::Int | Type::Dynamic) {
+                                return Err(CompileError::WrongArgumentType {
+                                    function: "sleep".into(),
+                                    index: 0,
+                                    expected: "int".into(),
+                                    found: duration_type.to_string(),
+                                });
+                            }
+
+                            return Ok(Type::None);
+                        }
+
+                        builtin_types::NativeKind::Intrinsic(
+                            builtin_types::Intrinsic::Select,
+                        ) => {}
+
+                        _ => {}
+                    }
                 }
 
-                if let Expression::Variable(name) = callee.as_ref()
-                    && self.intrinsic_for_call(name) == Some(builtin_types::Intrinsic::Select)
+                if let Some(spec) = native_spec.as_ref()
+                    && matches!(
+                        spec.kind,
+                        builtin_types::NativeKind::Intrinsic(
+                            builtin_types::Intrinsic::Select
+                        )
+                    )
                 {
                     if let Some(timeout) = arguments.get(1) {
                         let timeout_type = self.check_expression(timeout)?;
@@ -4505,9 +4520,8 @@ impl TypeChecker {
                     return Ok(Type::Tuple(vec![Type::Int, Type::Dynamic, Type::Bool]));
                 }
 
-                if let Expression::Variable(name) = callee.as_ref()
-                    && name == "channel"
-                    && self.lookup(name).is_some_and(|binding| binding.native)
+                if let Some(spec) = native_spec.as_ref()
+                    && spec.behavior == builtin_types::NativeCallBehavior::ChannelConstructor
                 {
                     if arguments.len() > 1 {
                         return Err(CompileError::WrongArgumentCount {
@@ -4533,7 +4547,7 @@ impl TypeChecker {
                         [argument] => self.resolve_type(argument),
                         _ => {
                             return Err(CompileError::InvalidGenericArity {
-                                name: name.clone(),
+                                name: spec.name.to_string(),
                                 expected: 1,
                                 found: generic_args.len(),
                             });
@@ -4546,8 +4560,11 @@ impl TypeChecker {
                     });
                 }
 
-                if let Expression::Variable(name) = callee.as_ref()
-                    && self.intrinsic_for_call(name) == Some(builtin_types::Intrinsic::Spawn)
+                if let Some(spec) = native_spec.as_ref()
+                    && matches!(
+                        spec.kind,
+                        builtin_types::NativeKind::Intrinsic(builtin_types::Intrinsic::Spawn)
+                    )
                 {
                     let callee_type = self.check_expression(&arguments[0])?;
                     let task_arguments = &arguments[1..];
@@ -4613,11 +4630,32 @@ impl TypeChecker {
                     return Ok(*signature.return_type);
                 }
 
-                // `Set(a, b, c)` (native, non redéfinie) : le type d'élément
-                // est déduit des arguments -> `Set<int>` pour `Set(1, 2, 3)`.
-                if let Expression::Variable(name) = callee.as_ref()
-                    && name == "Set"
-                    && self.lookup(name).is_some_and(|binding| binding.native)
+                if let Some(spec) = native_spec.as_ref()
+                    && spec.behavior == builtin_types::NativeCallBehavior::RangeConstructor
+                {
+                    // `range(...)` est une valeur `Range` concrète à l'exécution.
+                    // Le contrat global reste dynamique pour préserver la nature
+                    // variable de l'appel lorsqu'il est manipulé comme une valeur,
+                    // mais un appel direct possède un type précis.
+                    for (index, argument) in arguments.iter().enumerate() {
+                        let argument_type = self.check_expression(argument)?;
+                        if !matches!(argument_type, Type::Int | Type::Dynamic) {
+                            return Err(CompileError::WrongArgumentType {
+                                function: "range".into(),
+                                index,
+                                expected: "int".into(),
+                                found: argument_type.to_string(),
+                            });
+                        }
+                    }
+
+                    return Ok(Type::Range);
+                }
+
+                // `Set(a, b, c)` : le comportement spécial et son contrat viennent
+                // de `builtin_types`, le nom `Set` n'est plus une règle du checker.
+                if let Some(spec) = native_spec.as_ref()
+                    && spec.behavior == builtin_types::NativeCallBehavior::SetConstructor
                 {
                     let mut element: Option<Type> = None;
 
@@ -6259,12 +6297,6 @@ impl TypeChecker {
         }
 
         Ok(instantiated)
-    }
-
-    fn intrinsic_for_call(&self, name: &str) -> Option<builtin_types::Intrinsic> {
-        self.lookup(name)
-            .filter(|binding| binding.native)
-            .and_then(|_| builtin_types::intrinsic_kind(name))
     }
 
     fn check_call_signature(
@@ -9323,6 +9355,30 @@ let list_values: Iterator<int> = [1, 2, 3].iter();
         }
 
         matches!(error, CompileError::InvalidIterable { .. })
+    }
+
+    #[test]
+    fn direct_range_calls_have_the_concrete_range_type() {
+        let result = check(
+            r#"
+let values: Range = range(0, 5);
+let start: int = range(0, 5).start();
+let stop: int = range(0, 5).stop();
+let step: int = range(0, 5, 2).step();
+for value in range(0, 5) {
+    let current: int = value;
+}
+"#,
+        );
+
+        assert!(result.is_ok(), "un appel direct à range() doit être typé Range: {result:?}");
+    }
+
+    #[test]
+    fn range_rejects_a_known_non_integer_argument() {
+        let result = check("let value = range(0, \"stop\");");
+
+        assert!(result.is_err(), "range() doit refuser un argument statiquement connu comme str");
     }
 
     #[test]
