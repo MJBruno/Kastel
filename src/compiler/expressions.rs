@@ -149,7 +149,7 @@ impl Compiler {
                     return self.compile_method_call(object, name, arguments, *line, *column);
                 }
 
-                if let Expression::Variable(name) = callee.as_ref() {
+                if let Expression::Variable(_) = callee.as_ref() {
                     if builtin_call_kind == Some(builtin_types::NativeKind::Intrinsic(Intrinsic::Spawn)) {
                         if arguments.len() > u8::MAX as usize {
                             return Err(CompileError::TooManyArguments);

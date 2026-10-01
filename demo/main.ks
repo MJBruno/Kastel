@@ -1,4 +1,3 @@
-let r: Range = range(0, 10);
-// let start: int = range(0, 10).start();
-// let stop: int = range(0, 10).stop();
-// let step: int = range(0, 10, 2).step();
+let value: Range = range(0, 5);
+let c: Channel<int> = channel<int>(4);
+let values: Set<int> = Set(1, 2, 3);

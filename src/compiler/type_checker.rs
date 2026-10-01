@@ -4348,274 +4348,12 @@ impl TypeChecker {
                 arguments,
                 ..
             } => {
-                // Résolution unique du contrat natif : portée native → contrat
-                // canonique → arité → comportement d'appel. Un binding utilisateur
-                // portant le même nom n'entre jamais dans ce chemin.
-                let native_spec = match callee.as_ref() {
-                    Expression::Variable(name)
-                        if self.lookup(name).is_some_and(|binding| binding.native) =>
-                    {
-                        builtin_types::spec(name)
-                    }
-                    _ => None,
-                };
-
-                if let Some(spec) = native_spec.as_ref() {
-                    if !spec.arity.accepts(arguments.len()) {
-                        return Err(CompileError::WrongArgumentCount {
-                            expected: spec.arity.expected_for(arguments.len()) as i32,
-                            found: arguments.len(),
-                        });
-                    }
-
-                    match spec.kind {
-                        builtin_types::NativeKind::Intrinsic(
-                            builtin_types::Intrinsic::Yield,
-                        ) => return Ok(Type::None),
-
-                        builtin_types::NativeKind::Intrinsic(
-                            builtin_types::Intrinsic::Sleep,
-                        ) => {
-                            let duration_type = self.check_expression(&arguments[0])?;
-                            if !matches!(duration_type, Type::Int | Type::Dynamic) {
-                                return Err(CompileError::WrongArgumentType {
-                                    function: "sleep".into(),
-                                    index: 0,
-                                    expected: "int".into(),
-                                    found: duration_type.to_string(),
-                                });
-                            }
-
-                            return Ok(Type::None);
-                        }
-
-                        builtin_types::NativeKind::Intrinsic(
-                            builtin_types::Intrinsic::Select,
-                        ) => {}
-
-                        _ => {}
-                    }
-                }
-
-                if let Some(spec) = native_spec.as_ref()
-                    && matches!(
-                        spec.kind,
-                        builtin_types::NativeKind::Intrinsic(
-                            builtin_types::Intrinsic::Select
-                        )
-                    )
+                let native_spec = self.visible_native_spec(callee);
+                if let Some(spec) = native_spec
+                    && let Some(result) =
+                        self.check_native_call(spec, generic_args, arguments)?
                 {
-                    if let Some(timeout) = arguments.get(1) {
-                        let timeout_type = self.check_expression(timeout)?;
-                        if !matches!(timeout_type, Type::Int | Type::Dynamic) {
-                            return Err(CompileError::WrongArgumentType {
-                                function: "select".into(),
-                                index: 1,
-                                expected: "int".into(),
-                                found: timeout_type.to_string(),
-                            });
-                        }
-                    }
-
-                    let channels_type = self.check_expression(&arguments[0])?;
-
-                    let is_channel = |ty: &Type| {
-                        matches!(ty, Type::Dynamic)
-                            || matches!(
-                                ty,
-                                Type::Generic { name, arguments }
-                                    if name.eq_ignore_ascii_case("Channel") && arguments.len() == 1
-                            )
-                    };
-
-                    let channel_element_type = |ty: &Type| match ty {
-                        Type::Generic { name, arguments }
-                            if name.eq_ignore_ascii_case("Channel") && arguments.len() == 1 =>
-                        {
-                            Some(arguments[0].clone())
-                        }
-                        _ => None,
-                    };
-
-                    let is_select_case = |ty: &Type| match ty {
-                        Type::Dynamic => true,
-                        _ if is_channel(ty) => true,
-                        Type::Tuple(elements) if elements.len() == 2 => is_channel(&elements[0]),
-                        _ => false,
-                    };
-
-                    let validate_select_case = |checker: &Self,
-                                                case_type: &Type|
-                     -> Result<(), CompileError> {
-                        match case_type {
-                            Type::Dynamic => Ok(()),
-                            _ if is_channel(case_type) => Ok(()),
-                            Type::Tuple(types) if types.len() == 2 => {
-                                if !is_channel(&types[0]) {
-                                    return Err(CompileError::WrongArgumentType {
-                                        function: "select".into(),
-                                        index: 0,
-                                        expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
-                                        found: types[0].to_string(),
-                                    });
-                                }
-
-                                if let Some(element_type) = channel_element_type(&types[0])
-                                    && !checker.are_assignable(&types[1], &element_type)
-                                {
-                                    return Err(CompileError::WrongArgumentType {
-                                        function: "select".into(),
-                                        index: 0,
-                                        expected: format!(
-                                            "List<(Channel<{element_type}>, {element_type})>"
-                                        ),
-                                        found: case_type.to_string(),
-                                    });
-                                }
-
-                                Ok(())
-                            }
-                            _ => Err(CompileError::WrongArgumentType {
-                                function: "select".into(),
-                                index: 0,
-                                expected:
-                                    "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
-                                        .into(),
-                                found: case_type.to_string(),
-                            }),
-                        }
-                    };
-
-                    match &channels_type {
-                        Type::Array(element_type) => {
-                            if !is_select_case(element_type) {
-                                return Err(CompileError::WrongArgumentType {
-                                    function: "select".into(),
-                                    index: 0,
-                                    expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
-                                    found: channels_type.to_string(),
-                                });
-                            }
-                            validate_select_case(self, element_type)?;
-                        }
-                        Type::ArrayDynamic | Type::Dynamic => {}
-                        _ => {
-                            return Err(CompileError::WrongArgumentType {
-                                function: "select".into(),
-                                index: 0,
-                                expected:
-                                    "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
-                                        .into(),
-                                found: channels_type.to_string(),
-                            });
-                        }
-                    }
-
-                    // Le deuxième élément reste dynamique : `select` peut
-                    // renvoyer une valeur de canal, `None` en cas de fermeture
-                    // ou `None` après expiration du timeout. Ce contrat est
-                    // volontairement dynamique et correspond à l'API runtime
-                    // existante. La valeur des cas d'envoi est néanmoins
-                    // vérifiée statiquement par `validate_select_case` ci-dessus.
-                    return Ok(Type::Tuple(vec![Type::Int, Type::Dynamic, Type::Bool]));
-                }
-
-                if let Some(spec) = native_spec.as_ref()
-                    && spec.behavior == builtin_types::NativeCallBehavior::ChannelConstructor
-                {
-                    if arguments.len() > 1 {
-                        return Err(CompileError::WrongArgumentCount {
-                            expected: 1,
-                            found: arguments.len(),
-                        });
-                    }
-
-                    if let Some(capacity) = arguments.first() {
-                        let capacity_type = self.check_expression(capacity)?;
-                        if !matches!(capacity_type, Type::Int | Type::Dynamic) {
-                            return Err(CompileError::WrongArgumentType {
-                                function: "channel".into(),
-                                index: 0,
-                                expected: "int".into(),
-                                found: capacity_type.to_string(),
-                            });
-                        }
-                    }
-
-                    let element_type = match generic_args.as_slice() {
-                        [] => Type::Dynamic,
-                        [argument] => self.resolve_type(argument),
-                        _ => {
-                            return Err(CompileError::InvalidGenericArity {
-                                name: spec.name.to_string(),
-                                expected: 1,
-                                found: generic_args.len(),
-                            });
-                        }
-                    };
-
-                    return Ok(Type::Generic {
-                        name: "Channel".into(),
-                        arguments: vec![element_type],
-                    });
-                }
-
-                if let Some(spec) = native_spec.as_ref()
-                    && matches!(
-                        spec.kind,
-                        builtin_types::NativeKind::Intrinsic(builtin_types::Intrinsic::Spawn)
-                    )
-                {
-                    let callee_type = self.check_expression(&arguments[0])?;
-                    let task_arguments = &arguments[1..];
-                    let function_name = format!("spawn({})", self.expression_name(&arguments[0]));
-
-                    let (result_type, is_async) = match callee_type {
-                        Type::Function(signature) => {
-                            let instantiated = self.instantiate_call_signature(
-                                &signature,
-                                generic_args,
-                                task_arguments,
-                                &function_name,
-                            )?;
-                            (*instantiated.return_type, instantiated.is_async)
-                        }
-
-                        Type::Overloads(signatures) => {
-                            let signature = self.resolve_overload(
-                                &signatures,
-                                generic_args,
-                                task_arguments,
-                                &function_name,
-                            )?;
-                            (*signature.return_type, signature.is_async)
-                        }
-
-                        Type::Dynamic => {
-                            for argument in task_arguments {
-                                self.check_expression(argument)?;
-                            }
-                            (Type::Dynamic, false)
-                        }
-
-                        other => {
-                            return Err(CompileError::NotCallable {
-                                found: other.to_string(),
-                            });
-                        }
-                    };
-
-                    if is_async {
-                        // `async func` expose déjà `Task<T>`. `spawn` exécute
-                        // directement la fermeture dans une tâche, donc le
-                        // résultat est le même `Task<T>`, pas `Task<Task<T>>`.
-                        return Ok(result_type);
-                    }
-
-                    return Ok(Type::Generic {
-                        name: "Task".into(),
-                        arguments: vec![result_type],
-                    });
+                    return Ok(result);
                 }
 
                 // Fonction globale SURCHARGÉE (`add(1)`, `add(1, 2)`) : la
@@ -4628,47 +4366,6 @@ impl TypeChecker {
                         self.resolve_overload(&signatures, generic_args, arguments, name)?;
 
                     return Ok(*signature.return_type);
-                }
-
-                if let Some(spec) = native_spec.as_ref()
-                    && spec.behavior == builtin_types::NativeCallBehavior::RangeConstructor
-                {
-                    // `range(...)` est une valeur `Range` concrète à l'exécution.
-                    // Le contrat global reste dynamique pour préserver la nature
-                    // variable de l'appel lorsqu'il est manipulé comme une valeur,
-                    // mais un appel direct possède un type précis.
-                    for (index, argument) in arguments.iter().enumerate() {
-                        let argument_type = self.check_expression(argument)?;
-                        if !matches!(argument_type, Type::Int | Type::Dynamic) {
-                            return Err(CompileError::WrongArgumentType {
-                                function: "range".into(),
-                                index,
-                                expected: "int".into(),
-                                found: argument_type.to_string(),
-                            });
-                        }
-                    }
-
-                    return Ok(Type::Range);
-                }
-
-                // `Set(a, b, c)` : le comportement spécial et son contrat viennent
-                // de `builtin_types`, le nom `Set` n'est plus une règle du checker.
-                if let Some(spec) = native_spec.as_ref()
-                    && spec.behavior == builtin_types::NativeCallBehavior::SetConstructor
-                {
-                    let mut element: Option<Type> = None;
-
-                    for argument in arguments {
-                        let argument_type = self.check_expression(argument)?;
-
-                        element = Some(match element {
-                            Some(current) => current.merge(&argument_type),
-                            None => argument_type,
-                        });
-                    }
-
-                    return Ok(Type::Set(Box::new(element.unwrap_or(Type::Dynamic))));
                 }
 
                 // Pour une méthode de classe, l'arité fait partie de la
@@ -5591,6 +5288,307 @@ impl TypeChecker {
         }
 
         Ok(Type::Dynamic)
+    }
+
+    /// Résout le contrat natif visible pour un callee variable.
+    ///
+    /// La présence d'un binding utilisateur du même nom empêche toute interprétation
+    /// spéciale : seules les bindings explicitement marquées `native` peuvent
+    /// emprunter la table des contrats natifs.
+    fn visible_native_spec(&self, callee: &Expression) -> Option<&'static builtin_types::NativeSpec> {
+        let Expression::Variable(name) = callee else {
+            return None;
+        };
+
+        let binding = self.lookup(name)?;
+        if !binding.native {
+            return None;
+        }
+
+        builtin_types::spec(name)
+    }
+
+    /// Vérifie et résout un appel natif/intrinsèque.
+    ///
+    /// `Some(type)` signifie que l'appel possède une sémantique spéciale et que
+    /// le traitement général des appels ne doit pas continuer. `None` signifie
+    /// que la native suit sa signature normale.
+    fn check_native_call(
+        &mut self,
+        spec: &builtin_types::NativeSpec,
+        generic_args: &[TypeExpr],
+        arguments: &[Expression],
+    ) -> Result<Option<Type>, CompileError> {
+        if !spec.arity.accepts(arguments.len()) {
+            return Err(CompileError::WrongArgumentCount {
+                expected: spec.arity.expected_for(arguments.len()) as i32,
+                found: arguments.len(),
+            });
+        }
+
+        match spec.kind {
+            builtin_types::NativeKind::Intrinsic(builtin_types::Intrinsic::Yield) => {
+                Ok(Some(Type::None))
+            }
+
+            builtin_types::NativeKind::Intrinsic(builtin_types::Intrinsic::Sleep) => {
+                let duration_type = self.check_expression(
+                    arguments
+                        .first()
+                        .expect("l'arité de sleep doit être validée avant l'accès à l'argument"),
+                )?;
+
+                if !matches!(duration_type, Type::Int | Type::Dynamic) {
+                    return Err(CompileError::WrongArgumentType {
+                        function: spec.name.into(),
+                        index: 0,
+                        expected: "int".into(),
+                        found: duration_type.to_string(),
+                    });
+                }
+
+                Ok(Some(Type::None))
+            }
+
+            builtin_types::NativeKind::Intrinsic(builtin_types::Intrinsic::Select) => {
+                if let Some(timeout) = arguments.get(1) {
+                    let timeout_type = self.check_expression(timeout)?;
+                    if !matches!(timeout_type, Type::Int | Type::Dynamic) {
+                        return Err(CompileError::WrongArgumentType {
+                            function: spec.name.into(),
+                            index: 1,
+                            expected: "int".into(),
+                            found: timeout_type.to_string(),
+                        });
+                    }
+                }
+
+                let channels_type = self.check_expression(
+                    arguments
+                        .first()
+                        .expect("l'arité de select doit être validée avant l'accès au premier argument"),
+                )?;
+
+                let is_channel = |ty: &Type| {
+                    matches!(ty, Type::Dynamic)
+                        || matches!(
+                            ty,
+                            Type::Generic { name, arguments }
+                                if name.eq_ignore_ascii_case("Channel") && arguments.len() == 1
+                        )
+                };
+
+                let channel_element_type = |ty: &Type| match ty {
+                    Type::Generic { name, arguments }
+                        if name.eq_ignore_ascii_case("Channel") && arguments.len() == 1 =>
+                    {
+                        Some(arguments[0].clone())
+                    }
+                    _ => None,
+                };
+
+                let is_select_case = |ty: &Type| match ty {
+                    Type::Dynamic => true,
+                    _ if is_channel(ty) => true,
+                    Type::Tuple(elements) if elements.len() == 2 => is_channel(&elements[0]),
+                    _ => false,
+                };
+
+                let validate_select_case = |checker: &Self,
+                                            case_type: &Type|
+                 -> Result<(), CompileError> {
+                    match case_type {
+                        Type::Dynamic => Ok(()),
+                        _ if is_channel(case_type) => Ok(()),
+                        Type::Tuple(types) if types.len() == 2 => {
+                            if !is_channel(&types[0]) {
+                                return Err(CompileError::WrongArgumentType {
+                                    function: spec.name.into(),
+                                    index: 0,
+                                    expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
+                                    found: types[0].to_string(),
+                                });
+                            }
+
+                            if let Some(element_type) = channel_element_type(&types[0])
+                                && !checker.are_assignable(&types[1], &element_type)
+                            {
+                                return Err(CompileError::WrongArgumentType {
+                                    function: spec.name.into(),
+                                    index: 0,
+                                    expected: format!(
+                                        "List<(Channel<{element_type}>, {element_type})>"
+                                    ),
+                                    found: case_type.to_string(),
+                                });
+                            }
+
+                            Ok(())
+                        }
+                        _ => Err(CompileError::WrongArgumentType {
+                            function: spec.name.into(),
+                            index: 0,
+                            expected:
+                                "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
+                                    .into(),
+                            found: case_type.to_string(),
+                        }),
+                    }
+                };
+
+                match &channels_type {
+                    Type::Array(element_type) => {
+                        if !is_select_case(element_type) {
+                            return Err(CompileError::WrongArgumentType {
+                                function: spec.name.into(),
+                                index: 0,
+                                expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
+                                found: channels_type.to_string(),
+                            });
+                        }
+                        validate_select_case(self, element_type)?;
+                    }
+                    Type::ArrayDynamic | Type::Dynamic => {}
+                    _ => {
+                        return Err(CompileError::WrongArgumentType {
+                            function: spec.name.into(),
+                            index: 0,
+                            expected:
+                                "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
+                                    .into(),
+                            found: channels_type.to_string(),
+                        });
+                    }
+                }
+
+                Ok(Some(Type::Tuple(vec![Type::Int, Type::Dynamic, Type::Bool])))
+            }
+
+            builtin_types::NativeKind::Intrinsic(builtin_types::Intrinsic::Spawn) => {
+                let callee_type = self.check_expression(
+                    arguments
+                        .first()
+                        .expect("l'arité de spawn doit être validée avant l'accès au callee"),
+                )?;
+                let task_arguments = &arguments[1..];
+                let function_name = format!(
+                    "{}({})",
+                    spec.name,
+                    self.expression_name(
+                        arguments
+                            .first()
+                            .expect("spawn doit avoir une cible après validation de l'arité"),
+                    )
+                );
+
+                let (result_type, is_async) = match callee_type {
+                    Type::Function(signature) => {
+                        let instantiated = self.instantiate_call_signature(
+                            &signature,
+                            generic_args,
+                            task_arguments,
+                            &function_name,
+                        )?;
+                        (*instantiated.return_type, instantiated.is_async)
+                    }
+
+                    Type::Overloads(signatures) => {
+                        let signature = self.resolve_overload(
+                            &signatures,
+                            generic_args,
+                            task_arguments,
+                            &function_name,
+                        )?;
+                        (*signature.return_type, signature.is_async)
+                    }
+
+                    Type::Dynamic => {
+                        for argument in task_arguments {
+                            self.check_expression(argument)?;
+                        }
+                        (Type::Dynamic, false)
+                    }
+
+                    other => {
+                        return Err(CompileError::NotCallable {
+                            found: other.to_string(),
+                        });
+                    }
+                };
+
+                if is_async {
+                    return Ok(Some(result_type));
+                }
+
+                Ok(Some(Type::Generic {
+                    name: "Task".into(),
+                    arguments: vec![result_type],
+                }))
+            }
+
+            _ if spec.behavior == builtin_types::NativeCallBehavior::ChannelConstructor => {
+                if let Some(capacity) = arguments.first() {
+                    let capacity_type = self.check_expression(capacity)?;
+                    if !matches!(capacity_type, Type::Int | Type::Dynamic) {
+                        return Err(CompileError::WrongArgumentType {
+                            function: spec.name.into(),
+                            index: 0,
+                            expected: "int".into(),
+                            found: capacity_type.to_string(),
+                        });
+                    }
+                }
+
+                let element_type = match generic_args {
+                    [] => Type::Dynamic,
+                    [argument] => self.resolve_type(argument),
+                    _ => {
+                        return Err(CompileError::InvalidGenericArity {
+                            name: spec.name.into(),
+                            expected: 1,
+                            found: generic_args.len(),
+                        });
+                    }
+                };
+
+                Ok(Some(Type::Generic {
+                    name: "Channel".into(),
+                    arguments: vec![element_type],
+                }))
+            }
+
+            _ if spec.behavior == builtin_types::NativeCallBehavior::RangeConstructor => {
+                for (index, argument) in arguments.iter().enumerate() {
+                    let argument_type = self.check_expression(argument)?;
+                    if !matches!(argument_type, Type::Int | Type::Dynamic) {
+                        return Err(CompileError::WrongArgumentType {
+                            function: spec.name.into(),
+                            index,
+                            expected: "int".into(),
+                            found: argument_type.to_string(),
+                        });
+                    }
+                }
+
+                Ok(Some(Type::Range))
+            }
+
+            _ if spec.behavior == builtin_types::NativeCallBehavior::SetConstructor => {
+                let mut element: Option<Type> = None;
+
+                for argument in arguments {
+                    let argument_type = self.check_expression(argument)?;
+                    element = Some(match element {
+                        Some(current) => current.merge(&argument_type),
+                        None => argument_type,
+                    });
+                }
+
+                Ok(Some(Type::Set(Box::new(element.unwrap_or(Type::Dynamic)))))
+            }
+
+            _ => Ok(None),
+        }
     }
 
     /// Signatures de la fonction SURCHARGÉE désignée par `name` (locale ou
@@ -9379,6 +9377,18 @@ for value in range(0, 5) {
         let result = check("let value = range(0, \"stop\");");
 
         assert!(result.is_err(), "range() doit refuser un argument statiquement connu comme str");
+    }
+
+    #[test]
+    fn special_native_call_behaviors_are_checked_through_the_contract() {
+        let range = check("let value: Range = range(0, 5);");
+        assert!(range.is_ok(), "range doit être résolu via le contrat natif");
+
+        let channel = check("let c: Channel<int> = channel<int>(4);");
+        assert!(channel.is_ok(), "channel doit être résolu via le contrat natif");
+
+        let set = check("let values: Set<int> = Set(1, 2, 3);");
+        assert!(set.is_ok(), "Set doit être résolu via le contrat natif");
     }
 
     #[test]

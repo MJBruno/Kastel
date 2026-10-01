@@ -9,6 +9,7 @@
 //! `stdlib::register_compiler_natives` dérive directement de cette table.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use super::types::{FunctionType, GenericConstraint, Type};
 
@@ -233,7 +234,7 @@ fn intrinsic_with_arity(kind: Intrinsic, ty: Type, arity: Arity) -> NativeSpec {
 ///
 /// Cette liste doit rester la seule déclaration statique des noms de natives.
 /// Les modules de `stdlib` contiennent uniquement les implémentations Rust.
-pub fn specs() -> Vec<NativeSpec> {
+fn build_specs() -> Vec<NativeSpec> {
     use Type::*;
 
     let mut specs = Vec::new();
@@ -447,16 +448,33 @@ pub fn specs() -> Vec<NativeSpec> {
 }
 
 /// Contrats sous la forme historique attendue par le TypeChecker.
+
+static NATIVE_REGISTRY: OnceLock<Vec<NativeSpec>> = OnceLock::new();
+
+fn registry() -> &'static [NativeSpec] {
+    NATIVE_REGISTRY
+        .get_or_init(build_specs)
+        .as_slice()
+}
+
+/// Retourne une copie indépendante de la table canonique des contrats.
+///
+/// Les consommateurs opérationnels utilisent `spec()` / `registry()` afin
+/// d'éviter de reconstruire la totalité des contrats à chaque résolution.
+pub fn specs() -> Vec<NativeSpec> {
+    registry().to_vec()
+}
+
 pub fn all() -> HashMap<String, Type> {
-    specs()
-        .into_iter()
-        .map(|spec| (spec.name.to_string(), spec.ty))
+    registry()
+        .iter()
+        .map(|spec| (spec.name.to_string(), spec.ty.clone()))
         .collect()
 }
 
 /// Retourne le contrat natif complet correspondant au nom donné.
-pub fn spec(name: &str) -> Option<NativeSpec> {
-    specs().into_iter().find(|spec| spec.name == name)
+pub fn spec(name: &str) -> Option<&'static NativeSpec> {
+    registry().iter().find(|spec| spec.name == name)
 }
 
 /// Retourne uniquement la cardinalité statique d'une native/intrinsèque.
@@ -467,8 +485,8 @@ pub fn native_arity(name: &str) -> Option<Arity> {
 /// Noms des fonctions effectivement enregistrées dans `Compiler` comme
 /// globals natifs. Les intrinsèques du VM sont volontairement exclus.
 pub fn compiler_native_names() -> impl Iterator<Item = &'static str> {
-    specs()
-        .into_iter()
+    registry()
+        .iter()
         .filter(|spec| matches!(spec.kind, NativeKind::Runtime))
         .map(|spec| spec.name)
 }
