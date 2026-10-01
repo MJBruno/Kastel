@@ -1,0 +1,4 @@
+true
+true
+Ok(10)
+Err(échec)

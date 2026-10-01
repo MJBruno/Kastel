@@ -1,0 +1,4 @@
+full
+double paire
+carré
+carte haute

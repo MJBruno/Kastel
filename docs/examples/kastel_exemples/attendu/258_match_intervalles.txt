@@ -1,0 +1,4 @@
+insuffisant
+passable
+bien
+note invalide

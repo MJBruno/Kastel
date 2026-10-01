@@ -1,0 +1,6 @@
+protocole : https
+hôte : exemple.fr
+port : 8080
+chemin : /chemin/page
+x = 1
+y = 2

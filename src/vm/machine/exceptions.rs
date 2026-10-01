@@ -81,7 +81,9 @@ impl VirtualMachine {
     fn is_cancellation_value(value: &Value) -> bool {
         match value {
             Value::Object(handle) => match &*handle.borrow() {
-                Object::Error { kind, .. } => kind.as_str() == RuntimeError::TaskCancelled.kind_name(),
+                Object::Error { kind, .. } => {
+                    kind.as_str() == RuntimeError::TaskCancelled.kind_name()
+                }
                 _ => false,
             },
             _ => false,

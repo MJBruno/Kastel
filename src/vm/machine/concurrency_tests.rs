@@ -2,8 +2,12 @@ use std::rc::Rc;
 
 use crate::{
     compiler::compiler::Compiler,
+    compiler::module_types::ModuleTypeLoader,
+    compiler::type_checker::TypeCheckContext,
     error::compile_error::CompileError,
     frontend::{lexer::lexer::Lexer, parser::Parser},
+    module::module::ModuleLoader,
+    module::resolver::ModuleResolver,
     runtime::value::Value,
     stdlib::execute_native,
     vm::machine::VirtualMachine,
@@ -15,22 +19,14 @@ fn run_script(
     VirtualMachine,
     Result<(), crate::error::runtime_error::RuntimeError>,
 ) {
-    let tokens = Lexer::new(source.to_string())
-        .scan_token()
-        .unwrap();
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
 
-    let statements = Parser::new(tokens)
-        .parse()
-        .unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
 
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
 
-    let function = Rc::new(
-        compiler
-            .compile(&statements)
-            .unwrap(),
-    );
+    let function = Rc::new(compiler.compile(&statements).unwrap());
 
     let mut vm = VirtualMachine::new(function, None);
     let result = vm.run();
@@ -39,13 +35,9 @@ fn run_script(
 }
 
 fn compile_only(source: &str) -> Result<(), CompileError> {
-    let tokens = Lexer::new(source.to_string())
-        .scan_token()
-        .unwrap();
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
 
-    let statements = Parser::new(tokens)
-        .parse()
-        .unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
 
     let mut compiler = Compiler::new();
     execute_native(&mut compiler);
@@ -53,13 +45,19 @@ fn compile_only(source: &str) -> Result<(), CompileError> {
     compiler.compile(&statements).map(|_| ())
 }
 
+fn global(vm: &VirtualMachine, name: &str) -> Value {
+    vm.globals
+        .borrow()
+        .get(name)
+        .cloned()
+        .unwrap_or_else(|| panic!("globale '{name}' introuvable"))
+}
+
 fn is_wrong_argument_type(error: &CompileError) -> bool {
     match error {
         CompileError::WrongArgumentType { .. } => true,
 
-        CompileError::WithLocation { source, .. } => {
-            is_wrong_argument_type(source)
-        }
+        CompileError::WithLocation { source, .. } => is_wrong_argument_type(source),
 
         _ => false,
     }
@@ -71,6 +69,89 @@ fn is_type_mismatch(error: &CompileError) -> bool {
         CompileError::WithLocation { source, .. } => is_type_mismatch(source),
         _ => false,
     }
+}
+
+#[test]
+fn std_thread_exposes_qualified_scheduler_intrinsics() {
+    let root = std::env::temp_dir().join(format!("kastel_std_thread_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("std")).unwrap();
+
+    std::fs::write(
+        root.join("std/thread.ks"),
+        r#"
+export func spawn(task) { return spawn(task); }
+export func yield() { yield(); }
+export func sleep(milliseconds: int) { sleep(milliseconds); }
+"#,
+    )
+    .unwrap();
+
+    let main = root.join("main.ks");
+    let source = r#"
+import std.thread
+
+func worker(value: int) -> int {
+    thread.yield();
+    return value * 2;
+}
+
+let task: Task<int> = thread.spawn(worker, 21);
+thread.sleep(0);
+let answer = task.join();
+"#;
+    std::fs::write(&main, source).unwrap();
+
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
+    let resolver = ModuleResolver::new(root.clone()).with_std_root(root.join("std"));
+    let context = TypeCheckContext::new(
+        main.clone(),
+        Rc::new(ModuleTypeLoader::new(resolver.clone())),
+    );
+
+    let mut compiler = Compiler::new();
+    execute_native(&mut compiler);
+    let function = Rc::new(compiler.compile_with_context(&statements, context).unwrap());
+
+    let loader = ModuleLoader::with_resolver(resolver);
+    let mut vm = VirtualMachine::new_with_loader(function, Some(main), loader);
+    assert!(vm.run().is_ok());
+    assert_eq!(global(&vm, "answer"), Value::Integer(42));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn std_thread_sleep_rejects_non_integer_duration() {
+    let root = std::env::temp_dir().join(format!("kastel_std_thread_type_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("std")).unwrap();
+    std::fs::write(
+        root.join("std/thread.ks"),
+        r#"
+export func spawn(task) { return spawn(task); }
+export func yield() { yield(); }
+export func sleep(milliseconds: int) { sleep(milliseconds); }
+"#,
+    )
+    .unwrap();
+
+    let main = root.join("main.ks");
+    std::fs::write(&main, "import std.thread\nthread.sleep(\"10\")").unwrap();
+
+    let tokens = Lexer::new("import std.thread\nthread.sleep(\"10\")".to_string())
+        .scan_token()
+        .unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
+    let resolver = ModuleResolver::new(root.clone()).with_std_root(root.join("std"));
+    let context = TypeCheckContext::new(main, Rc::new(ModuleTypeLoader::new(resolver)));
+
+    let mut compiler = Compiler::new();
+    execute_native(&mut compiler);
+    assert!(compiler.compile_with_context(&statements, context).is_err());
+
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -350,9 +431,7 @@ fn task_capture_is_rejected() {
     "#,
     );
 
-    let error = result.expect_err(
-        "captured task must be rejected",
-    );
+    let error = result.expect_err("captured task must be rejected");
 
     assert!(matches!(
         error,
@@ -439,9 +518,7 @@ fn yield_outside_task_is_rejected() {
     "#,
     );
 
-    let error = result.expect_err(
-        "yield outside a task must fail",
-    );
+    let error = result.expect_err("yield outside a task must fail");
 
     assert!(matches!(
         error,
@@ -851,10 +928,12 @@ fn finished_tasks_release_their_stack_and_detached_ones_their_slot() {
 
     // Les tâches sans handle ont libéré leur slot (la dernière peut encore être
     // référencée par le dernier résultat d'expression de la VM).
-    let still_held = scheduler.tasks[1..].iter().filter(|slot| slot.is_some()).count();
+    let still_held = scheduler.tasks[1..]
+        .iter()
+        .filter(|slot| slot.is_some())
+        .count();
     assert!(still_held <= 1, "{still_held} slots non libérés");
 }
-
 
 #[test]
 fn task_can_be_cancelled_before_it_runs() {
@@ -967,7 +1046,6 @@ fn cancellation_requested_by_another_task_stops_the_target() {
     ));
 }
 
-
 #[test]
 fn channel_close_is_idempotent_and_send_is_rejected() {
     let (vm, result) = run_script(
@@ -1073,7 +1151,6 @@ fn closing_channel_wakes_waiting_consumer_with_catchable_error() {
         Some(Value::Boolean(true))
     ));
 }
-
 
 #[test]
 fn select_returns_first_ready_channel_in_deterministic_order() {
@@ -1642,7 +1719,6 @@ fn cancellation_requested_before_blocking_leaves_no_ghost_waiter() {
     assert!(scheduler.cancel_requested.is_empty());
 }
 
-
 #[test]
 fn select_with_timeout_returns_timeout_tuple() {
     on_big_stack(|| {
@@ -2064,7 +2140,6 @@ fn cancelling_mutex_owner_releases_the_lock() {
         assert_global_true(&vm, "ok");
     });
 }
-
 
 #[test]
 fn bounded_channel_blocks_send_until_recv() {
@@ -2540,7 +2615,10 @@ fn select_rejects_send_value_that_does_not_match_channel_type_statically() {
     )
     .unwrap_err();
 
-    assert!(is_wrong_argument_type(&error), "expected WrongArgumentType, got: {error:?}");
+    assert!(
+        is_wrong_argument_type(&error),
+        "expected WrongArgumentType, got: {error:?}"
+    );
 }
 
 #[test]
@@ -2906,7 +2984,6 @@ fn multiple_wait_group_waiters_resume_fifo() {
     });
 }
 
-
 #[test]
 fn mutex_wait_group_and_timer_coordinate_contended_work() {
     on_big_stack(|| {
@@ -3021,7 +3098,6 @@ fn channel_select_and_wait_group_coordinate_producer_shutdown() {
         assert_global_true(&vm, "ok");
     });
 }
-
 
 #[test]
 fn mixed_channel_waiters_preserve_fifo_order() {
@@ -3213,7 +3289,6 @@ fn pending_select_send_value_survives_gc_pressure() {
     });
 }
 
-
 #[test]
 fn barrier_properties_are_exposed() {
     on_big_stack(|| {
@@ -3388,7 +3463,6 @@ fn self_cancellation_while_waiting_on_barrier_breaks_barrier() {
     assert!(scheduler.waiting_barriers.is_empty());
 }
 
-
 #[test]
 fn waiting_barrier_is_kept_alive_by_the_scheduler() {
     on_big_stack(|| {
@@ -3459,7 +3533,6 @@ fn barrier_member_types_are_checked_statically() {
     .unwrap_err();
     assert!(is_type_mismatch(&error));
 }
-
 
 #[test]
 fn rwlock_readers_can_share_and_report_state() {
@@ -4237,7 +4310,6 @@ fn waiting_event_is_kept_alive_by_the_scheduler() {
     });
 }
 
-
 #[test]
 fn condvar_constructor_requires_a_mutex() {
     let error = compile_only(
@@ -4700,8 +4772,6 @@ fn event_methods_are_checked_statically() {
     ));
 }
 
-
-
 // ---------- async / await ----------
 
 #[test]
@@ -4839,7 +4909,6 @@ fn async_return_inference_exposes_task_of_the_inferred_type() {
     result.unwrap();
     assert_global_true(&vm, "ok");
 }
-
 
 #[test]
 fn async_await_inside_tasks_is_cooperative_beyond_nested_join_limit() {

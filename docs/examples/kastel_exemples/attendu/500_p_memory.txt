@@ -1,0 +1,5 @@
+paire A
+raté : B / C
+paire B
+paire C
+3

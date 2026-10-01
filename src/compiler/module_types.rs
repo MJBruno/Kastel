@@ -437,10 +437,8 @@ func unwrap<T>(box: Box<T>) -> T {
 }
 let value: int = unwrap({ value: 9 });
 "#;
-        let qualified_result = TypeChecker::check_with_context(
-            &parse(qualified),
-            TypeCheckContext::new(main, loader),
-        );
+        let qualified_result =
+            TypeChecker::check_with_context(&parse(qualified), TypeCheckContext::new(main, loader));
         assert!(qualified_result.is_ok(), "{qualified_result:?}");
 
         let _ = fs::remove_dir_all(root);
@@ -476,7 +474,10 @@ let task: Task<int> = spawn(compute, 21);
             TypeCheckContext::new(main, loader),
         );
 
-        assert!(result.is_ok(), "une fonction async importée doit rester async: {result:?}");
+        assert!(
+            result.is_ok(),
+            "une fonction async importée doit rester async: {result:?}"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -655,7 +656,10 @@ let bag: Bag<Bad> = [];
             ),
             TypeCheckContext::new(main, loader),
         );
-        assert!(invalid.is_err(), "la contrainte de Bag doit être conservée à l'import");
+        assert!(
+            invalid.is_err(),
+            "la contrainte de Bag doit être conservée à l'import"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -711,7 +715,10 @@ compare_with(new Number(), "not-an-int");
             ),
             TypeCheckContext::new(main.clone(), Rc::clone(&loader)),
         );
-        assert!(invalid.is_err(), "Comparable<int> doit être substitué en Comparable<str> et refusé");
+        assert!(
+            invalid.is_err(),
+            "Comparable<int> doit être substitué en Comparable<str> et refusé"
+        );
 
         let forwarded = TypeChecker::check_with_context(
             &parse(
@@ -724,7 +731,10 @@ func forward<U>(other: U) -> int {
             ),
             TypeCheckContext::new(main, loader),
         );
-        assert!(forwarded.is_err(), "une contrainte paramétrée doit rester vérifiée dans un contexte générique");
+        assert!(
+            forwarded.is_err(),
+            "une contrainte paramétrée doit rester vérifiée dans un contexte générique"
+        );
 
         let _ = fs::remove_dir_all(root);
     }

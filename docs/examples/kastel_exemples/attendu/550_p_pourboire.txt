@@ -1,0 +1,3 @@
+pourboire : 12.00
+total : 92.00
+par personne : 23.00

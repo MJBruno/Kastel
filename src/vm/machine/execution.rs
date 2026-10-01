@@ -74,9 +74,10 @@ impl VirtualMachine {
             }
 
             if let Some(budget) = instruction_budget
-                && instructions >= budget {
-                    return Ok(super::RunStatus::Yielded);
-                }
+                && instructions >= budget
+            {
+                return Ok(super::RunStatus::Yielded);
+            }
             instructions += 1;
             if cfg!(feature = "debug_trace") {
                 self.debug_machine()?;
@@ -119,9 +120,13 @@ impl VirtualMachine {
 
                 x if x == OpCode::JumpIfFalsePop as u8 => self.jump_if_false_pop().map(|_| false),
 
-                x if x == OpCode::LessLocalConstJump as u8 => self.less_local_const_jump().map(|_| false),
+                x if x == OpCode::LessLocalConstJump as u8 => {
+                    self.less_local_const_jump().map(|_| false)
+                }
 
-                x if x == OpCode::LoopLessAddLocalConst as u8 => self.loop_less_add_local_const().map(|_| false),
+                x if x == OpCode::LoopLessAddLocalConst as u8 => {
+                    self.loop_less_add_local_const().map(|_| false)
+                }
 
                 x if x == OpCode::AddLocalLocal as u8 => self.add_local_local().map(|_| false),
 
@@ -282,15 +287,14 @@ impl VirtualMachine {
         match value {
             Value::Object(handle) => match &*handle.borrow() {
                 Object::Error { kind, .. } => {
-                    expected.eq_ignore_ascii_case("Err")
-                        || expected.eq_ignore_ascii_case(kind)
+                    expected.eq_ignore_ascii_case("Err") || expected.eq_ignore_ascii_case(kind)
                 }
-                Object::Instance { class, .. } => class.as_ref().is_some_and(|class| {
-                    match &*class.borrow() {
+                Object::Instance { class, .. } => {
+                    class.as_ref().is_some_and(|class| match &*class.borrow() {
                         Object::Class { name, .. } => name.eq_ignore_ascii_case(expected),
                         _ => false,
-                    }
-                }),
+                    })
+                }
                 _ => value.type_name().eq_ignore_ascii_case(expected),
             },
             _ => value.type_name().eq_ignore_ascii_case(expected),
@@ -310,8 +314,7 @@ impl VirtualMachine {
             let current_frame_index = self.frames.len() - 1;
 
             let Some(handler_index) = self.exception_handlers.iter().rposition(|handler| {
-                handler.frame_index >= min_frame_len
-                    && handler.frame_index <= current_frame_index
+                handler.frame_index >= min_frame_len && handler.frame_index <= current_frame_index
             }) else {
                 self.close_current_frame_for_exception()?;
                 continue;
@@ -379,10 +382,7 @@ impl VirtualMachine {
 
     /// Propagation d'une annulation : seuls les handlers avec `finally` sont
     /// entrés, les `catch` sont ignorés.
-    fn propagate_cancellation_until(
-        &mut self,
-        min_frame_len: usize,
-    ) -> Result<bool, RuntimeError> {
+    fn propagate_cancellation_until(&mut self, min_frame_len: usize) -> Result<bool, RuntimeError> {
         loop {
             if self.frames.len() <= min_frame_len {
                 return Ok(false);

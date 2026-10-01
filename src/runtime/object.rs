@@ -7,7 +7,6 @@ use crate::vm::machine::scheduler::TaskHandle;
 use crate::module::module::ModuleInstance;
 use crate::runtime::barrier::BarrierState;
 use crate::runtime::channel::ChannelState;
-use crate::runtime::rwlock::RwLockState;
 use crate::runtime::closure::Closure;
 use crate::runtime::condvar::CondvarState;
 use crate::runtime::event::EventState;
@@ -15,6 +14,7 @@ use crate::runtime::function::Function;
 use crate::runtime::gc_handle::Gc;
 use crate::runtime::hashed::{DictEntries, SetElements};
 use crate::runtime::iterator::IteratorState;
+use crate::runtime::rwlock::RwLockState;
 use crate::runtime::upvalue::ObjUpvalue;
 use crate::runtime::value::Value;
 

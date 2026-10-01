@@ -316,7 +316,8 @@ impl Scheduler {
 
         let cancellation_requested = scheduler.cancel_requested.remove(&id);
 
-        let cancellable_outcome = matches!(outcome, Ok(RunStatus::Yielded) | Ok(RunStatus::Waiting));
+        let cancellable_outcome =
+            matches!(outcome, Ok(RunStatus::Yielded) | Ok(RunStatus::Waiting));
 
         // Une tâche qui a des `finally` en attente n'est pas détruite d'un
         // coup : elle est réveillée avec `TaskCancelled` (non interceptable)

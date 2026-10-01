@@ -1,0 +1,3 @@
+C termine à t=6
+A termine à t=7
+B termine à t=10

@@ -1,0 +1,4 @@
+Ok(0)
+Ok(1)
+Err(complet)
+Ok(0)

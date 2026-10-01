@@ -1,0 +1,4 @@
+tour 1 : 4 qualifiés
+tour 2 : 2 qualifiés
+tour 3 : 1 qualifiés
+vainqueur : Ada

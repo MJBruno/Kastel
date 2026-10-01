@@ -1,0 +1,7 @@
+0,0 à l'eau
+1,2 touché
+1,1 touché
+4,4 touché
+9,9 à l'eau
+1,3 touché
+flotte coulée : true

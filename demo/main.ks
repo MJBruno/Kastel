@@ -1,37 +1,28 @@
-// ==================================================================
-// Exemple 463 — Petit serveur simulé avec tâches
-// Catégorie : Mini-projets
-// ------------------------------------------------------------------
-// Des « requêtes » traitées en parallèle par des travailleurs.
-// ------------------------------------------------------------------
-// Sortie attendue :
-//   requête 1 traitée
-//   requête 2 traitée
-//   requête 3 traitée
-//   requête 4 traitée
-// ==================================================================
+import std.thread
 
-let requetes = channel<int>();
-let reponses = channel<str>();
-
-func travailleur() {
-    for i in range(2) {
-        let n = requetes.recv();
-        reponses.send("requête " + str(n) + " traitée");
-    }
+func compute(value: int) -> int {
+    thread.yield();
+    return value * 2;
 }
 
-let w1 = spawn(travailleur);
-let w2 = spawn(travailleur);
-for n in range(1, 5) {
-    requetes.send(n);
+func delayed(value: int) -> int {
+    thread.sleep(10);
+    return value + 1;
 }
 
-let recues = [];
-for i in range(4) {
-    recues.add(reponses.recv());
-}
-recues.sort();
-for r in recues {
-    println(r);
-}
+let first: Task<int> = thread.spawn(compute, 21);
+let second: Task<int> = thread.spawn(delayed, 41);
+
+// Give ready tasks an explicit scheduling opportunity.
+thread.sleep(0);
+
+let first_result = first.join();
+let second_result = second.join();
+
+let first_done = first.is_done();
+let second_status = second.status();
+
+println("first = " + str(first_result));
+println("second = " + str(second_result));
+println("first_done = " + str(first_done));
+println("second_status = " + second_status);

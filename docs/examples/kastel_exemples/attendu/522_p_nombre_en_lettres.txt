@@ -1,0 +1,7 @@
+0 : zéro
+17 : dix-sept
+21 : vingt-et-un
+42 : quarante-deux
+71 : soixante-et-onze
+80 : quatre-vingts
+99 : quatre-vingt-dix-neuf

@@ -229,8 +229,8 @@ impl TypeChecker {
                         )
                     })
                     .collect::<HashMap<_, _>>();
-                let generic_constraints =
-                    checker.generic_constraints_in_environment(generic_params, &alias_environment)?;
+                let generic_constraints = checker
+                    .generic_constraints_in_environment(generic_params, &alias_environment)?;
                 let generic_constraints = generic_params
                     .iter()
                     .map(|parameter| {
@@ -488,7 +488,8 @@ impl TypeChecker {
                                 self.import_type_dependencies(&interface, &resolved.ty);
                                 for (_, constraints) in &resolved.generic_constraints {
                                     for constraint in constraints {
-                                        let GenericConstraint::Interface(interface_type) = constraint;
+                                        let GenericConstraint::Interface(interface_type) =
+                                            constraint;
                                         self.import_type_dependencies(&interface, interface_type);
                                     }
                                 }
@@ -1262,10 +1263,7 @@ impl TypeChecker {
             };
 
             for constraint in constraints {
-                let instantiated = Self::substitute_generic_constraint(
-                    constraint,
-                    substitutions,
-                );
+                let instantiated = Self::substitute_generic_constraint(constraint, substitutions);
 
                 if !self.type_satisfies_constraint(actual, &instantiated) {
                     return Err(CompileError::GenericConstraintNotSatisfied {
@@ -1401,9 +1399,7 @@ impl TypeChecker {
 
                 let resolved_arguments = arguments
                     .iter()
-                    .map(|argument| {
-                        self.resolve_type_in_environment(argument, environment, 0)
-                    })
+                    .map(|argument| self.resolve_type_in_environment(argument, environment, 0))
                     .collect::<Vec<_>>();
 
                 if let Some(alias) = self.aliases.get(name) {
@@ -1425,8 +1421,10 @@ impl TypeChecker {
                             )
                         })
                         .collect::<HashMap<_, _>>();
-                    let alias_constraints = self
-                        .generic_constraints_in_environment(&alias.generic_params, &alias_environment)?;
+                    let alias_constraints = self.generic_constraints_in_environment(
+                        &alias.generic_params,
+                        &alias_environment,
+                    )?;
                     let substitutions = alias
                         .generic_params
                         .iter()
@@ -1501,13 +1499,12 @@ impl TypeChecker {
                     subject_name,
                 )
             }
-            Expression::Function { body, .. } => {
-                self.validate_alias_constraints_in_statements_with_context(
+            Expression::Function { body, .. } => self
+                .validate_alias_constraints_in_statements_with_context(
                     body,
                     environment,
                     active_constraints,
-                )
-            }
+                ),
             Expression::Call {
                 callee,
                 generic_args,
@@ -1603,14 +1600,13 @@ impl TypeChecker {
                 }
                 Ok(())
             }
-            Expression::Try(inner) | Expression::Await(inner) => {
-                self.validate_alias_constraints_in_expression(
+            Expression::Try(inner) | Expression::Await(inner) => self
+                .validate_alias_constraints_in_expression(
                     inner,
                     environment,
                     active_constraints,
                     subject_name,
-                )
-            }
+                ),
             Expression::Ternary {
                 condition,
                 then_expr,
@@ -1659,8 +1655,7 @@ impl TypeChecker {
         for statement in statements {
             let statement = Self::strip_position(statement);
             match statement {
-                Statement::Positioned { statement, .. }
-                | Statement::Export { statement } => {
+                Statement::Positioned { statement, .. } | Statement::Export { statement } => {
                     self.validate_alias_constraints_in_statements_with_context(
                         std::slice::from_ref(statement),
                         environment,
@@ -1854,9 +1849,12 @@ impl TypeChecker {
                 } => {
                     let function_environment =
                         Self::extend_generic_environment(environment, generic_params);
-                    let function_constraints = self
-                        .generic_constraints_in_environment(generic_params, &function_environment)?;
-                    let merged = Self::merge_constraint_maps(active_constraints, &function_constraints);
+                    let function_constraints = self.generic_constraints_in_environment(
+                        generic_params,
+                        &function_environment,
+                    )?;
+                    let merged =
+                        Self::merge_constraint_maps(active_constraints, &function_constraints);
                     self.validate_generic_param_bounds(
                         generic_params,
                         environment,
@@ -1885,8 +1883,7 @@ impl TypeChecker {
                         &merged,
                     )?;
                 }
-                Statement::Return { value: Some(value) }
-                | Statement::Throw { value } => {
+                Statement::Return { value: Some(value) } | Statement::Throw { value } => {
                     self.validate_alias_constraints_in_expression(
                         value,
                         environment,
@@ -1932,7 +1929,8 @@ impl TypeChecker {
                         Self::extend_generic_environment(environment, generic_params);
                     let class_constraints = self
                         .generic_constraints_in_environment(generic_params, &class_environment)?;
-                    let merged = Self::merge_constraint_maps(active_constraints, &class_constraints);
+                    let merged =
+                        Self::merge_constraint_maps(active_constraints, &class_constraints);
                     self.validate_generic_param_bounds(
                         generic_params,
                         environment,
@@ -1974,8 +1972,8 @@ impl TypeChecker {
                 } => {
                     let enum_environment =
                         Self::extend_generic_environment(environment, generic_params);
-                    let enum_constraints = self
-                        .generic_constraints_in_environment(generic_params, &enum_environment)?;
+                    let enum_constraints =
+                        self.generic_constraints_in_environment(generic_params, &enum_environment)?;
                     let merged = Self::merge_constraint_maps(active_constraints, &enum_constraints);
                     self.validate_generic_param_bounds(
                         generic_params,
@@ -2000,9 +1998,12 @@ impl TypeChecker {
                 } => {
                     let interface_environment =
                         Self::extend_generic_environment(environment, generic_params);
-                    let interface_constraints = self
-                        .generic_constraints_in_environment(generic_params, &interface_environment)?;
-                    let merged = Self::merge_constraint_maps(active_constraints, &interface_constraints);
+                    let interface_constraints = self.generic_constraints_in_environment(
+                        generic_params,
+                        &interface_environment,
+                    )?;
+                    let merged =
+                        Self::merge_constraint_maps(active_constraints, &interface_constraints);
                     self.validate_generic_param_bounds(
                         generic_params,
                         environment,
@@ -2048,12 +2049,10 @@ impl TypeChecker {
         outer_constraints: &HashMap<String, Vec<GenericConstraint>>,
         subject_name: &str,
     ) -> Result<(), CompileError> {
-        let method_environment = Self::extend_generic_environment(
-            outer_environment,
-            &method.generic_params,
-        );
-        let method_constraints = self
-            .generic_constraints_in_environment(&method.generic_params, &method_environment)?;
+        let method_environment =
+            Self::extend_generic_environment(outer_environment, &method.generic_params);
+        let method_constraints =
+            self.generic_constraints_in_environment(&method.generic_params, &method_environment)?;
         let merged = Self::merge_constraint_maps(outer_constraints, &method_constraints);
         self.validate_generic_param_bounds(
             &method.generic_params,
@@ -2295,16 +2294,8 @@ impl TypeChecker {
                 )?;
             }
             Type::Dict(key, value) => {
-                self.validate_type_constraints_in_context(
-                    key,
-                    active_constraints,
-                    subject_name,
-                )?;
-                self.validate_type_constraints_in_context(
-                    value,
-                    active_constraints,
-                    subject_name,
-                )?;
+                self.validate_type_constraints_in_context(key, active_constraints, subject_name)?;
+                self.validate_type_constraints_in_context(value, active_constraints, subject_name)?;
             }
             Type::Tuple(elements) | Type::Union(elements) => {
                 for element in elements {
@@ -2390,22 +2381,14 @@ impl TypeChecker {
     ) -> bool {
         match ty {
             Type::Dynamic => true,
-            Type::TypeParam(name) => active_constraints
-                .get(name)
-                .is_some_and(|constraints| {
-                    constraints
-                        .iter()
-                        .any(|active| self.constraints_imply(active, constraint))
-                }),
-            Type::Union(members) => members
-                .iter()
-                .all(|member| {
-                    self.type_satisfies_constraint_with_context(
-                        member,
-                        constraint,
-                        active_constraints,
-                    )
-                }),
+            Type::TypeParam(name) => active_constraints.get(name).is_some_and(|constraints| {
+                constraints
+                    .iter()
+                    .any(|active| self.constraints_imply(active, constraint))
+            }),
+            Type::Union(members) => members.iter().all(|member| {
+                self.type_satisfies_constraint_with_context(member, constraint, active_constraints)
+            }),
             _ => match constraint {
                 GenericConstraint::Interface(interface) => {
                     self.type_implements_interface(ty, interface)
@@ -3829,11 +3812,7 @@ impl TypeChecker {
         };
 
         for parameter in &declared_signature.params {
-            self.validate_type_constraints_in_context(
-                parameter,
-                &self.generic_constraints,
-                name,
-            )?;
+            self.validate_type_constraints_in_context(parameter, &self.generic_constraints, name)?;
         }
         self.validate_type_constraints_in_context(
             &declared_signature.return_type,
@@ -4339,7 +4318,8 @@ impl TypeChecker {
                 let awaited = self.check_expression(inner)?;
                 match awaited {
                     Type::Generic { name, arguments }
-                        if name.eq_ignore_ascii_case("Task") && arguments.len() == 1 => {
+                        if name.eq_ignore_ascii_case("Task") && arguments.len() == 1 =>
+                    {
                         Ok(arguments[0].clone())
                     }
                     Type::Dynamic => Ok(Type::Dynamic),
@@ -4438,13 +4418,13 @@ impl TypeChecker {
                     let is_select_case = |ty: &Type| match ty {
                         Type::Dynamic => true,
                         _ if is_channel(ty) => true,
-                        Type::Tuple(elements) if elements.len() == 2 => {
-                            is_channel(&elements[0])
-                        }
+                        Type::Tuple(elements) if elements.len() == 2 => is_channel(&elements[0]),
                         _ => false,
                     };
 
-                    let validate_select_case = |checker: &Self, case_type: &Type| -> Result<(), CompileError> {
+                    let validate_select_case = |checker: &Self,
+                                                case_type: &Type|
+                     -> Result<(), CompileError> {
                         match case_type {
                             Type::Dynamic => Ok(()),
                             _ if is_channel(case_type) => Ok(()),
@@ -4464,7 +4444,9 @@ impl TypeChecker {
                                     return Err(CompileError::WrongArgumentType {
                                         function: "select".into(),
                                         index: 0,
-                                        expected: format!("List<(Channel<{element_type}>, {element_type})>"),
+                                        expected: format!(
+                                            "List<(Channel<{element_type}>, {element_type})>"
+                                        ),
                                         found: case_type.to_string(),
                                     });
                                 }
@@ -4474,7 +4456,9 @@ impl TypeChecker {
                             _ => Err(CompileError::WrongArgumentType {
                                 function: "select".into(),
                                 index: 0,
-                                expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
+                                expected:
+                                    "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
+                                        .into(),
                                 found: case_type.to_string(),
                             }),
                         }
@@ -4649,11 +4633,134 @@ impl TypeChecker {
                     return Ok(Type::Set(Box::new(element.unwrap_or(Type::Dynamic))));
                 }
 
-                // Pour une méthode de classe, l'arité fait partie de la
-                // résolution. Cela permet `obj.foo()` et `obj.foo(x)`
-                // d'aboutir à deux signatures différentes.
+                // `std.thread` expose les trois intrinsèques du scheduler
+                // sans dupliquer leur implémentation dans le runtime.
+                // L'import `std.thread` lie le module au nom `thread`.
                 if let Expression::Member { object, name, .. } = callee.as_ref() {
                     let object_type = self.check_expression(object)?;
+
+                    let is_thread_module = match &object_type {
+                        Type::Module(path) => {
+                            std::path::Path::new(path)
+                                .file_stem()
+                                .and_then(|name| name.to_str())
+                                == Some("thread")
+                        }
+                        _ => false,
+                    };
+
+                    if is_thread_module {
+                        match name.as_str() {
+                            "yield" => {
+                                if !arguments.is_empty() {
+                                    return Err(CompileError::WrongArgumentCount {
+                                        expected: 0,
+                                        found: arguments.len(),
+                                    });
+                                }
+                                return Ok(Type::None);
+                            }
+
+                            "sleep" => {
+                                if arguments.len() != 1 {
+                                    return Err(CompileError::WrongArgumentCount {
+                                        expected: 1,
+                                        found: arguments.len(),
+                                    });
+                                }
+
+                                let duration_type = self.check_expression(&arguments[0])?;
+                                if !matches!(duration_type, Type::Int | Type::Dynamic) {
+                                    return Err(CompileError::WrongArgumentType {
+                                        function: "thread.sleep".into(),
+                                        index: 0,
+                                        expected: "int".into(),
+                                        found: duration_type.to_string(),
+                                    });
+                                }
+
+                                return Ok(Type::None);
+                            }
+
+                            "spawn" => {
+                                if arguments.is_empty() {
+                                    return Err(CompileError::WrongArgumentCount {
+                                        expected: 1,
+                                        found: 0,
+                                    });
+                                }
+
+                                let callee_type = self.check_expression(&arguments[0])?;
+                                let task_arguments = &arguments[1..];
+                                let function_name = format!(
+                                    "thread.spawn({})",
+                                    self.expression_name(&arguments[0])
+                                );
+
+                                let result_type = match callee_type {
+                                    Type::Function(signature) => {
+                                        let instantiated = self.instantiate_call_signature(
+                                            &signature,
+                                            generic_args,
+                                            task_arguments,
+                                            &function_name,
+                                        )?;
+                                        let result = *instantiated.return_type;
+                                        if instantiated.is_async {
+                                            result
+                                        } else {
+                                            Type::Generic {
+                                                name: "Task".into(),
+                                                arguments: vec![result],
+                                            }
+                                        }
+                                    }
+
+                                    Type::Overloads(signatures) => {
+                                        let signature = self.resolve_overload(
+                                            &signatures,
+                                            generic_args,
+                                            task_arguments,
+                                            &function_name,
+                                        )?;
+                                        let result = *signature.return_type;
+                                        if signature.is_async {
+                                            result
+                                        } else {
+                                            Type::Generic {
+                                                name: "Task".into(),
+                                                arguments: vec![result],
+                                            }
+                                        }
+                                    }
+
+                                    Type::Dynamic => {
+                                        for argument in task_arguments {
+                                            self.check_expression(argument)?;
+                                        }
+                                        Type::Generic {
+                                            name: "Task".into(),
+                                            arguments: vec![Type::Dynamic],
+                                        }
+                                    }
+
+                                    other => {
+                                        return Err(CompileError::NotCallable {
+                                            found: other.to_string(),
+                                        });
+                                    }
+                                };
+
+                                return Ok(result_type);
+                            }
+
+                            _ => {}
+                        }
+                    }
+
+                    // Pour une méthode de classe, l'arité fait partie de la
+                    // résolution. Cela permet `obj.foo()` et `obj.foo(x)`
+                    // d'aboutir à deux signatures différentes.
 
                     if let Some(class_name) = Self::type_name(&object_type) {
                         self.check_member_visibility(&class_name, name)?;
@@ -8090,7 +8197,10 @@ func invalid<T>(value: T | None) -> T {
 }
 "#,
         );
-        assert!(invalid_return.is_err(), "une union ne doit pas être retournable comme T");
+        assert!(
+            invalid_return.is_err(),
+            "une union ne doit pas être retournable comme T"
+        );
 
         let invalid_inference = check(
             r#"
@@ -8101,7 +8211,10 @@ func keep<T>(value: T | None) -> T | None {
 let text: str | None = keep(None);
 "#,
         );
-        assert!(invalid_inference.is_err(), "None seul ne doit pas permettre d'inférer T");
+        assert!(
+            invalid_inference.is_err(),
+            "None seul ne doit pas permettre d'inférer T"
+        );
     }
 
     #[test]
@@ -8733,7 +8846,10 @@ let source: dynamic = 1;
 let bad: Box<Bad> = source;
 "#,
         );
-        assert!(invalid.is_err(), "une annotation doit respecter la contrainte de Box<T>");
+        assert!(
+            invalid.is_err(),
+            "une annotation doit respecter la contrainte de Box<T>"
+        );
 
         let invalid_nested = check(
             r#"
@@ -8903,7 +9019,10 @@ func unwrap<T>(box: { value: T }) -> T {
 let bad: int = unwrap({ other: 42 });
 "#,
         );
-        assert!(invalid.is_err(), "un champ absent doit empêcher l'inférence générique");
+        assert!(
+            invalid.is_err(),
+            "un champ absent doit empêcher l'inférence générique"
+        );
     }
 
     #[test]
@@ -8933,7 +9052,10 @@ type Bag<T: Addable> = List<T>;
 let bad: Bag<Bad> = [];
 "#,
         );
-        assert!(invalid.is_err(), "la contrainte de l'alias ne doit pas disparaître après expansion");
+        assert!(
+            invalid.is_err(),
+            "la contrainte de l'alias ne doit pas disparaître après expansion"
+        );
 
         // La contrainte reste aussi active lorsqu'un paramètre générique
         // extérieur est utilisé comme argument de l'alias.
@@ -9052,7 +9174,10 @@ func compare_with<T: Comparable<U>, U>(value: T, other: U) -> int {
 let result: int = compare_with(new Number(), "not-an-int");
 "#,
         );
-        assert!(invalid.is_err(), "Comparable<int> ne doit pas satisfaire Comparable<str>");
+        assert!(
+            invalid.is_err(),
+            "Comparable<int> ne doit pas satisfaire Comparable<str>"
+        );
 
         let outer = check(
             r#"
@@ -9075,7 +9200,10 @@ func forward<U>(value: Number, other: U) -> int {
 }
 "#,
         );
-        assert!(outer.is_err(), "U doit rester vérifié contre Comparable<int> dans une fonction générique");
+        assert!(
+            outer.is_err(),
+            "U doit rester vérifié contre Comparable<int> dans une fonction générique"
+        );
     }
 
     #[test]

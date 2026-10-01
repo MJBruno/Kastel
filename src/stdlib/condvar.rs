@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler,
-    error::runtime_error::RuntimeError,
-    runtime::object::Object,
+    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::object::Object,
     runtime::value::Value,
 };
 

@@ -1,0 +1,3 @@
+Ok(900)
+Ok(750)
+Err(plafond journalier atteint)

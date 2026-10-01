@@ -19,7 +19,7 @@ use super::variables::Global;
 /// `1 + 1 + 1 + ...` produit un arbre de la profondeur du nombre de termes :
 /// au-delà de cette limite, `CompileError::ExpressionTooDeep` plutôt qu'un
 /// débordement de la pile native.
-pub const MAX_EXPRESSION_DEPTH: usize = 5_000;
+pub const MAX_EXPRESSION_DEPTH: usize = 1_024;
 
 /// Un `try` ouvert autour du code compilé. Sert à `return`, `?`, `break` et
 /// `continue`, qui doivent dépiler les handlers et exécuter les `finally` des

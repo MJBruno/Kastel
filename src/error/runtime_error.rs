@@ -303,11 +303,17 @@ impl std::fmt::Display for RuntimeError {
             }
 
             RuntimeError::CondvarDeadlock => {
-                write!(f, "Condition variable wait would deadlock because this task is already waiting on it.")
+                write!(
+                    f,
+                    "Condition variable wait would deadlock because this task is already waiting on it."
+                )
             }
 
             RuntimeError::CondvarNotOwner => {
-                write!(f, "Condition variable wait requires owning its associated mutex.")
+                write!(
+                    f,
+                    "Condition variable wait requires owning its associated mutex."
+                )
             }
 
             RuntimeError::YieldOutsideTask => {

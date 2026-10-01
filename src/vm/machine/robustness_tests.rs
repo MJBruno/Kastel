@@ -312,7 +312,7 @@ fn a_very_long_operator_chain_is_rejected_by_the_compiler() {
     // Le parser construit la chaîne itérativement, mais l'arbre a la
     // profondeur du nombre de termes : le compilateur (récursif) refuse.
     let rejected = on_big_stack(|| {
-        let source = format!("let x = 1{};", " + 1".repeat(6000));
+        let source = format!("let x = 1{};", " + 1".repeat(1_200));
         let tokens = Lexer::new(source).scan_token().unwrap();
         let statements = Parser::new(tokens).parse().unwrap();
 

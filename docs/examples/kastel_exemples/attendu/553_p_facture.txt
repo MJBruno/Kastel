@@ -1,0 +1,5 @@
+stylo x2 = 20.00
+cahier x1 = 5.50
+HT  25.50
+TVA 5.10
+TTC 30.60

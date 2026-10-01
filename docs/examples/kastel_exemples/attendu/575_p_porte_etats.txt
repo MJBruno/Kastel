@@ -1,0 +1,5 @@
+fermer -> fermée
+verrouiller -> verrouillée
+ouvrir -> verrouillée
+deverrouiller -> fermée
+ouvrir -> ouverte

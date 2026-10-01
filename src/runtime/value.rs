@@ -213,9 +213,7 @@ impl Value {
         ))))
     }
 
-    pub fn new_condvar(
-        mutex: Rc<RefCell<crate::runtime::mutex::MutexState>>,
-    ) -> Self {
+    pub fn new_condvar(mutex: Rc<RefCell<crate::runtime::mutex::MutexState>>) -> Self {
         Self::new_heap_object(Object::Condvar(Rc::new(RefCell::new(
             crate::runtime::condvar::CondvarState::new(mutex),
         ))))
@@ -1263,7 +1261,12 @@ impl std::fmt::Display for Value {
                     }
                     Object::RwLock(rwlock) => {
                         let state = rwlock.borrow();
-                        write!(f, "RwLock(readers={}, writer={})", state.reader_count(), state.is_write_locked())
+                        write!(
+                            f,
+                            "RwLock(readers={}, writer={})",
+                            state.reader_count(),
+                            state.is_write_locked()
+                        )
                     }
 
                     Object::Event(event) => {

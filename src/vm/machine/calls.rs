@@ -244,10 +244,7 @@ impl VirtualMachine {
         };
         let target_id = target_handle.id;
 
-        let scheduler = self
-            .scheduler
-            .upgrade()
-            .ok_or(RuntimeError::TaskNotFound)?;
+        let scheduler = self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
 
         let Some(waiter_id) = self.task_id else {
             // La VM racine ne peut pas être suspendue : conserver l'attente

@@ -122,6 +122,67 @@ impl Compiler {
                 ..
             } => {
                 if let Expression::Member { object, name, .. } = callee.as_ref() {
+                    if let Expression::Variable(module_name) = object.as_ref()
+                        && module_name == "thread"
+                    {
+                        match name.as_str() {
+                            "spawn" => {
+                                if arguments.is_empty() {
+                                    return Err(CompileError::WrongArgumentCount {
+                                        expected: 1,
+                                        found: 0,
+                                    });
+                                }
+
+                                if arguments.len() > u8::MAX as usize {
+                                    return Err(CompileError::TooManyArguments);
+                                }
+
+                                for argument in arguments {
+                                    self.compile_expression(argument)?;
+                                }
+
+                                self.current_line = *line;
+                                self.current_column = *column;
+                                self.emit_bytes(OpCode::Spawn, (arguments.len() - 1) as u8);
+                                return Ok(());
+                            }
+
+                            "yield" => {
+                                if !arguments.is_empty() {
+                                    return Err(CompileError::WrongArgumentCount {
+                                        expected: 0,
+                                        found: arguments.len(),
+                                    });
+                                }
+
+                                self.current_line = *line;
+                                self.current_column = *column;
+                                self.emit_opcode(OpCode::Yield);
+                                self.emit_opcode(OpCode::None);
+                                return Ok(());
+                            }
+
+                            "sleep" => {
+                                if arguments.len() != 1 {
+                                    return Err(CompileError::WrongArgumentCount {
+                                        expected: 1,
+                                        found: arguments.len(),
+                                    });
+                                }
+
+                                self.compile_expression(&arguments[0])?;
+                                self.current_line = *line;
+                                self.current_column = *column;
+                                self.emit_opcode(OpCode::Sleep);
+                                self.emit_opcode(OpCode::None);
+                                return Ok(());
+                            }
+
+                            _ => {}
+                        }
+                    }
+
                     return self.compile_method_call(object, name, arguments, *line, *column);
                 }
 

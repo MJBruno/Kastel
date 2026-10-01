@@ -1907,11 +1907,8 @@ impl VirtualMachine {
                             if let Some(task_id) = self.task_id {
                                 let scheduler =
                                     self.scheduler.upgrade().ok_or(RuntimeError::TaskNotFound)?;
-                                let ready = Scheduler::wait_on_event(
-                                    &scheduler,
-                                    task_id,
-                                    event.clone(),
-                                )?;
+                                let ready =
+                                    Scheduler::wait_on_event(&scheduler, task_id, event.clone())?;
 
                                 if ready {
                                     self.push(Value::None);
@@ -2232,7 +2229,6 @@ impl VirtualMachine {
 
                     return Ok(());
                 }
-
 
                 if object_kind == 23 {
                     match method_name.as_str() {

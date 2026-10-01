@@ -1,0 +1,3 @@
+Bruno
+25
+{nom: "Bruno", age: 25}

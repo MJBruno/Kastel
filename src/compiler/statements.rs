@@ -320,7 +320,11 @@ impl Compiler {
             Statement::TypeAlias { .. } => {}
 
             Statement::Function {
-                name, params, body, is_async, ..
+                name,
+                params,
+                body,
+                is_async,
+                ..
             } => {
                 self.compile_function_statement(name, params, body, *is_async)?;
             }

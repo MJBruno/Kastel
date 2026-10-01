@@ -46,7 +46,6 @@ pub(crate) fn to_string_method(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub mod array;
 pub mod barrier;
-pub mod rwlock;
 pub mod channel;
 pub mod condvar;
 pub mod debug;
@@ -64,6 +63,7 @@ pub mod path;
 pub mod process;
 pub mod record;
 pub mod result;
+pub mod rwlock;
 pub mod semaphore;
 pub mod set;
 pub mod string;

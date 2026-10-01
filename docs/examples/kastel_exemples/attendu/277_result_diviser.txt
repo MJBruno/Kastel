@@ -1,0 +1,2 @@
+Ok(2.5)
+Err(division par zéro)

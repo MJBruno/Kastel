@@ -1,0 +1,3 @@
+Err(crédit insuffisant)
+Err(épuisé)
+Ok(30)
