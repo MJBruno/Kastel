@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 /// Construit un mutex coopératif.
@@ -21,6 +21,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("mutex".into(), Value::NativeFunction(native_mutex));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("mutex");
-}

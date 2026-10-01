@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 use super::string::format_string;
@@ -83,8 +83,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("input".to_string(), Value::NativeFunction(native_input));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("print");
-    let _ = compiler.define_native("println");
-    let _ = compiler.define_native("input");
-}

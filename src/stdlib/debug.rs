@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 pub fn native_inspect(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -34,7 +34,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("debug".to_string(), Value::NativeFunction(native_debug));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("inspect");
-    let _ = compiler.define_native("debug");
-}

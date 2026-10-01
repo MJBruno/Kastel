@@ -1,7 +1,7 @@
 //! Runtime support for `Result<T, E>`.
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 use std::collections::HashMap;
 
@@ -30,7 +30,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("Err".into(), Value::NativeFunction(native_err));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("Ok");
-    let _ = compiler.define_native("Err");
-}

@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 pub fn native_os_name(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -79,10 +79,6 @@ fn register_one(globals: &mut HashMap<String, Value>, name: &str, function: supe
     globals.insert(name.to_string(), Value::NativeFunction(function));
 }
 
-fn define_one(compiler: &mut Compiler, name: &str) {
-    let _ = compiler.define_native(name);
-}
-
 pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "os_name", native_os_name);
     register_one(globals, "os_arch", native_os_arch);
@@ -90,9 +86,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "exit", native_exit);
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    define_one(compiler, "os_name");
-    define_one(compiler, "os_arch");
-    define_one(compiler, "args");
-    define_one(compiler, "exit");
-}

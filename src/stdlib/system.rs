@@ -3,7 +3,7 @@ use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::object::Object,
+    error::runtime_error::RuntimeError, runtime::object::Object,
     runtime::value::Value,
 };
 
@@ -228,10 +228,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("env".to_string(), Value::NativeFunction(native_env));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let names = ["int", "float", "str", "bool", "type", "clock", "cwd", "env"];
-
-    for name in names {
-        let _ = compiler.define_native(name);
-    }
-}

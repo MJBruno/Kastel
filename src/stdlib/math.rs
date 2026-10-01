@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 static RNG_STATE: AtomicU64 = AtomicU64::new(0);
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 fn expect_number(value: &Value) -> Result<f64, RuntimeError> {
@@ -492,10 +492,6 @@ fn register_one(globals: &mut HashMap<String, Value>, name: &str, function: supe
     globals.insert(name.to_string(), Value::NativeFunction(function));
 }
 
-fn define_one(compiler: &mut Compiler, name: &str) {
-    let _ = compiler.define_native(name);
-}
-
 pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "rand", native_rand);
     register_one(globals, "rand_int", native_rand_int);
@@ -524,30 +520,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "idiv", native_idiv);
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    define_one(compiler, "rand");
-    define_one(compiler, "rand_int");
-    define_one(compiler, "rand_range");
-    define_one(compiler, "abs");
-    define_one(compiler, "floor");
-    define_one(compiler, "ceil");
-    define_one(compiler, "round");
-    define_one(compiler, "sqrt");
-    define_one(compiler, "pow");
-    define_one(compiler, "min");
-    define_one(compiler, "max");
-    define_one(compiler, "sin");
-    define_one(compiler, "cos");
-    define_one(compiler, "tan");
-    define_one(compiler, "asin");
-    define_one(compiler, "acos");
-    define_one(compiler, "atan");
-    define_one(compiler, "atan2");
-    define_one(compiler, "log");
-    define_one(compiler, "log10");
-    define_one(compiler, "exp");
-    define_one(compiler, "wrapping_add");
-    define_one(compiler, "wrapping_sub");
-    define_one(compiler, "wrapping_mul");
-    define_one(compiler, "idiv");
-}

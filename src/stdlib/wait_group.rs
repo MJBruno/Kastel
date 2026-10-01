@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 /// Construit un compteur coopératif de tâches.
@@ -23,6 +23,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     );
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("wait_group");
-}

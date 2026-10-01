@@ -24,7 +24,6 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::{
-    compiler::compiler::Compiler,
     error::runtime_error::RuntimeError,
     runtime::gc_handle::Gc,
     runtime::object::Object,
@@ -517,16 +516,8 @@ fn register_one(globals: &mut HashMap<String, Value>, name: &str, function: supe
     globals.insert(name.to_string(), Value::NativeFunction(function));
 }
 
-fn define_one(compiler: &mut Compiler, name: &str) {
-    let _ = compiler.define_native(name);
-}
-
 pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "json_encode", native_json_encode);
     register_one(globals, "json_decode", native_json_decode);
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    define_one(compiler, "json_encode");
-    define_one(compiler, "json_decode");
-}

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 /// Convertit une valeur Kastel en entier i64.
@@ -82,7 +82,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("list".to_string(), Value::NativeFunction(native_list));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("range");
-    let _ = compiler.define_native("list");
-}

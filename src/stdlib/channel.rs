@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 /// Construit un canal coopératif. Sans argument, le canal est non borné.
@@ -29,6 +29,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("channel".into(), Value::NativeFunction(native_channel));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("channel");
-}

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 pub fn native_barrier(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -27,6 +27,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("barrier".into(), Value::NativeFunction(native_barrier));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("barrier");
-}

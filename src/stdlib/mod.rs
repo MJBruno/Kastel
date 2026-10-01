@@ -103,37 +103,38 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
 
 /// Enregistre les natives connues du compilateur.
 pub fn register_compiler_natives(compiler: &mut Compiler) {
-    io::register_compiler(compiler);
-    math::register_compiler(compiler);
-    string::register_compiler(compiler);
-    array::register_compiler(compiler);
-    tuple::register_compiler(compiler);
-    set::register_compiler(compiler);
-    dict::register_compiler(compiler);
-    event::register_compiler(compiler);
-    // object::register_compiler(compiler);
-    iterator::register_compiler(compiler);
-    system::register_compiler(compiler);
-    debug::register_compiler(compiler);
-    json::register_compiler(compiler);
-    file::register_compiler(compiler);
-    channel::register_compiler(compiler);
-    condvar::register_compiler(compiler);
-    mutex::register_compiler(compiler);
-    semaphore::register_compiler(compiler);
-    wait_group::register_compiler(compiler);
-    barrier::register_compiler(compiler);
-    rwlock::register_compiler(compiler);
-    path::register_compiler(compiler);
-    os::register_compiler(compiler);
-    process::register_compiler(compiler);
-    option::register_compiler(compiler);
-    result::register_compiler(compiler);
+    for name in crate::compiler::builtin_types::compiler_native_names() {
+        let _ = compiler.define_native(name);
+    }
 }
 
 /// Compatibilité avec l'ancien appel.
 pub fn execute_native(compiler: &mut Compiler) {
     register_compiler_natives(compiler);
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+    use std::collections::{BTreeSet, HashMap};
+
+    #[test]
+    fn runtime_registration_matches_native_contract_registry() {
+        let mut globals = HashMap::new();
+        register_natives(&mut globals);
+
+        let actual = globals
+            .iter()
+            .filter_map(|(name, value)| {
+                matches!(value, Value::NativeFunction(_)).then_some(name.as_str())
+            })
+            .collect::<BTreeSet<_>>();
+
+        let expected = crate::compiler::builtin_types::runtime_native_names()
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(actual, expected);
+    }
 }
 
 #[cfg(test)]

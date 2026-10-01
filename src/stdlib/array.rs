@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::object::Object,
+    error::runtime_error::RuntimeError, runtime::object::Object,
     runtime::value::Value,
 };
 
@@ -514,6 +514,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     let _ = globals;
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler;
-}

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 fn expect_string(value: &Value) -> Result<String, RuntimeError> {
@@ -152,10 +152,6 @@ fn register_one(globals: &mut HashMap<String, Value>, name: &str, function: supe
     globals.insert(name.to_string(), Value::NativeFunction(function));
 }
 
-fn define_one(compiler: &mut Compiler, name: &str) {
-    let _ = compiler.define_native(name);
-}
-
 pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "file_read", native_file_read);
     register_one(globals, "file_read_lines", native_file_read_lines);
@@ -166,12 +162,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "file_size", native_file_size);
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    define_one(compiler, "file_read");
-    define_one(compiler, "file_read_lines");
-    define_one(compiler, "file_write");
-    define_one(compiler, "file_append");
-    define_one(compiler, "file_exists");
-    define_one(compiler, "file_delete");
-    define_one(compiler, "file_size");
-}

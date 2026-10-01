@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::process::Command;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 fn expect_string(value: &Value) -> Result<String, RuntimeError> {
@@ -88,14 +88,7 @@ fn register_one(globals: &mut HashMap<String, Value>, name: &str, function: supe
     globals.insert(name.to_string(), Value::NativeFunction(function));
 }
 
-fn define_one(compiler: &mut Compiler, name: &str) {
-    let _ = compiler.define_native(name);
-}
-
 pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "process_run", native_process_run);
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    define_one(compiler, "process_run");
-}

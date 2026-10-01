@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 fn expect_string(value: &Value) -> Result<String, RuntimeError> {
@@ -181,10 +181,6 @@ fn register_one(globals: &mut HashMap<String, Value>, name: &str, function: supe
     globals.insert(name.to_string(), Value::NativeFunction(function));
 }
 
-fn define_one(compiler: &mut Compiler, name: &str) {
-    let _ = compiler.define_native(name);
-}
-
 pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "path_join", native_path_join);
     register_one(globals, "path_exists", native_path_exists);
@@ -197,14 +193,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "path_stem", native_path_stem);
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    define_one(compiler, "path_join");
-    define_one(compiler, "path_exists");
-    define_one(compiler, "path_is_dir");
-    define_one(compiler, "path_is_file");
-    define_one(compiler, "path_absolute");
-    define_one(compiler, "path_basename");
-    define_one(compiler, "path_dirname");
-    define_one(compiler, "path_extension");
-    define_one(compiler, "path_stem");
-}

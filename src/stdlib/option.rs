@@ -1,7 +1,7 @@
 //! Runtime support for `Option<T>`.
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 use std::collections::HashMap;
 
@@ -19,6 +19,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("Some".into(), Value::NativeFunction(native_some));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("Some");
-}

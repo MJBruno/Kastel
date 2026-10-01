@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 /// Construit un sémaphore coopératif avec `capacity` permis.
@@ -26,6 +26,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("semaphore".into(), Value::NativeFunction(native_semaphore));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("semaphore");
-}

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 /// Construit un verrou lecture/écriture coopératif.
@@ -22,6 +22,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("rwlock".into(), Value::NativeFunction(native_rwlock));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("rwlock");
-}

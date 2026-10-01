@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    compiler::compiler::Compiler, error::runtime_error::RuntimeError, runtime::value::Value,
+    error::runtime_error::RuntimeError, runtime::value::Value,
 };
 
 /// Construit un événement coopératif non signalé.
@@ -20,6 +20,3 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("event".into(), Value::NativeFunction(native_event));
 }
 
-pub fn register_compiler(compiler: &mut Compiler) {
-    let _ = compiler.define_native("event");
-}
