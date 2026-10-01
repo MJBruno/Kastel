@@ -4349,7 +4349,7 @@ impl TypeChecker {
                 ..
             } => {
                 if let Expression::Variable(name) = callee.as_ref()
-                    && name == "yield"
+                    && builtin_types::intrinsic_kind(name) == Some(builtin_types::Intrinsic::Yield)
                 {
                     if !arguments.is_empty() {
                         return Err(CompileError::WrongArgumentCount {
@@ -4361,7 +4361,7 @@ impl TypeChecker {
                 }
 
                 if let Expression::Variable(name) = callee.as_ref()
-                    && name == "sleep"
+                    && builtin_types::intrinsic_kind(name) == Some(builtin_types::Intrinsic::Sleep)
                 {
                     if arguments.len() != 1 {
                         return Err(CompileError::WrongArgumentCount {
@@ -4384,7 +4384,7 @@ impl TypeChecker {
                 }
 
                 if let Expression::Variable(name) = callee.as_ref()
-                    && name == "select"
+                    && builtin_types::intrinsic_kind(name) == Some(builtin_types::Intrinsic::Select)
                 {
                     if !(1..=2).contains(&arguments.len()) {
                         return Err(CompileError::WrongArgumentCount {
@@ -4550,7 +4550,7 @@ impl TypeChecker {
                 }
 
                 if let Expression::Variable(name) = callee.as_ref()
-                    && name == "spawn"
+                    && builtin_types::intrinsic_kind(name) == Some(builtin_types::Intrinsic::Spawn)
                 {
                     if arguments.is_empty() {
                         return Err(CompileError::WrongArgumentCount {

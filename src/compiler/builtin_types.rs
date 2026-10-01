@@ -17,9 +17,45 @@ use super::types::{FunctionType, GenericConstraint, Type};
 pub enum NativeKind {
     /// Fonction réellement enregistrée dans les globals du runtime.
     Runtime,
-    /// Fonction intrinsèque compilée en bytecode et donc non enregistrée
-    /// comme `Value::NativeFunction`.
-    Intrinsic,
+    /// Fonction intrinsèque compilée directement en bytecode.
+    Intrinsic(Intrinsic),
+}
+
+/// Intrinsèques du langage pris en charge directement par le compilateur/VM.
+///
+/// Leur nom et leur identité sémantique sont centralisés ici afin d'éviter de
+/// dupliquer des chaînes magiques dans le compilateur et le vérificateur de types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Intrinsic {
+    Spawn,
+    Yield,
+    Sleep,
+    Select,
+}
+
+impl Intrinsic {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Spawn => "spawn",
+            Self::Yield => "yield",
+            Self::Sleep => "sleep",
+            Self::Select => "select",
+        }
+    }
+
+    pub const fn all() -> [Self; 4] {
+        [Self::Spawn, Self::Yield, Self::Sleep, Self::Select]
+    }
+}
+
+pub fn intrinsic_kind(name: &str) -> Option<Intrinsic> {
+    match name {
+        "spawn" => Some(Intrinsic::Spawn),
+        "yield" => Some(Intrinsic::Yield),
+        "sleep" => Some(Intrinsic::Sleep),
+        "select" => Some(Intrinsic::Select),
+        _ => None,
+    }
 }
 
 /// Contrat complet d'une fonction native/intrinsèque.
@@ -69,11 +105,11 @@ fn runtime(name: &'static str, ty: Type) -> NativeSpec {
     }
 }
 
-fn intrinsic(name: &'static str, ty: Type) -> NativeSpec {
+fn intrinsic(kind: Intrinsic, ty: Type) -> NativeSpec {
     NativeSpec {
-        name,
+        name: kind.name(),
         ty,
-        kind: NativeKind::Intrinsic,
+        kind: NativeKind::Intrinsic(kind),
     }
 }
 
@@ -98,7 +134,7 @@ pub fn specs() -> Vec<NativeSpec> {
 
     // Concurrence. Ces quatre symboles sont des intrinsèques du VM et ne sont
     // donc pas enregistrés comme NativeFunction dans les globals runtime.
-    specs.push(intrinsic("spawn", Dynamic));
+    specs.push(intrinsic(Intrinsic::Spawn, Dynamic));
     specs.push(runtime(
         "channel",
         function(
@@ -128,9 +164,9 @@ pub fn specs() -> Vec<NativeSpec> {
         "condvar",
         function(&[Named("Mutex".into())], Named("Condvar".into())),
     ));
-    specs.push(intrinsic("yield", function(&[], None)));
-    specs.push(intrinsic("sleep", function(&[Int], None)));
-    specs.push(intrinsic("select", Dynamic));
+    specs.push(intrinsic(Intrinsic::Yield, function(&[], None)));
+    specs.push(intrinsic(Intrinsic::Sleep, function(&[Int], None)));
+    specs.push(intrinsic(Intrinsic::Select, Dynamic));
 
     // Option / Result.
     specs.push(runtime(
@@ -285,7 +321,7 @@ pub fn all() -> HashMap<String, Type> {
 pub fn compiler_native_names() -> impl Iterator<Item = &'static str> {
     specs()
         .into_iter()
-        .filter(|spec| spec.kind == NativeKind::Runtime)
+        .filter(|spec| matches!(spec.kind, NativeKind::Runtime))
         .map(|spec| spec.name)
 }
 
@@ -326,20 +362,41 @@ mod tests {
     }
 
     #[test]
+    fn all_native_contracts_have_unique_names_and_match_all() {
+        let specs = specs();
+        let all_types = all();
+        let mut names = std::collections::HashSet::new();
+
+        for spec in &specs {
+            assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
+            assert_eq!(all_types.get(spec.name), Some(&spec.ty));
+        }
+
+        assert_eq!(names.len(), all_types.len());
+    }
+
+    #[test]
+    fn intrinsic_identity_is_centralized() {
+        for intrinsic in Intrinsic::all() {
+            assert_eq!(intrinsic_kind(intrinsic.name()), Some(intrinsic));
+        }
+    }
+
+    #[test]
     fn every_runtime_native_has_one_contract() {
         let specs = specs();
         let mut names = std::collections::HashSet::new();
 
-        for spec in specs.iter().filter(|spec| spec.kind == NativeKind::Runtime) {
+        for spec in specs.iter().filter(|spec| matches!(spec.kind, NativeKind::Runtime)) {
             assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
         }
 
         assert_eq!(names.len(), 77);
         assert!(names.contains("process_run"));
-        assert!(!names.contains("spawn"));
-        assert!(!names.contains("yield"));
-        assert!(!names.contains("sleep"));
-        assert!(!names.contains("select"));
+        assert!(!names.contains(Intrinsic::Spawn.name()));
+        assert!(!names.contains(Intrinsic::Yield.name()));
+        assert!(!names.contains(Intrinsic::Sleep.name()));
+        assert!(!names.contains(Intrinsic::Select.name()));
     }
 
     #[test]

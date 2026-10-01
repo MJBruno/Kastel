@@ -3,7 +3,10 @@ use crate::error::compile_error::CompileError;
 use crate::frontend::ast::*;
 use crate::runtime::value::Value;
 
-use super::compiler::{Compiler, MAX_EXPRESSION_DEPTH};
+use super::{
+    builtin_types::{self, Intrinsic},
+    compiler::{Compiler, MAX_EXPRESSION_DEPTH},
+};
 
 impl Compiler {
     // ============================================================
@@ -126,7 +129,7 @@ impl Compiler {
                 }
 
                 if let Expression::Variable(name) = callee.as_ref() {
-                    if name == "spawn" {
+                    if builtin_types::intrinsic_kind(name) == Some(Intrinsic::Spawn) {
                         if arguments.is_empty() {
                             return Err(CompileError::WrongArgumentCount {
                                 expected: 1,
@@ -148,7 +151,7 @@ impl Compiler {
                         return Ok(());
                     }
 
-                    if name == "yield" {
+                    if builtin_types::intrinsic_kind(name) == Some(Intrinsic::Yield) {
                         if !arguments.is_empty() {
                             return Err(CompileError::WrongArgumentCount {
                                 expected: 0,
@@ -163,7 +166,7 @@ impl Compiler {
                         return Ok(());
                     }
 
-                    if name == "select" {
+                    if builtin_types::intrinsic_kind(name) == Some(Intrinsic::Select) {
                         if !(1..=2).contains(&arguments.len()) {
                             return Err(CompileError::WrongArgumentCount {
                                 expected: 1,
@@ -186,7 +189,7 @@ impl Compiler {
                         return Ok(());
                     }
 
-                    if name == "sleep" {
+                    if builtin_types::intrinsic_kind(name) == Some(Intrinsic::Sleep) {
                         if arguments.len() != 1 {
                             return Err(CompileError::WrongArgumentCount {
                                 expected: 1,

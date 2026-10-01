@@ -134,6 +134,16 @@ mod registry_tests {
             .collect::<BTreeSet<_>>();
 
         assert_eq!(actual, expected);
+
+        let contracts = crate::compiler::builtin_types::specs();
+        let intrinsic_count = contracts
+            .iter()
+            .filter(|spec| matches!(
+                spec.kind,
+                crate::compiler::builtin_types::NativeKind::Intrinsic(_)
+            ))
+            .count();
+        assert_eq!(intrinsic_count, 4);
     }
 }
 
