@@ -730,6 +730,9 @@ impl VirtualMachine {
         }
 
         self.waiting_channel = None;
+        // Un émetteur bloqué sur un canal fermé abandonne aussi sa valeur en
+        // attente : sans cela elle restait racine GC et état périmé.
+        self.waiting_channel_send = None;
         self.waiting_error = Some(error);
         self.waiting_requested = false;
         Ok(())

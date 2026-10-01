@@ -68,6 +68,37 @@ fn boolean(value: Value) -> bool {
 }
 
 // ============================================================
+//                      RÉSOLUTION DES NATIVES
+// ============================================================
+
+#[test]
+fn user_bindings_shadow_intrinsics_without_invoking_vm_opcodes() {
+    let (vm, result) = run_script(
+        r#"
+let spawn = func(value) { return value + 1; };
+
+func local_shadow() {
+    let yield = func() { return 42; };
+    let sleep = func(value) { return value * 2; };
+    let select = func() { return 7; };
+
+    return [yield(), sleep(21), select()];
+}
+
+let a = spawn(41);
+let values = local_shadow();
+"#,
+    );
+
+    result.expect("les bindings utilisateur doivent masquer les intrinsèques homonymes");
+
+    assert_eq!(integer(global(&vm, "a")), 42);
+    assert_eq!(integer(global(&vm, "values").array_get(0).unwrap()), 42);
+    assert_eq!(integer(global(&vm, "values").array_get(1).unwrap()), 42);
+    assert_eq!(integer(global(&vm, "values").array_get(2).unwrap()), 7);
+}
+
+// ============================================================
 //                      RACINES DU GC
 // ============================================================
 

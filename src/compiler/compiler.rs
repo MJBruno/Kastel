@@ -8,6 +8,7 @@ use crate::frontend::ast::Statement;
 use crate::runtime::function::Function;
 // use crate::runtime::upvalue::Upvalue;
 
+use super::builtin_types::{self, NativeKind};
 use super::context::{CompilerContext, CompilerContextRef};
 // use super::locals::LocalTable;
 use super::loops::LoopContext;
@@ -190,6 +191,45 @@ impl Compiler {
         );
 
         Ok(())
+    }
+
+    /// Résout un nom d'appel par rapport à la portée visible avant de lui
+    /// appliquer la sémantique spéciale des natives/intrinsèques.
+    ///
+    /// Une déclaration utilisateur visible doit toujours primer sur le nom
+    /// d'une intrinsèque. Sans cette règle, `let sleep = func(...) { ... }`
+    /// continuerait à être compilé comme l'opcode `Sleep`, indépendamment de
+    /// la valeur réellement résolue par le langage.
+    pub(crate) fn visible_builtin_call_kind(
+        &self,
+        name: &str,
+    ) -> Result<Option<NativeKind>, CompileError> {
+        let mut context = Some(Rc::clone(&self.context));
+
+        while let Some(current) = context {
+            let (local, enclosing) = {
+                let borrowed = current.borrow();
+                (borrowed.locals.resolve_local(name)?, borrowed.enclosing.clone())
+            };
+
+            if local.is_some() {
+                return Ok(None);
+            }
+
+            context = enclosing;
+        }
+
+        if let Some(global) = self.globals.borrow().get(name) {
+            if global.native {
+                return Ok(Some(NativeKind::Runtime));
+            }
+
+            // Un global utilisateur/importé portant le même nom masque toute
+            // intrinsèque homonyme.
+            return Ok(None);
+        }
+
+        Ok(builtin_types::intrinsic_kind(name).map(NativeKind::Intrinsic))
     }
 
     // ============================================================

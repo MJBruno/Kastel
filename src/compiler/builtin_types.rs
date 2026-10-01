@@ -21,6 +21,47 @@ pub enum NativeKind {
     Intrinsic(Intrinsic),
 }
 
+/// Cardinalité d'appel d'une fonction native ou intrinsèque.
+///
+/// `FunctionType` décrit les types des paramètres lorsqu'une signature fixe
+/// est possible. `Arity` complète ce modèle pour les API dont le nombre
+/// d'arguments varie sans pour autant rendre leur contrat statique
+/// complètement dynamique.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arity {
+    Exact(usize),
+    Range { min: usize, max: usize },
+    AtLeast(usize),
+}
+
+impl Arity {
+    pub const fn accepts(self, found: usize) -> bool {
+        match self {
+            Self::Exact(expected) => found == expected,
+            Self::Range { min, max } => found >= min && found <= max,
+            Self::AtLeast(min) => found >= min,
+        }
+    }
+
+    /// Valeur historique à utiliser avec `WrongArgumentCount`.
+    /// Pour une plage, on fournit la borne la plus proche de la valeur
+    /// invalide afin de conserver l'erreur existante sans inventer une
+    /// nouvelle représentation de diagnostic.
+    pub const fn expected_for(self, found: usize) -> usize {
+        match self {
+            Self::Exact(expected) => expected,
+            Self::Range { min, max } => {
+                if found < min {
+                    min
+                } else {
+                    max
+                }
+            }
+            Self::AtLeast(min) => min,
+        }
+    }
+}
+
 /// Intrinsèques du langage pris en charge directement par le compilateur/VM.
 ///
 /// Leur nom et leur identité sémantique sont centralisés ici afin d'éviter de
@@ -32,7 +73,7 @@ pub enum Intrinsic {
     Sleep,
     Select,
 }
-
+#[allow(dead_code)]
 impl Intrinsic {
     pub const fn name(self) -> &'static str {
         match self {
@@ -64,6 +105,7 @@ pub struct NativeSpec {
     pub name: &'static str,
     pub ty: Type,
     pub kind: NativeKind,
+    pub arity: Arity,
 }
 
 fn function(params: &[Type], return_type: Type) -> Type {
@@ -98,18 +140,53 @@ fn generic_function(params: &[Type], return_type: Type, generic_params: &[&str])
 }
 
 fn runtime(name: &'static str, ty: Type) -> NativeSpec {
+    let arity = match &ty {
+        Type::Function(signature) => Arity::Exact(signature.params.len()),
+        _ => panic!(
+            "la native `{name}` doit fournir une arité explicite via runtime_with_arity"
+        ),
+    };
+
     NativeSpec {
         name,
         ty,
         kind: NativeKind::Runtime,
+        arity,
+    }
+}
+
+fn runtime_with_arity(name: &'static str, ty: Type, arity: Arity) -> NativeSpec {
+    NativeSpec {
+        name,
+        ty,
+        kind: NativeKind::Runtime,
+        arity,
     }
 }
 
 fn intrinsic(kind: Intrinsic, ty: Type) -> NativeSpec {
+    let arity = match &ty {
+        Type::Function(signature) => Arity::Exact(signature.params.len()),
+        _ => panic!(
+            "l'intrinsèque `{}` doit fournir une arité explicite via intrinsic_with_arity",
+            kind.name()
+        ),
+    };
+
     NativeSpec {
         name: kind.name(),
         ty,
         kind: NativeKind::Intrinsic(kind),
+        arity,
+    }
+}
+
+fn intrinsic_with_arity(kind: Intrinsic, ty: Type, arity: Arity) -> NativeSpec {
+    NativeSpec {
+        name: kind.name(),
+        ty,
+        kind: NativeKind::Intrinsic(kind),
+        arity,
     }
 }
 
@@ -122,20 +199,22 @@ pub fn specs() -> Vec<NativeSpec> {
 
     let mut specs = Vec::new();
 
-    // I/O. `print`, `println` et `input` possèdent une arité dynamique/optionnelle
-    // dans le runtime ; on ne leur attribue donc pas une arité fixe artificielle.
-    specs.push(runtime("print", Dynamic));
-    specs.push(runtime("println", Dynamic));
-    specs.push(runtime("input", Dynamic));
+    // I/O. Les types d'arguments restent dynamiques, mais l'arité fait partie
+    // du contrat statique et est contrôlée avant l'exécution.
+    specs.push(runtime_with_arity("print", Dynamic, Arity::AtLeast(1)));
+    specs.push(runtime_with_arity("println", Dynamic, Arity::AtLeast(1)));
+    specs.push(runtime_with_arity("input", Dynamic, Arity::Range { min: 0, max: 1 }));
 
     // `Set(a, b, c)` : arité variable. Le TypeChecker déduit le type
     // `Set<T>` du résultat à partir des arguments.
-    specs.push(runtime("Set", Dynamic));
+    specs.push(runtime_with_arity("Set", Dynamic, Arity::AtLeast(0)));
 
     // Concurrence. Ces quatre symboles sont des intrinsèques du VM et ne sont
     // donc pas enregistrés comme NativeFunction dans les globals runtime.
-    specs.push(intrinsic(Intrinsic::Spawn, Dynamic));
-    specs.push(runtime(
+    specs.push(intrinsic_with_arity(Intrinsic::Spawn, Dynamic, Arity::AtLeast(1)));
+    // `channel()` est non borné, `channel(n)` est borné à `n` places : l'arité
+    // est donc une plage, pas `Exact(0)` déduit de la signature sans paramètre.
+    specs.push(runtime_with_arity(
         "channel",
         function(
             &[],
@@ -144,6 +223,7 @@ pub fn specs() -> Vec<NativeSpec> {
                 arguments: vec![Dynamic],
             },
         ),
+        Arity::Range { min: 0, max: 1 },
     ));
     specs.push(runtime("mutex", function(&[], Named("Mutex".into()))));
     specs.push(runtime(
@@ -166,7 +246,11 @@ pub fn specs() -> Vec<NativeSpec> {
     ));
     specs.push(intrinsic(Intrinsic::Yield, function(&[], None)));
     specs.push(intrinsic(Intrinsic::Sleep, function(&[Int], None)));
-    specs.push(intrinsic(Intrinsic::Select, Dynamic));
+    specs.push(intrinsic_with_arity(
+        Intrinsic::Select,
+        Dynamic,
+        Arity::Range { min: 1, max: 2 },
+    ));
 
     // Option / Result.
     specs.push(runtime(
@@ -249,15 +333,19 @@ pub fn specs() -> Vec<NativeSpec> {
         "dict",
         function(&[], Dict(Box::new(Dynamic), Box::new(Dynamic))),
     ));
-    // `range` accepte 1, 2 ou 3 arguments : le modèle de type n'a pas encore
-    // de signature variadique, donc son contrat reste Dynamic.
-    specs.push(runtime("range", Dynamic));
+    // `range` accepte 1, 2 ou 3 arguments. Son type d'élément reste dynamique
+    // ici, mais sa cardinalité est entièrement connue statiquement.
+    specs.push(runtime_with_arity(
+        "range",
+        Dynamic,
+        Arity::Range { min: 1, max: 3 },
+    ));
     specs.push(runtime("list", unary(Dynamic, ArrayDynamic)));
 
     // Debug.
     specs.push(runtime("inspect", unary(Dynamic, Str)));
     specs.push(runtime("debug", unary(Dynamic, Dynamic)));
-    specs.push(runtime("format", Dynamic));
+    specs.push(runtime_with_arity("format", Dynamic, Arity::AtLeast(1)));
 
     // JSON.
     specs.push(runtime("json_encode", unary(Dynamic, Str)));
@@ -287,7 +375,11 @@ pub fn specs() -> Vec<NativeSpec> {
     specs.push(runtime("os_name", function(&[], Str)));
     specs.push(runtime("os_arch", function(&[], Str)));
     specs.push(runtime("args", function(&[], Array(Box::new(Str)))));
-    specs.push(runtime("exit", Dynamic));
+    specs.push(runtime_with_arity(
+        "exit",
+        Dynamic,
+        Arity::Range { min: 0, max: 1 },
+    ));
 
     // Processus externes. Le second argument accepte Array<str> ou Tuple<str>
     // au runtime ; Dynamic représente correctement cette surface polymorphe
@@ -314,6 +406,16 @@ pub fn all() -> HashMap<String, Type> {
         .into_iter()
         .map(|spec| (spec.name.to_string(), spec.ty))
         .collect()
+}
+
+/// Retourne le contrat natif complet correspondant au nom donné.
+pub fn spec(name: &str) -> Option<NativeSpec> {
+    specs().into_iter().find(|spec| spec.name == name)
+}
+
+/// Retourne uniquement la cardinalité statique d'une native/intrinsèque.
+pub fn native_arity(name: &str) -> Option<Arity> {
+    spec(name).map(|spec| spec.arity)
 }
 
 /// Noms des fonctions effectivement enregistrées dans `Compiler` comme
@@ -370,6 +472,8 @@ mod tests {
         for spec in &specs {
             assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
             assert_eq!(all_types.get(spec.name), Some(&spec.ty));
+            let representative = spec.arity.expected_for(0);
+            assert!(spec.arity.accepts(representative));
         }
 
         assert_eq!(names.len(), all_types.len());
@@ -380,6 +484,24 @@ mod tests {
         for intrinsic in Intrinsic::all() {
             assert_eq!(intrinsic_kind(intrinsic.name()), Some(intrinsic));
         }
+    }
+
+    #[test]
+    fn variable_native_arities_are_explicit() {
+        assert_eq!(native_arity("range"), Some(Arity::Range { min: 1, max: 3 }));
+        assert_eq!(native_arity("input"), Some(Arity::Range { min: 0, max: 1 }));
+        assert_eq!(native_arity("exit"), Some(Arity::Range { min: 0, max: 1 }));
+        assert_eq!(native_arity("print"), Some(Arity::AtLeast(1)));
+        assert_eq!(native_arity("println"), Some(Arity::AtLeast(1)));
+        assert_eq!(native_arity("format"), Some(Arity::AtLeast(1)));
+        assert_eq!(native_arity("Set"), Some(Arity::AtLeast(0)));
+        assert_eq!(native_arity("spawn"), Some(Arity::AtLeast(1)));
+        assert_eq!(native_arity("select"), Some(Arity::Range { min: 1, max: 2 }));
+        assert_eq!(native_arity("channel"), Some(Arity::Range { min: 0, max: 1 }));
+
+        assert!(!Arity::Range { min: 1, max: 3 }.accepts(0));
+        assert!(Arity::Range { min: 1, max: 3 }.accepts(2));
+        assert!(!Arity::Range { min: 1, max: 3 }.accepts(4));
     }
 
     #[test]

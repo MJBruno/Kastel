@@ -202,8 +202,6 @@ fn task_status_transitions_from_ready_to_waiting_to_done() {
     assert_eq!(string(&vm, "done"), "done");
 }
 
-
-
 #[test]
 fn yield_is_cooperative_and_preserves_fifo_ready_order() {
     let (vm, result) = run_script(
@@ -230,8 +228,6 @@ fn yield_is_cooperative_and_preserves_fifo_ready_order() {
     assert_eq!(integer_at(&vm, "order", 2), 11);
     assert_eq!(integer_at(&vm, "order", 3), 12);
 }
-
-
 
 #[test]
 fn sleep_moves_a_task_to_waiting_until_the_timer_expires() {
@@ -261,8 +257,6 @@ fn sleep_moves_a_task_to_waiting_until_the_timer_expires() {
     assert_eq!(string(&vm, "waiting"), "waiting");
     assert_eq!(integer(&vm, "value"), 99);
 }
-
-
 
 #[test]
 fn detached_tasks_are_drained_before_vm_shutdown() {
@@ -335,9 +329,9 @@ fn multiple_awaiters_are_woken_when_the_target_task_finishes() {
         let va = 0;
         let vb = 0;
 
-        async func producer() -> int {
-            sleep(5);
-            return 9;
+        async func producer(gate) -> int {
+            let value = gate.recv();
+            return value;
         }
 
         func waiter(target, output, id) -> int {
@@ -347,17 +341,21 @@ fn multiple_awaiters_are_woken_when_the_target_task_finishes() {
         }
 
         func scenario() {
-            let target = producer();
+            let gate = channel();
+            let target = producer(gate);
+
             let a = spawn(waiter, target, output, 1);
             let b = spawn(waiter, target, output, 2);
 
             yield();
             yield();
             yield();
+
             a_waiting = a.status();
             b_waiting = b.status();
 
-            target.join();
+            gate.send(9);
+
             va = a.join();
             vb = b.join();
         }
@@ -368,15 +366,19 @@ fn multiple_awaiters_are_woken_when_the_target_task_finishes() {
     );
 
     result.expect("plusieurs awaiters doivent être réveillés par la même tâche");
+
     assert_eq!(string(&vm, "a_waiting"), "waiting");
     assert_eq!(string(&vm, "b_waiting"), "waiting");
+
     assert_eq!(integer(&vm, "va"), 9);
     assert_eq!(integer(&vm, "vb"), 9);
+
     assert_eq!(array_len(&vm, "output"), 2);
-    assert_eq!(integer_at(&vm, "output", 0) + integer_at(&vm, "output", 1), 21);
+    assert_eq!(
+        integer_at(&vm, "output", 0) + integer_at(&vm, "output", 1),
+        21
+    );
 }
-
-
 
 #[test]
 fn task_failure_is_reported_through_join_and_status() {
@@ -406,8 +408,6 @@ fn task_failure_is_reported_through_join_and_status() {
     assert!(boolean(&vm, "caught"));
     assert_eq!(string(&vm, "kind"), "DivisionByZero");
 }
-
-
 
 #[test]
 fn cancelling_a_task_twice_is_idempotent_and_marks_it_cancelled() {
@@ -473,8 +473,6 @@ fn cancelled_channel_sender_is_removed_from_wait_queue() {
     assert_eq!(integer_at(&vm, "results", 4), 3);
 }
 
-
-
 #[test]
 fn cancellation_runs_finally_and_releases_mutex() {
     let (vm, result) = run_script(
@@ -539,8 +537,6 @@ fn cancellation_runs_finally_and_releases_mutex() {
     assert_eq!(integer_at(&vm, "order", 1), 2);
     assert_eq!(integer_at(&vm, "order", 2), 3);
 }
-
-
 
 // ============================================================================
 // CHANNELS / SELECT
@@ -634,8 +630,6 @@ fn blocked_receiver_is_woken_by_send() {
     assert_eq!(integer(&vm, "value"), 77);
 }
 
-
-
 #[test]
 fn blocked_senders_are_released_in_fifo_order() {
     let (vm, result) = run_script(
@@ -676,8 +670,6 @@ fn blocked_senders_are_released_in_fifo_order() {
     assert_eq!(integer_at(&vm, "order", 1), 3);
 }
 
-
-
 #[test]
 fn blocked_receivers_are_released_in_fifo_order() {
     let (vm, result) = run_script(
@@ -710,8 +702,6 @@ fn blocked_receivers_are_released_in_fifo_order() {
     assert_eq!(integer_at(&vm, "order", 0), 10);
     assert_eq!(integer_at(&vm, "order", 1), 20);
 }
-
-
 
 #[test]
 fn try_recv_returns_none_without_blocking_when_channel_is_empty() {
@@ -809,8 +799,6 @@ fn blocked_receiver_is_woken_with_channel_closed_error() {
     assert_eq!(string(&vm, "kind"), "ChannelClosed");
 }
 
-
-
 #[test]
 fn select_receives_first_ready_case_and_reports_the_index() {
     let (vm, result) = run_script(
@@ -858,8 +846,6 @@ fn select_waits_inside_a_task_and_resumes_with_the_selected_value() {
     result.expect("select doit pouvoir suspendre une tâche");
     assert_eq!(integer(&vm, "value"), 55);
 }
-
-
 
 #[test]
 fn select_timeout_zero_returns_the_timeout_tuple() {
@@ -971,8 +957,6 @@ fn mutex_waiters_are_released_in_fifo_order() {
     assert_eq!(integer_at(&vm, "order", 2), 3);
 }
 
-
-
 #[test]
 fn mutex_is_released_automatically_when_owner_task_completes() {
     let (vm, result) = run_script(
@@ -1006,8 +990,6 @@ fn mutex_is_released_automatically_when_owner_task_completes() {
     assert_eq!(integer_at(&vm, "order", 1), 2);
     assert!(!boolean(&vm, "locked"));
 }
-
-
 
 #[test]
 fn reentrant_mutex_lock_reports_deadlock() {
@@ -1068,8 +1050,6 @@ fn rwlock_allows_multiple_readers_and_tracks_reader_count() {
     assert!(!boolean(&vm, "read_locked"));
 }
 
-
-
 #[test]
 fn rwlock_writer_waits_for_readers_and_is_woken_after_release() {
     let (vm, result) = run_script(
@@ -1106,8 +1086,6 @@ fn rwlock_writer_waits_for_readers_and_is_woken_after_release() {
     assert_eq!(integer_at(&vm, "order", 2), 3);
     assert!(!boolean(&vm, "write_locked"));
 }
-
-
 
 #[test]
 fn rwlock_try_methods_respect_current_ownership() {
@@ -1197,8 +1175,6 @@ fn rwlock_is_released_automatically_when_owner_task_completes() {
     assert!(!boolean(&vm, "write_locked"));
 }
 
-
-
 #[test]
 fn reentrant_rwlock_write_reports_deadlock() {
     expect_runtime_error(
@@ -1280,8 +1256,6 @@ fn semaphore_try_acquire_and_release_update_available_permits() {
     assert_eq!(integer_at(&vm, "results", 2), 1);
 }
 
-
-
 #[test]
 fn semaphore_waiters_are_released_in_fifo_order() {
     let (vm, result) = run_script(
@@ -1311,8 +1285,6 @@ fn semaphore_waiters_are_released_in_fifo_order() {
     assert_eq!(integer_at(&vm, "order", 1), 2);
     assert_eq!(integer_at(&vm, "order", 2), 3);
 }
-
-
 
 #[test]
 fn cancelling_a_semaphore_owner_releases_its_permit() {
@@ -1366,8 +1338,6 @@ fn cancelling_a_semaphore_owner_releases_its_permit() {
     assert_eq!(integer(&vm, "available"), 1);
 }
 
-
-
 #[test]
 fn semaphore_is_released_automatically_when_owner_task_completes() {
     let (vm, result) = run_script(
@@ -1401,8 +1371,6 @@ fn semaphore_is_released_automatically_when_owner_task_completes() {
     assert_eq!(integer_at(&vm, "order", 1), 2);
     assert_eq!(integer(&vm, "available"), 1);
 }
-
-
 
 #[test]
 fn semaphore_requires_a_positive_capacity() {
@@ -1468,8 +1436,6 @@ fn wait_group_blocks_until_all_workers_finish() {
     assert_eq!(integer_at(&vm, "order", 2), 99);
 }
 
-
-
 #[test]
 fn cancelled_wait_group_waiter_is_cleaned_up() {
     let (vm, result) = run_script(
@@ -1510,8 +1476,6 @@ fn cancelled_wait_group_waiter_is_cleaned_up() {
     assert!(boolean(&vm, "cancelled"));
     assert!(boolean(&vm, "done"));
 }
-
-
 
 #[test]
 fn wait_group_rejects_negative_and_underflow_operations() {
@@ -1577,10 +1541,11 @@ fn barrier_releases_a_generation_and_is_reusable() {
     assert_eq!(integer(&vm, "parties"), 2);
     assert_eq!(array_len(&vm, "order"), 4);
     assert_eq!(integer_at(&vm, "order", 0) + integer_at(&vm, "order", 1), 3);
-    assert_eq!(integer_at(&vm, "order", 2) + integer_at(&vm, "order", 3), 23);
+    assert_eq!(
+        integer_at(&vm, "order", 2) + integer_at(&vm, "order", 3),
+        23
+    );
 }
-
-
 
 #[test]
 fn cancelling_a_barrier_waiter_breaks_the_barrier() {
@@ -1632,8 +1597,6 @@ fn cancelling_a_barrier_waiter_breaks_the_barrier() {
     assert!(boolean(&vm, "broken"));
     assert!(boolean(&vm, "other_broken"));
 }
-
-
 
 #[test]
 fn barrier_requires_a_positive_party_count() {
@@ -1688,8 +1651,6 @@ fn event_is_sticky_until_reset_and_wakes_all_waiters() {
     assert_eq!(integer_at(&vm, "order", 0) + integer_at(&vm, "order", 1), 3);
 }
 
-
-
 // ============================================================================
 // CONDVAR
 // ============================================================================
@@ -1734,8 +1695,6 @@ fn condvar_notify_one_reacquires_the_associated_mutex() {
     assert_eq!(integer_at(&vm, "order", 1), 1);
 }
 
-
-
 #[test]
 fn condvar_notify_all_wakes_all_waiters() {
     let (vm, result) = run_script(
@@ -1774,8 +1733,6 @@ fn condvar_notify_all_wakes_all_waiters() {
     assert_eq!(integer_at(&vm, "order", 0) + integer_at(&vm, "order", 1), 3);
 }
 
-
-
 #[test]
 fn condvar_wait_requires_the_associated_mutex_and_a_task() {
     expect_runtime_error(
@@ -1796,8 +1753,6 @@ fn condvar_rejects_a_non_mutex_constructor_argument() {
         "#,
     );
 }
-
-
 
 // ============================================================================
 // OWNERSHIP ERRORS
@@ -1834,8 +1789,6 @@ fn mutex_unlock_by_a_non_owner_reports_an_error_without_corrupting_owner() {
     assert_eq!(string(&vm, "kind"), "MutexNotOwner");
 }
 
-
-
 #[test]
 fn semaphore_release_by_a_non_owner_reports_an_error_without_consuming_the_permit() {
     let (vm, result) = run_script(
@@ -1868,8 +1821,6 @@ fn semaphore_release_by_a_non_owner_reports_an_error_without_consuming_the_permi
     assert_eq!(string(&vm, "kind"), "SemaphoreNotOwner");
     assert_eq!(integer(&vm, "available"), 1);
 }
-
-
 
 #[test]
 fn rwlock_unlock_by_a_non_owner_reports_an_error_without_corrupting_owner() {
@@ -1904,8 +1855,6 @@ fn rwlock_unlock_by_a_non_owner_reports_an_error_without_corrupting_owner() {
     assert!(!boolean(&vm, "locked"));
 }
 
-
-
 #[test]
 fn condvar_wait_by_a_non_owner_reports_an_error_without_releasing_the_mutex() {
     let (vm, result) = run_script(
@@ -1937,8 +1886,6 @@ fn condvar_wait_by_a_non_owner_reports_an_error_without_releasing_the_mutex() {
     result.expect("condvar.wait doit vérifier que la tâche possède le mutex associé");
     assert_eq!(string(&vm, "kind"), "CondvarNotOwner");
 }
-
-
 
 // ============================================================================
 // API GUARDS
@@ -1974,5 +1921,545 @@ fn async_function_result_type_is_task() {
 
         let task: Task<int> = compute();
         "#,
+    );
+}
+
+// ============================================================================
+// CHARGE, ROBUSTESSE ET CAS LIMITES
+// ============================================================================
+//
+// Ces tests vérifient ce que les tests unitaires ci-dessus ne couvrent pas :
+// l'exclusion mutuelle et les plafonds de capacité SOUS CHARGE (beaucoup de
+// tâches qui s'entrelacent avec `yield`), la libération des attentes en masse
+// (fermeture de canal, annulation), la pression sur le GC pendant un `await`
+// de la VM racine, la détection de deadlock et la limite d'imbrication.
+// Ils restent déterministes : aucun thread OS dans le scénario Kastel, pas de
+// dépendance à l'horloge hors un garde-fou de durée très large.
+
+/// Exécute `body` dans un thread à pile large : l'imbrication de tâches
+/// (`join` dans `join`) consomme la pile native, comme le fait `main.rs` avec
+/// son thread d'interprétation. Tout (VM, registre GC) reste dans ce thread.
+fn on_large_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .name("kastel-test".to_string())
+        .stack_size(128 * 1024 * 1024)
+        .spawn(body)
+        .expect("le thread de test doit démarrer")
+        .join()
+        .expect("le thread de test ne doit pas paniquer")
+}
+
+#[test]
+fn many_short_tasks_all_complete_and_can_be_joined() {
+    let (vm, result) = run_script(
+        r#"
+        func work(x) -> int { return x + 1; }
+
+        let tasks = [];
+        let i = 0;
+        while i < 2000 {
+            let t = spawn(work, i);
+            tasks.add(t);
+            i = i + 1;
+        }
+
+        let total = 0;
+        let k = 0;
+        while k < 2000 {
+            total = total + tasks[k].join();
+            k = k + 1;
+        }
+        "#,
+    );
+
+    result.expect("2000 tâches doivent toutes se terminer");
+    // somme de (i + 1) pour i dans 0..2000
+    assert_eq!(integer(&vm, "total"), 2_001_000);
+}
+
+#[test]
+fn mutex_gives_mutual_exclusion_under_load() {
+    let (vm, result) = run_script(
+        r#"
+        let m = mutex();
+        let counter = 0;
+        let inside = 0;
+        let max_inside = 0;
+
+        func worker(lock) -> None {
+            lock.lock();
+            inside = inside + 1;
+            if inside > max_inside {
+                max_inside = inside;
+            }
+            let seen = counter;
+            yield();
+            counter = seen + 1;
+            inside = inside - 1;
+            lock.unlock();
+        }
+
+        let tasks = [];
+        let i = 0;
+        while i < 40 {
+            let t = spawn(worker, m);
+            tasks.add(t);
+            i = i + 1;
+        }
+
+        let k = 0;
+        while k < 40 {
+            tasks[k].join();
+            k = k + 1;
+        }
+        let locked = m.is_locked();
+        "#,
+    );
+
+    result.expect("40 tâches doivent se partager un mutex");
+    // Sans exclusion mutuelle, le `yield` entre lecture et écriture
+    // perdrait des mises à jour et `max_inside` dépasserait 1.
+    assert_eq!(integer(&vm, "counter"), 40);
+    assert_eq!(integer(&vm, "max_inside"), 1);
+    assert!(!boolean(&vm, "locked"));
+}
+
+#[test]
+fn semaphore_never_exceeds_its_capacity_under_load() {
+    let (vm, result) = run_script(
+        r#"
+        let sem = semaphore(3);
+        let inside = 0;
+        let max_inside = 0;
+        let finished = 0;
+
+        func worker(s) -> None {
+            s.acquire();
+            inside = inside + 1;
+            if inside > max_inside {
+                max_inside = inside;
+            }
+            yield();
+            yield();
+            inside = inside - 1;
+            finished = finished + 1;
+            s.release();
+        }
+
+        let tasks = [];
+        let i = 0;
+        while i < 12 {
+            let t = spawn(worker, sem);
+            tasks.add(t);
+            i = i + 1;
+        }
+
+        let k = 0;
+        while k < 12 {
+            tasks[k].join();
+            k = k + 1;
+        }
+        let available = sem.available();
+        "#,
+    );
+
+    result.expect("12 tâches doivent se partager un sémaphore de 3 permis");
+    assert_eq!(integer(&vm, "finished"), 12);
+    assert_eq!(integer(&vm, "max_inside"), 3);
+    assert_eq!(integer(&vm, "available"), 3);
+}
+
+#[test]
+fn bounded_channel_producer_consumer_keeps_order_and_count() {
+    let (vm, result) = run_script(
+        r#"
+        let ch = channel(2);
+        let received = [];
+
+        func producer(c) -> None {
+            let i = 0;
+            while i < 100 {
+                c.send(i);
+                i = i + 1;
+            }
+            c.close();
+        }
+
+        func consumer(c, out) -> None {
+            let running = true;
+            while running {
+                try {
+                    let v = c.recv();
+                    out.add(v);
+                } catch (e: Err) {
+                    running = false;
+                }
+            }
+        }
+
+        let p = spawn(producer, ch);
+        let q = spawn(consumer, ch, received);
+        p.join();
+        q.join();
+
+        let ordered = true;
+        let k = 0;
+        while k < 100 {
+            if received[k] != k {
+                ordered = false;
+            }
+            k = k + 1;
+        }
+        "#,
+    );
+
+    result.expect("producteur/consommateur sur canal borné");
+    assert_eq!(array_len(&vm, "received"), 100);
+    assert!(boolean(&vm, "ordered"));
+}
+
+#[test]
+fn closing_a_channel_wakes_every_blocked_receiver() {
+    let (vm, result) = run_script(
+        r#"
+        let c = channel();
+        let tasks = [];
+        let woken = 0;
+
+        func receiver(ch) -> int {
+            return ch.recv();
+        }
+
+        func scenario() {
+            let i = 0;
+            while i < 10 {
+                let t = spawn(receiver, c);
+                tasks.add(t);
+                i = i + 1;
+            }
+            yield();
+            c.close();
+
+            let k = 0;
+            while k < 10 {
+                try {
+                    tasks[k].join();
+                } catch (e: Err) {
+                    if e.kind == "ChannelClosed" {
+                        woken = woken + 1;
+                    }
+                }
+                k = k + 1;
+            }
+        }
+
+        let coordinator = spawn(scenario);
+        coordinator.join();
+        "#,
+    );
+
+    result.expect("close doit réveiller tous les receveurs bloqués");
+    assert_eq!(integer(&vm, "woken"), 10);
+}
+
+#[test]
+fn closing_a_channel_releases_blocked_senders_and_leaves_them_usable() {
+    let (vm, result) = run_script(
+        r#"
+        let full = channel(1);
+        let other = channel();
+        full.send(0);
+        let caught = 0;
+        let sum = 0;
+
+        func sender(ch, o) -> int {
+            try {
+                ch.send(2);
+            } catch (e: Err) {
+                caught = caught + 1;
+            }
+            return o.recv();
+        }
+
+        func scenario() {
+            let a = spawn(sender, full, other);
+            let b = spawn(sender, full, other);
+            yield();
+            full.close();
+            yield();
+            other.send(7);
+            other.send(8);
+            sum = a.join() + b.join();
+        }
+
+        let coordinator = spawn(scenario);
+        coordinator.join();
+        "#,
+    );
+
+    result.expect("les émetteurs bloqués doivent être libérés par close");
+    assert_eq!(integer(&vm, "caught"), 2);
+    // les deux émetteurs ont ensuite pu recevoir normalement sur un autre canal
+    assert_eq!(integer(&vm, "sum"), 15);
+}
+
+#[test]
+fn cancelling_many_sleeping_tasks_releases_them_immediately() {
+    let started = std::time::Instant::now();
+
+    let (vm, result) = run_script(
+        r#"
+        let tasks = [];
+        let cancelled = 0;
+
+        func sleeper() -> None {
+            sleep(10000);
+        }
+
+        func scenario() {
+            let i = 0;
+            while i < 100 {
+                let t = spawn(sleeper);
+                tasks.add(t);
+                i = i + 1;
+            }
+            yield();
+
+            let k = 0;
+            while k < 100 {
+                tasks[k].cancel();
+                k = k + 1;
+            }
+
+            let j = 0;
+            while j < 100 {
+                try {
+                    tasks[j].join();
+                } catch (e: Err) {
+                    if e.kind == "TaskCancelled" {
+                        cancelled = cancelled + 1;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+
+        let coordinator = spawn(scenario);
+        coordinator.join();
+        "#,
+    );
+
+    result.expect("l'annulation en masse doit réussir");
+    assert_eq!(integer(&vm, "cancelled"), 100);
+    // Chaque tâche dormait 10 s : si les timers n'étaient pas nettoyés ou si
+    // l'annulation attendait l'échéance, le script durerait >= 10 s.
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "l'annulation ne doit pas attendre les timers"
+    );
+}
+
+#[test]
+fn root_await_keeps_its_own_locals_alive_across_gc() {
+    // Pendant `await`, la VM racine fait tourner d'autres tâches ; leurs
+    // allocations déclenchent le GC. Les variables locales de la VM racine
+    // (ici `local`, vivant seulement dans la frame de `main_work`) doivent
+    // rester des racines.
+    let (vm, result) = run_script(
+        r#"
+        async func churn(n) -> int {
+            let i = 0;
+            let keep = [];
+            while i < n {
+                let tmp = [i, i + 1, i + 2];
+                if i % 100 == 0 {
+                    keep.add(tmp);
+                }
+                i = i + 1;
+                if i % 50 == 0 {
+                    yield();
+                }
+            }
+            return keep.size();
+        }
+
+        func main_work() -> int {
+            let local = [10, 20, 30];
+            let t = churn(20000);
+            let r = await t;
+            return local[0] + local[1] + local[2] + r;
+        }
+
+        let result = main_work();
+        "#,
+    );
+
+    result.expect("les locales de la VM racine doivent survivre au GC pendant await");
+    // 10 + 20 + 30 + 200 éléments conservés
+    assert_eq!(integer(&vm, "result"), 260);
+}
+
+#[test]
+fn mutual_join_is_reported_as_a_deadlock_instead_of_hanging() {
+    let (vm, result) = run_script(
+        r#"
+        let box = [];
+
+        func first(b) -> int {
+            return b[1].join();
+        }
+
+        func second(b) -> int {
+            return b[0].join();
+        }
+
+        let ta = spawn(first, box);
+        let tb = spawn(second, box);
+        box.add(ta);
+        box.add(tb);
+
+        let kind = "none";
+        try {
+            ta.join();
+        } catch (e: Err) {
+            kind = e.kind;
+        }
+        "#,
+    );
+
+    result.expect("un join croisé doit produire une erreur rattrapable");
+    assert_eq!(string(&vm, "kind"), "TaskDeadlock");
+}
+
+#[test]
+fn root_send_on_a_full_channel_without_receiver_reports_a_deadlock() {
+    expect_runtime_error(
+        r#"
+        let c = channel(1);
+        c.send(1);
+        c.send(2);
+        "#,
+        "TaskDeadlock",
+    );
+}
+
+#[test]
+fn an_unjoined_failing_task_does_not_stop_the_other_tasks() {
+    let (vm, result) = run_script(
+        r#"
+        func boom() -> int { return 1 % 0; }
+
+        let done = [];
+        func fine(out) -> None { out.add(1); }
+
+        spawn(boom);
+        let t = spawn(fine, done);
+        t.join();
+        "#,
+    );
+
+    result.expect("l'échec d'une tâche non jointe ne doit pas faire échouer le programme");
+    assert_eq!(array_len(&vm, "done"), 1);
+}
+
+#[test]
+fn nested_joins_below_the_limit_work() {
+    let value = on_large_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            func nest(n) -> int {
+                if n == 0 {
+                    return 0;
+                }
+                let t = spawn(nest, n - 1);
+                return t.join() + 1;
+            }
+
+            let root = spawn(nest, 20);
+            let depth = root.join();
+            "#,
+        );
+        result.expect("20 niveaux d'imbrication doivent passer");
+        integer(&vm, "depth")
+    });
+
+    assert_eq!(value, 20);
+}
+
+#[test]
+fn nested_joins_beyond_the_limit_report_an_error_instead_of_overflowing() {
+    let kind = on_large_stack(|| {
+        let (vm, result) = run_script(
+            r#"
+            func nest(n) -> int {
+                if n == 0 {
+                    return 0;
+                }
+                let t = spawn(nest, n - 1);
+                return t.join() + 1;
+            }
+
+            let root = spawn(nest, 300);
+            let kind = "none";
+            try {
+                root.join();
+            } catch (e: Err) {
+                kind = e.kind;
+            }
+            "#,
+        );
+        result.expect("le dépassement doit être une erreur Kastel rattrapable");
+        string(&vm, "kind")
+    });
+
+    assert_eq!(kind, "TaskNestingTooDeep");
+}
+
+#[test]
+fn stale_timer_entries_are_purged_when_computing_the_next_deadline() {
+    use crate::vm::machine::scheduler::Scheduler;
+    use std::{
+        cmp::Reverse,
+        time::{Duration, Instant},
+    };
+
+    let mut scheduler = Scheduler::new();
+    let now = Instant::now();
+
+    // 1000 entrées périmées (aucune tâche endormie correspondante), avec des
+    // échéances plus proches que l'entrée valide.
+    for id in 0..1000usize {
+        scheduler
+            .timers
+            .push(Reverse((now + Duration::from_secs(10), id)));
+    }
+
+    let valid = now + Duration::from_secs(20);
+    scheduler.sleeping_tasks.insert(5000, valid);
+    scheduler.timers.push(Reverse((valid, 5000)));
+
+    assert_eq!(scheduler.next_timer_deadline(), Some(valid));
+    assert_eq!(
+        scheduler.timers.len(),
+        1,
+        "les entrées périmées doivent être retirées du tas"
+    );
+
+    // Plus aucune tâche endormie : plus d'échéance, tas vide.
+    scheduler.sleeping_tasks.clear();
+    assert_eq!(scheduler.next_timer_deadline(), None);
+    assert!(scheduler.timers.is_empty());
+}
+
+#[test]
+fn a_dead_task_slot_costs_one_pointer() {
+    use crate::vm::machine::scheduler::TaskState;
+
+    // `tasks` garde un slot par tâche jamais créée (les identifiants ne sont
+    // pas réutilisés). Boxer `TaskState` limite le coût d'un slot libéré à un
+    // pointeur au lieu de la taille de toute une VM.
+    assert_eq!(
+        std::mem::size_of::<Option<Box<TaskState>>>(),
+        std::mem::size_of::<usize>()
     );
 }

@@ -235,6 +235,7 @@ impl VirtualMachine {
 
     pub(crate) fn await_task(&mut self) -> Result<(), RuntimeError> {
         let task_value = self.pop()?;
+        let task_object = task_value.clone();
         let target_handle = match task_value {
             Value::Object(object) => match &*object.borrow() {
                 Object::Task(task) => Rc::clone(task),
@@ -248,7 +249,10 @@ impl VirtualMachine {
 
         let Some(waiter_id) = self.task_id else {
             // La VM racine ne peut pas être suspendue : conserver l'attente
-            // synchrone historique.
+            // synchrone historique. `join` fait tourner d'autres tâches, qui
+            // peuvent déclencher le GC : sans épinglage, la pile, les frames et
+            // le Task attendu de cette VM n'étaient pas des racines.
+            let _pinned = self.pin_roots_with(std::slice::from_ref(&task_object));
             let result = super::scheduler::Scheduler::join(&scheduler, target_id)?;
             self.push(result);
             return Ok(());

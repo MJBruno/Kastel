@@ -4348,28 +4348,32 @@ impl TypeChecker {
                 arguments,
                 ..
             } => {
+                // Les natives dynamiques conservent leur flexibilité de types,
+                // mais leur cardinalité est un contrat statique. Cela couvre
+                // notamment `range(1..=3)`, `input(0..=1)`, `exit(0..=1)`,
+                // `print/println/format` et `Set(...)` sans transformer leur
+                // résultat en faux `FunctionType`.
                 if let Expression::Variable(name) = callee.as_ref()
-                    && builtin_types::intrinsic_kind(name) == Some(builtin_types::Intrinsic::Yield)
+                    && let Some(binding) = self.lookup(name)
+                    && binding.native
+                    && let Some(arity) = builtin_types::native_arity(name)
+                    && !arity.accepts(arguments.len())
                 {
-                    if !arguments.is_empty() {
-                        return Err(CompileError::WrongArgumentCount {
-                            expected: 0,
-                            found: arguments.len(),
-                        });
-                    }
+                    return Err(CompileError::WrongArgumentCount {
+                        expected: arity.expected_for(arguments.len()) as i32,
+                        found: arguments.len(),
+                    });
+                }
+
+                if let Expression::Variable(name) = callee.as_ref()
+                    && self.intrinsic_for_call(name) == Some(builtin_types::Intrinsic::Yield)
+                {
                     return Ok(Type::None);
                 }
 
                 if let Expression::Variable(name) = callee.as_ref()
-                    && builtin_types::intrinsic_kind(name) == Some(builtin_types::Intrinsic::Sleep)
+                    && self.intrinsic_for_call(name) == Some(builtin_types::Intrinsic::Sleep)
                 {
-                    if arguments.len() != 1 {
-                        return Err(CompileError::WrongArgumentCount {
-                            expected: 1,
-                            found: arguments.len(),
-                        });
-                    }
-
                     let duration_type = self.check_expression(&arguments[0])?;
                     if !matches!(duration_type, Type::Int | Type::Dynamic) {
                         return Err(CompileError::WrongArgumentType {
@@ -4384,15 +4388,8 @@ impl TypeChecker {
                 }
 
                 if let Expression::Variable(name) = callee.as_ref()
-                    && builtin_types::intrinsic_kind(name) == Some(builtin_types::Intrinsic::Select)
+                    && self.intrinsic_for_call(name) == Some(builtin_types::Intrinsic::Select)
                 {
-                    if !(1..=2).contains(&arguments.len()) {
-                        return Err(CompileError::WrongArgumentCount {
-                            expected: 1,
-                            found: arguments.len(),
-                        });
-                    }
-
                     if let Some(timeout) = arguments.get(1) {
                         let timeout_type = self.check_expression(timeout)?;
                         if !matches!(timeout_type, Type::Int | Type::Dynamic) {
@@ -4550,15 +4547,8 @@ impl TypeChecker {
                 }
 
                 if let Expression::Variable(name) = callee.as_ref()
-                    && builtin_types::intrinsic_kind(name) == Some(builtin_types::Intrinsic::Spawn)
+                    && self.intrinsic_for_call(name) == Some(builtin_types::Intrinsic::Spawn)
                 {
-                    if arguments.is_empty() {
-                        return Err(CompileError::WrongArgumentCount {
-                            expected: 1,
-                            found: 0,
-                        });
-                    }
-
                     let callee_type = self.check_expression(&arguments[0])?;
                     let task_arguments = &arguments[1..];
                     let function_name = format!("spawn({})", self.expression_name(&arguments[0]));
@@ -6269,6 +6259,12 @@ impl TypeChecker {
         }
 
         Ok(instantiated)
+    }
+
+    fn intrinsic_for_call(&self, name: &str) -> Option<builtin_types::Intrinsic> {
+        self.lookup(name)
+            .filter(|binding| binding.native)
+            .and_then(|_| builtin_types::intrinsic_kind(name))
     }
 
     fn check_call_signature(
@@ -9327,6 +9323,30 @@ let list_values: Iterator<int> = [1, 2, 3].iter();
         }
 
         matches!(error, CompileError::InvalidIterable { .. })
+    }
+
+    #[test]
+    fn variable_arity_natives_are_checked_statically() {
+        let invalid_range = check("let value = range();");
+        assert!(invalid_range.is_err(), "range() doit être refusé statiquement");
+
+        let invalid_range_too_many = check("let value = range(1, 2, 3, 4);");
+        assert!(
+            invalid_range_too_many.is_err(),
+            "range(1, 2, 3, 4) doit être refusé statiquement"
+        );
+
+        let invalid_input = check(r#"let value = input("prompt", "extra");"#);
+        assert!(invalid_input.is_err(), "input() accepte au plus un argument");
+
+        let invalid_exit = check("exit(0, 1);");
+        assert!(invalid_exit.is_err(), "exit() accepte au plus un argument");
+
+        let invalid_print = check("print();");
+        assert!(invalid_print.is_err(), "print() exige au moins un argument");
+
+        let valid_set = check("let values = Set();");
+        assert!(valid_set.is_ok(), "Set() doit accepter zéro argument");
     }
 
     #[test]

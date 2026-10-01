@@ -124,19 +124,32 @@ impl Compiler {
                 column,
                 ..
             } => {
+                // Une seule source de vérité pour la cardinalité des natives
+                // et des intrinsèques. Les types dynamiques restent permissifs,
+                // mais une arité connue est toujours validée avant le bytecode.
+                let builtin_call_kind = if let Expression::Variable(name) = callee.as_ref() {
+                    self.visible_builtin_call_kind(name)?
+                } else {
+                    None
+                };
+
+                if let Expression::Variable(name) = callee.as_ref()
+                    && builtin_call_kind.is_some()
+                    && let Some(arity) = builtin_types::native_arity(name)
+                    && !arity.accepts(arguments.len())
+                {
+                    return Err(CompileError::WrongArgumentCount {
+                        expected: arity.expected_for(arguments.len()) as i32,
+                        found: arguments.len(),
+                    });
+                }
+
                 if let Expression::Member { object, name, .. } = callee.as_ref() {
                     return self.compile_method_call(object, name, arguments, *line, *column);
                 }
 
                 if let Expression::Variable(name) = callee.as_ref() {
-                    if builtin_types::intrinsic_kind(name) == Some(Intrinsic::Spawn) {
-                        if arguments.is_empty() {
-                            return Err(CompileError::WrongArgumentCount {
-                                expected: 1,
-                                found: 0,
-                            });
-                        }
-
+                    if builtin_call_kind == Some(builtin_types::NativeKind::Intrinsic(Intrinsic::Spawn)) {
                         if arguments.len() > u8::MAX as usize {
                             return Err(CompileError::TooManyArguments);
                         }
@@ -151,14 +164,7 @@ impl Compiler {
                         return Ok(());
                     }
 
-                    if builtin_types::intrinsic_kind(name) == Some(Intrinsic::Yield) {
-                        if !arguments.is_empty() {
-                            return Err(CompileError::WrongArgumentCount {
-                                expected: 0,
-                                found: arguments.len(),
-                            });
-                        }
-
+                    if builtin_call_kind == Some(builtin_types::NativeKind::Intrinsic(Intrinsic::Yield)) {
                         self.current_line = *line;
                         self.current_column = *column;
                         self.emit_opcode(OpCode::Yield);
@@ -166,14 +172,7 @@ impl Compiler {
                         return Ok(());
                     }
 
-                    if builtin_types::intrinsic_kind(name) == Some(Intrinsic::Select) {
-                        if !(1..=2).contains(&arguments.len()) {
-                            return Err(CompileError::WrongArgumentCount {
-                                expected: 1,
-                                found: arguments.len(),
-                            });
-                        }
-
+                    if builtin_call_kind == Some(builtin_types::NativeKind::Intrinsic(Intrinsic::Select)) {
                         // `Select` attend toujours deux valeurs sur la pile :
                         // timeout (ou None), puis la liste des channels.
                         if let Some(timeout) = arguments.get(1) {
@@ -189,14 +188,7 @@ impl Compiler {
                         return Ok(());
                     }
 
-                    if builtin_types::intrinsic_kind(name) == Some(Intrinsic::Sleep) {
-                        if arguments.len() != 1 {
-                            return Err(CompileError::WrongArgumentCount {
-                                expected: 1,
-                                found: arguments.len(),
-                            });
-                        }
-
+                    if builtin_call_kind == Some(builtin_types::NativeKind::Intrinsic(Intrinsic::Sleep)) {
                         self.compile_expression(&arguments[0])?;
                         self.current_line = *line;
                         self.current_column = *column;
