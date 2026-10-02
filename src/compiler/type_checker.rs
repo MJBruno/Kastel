@@ -71,7 +71,7 @@ pub(crate) struct ClassInfo {
     interface_types: Vec<Type>,
     /// Une classe ou un enum peut surcharger une méthode par son arité.
     /// Deux signatures de même nom et de même arité restent interdites.
-    methods: HashMap<String, Vec<FunctionType>>,
+    methods: HashMap<String, OverloadSet<FunctionType>>,
     /// Champs déclarés par `let nom: type = ...;` dans le corps de la classe.
     fields: HashMap<String, Type>,
     /// `static func ...` : appelées sur la CLASSE (`NomClasse.membre`), pas
@@ -79,7 +79,7 @@ pub(crate) struct ClassInfo {
     /// ne sont pas héritées ; voir `find_static_methods`, consultée en
     /// complément de `find_methods_for_type` lorsqu'aucune méthode
     /// d'instance ne correspond.
-    static_methods: HashMap<String, Vec<FunctionType>>,
+    static_methods: HashMap<String, OverloadSet<FunctionType>>,
     /// `static let ...` : équivalent statique de `fields`.
     static_fields: HashMap<String, Type>,
     /// Membres (champs et méthodes, statiques ou non) déclarés `private`
@@ -2731,9 +2731,9 @@ impl TypeChecker {
                         }
                     }
 
-                    let mut method_map: HashMap<String, Vec<FunctionType>> = HashMap::new();
+                    let mut method_map: HashMap<String, OverloadSet<FunctionType>> = HashMap::new();
                     let mut field_map: HashMap<String, Type> = HashMap::new();
-                    let mut static_method_map: HashMap<String, Vec<FunctionType>> = HashMap::new();
+                    let mut static_method_map: HashMap<String, OverloadSet<FunctionType>> = HashMap::new();
                     let mut static_field_map: HashMap<String, Type> = HashMap::new();
                     let mut private_members: HashSet<String> = HashSet::new();
                     let mut protected_members: HashSet<String> = HashSet::new();
@@ -2815,18 +2815,14 @@ impl TypeChecker {
                             method_map.entry(method.name.clone()).or_default()
                         };
 
-                        if overloads
-                            .iter()
-                            .any(|existing| existing.params.len() == signature.params.len())
-                        {
+                        let arity = signature.params.len();
+                        if overloads.insert_unique(signature).is_err() {
                             return Err(CompileError::DuplicateMethod {
                                 class_name: name.clone(),
                                 method_name: method.name.clone(),
-                                arity: signature.params.len(),
+                                arity,
                             });
                         }
-
-                        overloads.push(signature);
 
                         match method.visibility {
                             Visibility::Private => {
@@ -2874,7 +2870,7 @@ impl TypeChecker {
                     let previous_generics =
                         std::mem::replace(&mut self.generic_params, enum_generic_names.clone());
                     let enum_generic_constraints = self.generic_constraints(generic_params)?;
-                    let mut method_map: HashMap<String, Vec<FunctionType>> = HashMap::new();
+                    let mut method_map: HashMap<String, OverloadSet<FunctionType>> = HashMap::new();
 
                     for method in methods {
                         let method_generic_names = Self::validate_nested_generic_declaration(
@@ -2920,19 +2916,15 @@ impl TypeChecker {
                         };
 
                         let overloads = method_map.entry(method.name.clone()).or_default();
+                        let arity = signature.params.len();
 
-                        if overloads
-                            .iter()
-                            .any(|existing| existing.params.len() == signature.params.len())
-                        {
+                        if overloads.insert_unique(signature).is_err() {
                             return Err(CompileError::DuplicateMethod {
                                 class_name: name.clone(),
                                 method_name: method.name.clone(),
-                                arity: signature.params.len(),
+                                arity,
                             });
                         }
-
-                        overloads.push(signature);
                     }
 
                     self.generic_params = previous_generics;
@@ -2996,7 +2988,7 @@ impl TypeChecker {
                             });
                         }
                     }
-                    let mut method_map: HashMap<String, Vec<FunctionType>> = HashMap::new();
+                    let mut method_map: HashMap<String, OverloadSet<FunctionType>> = HashMap::new();
 
                     for method in methods {
                         let method_generic_names = Self::validate_nested_generic_declaration(
@@ -3039,19 +3031,15 @@ impl TypeChecker {
                         };
 
                         let overloads = method_map.entry(method.name.clone()).or_default();
+                        let arity = signature.params.len();
 
-                        if overloads
-                            .iter()
-                            .any(|existing| existing.params.len() == signature.params.len())
-                        {
+                        if overloads.insert_unique(signature).is_err() {
                             return Err(CompileError::DuplicateMethod {
                                 class_name: name.clone(),
                                 method_name: method.name.clone(),
-                                arity: signature.params.len(),
+                                arity,
                             });
                         }
-
-                        overloads.push(signature);
                     }
 
                     self.generic_params = previous_generics;
@@ -4102,14 +4090,19 @@ impl TypeChecker {
             });
         }
 
-        if let Some(class) = self.classes.get_mut(class_name)
-            && let Some(overloads) = class.methods.get_mut(&method.name)
-            && let Some(signature) = overloads
-                .iter_mut()
-                .find(|signature| signature.params.len() == method.params.len())
-            && method.return_type.is_none()
-        {
-            *signature.return_type = inferred_return;
+        if let Some(class) = self.classes.get_mut(class_name) {
+            let overloads = if method.is_static {
+                class.static_methods.get_mut(&method.name)
+            } else {
+                class.methods.get_mut(&method.name)
+            };
+
+            if let Some(signature) = overloads
+                .and_then(|set| set.get_by_arity_mut(method.params.len()))
+                && method.return_type.is_none()
+            {
+                *signature.return_type = inferred_return;
+            }
         }
 
         self.pop_scope();
@@ -5837,7 +5830,7 @@ impl TypeChecker {
         self.classes
             .get(class_name)
             .and_then(|class| class.static_methods.get(method_name))
-            .cloned()
+            .map(OverloadSet::to_vec)
             .unwrap_or_default()
     }
 

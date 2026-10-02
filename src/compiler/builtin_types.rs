@@ -447,7 +447,7 @@ fn build_specs() -> Vec<NativeSpec> {
     specs
 }
 
-// Contrats sous la forme historique attendue par le TypeChecker.
+/// Contrats sous la forme historique attendue par le TypeChecker.
 
 static NATIVE_REGISTRY: OnceLock<Vec<NativeSpec>> = OnceLock::new();
 

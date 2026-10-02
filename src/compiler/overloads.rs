@@ -53,6 +53,10 @@ impl<T> OverloadSet<T> {
     }
 
 
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.entries.iter()
+    }
+
     pub(crate) fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
         self.entries.iter_mut()
     }
@@ -93,6 +97,28 @@ impl<T> OverloadSet<T> {
         self.entries
             .iter()
             .any(|entry| entry.overload_arity() == arity)
+    }
+
+    // Retourne la surcharge correspondant à une arité précise.
+    
+    #[allow(dead_code)]
+    pub(crate) fn get_by_arity(&self, arity: usize) -> Option<&T>
+    where
+        T: OverloadArity,
+    {
+        self.entries
+            .iter()
+            .find(|entry| entry.overload_arity() == arity)
+    }
+
+    /// Retourne mutablement la surcharge correspondant à une arité précise.
+    pub(crate) fn get_by_arity_mut(&mut self, arity: usize) -> Option<&mut T>
+    where
+        T: OverloadArity,
+    {
+        self.entries
+            .iter_mut()
+            .find(|entry| entry.overload_arity() == arity)
     }
 
 }
