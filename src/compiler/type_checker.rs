@@ -8,7 +8,7 @@ use super::{
     capability::Capability,
     compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
-    call_resolution::{validate_arity, Callable},
+    call_resolution::{validate_arity, CallTarget, Callable, CallableTarget},
     overloads::OverloadSet,
     types::{FunctionType, GenericConstraint, Type},
 };
@@ -4333,27 +4333,8 @@ impl TypeChecker {
                 arguments,
                 ..
             } => {
-                let native_spec = self.visible_native_spec(callee);
-                if let Some(spec) = native_spec
-                    && let Some(result) =
-                        self.check_native_call(spec, generic_args, arguments)?
-                {
-                    return Ok(result);
-                }
-
-                // Les fonctions globales surchargées sont résolues par le
-                // même noyau que les autres callables.
-                if let Expression::Variable(name) = callee.as_ref()
-                    && let Some(signatures) = self.overloads_of(name)
-                {
-                    let signature =
-                        self.resolve_overload(&signatures, generic_args, arguments, name)?;
-
-                    return Ok(*signature.return_type);
-                }
-
-                // Toutes les formes d'appels membres passent maintenant par
-                // un seul point de décision avant le fallback dynamique.
+                // Toutes les formes d'appels membres passent par un seul point
+                // de décision avant la résolution des callee non-membres.
                 if let Expression::Member { object, name, .. } = callee.as_ref()
                     && let Some(result) =
                         self.check_member_call(object, name, generic_args, arguments)?
@@ -4361,17 +4342,43 @@ impl TypeChecker {
                     return Ok(result);
                 }
 
-                let callee_type = self.check_expression(callee)?;
-
                 let function_name = self.expression_name(callee);
-                match self.resolve_callable_signature(
-                    &callee_type,
-                    generic_args,
-                    arguments,
-                    &function_name,
-                )? {
-                    Some(signature) => Ok(*signature.return_type),
-                    None => Ok(Type::Dynamic),
+                match self.resolve_call_target(callee)? {
+                    CallTarget::Native(spec) => {
+                        if let Some(result) =
+                            self.check_native_call(&spec, generic_args, arguments)?
+                        {
+                            return Ok(result);
+                        }
+
+                        // Une native standard utilise sa signature déclarée dans
+                        // le registre ; aucun second contrat ne doit être déduit
+                        // depuis le binding runtime.
+                        match self.resolve_callable_signature(
+                            &spec.ty,
+                            generic_args,
+                            arguments,
+                            &function_name,
+                        )? {
+                            Some(signature) => Ok(*signature.return_type),
+                            None => Ok(Type::Dynamic),
+                        }
+                    }
+                    CallTarget::Callable(callable) => {
+                        let signature = self.resolve_owned_callable(
+                            &callable,
+                            generic_args,
+                            arguments,
+                            &function_name,
+                        )?;
+                        Ok(*signature.return_type)
+                    }
+                    CallTarget::Dynamic => {
+                        for argument in arguments {
+                            self.check_expression(argument)?;
+                        }
+                        Ok(Type::Dynamic)
+                    }
                 }
             }
 
@@ -5135,6 +5142,36 @@ impl TypeChecker {
         }
 
         Ok(Type::Dynamic)
+    }
+
+    /// Classe la cible d'un appel non-membre avant la validation des arguments.
+    ///
+    /// L'ordre est contractuel : une native visible gagne sur le nom libre, puis
+    /// une surcharge utilisateur est conservée comme ensemble de signatures.
+    /// Tout le reste est ramené à son `Type` normal et traité par le résolveur.
+    fn resolve_call_target(&mut self, callee: &Expression) -> Result<CallTarget, CompileError> {
+        if let Some(spec) = self.visible_native_spec(callee) {
+            return Ok(CallTarget::Native(spec.clone()));
+        }
+
+        if let Expression::Variable(name) = callee
+            && let Some(signatures) = self.overloads_of(name)
+        {
+            return Ok(CallTarget::Callable(CallableTarget::Overloaded(signatures)));
+        }
+
+        match self.check_expression(callee)? {
+            Type::Function(signature) => {
+                Ok(CallTarget::Callable(CallableTarget::One(signature)))
+            }
+            Type::Overloads(signatures) => {
+                Ok(CallTarget::Callable(CallableTarget::Overloaded(signatures)))
+            }
+            Type::Dynamic => Ok(CallTarget::Dynamic),
+            other => Err(CompileError::NotCallable {
+                found: other.to_string(),
+            }),
+        }
     }
 
     /// Résout le contrat natif visible pour un callee variable.
@@ -6257,6 +6294,23 @@ impl TypeChecker {
     fn resolve_selected_callable(
         &mut self,
         callable: Callable<'_>,
+        generic_args: &[TypeExpr],
+        arguments: &[Expression],
+        function_name: &str,
+    ) -> Result<FunctionType, CompileError> {
+        let signature = callable
+            .select(arguments.len())
+            .map_err(|error| CompileError::WrongArgumentCount {
+                expected: error.expected,
+                found: error.found,
+            })?;
+
+        self.instantiate_call_signature(signature, generic_args, arguments, function_name)
+    }
+
+    fn resolve_owned_callable(
+        &mut self,
+        callable: &CallableTarget,
         generic_args: &[TypeExpr],
         arguments: &[Expression],
         function_name: &str,

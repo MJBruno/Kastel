@@ -95,9 +95,40 @@ impl<'a> Callable<'a> {
     }
 }
 
+/// Ensemble de signatures utilisateur détenu par une cible d'appel.
+///
+/// Cette représentation évite de transporter un `Type` complet dans la phase
+/// de résolution : une cible utilisateur est soit une signature unique, soit
+/// un ensemble d'overloads.
+#[derive(Debug, Clone)]
+pub(crate) enum CallableTarget {
+    One(FunctionType),
+    Overloaded(Vec<FunctionType>),
+}
+
+impl CallableTarget {
+    pub(crate) fn select(&self, arity: usize) -> Result<&FunctionType, ArityError> {
+        match self {
+            Self::One(signature) => Callable::One(signature).select(arity),
+            Self::Overloaded(signatures) => Callable::Overloaded(signatures).select(arity),
+        }
+    }
+}
+
+/// Cible d'un appel après résolution du nom/callee, avant la validation des
+/// arguments. Les natives restent des contrats statiques distincts ; les
+/// fonctions utilisateur ont une représentation dédiée ; `Dynamic` conserve
+/// le fallback dynamique sans réintroduire la représentation `Type` complète.
+#[derive(Debug, Clone)]
+pub(crate) enum CallTarget {
+    Native(super::builtin_types::NativeSpec),
+    Callable(CallableTarget),
+    Dynamic,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{validate_arity, Callable};
+    use super::{validate_arity, CallTarget, Callable, CallableTarget};
     use crate::compiler::builtin_types::Arity;
     use crate::compiler::types::{FunctionType, Type};
 
@@ -132,6 +163,46 @@ mod tests {
         let error = Callable::Overloaded(&[]).select(4).unwrap_err();
         assert_eq!(error.expected, 0);
         assert_eq!(error.found, 4);
+    }
+
+
+    #[test]
+    fn call_target_can_represent_overloaded_user_calls() {
+        let signatures = vec![signature(1), signature(2)];
+        match CallTarget::Callable(CallableTarget::Overloaded(signatures.clone())) {
+            CallTarget::Callable(CallableTarget::Overloaded(found)) => assert_eq!(found.len(), 2),
+            _ => panic!("la cible doit conserver l'ensemble des overloads"),
+        }
+    }
+
+    #[test]
+    fn callable_target_selects_unique_and_overloaded_signatures_by_arity() {
+        let unique = CallableTarget::One(signature(2));
+        assert_eq!(unique.select(2).unwrap().params.len(), 2);
+        assert!(unique.select(1).is_err());
+
+        let overloaded = CallableTarget::Overloaded(vec![signature(1), signature(3)]);
+        assert_eq!(overloaded.select(3).unwrap().params.len(), 3);
+        assert!(overloaded.select(2).is_err());
+    }
+
+    #[test]
+    fn call_target_can_represent_dynamic_calls() {
+        assert!(matches!(CallTarget::Dynamic, CallTarget::Dynamic));
+    }
+
+    #[test]
+    fn call_target_can_represent_typed_and_native_calls() {
+        let signature = signature(1);
+        match CallTarget::Callable(CallableTarget::One(signature.clone())) {
+            CallTarget::Callable(CallableTarget::One(found)) => {
+                assert_eq!(found.params.len(), 1);
+            }
+            _ => panic!("la cible typée doit conserver la signature"),
+        }
+
+        let spec = crate::compiler::builtin_types::spec("print").expect("print est un contrat natif");
+        assert!(matches!(CallTarget::Native(spec.clone()), CallTarget::Native(_)));
     }
 
     #[test]
