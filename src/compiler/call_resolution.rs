@@ -7,7 +7,7 @@
 
 use super::{
     builtin_types::Arity,
-    types::FunctionType,
+    types::{FunctionType, Type},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +42,53 @@ impl CallArity for Arity {
 
     fn expected_arity(&self, found: usize) -> usize {
         self.expected_for(found)
+    }
+}
+
+/// Résultat sémantique minimal d'une résolution d'appel.
+///
+/// La cible conserve la nature de l'appel, `signature` contient la signature
+/// effectivement sélectionnée lorsqu'elle existe, et `return_type` expose le
+/// type résultant du call-site. Cette structure reste volontairement légère :
+/// elle ne constitue pas encore un HIR complet.
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedCall {
+    pub(crate) target: CallTarget,
+    pub(crate) signature: Option<FunctionType>,
+    pub(crate) return_type: Type,
+}
+
+impl ResolvedCall {
+    pub(crate) fn from_signature(target: CallTarget, signature: FunctionType) -> Self {
+        let return_type = *signature.return_type.clone();
+        Self {
+            target,
+            signature: Some(signature),
+            return_type,
+        }
+    }
+
+    pub(crate) fn special(target: CallTarget, return_type: Type) -> Self {
+        Self {
+            target,
+            signature: None,
+            return_type,
+        }
+    }
+
+    pub(crate) fn dynamic() -> Self {
+        Self::special(CallTarget::Dynamic, Type::Dynamic)
+    }
+
+    /// Décompose le résultat de résolution pour le consommateur sémantique.
+    ///
+    /// Cette API rend explicites les trois informations produites par la
+    /// résolution : la cible, la signature éventuellement sélectionnée et le
+    /// type de retour. Le `TypeChecker` peut actuellement n'utiliser que ce
+    /// dont il a besoin sans rendre les autres champs morts au niveau du
+    /// compilateur Rust.
+    pub(crate) fn into_parts(self) -> (CallTarget, Option<FunctionType>, Type) {
+        (self.target, self.signature, self.return_type)
     }
 }
 
@@ -128,7 +175,7 @@ pub(crate) enum CallTarget {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_arity, CallTarget, Callable, CallableTarget};
+    use super::{validate_arity, CallTarget, Callable, CallableTarget, ResolvedCall};
     use crate::compiler::builtin_types::Arity;
     use crate::compiler::types::{FunctionType, Type};
 
@@ -203,6 +250,48 @@ mod tests {
 
         let spec = crate::compiler::builtin_types::spec("print").expect("print est un contrat natif");
         assert!(matches!(CallTarget::Native(spec.clone()), CallTarget::Native(_)));
+    }
+
+    #[test]
+    fn resolved_call_preserves_selected_signature_and_return_type() {
+        let signature = FunctionType {
+            generic_params: Vec::new(),
+            is_async: false,
+            generic_constraints: Vec::new(),
+            params: vec![Type::Dynamic],
+            return_type: Box::new(Type::Str),
+        };
+        let resolved = ResolvedCall::from_signature(
+            CallTarget::Callable(CallableTarget::One(signature.clone())),
+            signature,
+        );
+
+        assert!(resolved.signature.is_some());
+        assert_eq!(resolved.return_type, Type::Str);
+        assert!(matches!(
+            resolved.target,
+            CallTarget::Callable(CallableTarget::One(_))
+        ));
+    }
+
+    #[test]
+    fn resolved_call_can_represent_dynamic_resolution() {
+        let resolved = ResolvedCall::dynamic();
+        assert!(matches!(resolved.target, CallTarget::Dynamic));
+        assert!(resolved.signature.is_none());
+        assert_eq!(resolved.return_type, Type::Dynamic);
+    }
+
+    #[test]
+    fn resolved_call_can_represent_special_native_results() {
+        let spec = crate::compiler::builtin_types::spec("range")
+            .expect("range est un contrat natif")
+            .clone();
+        let resolved = ResolvedCall::special(CallTarget::Native(spec), Type::Range);
+
+        assert!(resolved.signature.is_none());
+        assert_eq!(resolved.return_type, Type::Range);
+        assert!(matches!(resolved.target, CallTarget::Native(_)));
     }
 
     #[test]

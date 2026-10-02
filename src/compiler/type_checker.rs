@@ -8,7 +8,7 @@ use super::{
     capability::Capability,
     compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
-    call_resolution::{validate_arity, CallTarget, Callable, CallableTarget},
+    call_resolution::{validate_arity, CallTarget, Callable, CallableTarget, ResolvedCall},
     overloads::OverloadSet,
     types::{FunctionType, GenericConstraint, Type},
 };
@@ -4342,44 +4342,9 @@ impl TypeChecker {
                     return Ok(result);
                 }
 
-                let function_name = self.expression_name(callee);
-                match self.resolve_call_target(callee)? {
-                    CallTarget::Native(spec) => {
-                        if let Some(result) =
-                            self.check_native_call(&spec, generic_args, arguments)?
-                        {
-                            return Ok(result);
-                        }
-
-                        // Une native standard utilise sa signature déclarée dans
-                        // le registre ; aucun second contrat ne doit être déduit
-                        // depuis le binding runtime.
-                        match self.resolve_callable_signature(
-                            &spec.ty,
-                            generic_args,
-                            arguments,
-                            &function_name,
-                        )? {
-                            Some(signature) => Ok(*signature.return_type),
-                            None => Ok(Type::Dynamic),
-                        }
-                    }
-                    CallTarget::Callable(callable) => {
-                        let signature = self.resolve_owned_callable(
-                            &callable,
-                            generic_args,
-                            arguments,
-                            &function_name,
-                        )?;
-                        Ok(*signature.return_type)
-                    }
-                    CallTarget::Dynamic => {
-                        for argument in arguments {
-                            self.check_expression(argument)?;
-                        }
-                        Ok(Type::Dynamic)
-                    }
-                }
+                let (_, _, return_type) =
+                    self.resolve_call(callee, generic_args, arguments)?.into_parts();
+                Ok(return_type)
             }
 
             Expression::Array(elements) => {
@@ -5142,6 +5107,66 @@ impl TypeChecker {
         }
 
         Ok(Type::Dynamic)
+    }
+
+    /// Résout un appel non-membre en une petite valeur sémantique réutilisable.
+    ///
+    /// La vérification des arguments reste effectuée ici, mais le résultat est
+    /// désormais conservé sous une forme explicite : cible, signature choisie
+    /// éventuelle et type de retour. Cela prépare une future représentation
+    /// minimale des call-sites sans introduire de HIR/MIR supplémentaire.
+    fn resolve_call(
+        &mut self,
+        callee: &Expression,
+        generic_args: &[TypeExpr],
+        arguments: &[Expression],
+    ) -> Result<ResolvedCall, CompileError> {
+        let function_name = self.expression_name(callee);
+
+        match self.resolve_call_target(callee)? {
+            CallTarget::Native(spec) => {
+                if let Some(result) = self.check_native_call(&spec, generic_args, arguments)? {
+                    return Ok(ResolvedCall::special(CallTarget::Native(spec), result));
+                }
+
+                // Une native standard utilise sa signature déclarée dans
+                // le registre ; aucun second contrat ne doit être déduit
+                // depuis le binding runtime.
+                match self.resolve_callable_signature(
+                    &spec.ty,
+                    generic_args,
+                    arguments,
+                    &function_name,
+                )? {
+                    Some(signature) => Ok(ResolvedCall::from_signature(
+                        CallTarget::Native(spec),
+                        signature,
+                    )),
+                    None => Ok(ResolvedCall::special(
+                        CallTarget::Native(spec),
+                        Type::Dynamic,
+                    )),
+                }
+            }
+            CallTarget::Callable(callable) => {
+                let signature = self.resolve_owned_callable(
+                    &callable,
+                    generic_args,
+                    arguments,
+                    &function_name,
+                )?;
+                Ok(ResolvedCall::from_signature(
+                    CallTarget::Callable(callable),
+                    signature,
+                ))
+            }
+            CallTarget::Dynamic => {
+                for argument in arguments {
+                    self.check_expression(argument)?;
+                }
+                Ok(ResolvedCall::dynamic())
+            }
+        }
     }
 
     /// Classe la cible d'un appel non-membre avant la validation des arguments.
