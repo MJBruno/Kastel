@@ -1,16 +1,61 @@
-//! Noyau commun de résolution des signatures d'appel.
+//! Noyau commun de résolution des signatures et contrats d'appel.
 //!
-//! La résolution statique distingue seulement deux formes de callable :
-//! une signature unique et un ensemble de signatures surchargées. L'arité
-//! est décidée ici avant l'instanciation générique afin que les fonctions,
-//! méthodes et constructeurs utilisent exactement la même règle.
+//! La résolution statique distingue les signatures fixes, les ensembles de
+//! signatures surchargées et les contrats d'arité des natives/intrinsèques.
+//! Toutes ces formes passent par la même validation d'arité avant les règles
+//! propres à l'appel (instanciation générique, vérification des types, etc.).
 
-use super::types::FunctionType;
+use super::{
+    builtin_types::Arity,
+    types::FunctionType,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ArityError {
     pub(crate) expected: i32,
     pub(crate) found: usize,
+}
+
+/// Contrat d'arité minimal commun aux différents callable du compilateur.
+///
+/// Les signatures de fonctions ont une arité exacte, tandis que les natives
+/// peuvent accepter une plage ou un nombre minimal d'arguments.
+pub(crate) trait CallArity {
+    fn accepts_arity(&self, found: usize) -> bool;
+    fn expected_arity(&self, found: usize) -> usize;
+}
+
+impl CallArity for FunctionType {
+    fn accepts_arity(&self, found: usize) -> bool {
+        self.params.len() == found
+    }
+
+    fn expected_arity(&self, _found: usize) -> usize {
+        self.params.len()
+    }
+}
+
+impl CallArity for Arity {
+    fn accepts_arity(&self, found: usize) -> bool {
+        self.accepts(found)
+    }
+
+    fn expected_arity(&self, found: usize) -> usize {
+        self.expected_for(found)
+    }
+}
+
+/// Valide un contrat d'arité sans imposer de représentation particulière du
+/// callable. C'est le point commun entre signatures fixes et natives.
+pub(crate) fn validate_arity<T: CallArity>(contract: &T, found: usize) -> Result<(), ArityError> {
+    if contract.accepts_arity(found) {
+        Ok(())
+    } else {
+        Err(ArityError {
+            expected: contract.expected_arity(found) as i32,
+            found,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -28,17 +73,13 @@ impl<'a> Callable<'a> {
     pub(crate) fn select(self, arity: usize) -> Result<&'a FunctionType, ArityError> {
         match self {
             Self::One(signature) => {
-                if signature.params.len() == arity {
-                    Ok(signature)
-                } else {
-                    Err(ArityError {
-                        expected: signature.params.len() as i32,
-                        found: arity,
-                    })
-                }
+                validate_arity(signature, arity)?;
+                Ok(signature)
             }
             Self::Overloaded(signatures) => {
-                if let Some(signature) = signatures.iter().find(|signature| signature.params.len() == arity) {
+                if let Some(signature) = signatures.iter().find(|signature| {
+                    signature.params.len() == arity
+                }) {
                     return Ok(signature);
                 }
 
@@ -56,7 +97,8 @@ impl<'a> Callable<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::Callable;
+    use super::{validate_arity, Callable};
+    use crate::compiler::builtin_types::Arity;
     use crate::compiler::types::{FunctionType, Type};
 
     fn signature(arity: usize) -> FunctionType {
@@ -90,5 +132,27 @@ mod tests {
         let error = Callable::Overloaded(&[]).select(4).unwrap_err();
         assert_eq!(error.expected, 0);
         assert_eq!(error.found, 4);
+    }
+
+    #[test]
+    fn native_exact_arity_uses_the_shared_validator() {
+        assert!(validate_arity(&Arity::Exact(2), 2).is_ok());
+        let error = validate_arity(&Arity::Exact(2), 1).unwrap_err();
+        assert_eq!(error.expected, 2);
+        assert_eq!(error.found, 1);
+    }
+
+    #[test]
+    fn native_range_and_at_least_arity_use_the_shared_validator() {
+        assert!(validate_arity(&Arity::Range { min: 1, max: 3 }, 2).is_ok());
+        assert!(validate_arity(&Arity::AtLeast(1), 4).is_ok());
+
+        let range_error = validate_arity(&Arity::Range { min: 1, max: 3 }, 5).unwrap_err();
+        assert_eq!(range_error.expected, 3);
+        assert_eq!(range_error.found, 5);
+
+        let at_least_error = validate_arity(&Arity::AtLeast(2), 1).unwrap_err();
+        assert_eq!(at_least_error.expected, 2);
+        assert_eq!(at_least_error.found, 1);
     }
 }

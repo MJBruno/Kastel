@@ -8,7 +8,7 @@ use super::{
     capability::Capability,
     compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
-    call_resolution::Callable,
+    call_resolution::{validate_arity, Callable},
     overloads::OverloadSet,
     types::{FunctionType, GenericConstraint, Type},
 };
@@ -5278,12 +5278,12 @@ impl TypeChecker {
         generic_args: &[TypeExpr],
         arguments: &[Expression],
     ) -> Result<Option<Type>, CompileError> {
-        if !spec.arity.accepts(arguments.len()) {
-            return Err(CompileError::WrongArgumentCount {
-                expected: spec.arity.expected_for(arguments.len()) as i32,
-                found: arguments.len(),
-            });
-        }
+        validate_arity(&spec.arity, arguments.len()).map_err(|error| {
+            CompileError::WrongArgumentCount {
+                expected: error.expected,
+                found: error.found,
+            }
+        })?;
 
         match spec.kind {
             builtin_types::NativeKind::Intrinsic(builtin_types::Intrinsic::Yield) => {
