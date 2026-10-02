@@ -4341,9 +4341,8 @@ impl TypeChecker {
                     return Ok(result);
                 }
 
-                // Fonction globale SURCHARGÉE (`add(1)`, `add(1, 2)`) : la
-                // signature est choisie par arité et par type, comme pour une
-                // méthode.
+                // Les fonctions globales surchargées sont résolues par le
+                // même noyau que les autres callables.
                 if let Expression::Variable(name) = callee.as_ref()
                     && let Some(signatures) = self.overloads_of(name)
                 {
@@ -4353,124 +4352,13 @@ impl TypeChecker {
                     return Ok(*signature.return_type);
                 }
 
-                // Pour une méthode de classe, l'arité fait partie de la
-                // résolution. Cela permet `obj.foo()` et `obj.foo(x)`
-                // d'aboutir à deux signatures différentes.
-                if let Expression::Member { object, name, .. } = callee.as_ref() {
-                    let object_type = self.check_expression(object)?;
-
-                    if let Some(class_name) = Self::type_name(&object_type) {
-                        self.check_member_visibility(&class_name, name)?;
-
-                        let signatures = self.find_methods_for_type(&object_type, name);
-
-                        if !signatures.is_empty() {
-                            let signature = self.resolve_overload(
-                                &signatures,
-                                generic_args,
-                                arguments,
-                                &format!("{class_name}.{name}"),
-                            )?;
-
-                            return Ok(*signature.return_type);
-                        }
-
-                        // Méthode STATIQUE (`NomClasse.membre(...)`, appelée
-                        // sur la classe ou, comme les langages dont Kastel
-                        // s'inspire, sur une instance) : même vérification
-                        // d'arité/générique que pour une méthode d'instance.
-                        let static_signatures = self.find_static_methods(&class_name, name);
-
-                        if !static_signatures.is_empty() {
-                            let signature = self.resolve_overload(
-                                &static_signatures,
-                                generic_args,
-                                arguments,
-                                &format!("{class_name}.{name}"),
-                            )?;
-
-                            return Ok(*signature.return_type);
-                        }
-                    }
-
-                    if let Some(Type::Function(signature)) = object_type.channel_member_type(name) {
-                        return self.check_call_signature(
-                            &signature,
-                            generic_args,
-                            arguments,
-                            name,
-                        );
-                    }
-
-                    if let Some(Type::Function(signature)) = object_type.mutex_member_type(name) {
-                        return self.check_call_signature(
-                            &signature,
-                            generic_args,
-                            arguments,
-                            name,
-                        );
-                    }
-
-                    if let Some(Type::Function(signature)) = object_type.event_member_type(name) {
-                        return self.check_call_signature(
-                            &signature,
-                            generic_args,
-                            arguments,
-                            name,
-                        );
-                    }
-
-                    if let Some(Type::Function(signature)) = object_type.rwlock_member_type(name) {
-                        return self.check_call_signature(
-                            &signature,
-                            generic_args,
-                            arguments,
-                            name,
-                        );
-                    }
-
-                    if let Some(Type::Function(signature)) = object_type.condvar_member_type(name) {
-                        return self.check_call_signature(
-                            &signature,
-                            generic_args,
-                            arguments,
-                            name,
-                        );
-                    }
-
-                    if let Some(Type::Function(signature)) =
-                        object_type.option_result_member_type(name)
-                    {
-                        return self.check_call_signature(
-                            &signature,
-                            generic_args,
-                            arguments,
-                            name,
-                        );
-                    }
-
-                    // Array, Dict, Tuple, String, Range : méthodes STANDARD
-                    // typées pour un APPEL (`a.size()`, `d.get(k)`...), et
-                    // erreur guidée pour les noms supprimés (`a.length`,
-                    // `a.push(x)`, `d.has(k)`...).
-                    if let Some(replacement) = object_type.renamed_member(name) {
-                        return Err(CompileError::RenamedMember {
-                            name: name.to_string(),
-                            replacement: replacement.to_string(),
-                        });
-                    }
-
-                    if !matches!(object_type, Type::Set(_) | Type::SetDynamic)
-                        && let Some(Type::Function(signature)) =
-                            object_type.collection_member_type(name)
-                    {
-                        return self.check_call_signature(
-                            &signature,
-                            generic_args,
-                            arguments,
-                            name,
-                        );
-                    }
+                // Toutes les formes d'appels membres passent maintenant par
+                // un seul point de décision avant le fallback dynamique.
+                if let Expression::Member { object, name, .. } = callee.as_ref()
+                    && let Some(result) =
+                        self.check_member_call(object, name, generic_args, arguments)?
+                {
+                    return Ok(result);
                 }
 
                 let callee_type = self.check_expression(callee)?;
@@ -5526,6 +5414,121 @@ impl TypeChecker {
 
             _ => Ok(None),
         }
+    }
+
+    fn check_member_call(
+        &mut self,
+        object: &Expression,
+        member_name: &str,
+        generic_args: &[TypeExpr],
+        arguments: &[Expression],
+    ) -> Result<Option<Type>, CompileError> {
+        let object_type = self.check_expression(object)?;
+
+        // Méthodes d'instance puis méthodes statiques partagent le même
+        // noyau de résolution d'overload. L'instance reste prioritaire.
+        if let Some(class_name) = Self::type_name(&object_type) {
+            self.check_member_visibility(&class_name, member_name)?;
+
+            let signatures = self.find_methods_for_type(&object_type, member_name);
+            if !signatures.is_empty() {
+                let signature = self.resolve_overload(
+                    &signatures,
+                    generic_args,
+                    arguments,
+                    &format!("{class_name}.{member_name}"),
+                )?;
+                return Ok(Some(*signature.return_type));
+            }
+
+            let static_signatures = self.find_static_methods(&class_name, member_name);
+            if !static_signatures.is_empty() {
+                let signature = self.resolve_overload(
+                    &static_signatures,
+                    generic_args,
+                    arguments,
+                    &format!("{class_name}.{member_name}"),
+                )?;
+                return Ok(Some(*signature.return_type));
+            }
+        }
+
+        // Membres des types runtime spécialisés.
+        if let Some(Type::Function(signature)) = object_type.channel_member_type(member_name) {
+            return Ok(Some(self.check_call_signature(
+                &signature,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        if let Some(Type::Function(signature)) = object_type.mutex_member_type(member_name) {
+            return Ok(Some(self.check_call_signature(
+                &signature,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        if let Some(Type::Function(signature)) = object_type.event_member_type(member_name) {
+            return Ok(Some(self.check_call_signature(
+                &signature,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        if let Some(Type::Function(signature)) = object_type.rwlock_member_type(member_name) {
+            return Ok(Some(self.check_call_signature(
+                &signature,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        if let Some(Type::Function(signature)) = object_type.condvar_member_type(member_name) {
+            return Ok(Some(self.check_call_signature(
+                &signature,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        if let Some(Type::Function(signature)) = object_type.option_result_member_type(member_name) {
+            return Ok(Some(self.check_call_signature(
+                &signature,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        // Array, Dict, Tuple, String, Range : méthodes standard.
+        if let Some(replacement) = object_type.renamed_member(member_name) {
+            return Err(CompileError::RenamedMember {
+                name: member_name.to_string(),
+                replacement: replacement.to_string(),
+            });
+        }
+
+        if !matches!(object_type, Type::Set(_) | Type::SetDynamic)
+            && let Some(Type::Function(signature)) =
+                object_type.collection_member_type(member_name)
+        {
+            return Ok(Some(self.check_call_signature(
+                &signature,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        Ok(None)
     }
 
     /// Signatures de la fonction SURCHARGÉE désignée par `name` (locale ou
