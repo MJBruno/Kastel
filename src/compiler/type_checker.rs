@@ -8,6 +8,7 @@ use super::{
     capability::Capability,
     compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
+    overloads::{find_by_arity, OverloadSet},
     types::{FunctionType, GenericConstraint, Type},
 };
 
@@ -140,12 +141,12 @@ pub struct TypeChecker {
     /// surcharge par arité. Les appels directs (`add(1, 2)`) choisissent la
     /// signature comme pour les méthodes ; le nom lui-même, pris comme valeur,
     /// reste dynamique.
-    function_overloads: HashMap<String, Vec<FunctionType>>,
+    function_overloads: HashMap<String, OverloadSet<FunctionType>>,
 
     /// Comme `function_overloads`, pour les fonctions LOCALES : une entrée
     /// par portée (parallèle à `scopes`, l'indice 0 — le global — restant
     /// vide car il utilise `function_overloads`).
-    local_functions: Vec<HashMap<String, Vec<FunctionType>>>,
+    local_functions: Vec<HashMap<String, OverloadSet<FunctionType>>>,
 }
 
 // Résultat de la recherche d'une méthode d'opérateur (`+`, `==`, `<`...)
@@ -2655,17 +2656,12 @@ impl TypeChecker {
                     };
 
                     if let Some(overloads) = self.function_overloads.get_mut(name) {
-                        if overloads
-                            .iter()
-                            .any(|existing| existing.params.len() == signature.params.len())
-                        {
+                        if overloads.insert_unique(signature.clone()).is_err() {
                             return Err(CompileError::DuplicateFunction {
                                 name: name.clone(),
                                 arity: signature.params.len(),
                             });
                         }
-
-                        overloads.push(signature);
 
                         if let Some(binding) = self.scopes[0].get_mut(name) {
                             binding.ty = Type::Dynamic;
@@ -2674,7 +2670,7 @@ impl TypeChecker {
                         self.functions.remove(name);
                     } else {
                         self.function_overloads
-                            .insert(name.clone(), vec![signature.clone()]);
+                            .insert(name.clone(), OverloadSet::from_one(signature.clone()));
                         self.declare_global_declaration(name, Type::Function(signature.clone()))?;
                         self.functions.insert(name.clone(), signature);
                     }
@@ -3741,7 +3737,7 @@ impl TypeChecker {
                     .cloned()
                     .unwrap_or_default();
 
-                Ok((name.clone(), Type::Overloads(signatures)))
+                Ok((name.clone(), Type::Overloads(signatures.into_vec())))
             }
 
             Statement::Function { name, .. } => self
@@ -3826,17 +3822,12 @@ impl TypeChecker {
             // Surcharge locale : une fonction du même nom est déjà déclarée
             // dans CETTE portée (même arité = erreur).
             if let Some(overloads) = self.local_functions[parent_scope_index].get_mut(name) {
-                if overloads
-                    .iter()
-                    .any(|existing| existing.params.len() == declared_signature.params.len())
-                {
+                if overloads.insert_unique(declared_signature.clone()).is_err() {
                     return Err(CompileError::DuplicateFunction {
                         name: name.to_string(),
                         arity: declared_signature.params.len(),
                     });
                 }
-
-                overloads.push(declared_signature.clone());
 
                 if let Some(binding) = self.scopes[parent_scope_index].get_mut(name) {
                     binding.ty = Type::Dynamic;
@@ -3852,7 +3843,7 @@ impl TypeChecker {
                 )?;
 
                 self.local_functions[parent_scope_index]
-                    .insert(name.to_string(), vec![declared_signature.clone()]);
+                    .insert(name.to_string(), OverloadSet::from_one(declared_signature.clone()));
             }
         }
 
@@ -5605,7 +5596,7 @@ impl TypeChecker {
 
                 return signatures
                     .filter(|signatures| signatures.len() > 1)
-                    .cloned();
+                    .map(OverloadSet::to_vec);
             }
         }
 
@@ -6316,9 +6307,7 @@ impl TypeChecker {
         arguments: &[Expression],
         function_name: &str,
     ) -> Result<FunctionType, CompileError> {
-        let signature = signatures
-            .iter()
-            .find(|signature| signature.params.len() == arguments.len());
+        let signature = find_by_arity(signatures, arguments.len());
 
         let Some(signature) = signature else {
             let expected = signatures

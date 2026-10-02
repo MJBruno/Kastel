@@ -12,6 +12,7 @@ use super::builtin_types::{self, NativeKind};
 use super::context::{CompilerContext, CompilerContextRef};
 // use super::locals::LocalTable;
 use super::loops::LoopContext;
+use super::overloads::OverloadSet;
 use super::type_checker::{TypeCheckContext, TypeChecker};
 use super::variables::Global;
 
@@ -63,7 +64,7 @@ pub struct Compiler {
     /// paramètres différent. Toute déclaration de fonction globale émet
     /// `OpCode::Overload` (voir `compile_function_statement`), qui définit,
     /// remplace ou étend selon ce qui existe déjà à l'exécution.
-    pub(crate) function_arities: HashMap<String, Vec<usize>>,
+    pub(crate) function_arities: HashMap<String, OverloadSet<usize>>,
 
     /// Copie du contexte de résolution passé au vérificateur de types
     /// (`None` si le module compile sans résolution d'imports, ou en REPL
@@ -320,20 +321,18 @@ impl Compiler {
             // surcharges (même arité = erreur).
             Statement::Function { name, params, .. } => {
                 if let Some(arities) = self.function_arities.get_mut(name) {
-                    if arities.contains(&params.len()) {
+                    if arities.insert_unique(params.len()).is_err() {
                         return Err(CompileError::DuplicateFunction {
                             name: name.clone(),
                             arity: params.len(),
                         });
                     }
 
-                    arities.push(params.len());
-
                     return Ok(());
                 }
 
                 self.function_arities
-                    .insert(name.clone(), vec![params.len()]);
+                    .insert(name.clone(), OverloadSet::from_one(params.len()));
 
                 self.predeclare_global_name(name, true)
             }

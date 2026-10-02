@@ -1,5 +1,7 @@
 use crate::error::compile_error::CompileError;
 
+use super::overloads::OverloadSet;
+
 #[derive(Clone, Debug)]
 /// # Local
 /// Représente une variable locale connue du compilateur.
@@ -23,7 +25,7 @@ pub struct Local {
     /// Non vide si cette locale contient une FONCTION déclarée par `func`
     /// (et non une variable) : arités déjà déclarées sous ce nom, pour la
     /// surcharge de fonctions locales.
-    pub function_arities: Vec<usize>,
+    pub function_arities: OverloadSet<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -99,7 +101,7 @@ impl LocalTable {
             depth: None,
             slot,
             mutable,
-            function_arities: Vec::new(),
+            function_arities: OverloadSet::new(),
         });
 
         self.max_slots = self.max_slots.max(self.locals.len());
@@ -120,10 +122,10 @@ impl LocalTable {
             }
 
             if local.name == name {
-                return if local.function_arities.is_empty() {
+                return if local.function_arities.len() == 0 {
                     None
                 } else {
-                    Some((local.slot, local.function_arities.clone()))
+                    Some((local.slot, local.function_arities.to_vec()))
                 };
             }
         }
@@ -134,7 +136,7 @@ impl LocalTable {
     /// Note que la locale `slot` contient une fonction de `arity` paramètres.
     pub fn add_function_arity(&mut self, slot: u8, arity: usize) {
         if let Some(local) = self.locals.get_mut(slot as usize) {
-            local.function_arities.push(arity);
+            let _ = local.function_arities.insert_unique(arity);
         }
     }
 

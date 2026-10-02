@@ -447,7 +447,7 @@ fn build_specs() -> Vec<NativeSpec> {
     specs
 }
 
-/// Contrats sous la forme historique attendue par le TypeChecker.
+// Contrats sous la forme historique attendue par le TypeChecker.
 
 static NATIVE_REGISTRY: OnceLock<Vec<NativeSpec>> = OnceLock::new();
 
@@ -455,14 +455,6 @@ fn registry() -> &'static [NativeSpec] {
     NATIVE_REGISTRY
         .get_or_init(build_specs)
         .as_slice()
-}
-
-/// Retourne une copie indépendante de la table canonique des contrats.
-///
-/// Les consommateurs opérationnels utilisent `spec()` / `registry()` afin
-/// d'éviter de reconstruire la totalité des contrats à chaque résolution.
-pub fn specs() -> Vec<NativeSpec> {
-    registry().to_vec()
 }
 
 pub fn all() -> HashMap<String, Type> {
@@ -475,6 +467,16 @@ pub fn all() -> HashMap<String, Type> {
 /// Retourne le contrat natif complet correspondant au nom donné.
 pub fn spec(name: &str) -> Option<&'static NativeSpec> {
     registry().iter().find(|spec| spec.name == name)
+}
+
+/// Retourne une vue possédant les contrats natifs/intrinsèques.
+///
+/// Cette API conserve la compatibilité avec les tests et modules qui ont
+/// besoin d'itérer sur l'ensemble de la registry sans exposer directement
+/// son stockage interne.
+#[allow(dead_code)]
+pub fn specs() -> Vec<NativeSpec> {
+    registry().to_vec()
 }
 
 /// Retourne uniquement la cardinalité statique d'une native/intrinsèque.
@@ -524,11 +526,11 @@ mod tests {
 
     #[test]
     fn all_native_contracts_have_unique_names_and_match_all() {
-        let specs = specs();
+        let specs = registry();
         let all_types = all();
         let mut names = std::collections::HashSet::new();
 
-        for spec in &specs {
+        for spec in specs {
             assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
             assert_eq!(all_types.get(spec.name), Some(&spec.ty));
             let representative = spec.arity.expected_for(0);
@@ -585,7 +587,7 @@ mod tests {
 
     #[test]
     fn every_runtime_native_has_one_contract() {
-        let specs = specs();
+        let specs = registry();
         let mut names = std::collections::HashSet::new();
 
         for spec in specs.iter().filter(|spec| matches!(spec.kind, NativeKind::Runtime)) {

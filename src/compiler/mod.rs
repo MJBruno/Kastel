@@ -10,6 +10,7 @@ mod emit;
 mod expressions;
 mod functions;
 mod locals;
+mod overloads;
 mod loops;
 pub(crate) mod module_types;
 mod scope;
