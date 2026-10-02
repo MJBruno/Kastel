@@ -384,11 +384,11 @@ mod tests {
         assert!(dict.dict_contains(&int(50_000)).unwrap());
 
         // Les entrées restent lisibles comme tranche.
-        if let Value::Object(handle) = &dict {
-            if let Object::Dict(entries) = &*handle.borrow() {
-                assert_eq!(entries.len(), 100_000);
-                assert!(matches!(entries[0].0, Value::Integer(0)));
-            }
+        if let Value::Object(handle) = &dict
+            && let Object::Dict(entries) = &*handle.borrow()
+        {
+            assert_eq!(entries.len(), 100_000);
+            assert!(matches!(entries[0].0, Value::Integer(0)));
         }
     }
 }

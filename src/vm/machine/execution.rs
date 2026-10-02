@@ -66,12 +66,11 @@ impl VirtualMachine {
         let mut instructions = 0usize;
 
         loop {
-            if let Some(error) = self.waiting_error.take() {
-                if !self.propagate_runtime_error(error.clone())? {
+            if let Some(error) = self.waiting_error.take()
+                && !self.propagate_runtime_error(error.clone())? {
                     self.print_profile();
                     return Err(error);
                 }
-            }
 
             if let Some(budget) = instruction_budget
                 && instructions >= budget

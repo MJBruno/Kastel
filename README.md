@@ -51,7 +51,7 @@ The goal is to build each layer in a readable, testable, and extensible way with
 ## ✨ Features
 
 | Domain | Features |
-|---|---|
+| --- | --- |
 | Language | Dynamic typing, optional annotations, inference, union types |
 | Variables | `let`, `const`, local and global variables |
 | Functions | Functions, recursion, nested functions, anonymous functions, arrow functions |
@@ -960,4 +960,4 @@ Personal project focused on designing a dynamic programming language and its vir
 
 Repository:
 
-https://github.com/MJBruno/Kastel
+<https://github.com/MJBruno/Kastel>

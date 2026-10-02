@@ -125,17 +125,7 @@ impl VirtualMachine {
 
             let overloads = methods.entry(method_name.clone()).or_default();
 
-            if overloads.iter().any(|existing| match existing {
-                Value::Object(handle) => {
-                    let object = handle.borrow();
-                    matches!(
-                        &*object,
-                        Object::Closure(closure)
-                            if closure.function.arity.checked_sub(1) == Some(arity)
-                    )
-                }
-                _ => false,
-            }) {
+            if Self::find_value_overload(overloads, arity, 1).0.is_some() {
                 return Err(RuntimeError::DuplicateMethod {
                     name: method_name,
                     arity,
@@ -179,16 +169,7 @@ impl VirtualMachine {
 
             let overloads = static_methods.entry(method_name.clone()).or_default();
 
-            if overloads.iter().any(|existing| match existing {
-                Value::Object(handle) => {
-                    let object = handle.borrow();
-                    matches!(
-                        &*object,
-                        Object::Closure(closure) if closure.function.arity == arity
-                    )
-                }
-                _ => false,
-            }) {
+            if Self::find_value_overload(overloads, arity, 0).0.is_some() {
                 return Err(RuntimeError::DuplicateMethod {
                     name: method_name,
                     arity,
@@ -766,17 +747,7 @@ impl VirtualMachine {
 
             let overloads = methods.entry(method_name.clone()).or_default();
 
-            if overloads.iter().any(|existing| match existing {
-                Value::Object(handle) => {
-                    let object = handle.borrow();
-                    matches!(
-                        &*object,
-                        Object::Closure(closure)
-                            if closure.function.arity.checked_sub(1) == Some(arity)
-                    )
-                }
-                _ => false,
-            }) {
+            if Self::find_value_overload(overloads, arity, 1).0.is_some() {
                 return Err(RuntimeError::DuplicateMethod {
                     name: method_name,
                     arity,

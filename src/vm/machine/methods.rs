@@ -193,6 +193,45 @@ impl VirtualMachine {
     //                     METHOD RESOLUTION
     // ============================================================
 
+    /// Recherche une surcharge dans une collection de closures selon une
+    /// seule règle d'arité. Une méthode d'instance ou d'enum possède un
+    /// `self` implicite ; une méthode statique n'en possède pas.
+    ///
+    /// Retourne la surcharge exacte et, séparément, la première arité
+    /// déclarée disponible pour construire un diagnostic d'arité.
+    pub(crate) fn find_value_overload(
+        overloads: &[Value],
+        arg_count: usize,
+        implicit_receiver_arity: usize,
+    ) -> (Option<Value>, Option<usize>) {
+        let mut declared_arity = None;
+
+        for value in overloads {
+            let Value::Object(handle) = value else {
+                continue;
+            };
+
+            let object = handle.borrow();
+            let Object::Closure(closure) = &*object else {
+                continue;
+            };
+
+            let Some(visible_arity) =
+                closure.function.arity.checked_sub(implicit_receiver_arity)
+            else {
+                continue;
+            };
+
+            declared_arity.get_or_insert(visible_arity);
+
+            if visible_arity == arg_count {
+                return (Some(value.clone()), declared_arity);
+            }
+        }
+
+        (None, declared_arity)
+    }
+
     pub(crate) fn find_class_method_from(
         class: Gc<Object>,
         name: &str,
@@ -204,19 +243,7 @@ impl VirtualMachine {
         };
 
         let overloads = methods.get(name)?;
-
-        overloads.iter().find_map(|method| {
-            let Value::Object(handle) = method else {
-                return None;
-            };
-
-            let object = handle.borrow();
-            let Object::Closure(closure) = &*object else {
-                return None;
-            };
-
-            (closure.function.arity.checked_sub(1) == Some(arg_count)).then(|| method.clone())
-        })
+        Self::find_value_overload(overloads, arg_count, 1).0
     }
 
     pub(crate) fn class_method_arities(class: Gc<Object>, name: &str) -> Vec<usize> {
@@ -2592,37 +2619,10 @@ impl VirtualMachine {
 
                             match &*object {
                                 Object::EnumVariant { methods, .. } => {
-                                    let method = methods.get(&method_name).and_then(|overloads| {
-                                        overloads.iter().find(|value| {
-                                            matches!(
-                                                value,
-                                                Value::Object(method_handle)
-                                                    if matches!(
-                                                        &*method_handle.borrow(),
-                                                        Object::Closure(closure)
-                                                            if closure.function.arity == arg_count + 1
-                                                    )
-                                            )
-                                        })
-                                    }).cloned();
-
-                                    let expected =
-                                        methods.get(&method_name).and_then(|overloads| {
-                                            overloads.first().and_then(|value| match value {
-                                                Value::Object(method_handle) => {
-                                                    let method_object = method_handle.borrow();
-                                                    match &*method_object {
-                                                        Object::Closure(closure) => {
-                                                            closure.function.arity.checked_sub(1)
-                                                        }
-                                                        _ => None,
-                                                    }
-                                                }
-                                                _ => None,
-                                            })
-                                        });
-
-                                    (method, expected)
+                                    methods
+                                        .get(&method_name)
+                                        .map(|overloads| Self::find_value_overload(overloads, arg_count, 1))
+                                        .unwrap_or((None, None))
                                 }
 
                                 _ => return Err(RuntimeError::TypeError),
@@ -2677,37 +2677,9 @@ impl VirtualMachine {
                                 Object::Class { static_methods, .. } => {
                                     let overloads = static_methods.get(&method_name);
 
-                                    let method = overloads
-                                        .and_then(|overloads| {
-                                            overloads.iter().find(|value| {
-                                            matches!(
-                                                value,
-                                                Value::Object(method_handle)
-                                                    if matches!(
-                                                        &*method_handle.borrow(),
-                                                        Object::Closure(closure)
-                                                            if closure.function.arity == arg_count
-                                                    )
-                                            )
-                                        })
-                                        })
-                                        .cloned();
-
-                                    let declared_arity = overloads.and_then(|overloads| {
-                                        overloads.first().and_then(|value| match value {
-                                            Value::Object(method_handle) => {
-                                                match &*method_handle.borrow() {
-                                                    Object::Closure(closure) => {
-                                                        Some(closure.function.arity)
-                                                    }
-                                                    _ => None,
-                                                }
-                                            }
-                                            _ => None,
-                                        })
-                                    });
-
-                                    (method, declared_arity)
+                                    overloads
+                                        .map(|values| Self::find_value_overload(values, arg_count, 0))
+                                        .unwrap_or((None, None))
                                 }
 
                                 _ => return Err(RuntimeError::TypeError),

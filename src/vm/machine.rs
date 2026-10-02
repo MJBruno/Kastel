@@ -1091,18 +1091,6 @@ impl VirtualMachine {
             .retain(|handler| handler.frame_index < frame_count);
     }
 
-    // pub(crate) fn nearest_exception_handler(
-    //     &self,
-    // ) -> Option<&ExceptionHandler> {
-    //     self.exception_handlers.last()
-    // }
-
-    // pub(crate) fn take_nearest_exception_handler(
-    //     &mut self,
-    // ) -> Option<ExceptionHandler> {
-    //     self.exception_handlers.pop()
-    // }
-
     pub(crate) fn restore_exception_stack(
         &mut self,
         stack_height: usize,

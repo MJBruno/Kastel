@@ -45,6 +45,16 @@ fn run_script(source: &str) -> (VirtualMachine, Result<(), RuntimeError>) {
     (vm, result)
 }
 
+fn compile_script(source: &str) -> Result<(), crate::error::compile_error::CompileError> {
+    let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+    let statements = Parser::new(tokens).parse().unwrap();
+
+    let mut compiler = Compiler::new();
+    execute_native(&mut compiler);
+
+    compiler.compile(&statements).map(|_| ())
+}
+
 fn global(vm: &VirtualMachine, name: &str) -> Value {
     vm.globals
         .borrow()
@@ -1205,6 +1215,73 @@ read(b);
 "#,
     );
     assert!(result.1.is_err());
+}
+
+#[test]
+fn static_method_overloading_dispatches_on_arity() {
+    let (vm, result) = run_script(
+        r#"
+        class Calc {
+            static func combine(x: int) -> int { return x; }
+            static func combine(x: int, y: int) -> int { return x + y; }
+        }
+
+        let one = Calc.combine(3);
+        let two = Calc.combine(1, 2);
+        "#,
+    );
+
+    assert!(result.is_ok());
+    assert_eq!(integer(global(&vm, "one")), 3);
+    assert_eq!(integer(global(&vm, "two")), 3);
+}
+
+#[test]
+fn enum_method_overloading_dispatches_on_arity() {
+    let (vm, result) = run_script(
+        r#"
+        enum Status {
+            Ready,
+            Done
+
+            func label() -> str { return "ready"; }
+            func label(prefix: str) -> str { return prefix + "ready"; }
+        }
+
+        let zero = Status.Ready.label();
+        let one = Status.Ready.label("not_");
+        "#,
+    );
+
+    assert!(result.is_ok());
+    assert_eq!(format!("{}", global(&vm, "zero")), "ready");
+    assert_eq!(format!("{}", global(&vm, "one")), "not_ready");
+}
+
+#[test]
+fn overloaded_static_and_enum_methods_reject_missing_arities() {
+    let static_result = compile_script(
+        r#"
+        class Calc {
+            static func combine(x: int) -> int { return x; }
+            static func combine(x: int, y: int) -> int { return x + y; }
+        }
+        Calc.combine(1, 2, 3);
+        "#,
+    );
+    assert!(static_result.is_err());
+
+    let enum_result = compile_script(
+        r#"
+        enum Status {
+            Ready
+
+            func label() -> str { return "ready"; }
+        }
+        Status.Ready.label("extra");
+        "#,
+    );
+    assert!(enum_result.is_err());
 }
 
 #[test]
