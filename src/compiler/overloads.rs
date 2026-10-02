@@ -52,7 +52,6 @@ impl<T> OverloadSet<T> {
         self.entries.len()
     }
 
-
     pub(crate) fn iter(&self) -> std::slice::Iter<'_, T> {
         self.entries.iter()
     }
@@ -99,19 +98,6 @@ impl<T> OverloadSet<T> {
             .any(|entry| entry.overload_arity() == arity)
     }
 
-    // Retourne la surcharge correspondant à une arité précise.
-    
-    #[allow(dead_code)]
-    pub(crate) fn get_by_arity(&self, arity: usize) -> Option<&T>
-    where
-        T: OverloadArity,
-    {
-        self.entries
-            .iter()
-            .find(|entry| entry.overload_arity() == arity)
-    }
-
-    /// Retourne mutablement la surcharge correspondant à une arité précise.
     pub(crate) fn get_by_arity_mut(&mut self, arity: usize) -> Option<&mut T>
     where
         T: OverloadArity,
@@ -120,14 +106,6 @@ impl<T> OverloadSet<T> {
             .iter_mut()
             .find(|entry| entry.overload_arity() == arity)
     }
-
-}
-
-/// Recherche déterministe d'une surcharge par arité.
-pub(crate) fn find_by_arity<T: OverloadArity>(entries: &[T], arity: usize) -> Option<&T> {
-    entries
-        .iter()
-        .find(|entry| entry.overload_arity() == arity)
 }
 
 impl<'a, T> IntoIterator for &'a OverloadSet<T> {
@@ -159,7 +137,7 @@ impl<T> IntoIterator for OverloadSet<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OverloadArity, OverloadSet, find_by_arity};
+    use super::{OverloadArity, OverloadSet};
     use crate::compiler::types::{FunctionType, Type};
 
     fn signature(arity: usize) -> FunctionType {
@@ -187,9 +165,9 @@ mod tests {
         set.insert_unique(signature(1)).unwrap();
         set.insert_unique(signature(3)).unwrap();
 
-        assert!(find_by_arity(&set.to_vec(), 1).is_some());
-        assert!(find_by_arity(&set.to_vec(), 2).is_none());
-        assert_eq!(find_by_arity(&set.to_vec(), 3).unwrap().params.len(), 3);
+        assert!(set.iter().any(|entry| entry.overload_arity() == 1));
+        assert!(set.iter().all(|entry| entry.overload_arity() != 2));
+        assert_eq!(set.iter().find(|entry| entry.overload_arity() == 3).unwrap().params.len(), 3);
     }
 
     #[test]

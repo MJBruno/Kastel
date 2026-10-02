@@ -20,6 +20,11 @@ pub(crate) enum Callable<'a> {
 }
 
 impl<'a> Callable<'a> {
+    /// Sélectionne la signature d'un appel à partir de l'arité uniquement.
+    ///
+    /// La validation générique et la compatibilité des types restent dans le
+    /// TypeChecker après cette sélection. Ainsi, toutes les formes de
+    /// callable passent par exactement le même point de décision.
     pub(crate) fn select(self, arity: usize) -> Result<&'a FunctionType, ArityError> {
         match self {
             Self::One(signature) => {
