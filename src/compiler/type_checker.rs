@@ -8,6 +8,7 @@ use super::{
     capability::Capability,
     compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
+    call_resolution::Callable,
     overloads::{find_by_arity, OverloadSet},
     types::{FunctionType, GenericConstraint, Type},
 };
@@ -4474,41 +4475,15 @@ impl TypeChecker {
 
                 let callee_type = self.check_expression(callee)?;
 
-                match callee_type {
-                    Type::Function(signature) => {
-                        let function_name = self.expression_name(callee);
-                        self.check_call_signature(
-                            &signature,
-                            generic_args,
-                            arguments,
-                            &function_name,
-                        )
-                    }
-
-                    // Fonction surchargée importée d'un module : signature
-                    // choisie par arité et par type.
-                    Type::Overloads(signatures) => {
-                        let function_name = self.expression_name(callee);
-                        let signature = self.resolve_overload(
-                            &signatures,
-                            generic_args,
-                            arguments,
-                            &function_name,
-                        )?;
-
-                        Ok(*signature.return_type)
-                    }
-
-                    Type::Dynamic => {
-                        for argument in arguments {
-                            self.check_expression(argument)?;
-                        }
-                        Ok(Type::Dynamic)
-                    }
-
-                    other => Err(CompileError::NotCallable {
-                        found: other.to_string(),
-                    }),
+                let function_name = self.expression_name(callee);
+                match self.resolve_callable_signature(
+                    &callee_type,
+                    generic_args,
+                    arguments,
+                    &function_name,
+                )? {
+                    Some(signature) => Ok(*signature.return_type),
+                    None => Ok(Type::Dynamic),
                 }
             }
 
@@ -5465,39 +5440,17 @@ impl TypeChecker {
                     )
                 );
 
-                let (result_type, is_async) = match callee_type {
-                    Type::Function(signature) => {
-                        let instantiated = self.instantiate_call_signature(
-                            &signature,
-                            generic_args,
-                            task_arguments,
-                            &function_name,
-                        )?;
-                        (*instantiated.return_type, instantiated.is_async)
-                    }
-
-                    Type::Overloads(signatures) => {
-                        let signature = self.resolve_overload(
-                            &signatures,
-                            generic_args,
-                            task_arguments,
-                            &function_name,
-                        )?;
-                        (*signature.return_type, signature.is_async)
-                    }
-
-                    Type::Dynamic => {
-                        for argument in task_arguments {
-                            self.check_expression(argument)?;
-                        }
-                        (Type::Dynamic, false)
-                    }
-
-                    other => {
-                        return Err(CompileError::NotCallable {
-                            found: other.to_string(),
-                        });
-                    }
+                let (result_type, is_async) = if let Some(signature) =
+                    self.resolve_callable_signature(
+                        &callee_type,
+                        generic_args,
+                        task_arguments,
+                        &function_name,
+                    )?
+                {
+                    (*signature.return_type, signature.is_async)
+                } else {
+                    (Type::Dynamic, false)
                 };
 
                 if is_async {
@@ -6293,6 +6246,38 @@ impl TypeChecker {
             .return_type)
     }
 
+    fn resolve_callable_signature(
+        &mut self,
+        callable: &Type,
+        generic_args: &[TypeExpr],
+        arguments: &[Expression],
+        function_name: &str,
+    ) -> Result<Option<FunctionType>, CompileError> {
+        let selected = match callable {
+            Type::Function(signature) => Callable::One(signature).select(arguments.len()),
+            Type::Overloads(signatures) => Callable::Overloaded(signatures).select(arguments.len()),
+            Type::Dynamic => {
+                for argument in arguments {
+                    self.check_expression(argument)?;
+                }
+                return Ok(None);
+            }
+            other => {
+                return Err(CompileError::NotCallable {
+                    found: other.to_string(),
+                });
+            }
+        };
+
+        let signature = selected.map_err(|error| CompileError::WrongArgumentCount {
+            expected: error.expected,
+            found: error.found,
+        })?;
+
+        self.instantiate_call_signature(signature, generic_args, arguments, function_name)
+            .map(Some)
+    }
+
     fn resolve_overload(
         &mut self,
         signatures: &[FunctionType],
@@ -6300,19 +6285,12 @@ impl TypeChecker {
         arguments: &[Expression],
         function_name: &str,
     ) -> Result<FunctionType, CompileError> {
-        let signature = find_by_arity(signatures, arguments.len());
-
-        let Some(signature) = signature else {
-            let expected = signatures
-                .first()
-                .map(|signature| signature.params.len() as i32)
-                .unwrap_or(0);
-
-            return Err(CompileError::WrongArgumentCount {
-                expected,
-                found: arguments.len(),
-            });
-        };
+        let signature = Callable::Overloaded(signatures)
+            .select(arguments.len())
+            .map_err(|error| CompileError::WrongArgumentCount {
+                expected: error.expected,
+                found: error.found,
+            })?;
 
         self.instantiate_call_signature(signature, generic_args, arguments, function_name)
     }
@@ -6324,10 +6302,7 @@ impl TypeChecker {
         class_generic_names: &[String],
     ) -> Result<Option<Vec<Type>>, CompileError> {
         let signatures = self.find_methods(class_name, CONSTRUCTOR_NAME);
-        let Some(signature) = signatures
-            .iter()
-            .find(|signature| signature.params.len() == arguments.len())
-        else {
+        let Some(signature) = find_by_arity(&signatures, arguments.len()) else {
             return Ok(None);
         };
 
