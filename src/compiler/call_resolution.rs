@@ -68,6 +68,46 @@ impl ResolvedCall {
         }
     }
 
+    pub(crate) fn from_callable(callable: CallableTarget, signature: FunctionType) -> Self {
+        Self::from_signature(CallTarget::Callable(callable), signature)
+    }
+
+    pub(crate) fn from_constructor(
+        class_name: String,
+        callable: CallableTarget,
+        signature: FunctionType,
+        return_type: Type,
+    ) -> Self {
+        Self {
+            target: CallTarget::Constructor {
+                class_name,
+                callable: Some(callable),
+            },
+            signature: Some(signature),
+            return_type,
+        }
+    }
+
+    pub(crate) fn implicit_constructor(class_name: String, return_type: Type) -> Self {
+        Self {
+            target: CallTarget::Constructor {
+                class_name,
+                callable: None,
+            },
+            signature: None,
+            return_type,
+        }
+    }
+
+    pub(crate) fn constructor_details(&self) -> Option<(&str, Option<&CallableTarget>)> {
+        match &self.target {
+            CallTarget::Constructor { class_name, callable } => {
+                Some((class_name.as_str(), callable.as_ref()))
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn special(target: CallTarget, return_type: Type) -> Self {
         Self {
             target,
@@ -170,6 +210,10 @@ impl CallableTarget {
 pub(crate) enum CallTarget {
     Native(super::builtin_types::NativeSpec),
     Callable(CallableTarget),
+    Constructor {
+        class_name: String,
+        callable: Option<CallableTarget>,
+    },
     Dynamic,
 }
 
@@ -272,6 +316,69 @@ mod tests {
             resolved.target,
             CallTarget::Callable(CallableTarget::One(_))
         ));
+    }
+
+    #[test]
+    fn resolved_call_from_callable_preserves_callable_target() {
+        let first = signature(1);
+        let second = signature(2);
+        let target = CallableTarget::Overloaded(vec![first.clone(), second.clone()]);
+        let expected_target = target.clone();
+        let resolved = ResolvedCall::from_callable(target, second.clone());
+
+        let (target_after, selected, return_type) = resolved.into_parts();
+        assert_eq!(selected, Some(second));
+        assert_eq!(return_type, Type::None);
+
+        match (target_after, expected_target) {
+            (
+                CallTarget::Callable(CallableTarget::Overloaded(actual)),
+                CallableTarget::Overloaded(expected),
+            ) => assert_eq!(actual, expected),
+            (actual, expected) => panic!("unexpected targets: {actual:?} vs {expected:?}"),
+        }
+    }
+
+    #[test]
+    fn resolved_call_can_represent_constructor_resolution() {
+        let signature = signature(2);
+        let callable = CallableTarget::One(signature.clone());
+        let resolved = ResolvedCall::from_constructor(
+            "Box".to_string(),
+            callable.clone(),
+            signature.clone(),
+            Type::Named("Box".to_string()),
+        );
+
+        let (target, selected, return_type) = resolved.into_parts();
+        assert_eq!(selected, Some(signature));
+        assert_eq!(return_type, Type::Named("Box".to_string()));
+        match target {
+            CallTarget::Constructor { class_name, callable: Some(found) } => {
+                assert_eq!(class_name, "Box");
+                assert!(matches!(found, CallableTarget::One(_)));
+                assert_eq!(found.select(2).unwrap().params.len(), 2);
+            }
+            other => panic!("unexpected constructor target: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolved_call_can_represent_an_implicit_constructor() {
+        let resolved = ResolvedCall::implicit_constructor(
+            "Box".to_string(),
+            Type::Named("Box".to_string()),
+        );
+
+        let (target, selected, return_type) = resolved.into_parts();
+        assert!(selected.is_none());
+        assert_eq!(return_type, Type::Named("Box".to_string()));
+        match target {
+            CallTarget::Constructor { class_name, callable: None } => {
+                assert_eq!(class_name, "Box");
+            }
+            other => panic!("unexpected constructor target: {other:?}"),
+        }
     }
 
     #[test]

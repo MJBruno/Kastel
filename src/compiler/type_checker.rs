@@ -4336,10 +4336,11 @@ impl TypeChecker {
                 // Toutes les formes d'appels membres passent par un seul point
                 // de décision avant la résolution des callee non-membres.
                 if let Expression::Member { object, name, .. } = callee.as_ref()
-                    && let Some(result) =
+                    && let Some(resolved) =
                         self.check_member_call(object, name, generic_args, arguments)?
                 {
-                    return Ok(result);
+                    let (_, _, return_type) = resolved.into_parts();
+                    return Ok(return_type);
                 }
 
                 let (_, _, return_type) =
@@ -4439,106 +4440,20 @@ impl TypeChecker {
                 arguments,
                 ..
             } => {
-                let class_name = self.canonical_class_name(class_name);
-
-                if self
-                    .classes
-                    .get(&class_name)
-                    .is_some_and(|info| !info.enum_variants.is_empty())
-                {
-                    return Err(CompileError::TypeMismatch {
-                        expected: "class".to_string(),
-                        found: format!("enum {class_name}"),
-                    });
-                }
-
-                // Constructeur `private` : `new` n'est permis que dans le
-                // corps de la classe qui le déclare.
-                self.check_member_visibility(&class_name, CONSTRUCTOR_NAME)?;
-
-                let class_info = self.classes.get(&class_name).cloned();
-                let class_generic_names = class_info
-                    .as_ref()
-                    .map(|info| info.generic_params.clone())
-                    .unwrap_or_default();
-
-                let mut class_arguments = if !generic_args.is_empty() {
-                    if generic_args.len() != class_generic_names.len() {
-                        return Err(CompileError::InvalidGenericArity {
-                            name: class_name.clone(),
-                            expected: class_generic_names.len(),
-                            found: generic_args.len(),
-                        });
-                    }
-
-                    generic_args
-                        .iter()
-                        .map(|argument| self.resolve_type(argument))
-                        .collect::<Vec<_>>()
-                } else {
-                    vec![Type::Dynamic; class_generic_names.len()]
+                let resolved =
+                    self.resolve_constructor_call(class_name, generic_args, arguments)?;
+                let Some((resolved_class_name, _callable)) = resolved.constructor_details() else {
+                    unreachable!("constructor resolution must produce a constructor target");
                 };
 
-                // Une classe générique peut déduire ses paramètres depuis son
-                // constructeur : `new Box(42)` devient `Box<int>`.
-                if !class_generic_names.is_empty()
-                    && generic_args.is_empty()
-                    && let Some(inferred) = self.infer_class_arguments_from_constructor(
-                        &class_name,
-                        arguments,
-                        &class_generic_names,
-                    )?
-                {
-                    class_arguments = inferred;
-                }
+                debug_assert_eq!(
+                    resolved_class_name,
+                    self.canonical_class_name(class_name.as_str()),
+                    "constructor target must preserve the resolved class name"
+                );
 
-                if let Some(info) = &class_info
-                    && !info.generic_constraints.is_empty()
-                {
-                    let substitutions = class_generic_names
-                        .iter()
-                        .cloned()
-                        .zip(class_arguments.iter().cloned())
-                        .collect::<HashMap<_, _>>();
-                    self.validate_constraint_set(
-                        &info.generic_constraints,
-                        &substitutions,
-                        &class_name,
-                    )?;
-                }
-
-                let instance_type = if class_generic_names.is_empty() {
-                    Type::Named(class_name.clone())
-                } else {
-                    Type::Generic {
-                        name: class_name.clone(),
-                        arguments: class_arguments,
-                    }
-                };
-
-                let signatures = self.find_methods_for_type(&instance_type, CONSTRUCTOR_NAME);
-
-                if !signatures.is_empty() {
-                    self.resolve_overload(
-                        &signatures,
-                        &[],
-                        arguments,
-                        &format!("{class_name}.{CONSTRUCTOR_NAME}"),
-                    )?;
-                } else {
-                    for argument in arguments {
-                        self.check_expression(argument)?;
-                    }
-
-                    if !arguments.is_empty() && self.class_is_known(&class_name) {
-                        return Err(CompileError::WrongArgumentCount {
-                            expected: 0,
-                            found: arguments.len(),
-                        });
-                    }
-                }
-
-                Ok(instance_type)
+                let (_, _, return_type) = resolved.into_parts();
+                Ok(return_type)
             }
 
             Expression::SelfValue => {
@@ -5109,6 +5024,126 @@ impl TypeChecker {
         Ok(Type::Dynamic)
     }
 
+    /// Résout une construction `new Class(...)` dans la même métadonnée
+    /// sémantique qu'un appel normal. La résolution conserve également le
+    /// nom de classe, car un constructeur n'est pas une fonction utilisateur
+    /// ordinaire et devra être distingué lors d'une future émission sémantique.
+    fn resolve_constructor_call(
+        &mut self,
+        raw_class_name: &str,
+        generic_args: &[TypeExpr],
+        arguments: &[Expression],
+    ) -> Result<ResolvedCall, CompileError> {
+        let class_name = self.canonical_class_name(raw_class_name);
+
+        if self
+            .classes
+            .get(&class_name)
+            .is_some_and(|info| !info.enum_variants.is_empty())
+        {
+            return Err(CompileError::TypeMismatch {
+                expected: "class".to_string(),
+                found: format!("enum {class_name}"),
+            });
+        }
+
+        // Constructeur `private` : `new` n'est permis que dans le
+        // corps de la classe qui le déclare.
+        self.check_member_visibility(&class_name, CONSTRUCTOR_NAME)?;
+
+        let class_info = self.classes.get(&class_name).cloned();
+        let class_generic_names = class_info
+            .as_ref()
+            .map(|info| info.generic_params.clone())
+            .unwrap_or_default();
+
+        let mut class_arguments = if !generic_args.is_empty() {
+            if generic_args.len() != class_generic_names.len() {
+                return Err(CompileError::InvalidGenericArity {
+                    name: class_name.clone(),
+                    expected: class_generic_names.len(),
+                    found: generic_args.len(),
+                });
+            }
+
+            generic_args
+                .iter()
+                .map(|argument| self.resolve_type(argument))
+                .collect::<Vec<_>>()
+        } else {
+            vec![Type::Dynamic; class_generic_names.len()]
+        };
+
+        // Une classe générique peut déduire ses paramètres depuis son
+        // constructeur : `new Box(42)` devient `Box<int>`.
+        if !class_generic_names.is_empty()
+            && generic_args.is_empty()
+            && let Some(inferred) = self.infer_class_arguments_from_constructor(
+                &class_name,
+                arguments,
+                &class_generic_names,
+            )?
+        {
+            class_arguments = inferred;
+        }
+
+        if let Some(info) = &class_info
+            && !info.generic_constraints.is_empty()
+        {
+            let substitutions = class_generic_names
+                .iter()
+                .cloned()
+                .zip(class_arguments.iter().cloned())
+                .collect::<HashMap<_, _>>();
+            self.validate_constraint_set(
+                &info.generic_constraints,
+                &substitutions,
+                &class_name,
+            )?;
+        }
+
+        let instance_type = if class_generic_names.is_empty() {
+            Type::Named(class_name.clone())
+        } else {
+            Type::Generic {
+                name: class_name.clone(),
+                arguments: class_arguments,
+            }
+        };
+
+        let signatures = self.find_methods_for_type(&instance_type, CONSTRUCTOR_NAME);
+
+        if !signatures.is_empty() {
+            let callable = CallableTarget::Overloaded(signatures);
+            let signature = self.resolve_owned_callable(
+                &callable,
+                &[],
+                arguments,
+                &format!("{class_name}.{CONSTRUCTOR_NAME}"),
+            )?;
+
+            return Ok(ResolvedCall::from_constructor(
+                class_name,
+                callable,
+                signature,
+                instance_type,
+            ));
+        }
+
+        for argument in arguments {
+            self.check_expression(argument)?;
+        }
+
+        if !arguments.is_empty() && self.class_is_known(&class_name) {
+            return Err(CompileError::WrongArgumentCount {
+                expected: 0,
+                found: arguments.len(),
+            });
+        }
+
+        Ok(ResolvedCall::implicit_constructor(class_name, instance_type))
+    }
+
     /// Résout un appel non-membre en une petite valeur sémantique réutilisable.
     ///
     /// La vérification des arguments reste effectuée ici, mais le résultat est
@@ -5160,6 +5195,9 @@ impl TypeChecker {
                     signature,
                 ))
             }
+            CallTarget::Constructor { .. } => unreachable!(
+                "constructor targets are resolved through Expression::New"
+            ),
             CallTarget::Dynamic => {
                 for argument in arguments {
                     self.check_expression(argument)?;
@@ -5478,13 +5516,17 @@ impl TypeChecker {
         }
     }
 
+    /// Résout un appel membre en conservant la même métadonnée sémantique
+    /// minimale que les appels non-membres. La découverte de la méthode
+    /// reste spécifique au type, mais la sélection et la validation de sa
+    /// signature convergent vers `ResolvedCall`.
     fn check_member_call(
         &mut self,
         object: &Expression,
         member_name: &str,
         generic_args: &[TypeExpr],
         arguments: &[Expression],
-    ) -> Result<Option<Type>, CompileError> {
+    ) -> Result<Option<ResolvedCall>, CompileError> {
         let object_type = self.check_expression(object)?;
 
         // Méthodes d'instance puis méthodes statiques partagent le même
@@ -5494,30 +5536,32 @@ impl TypeChecker {
 
             let signatures = self.find_methods_for_type(&object_type, member_name);
             if !signatures.is_empty() {
-                let signature = self.resolve_overload(
-                    &signatures,
+                let callable = CallableTarget::Overloaded(signatures.clone());
+                let signature = self.resolve_owned_callable(
+                    &callable,
                     generic_args,
                     arguments,
                     &format!("{class_name}.{member_name}"),
                 )?;
-                return Ok(Some(*signature.return_type));
+                return Ok(Some(ResolvedCall::from_callable(callable, signature)));
             }
 
             let static_signatures = self.find_static_methods(&class_name, member_name);
             if !static_signatures.is_empty() {
-                let signature = self.resolve_overload(
-                    &static_signatures,
+                let callable = CallableTarget::Overloaded(static_signatures.clone());
+                let signature = self.resolve_owned_callable(
+                    &callable,
                     generic_args,
                     arguments,
                     &format!("{class_name}.{member_name}"),
                 )?;
-                return Ok(Some(*signature.return_type));
+                return Ok(Some(ResolvedCall::from_callable(callable, signature)));
             }
         }
 
         // Membres des types runtime spécialisés.
         if let Some(Type::Function(signature)) = object_type.channel_member_type(member_name) {
-            return Ok(Some(self.check_call_signature(
+            return Ok(Some(self.resolve_member_signature(
                 &signature,
                 generic_args,
                 arguments,
@@ -5526,7 +5570,7 @@ impl TypeChecker {
         }
 
         if let Some(Type::Function(signature)) = object_type.mutex_member_type(member_name) {
-            return Ok(Some(self.check_call_signature(
+            return Ok(Some(self.resolve_member_signature(
                 &signature,
                 generic_args,
                 arguments,
@@ -5535,7 +5579,7 @@ impl TypeChecker {
         }
 
         if let Some(Type::Function(signature)) = object_type.event_member_type(member_name) {
-            return Ok(Some(self.check_call_signature(
+            return Ok(Some(self.resolve_member_signature(
                 &signature,
                 generic_args,
                 arguments,
@@ -5544,7 +5588,7 @@ impl TypeChecker {
         }
 
         if let Some(Type::Function(signature)) = object_type.rwlock_member_type(member_name) {
-            return Ok(Some(self.check_call_signature(
+            return Ok(Some(self.resolve_member_signature(
                 &signature,
                 generic_args,
                 arguments,
@@ -5553,7 +5597,7 @@ impl TypeChecker {
         }
 
         if let Some(Type::Function(signature)) = object_type.condvar_member_type(member_name) {
-            return Ok(Some(self.check_call_signature(
+            return Ok(Some(self.resolve_member_signature(
                 &signature,
                 generic_args,
                 arguments,
@@ -5562,7 +5606,7 @@ impl TypeChecker {
         }
 
         if let Some(Type::Function(signature)) = object_type.option_result_member_type(member_name) {
-            return Ok(Some(self.check_call_signature(
+            return Ok(Some(self.resolve_member_signature(
                 &signature,
                 generic_args,
                 arguments,
@@ -5582,7 +5626,7 @@ impl TypeChecker {
             && let Some(Type::Function(signature)) =
                 object_type.collection_member_type(member_name)
         {
-            return Ok(Some(self.check_call_signature(
+            return Ok(Some(self.resolve_member_signature(
                 &signature,
                 generic_args,
                 arguments,
@@ -6299,21 +6343,23 @@ impl TypeChecker {
         Ok(instantiated)
     }
 
-    fn check_call_signature(
+    fn resolve_member_signature(
         &mut self,
         signature: &FunctionType,
         generic_args: &[TypeExpr],
         arguments: &[Expression],
         function_name: &str,
-    ) -> Result<Type, CompileError> {
-        Ok(*self
-            .resolve_selected_callable(
-                Callable::One(signature),
-                generic_args,
-                arguments,
-                function_name,
-            )?
-            .return_type)
+    ) -> Result<ResolvedCall, CompileError> {
+        let selected = self.resolve_selected_callable(
+            Callable::One(signature),
+            generic_args,
+            arguments,
+            function_name,
+        )?;
+        Ok(ResolvedCall::from_callable(
+            CallableTarget::One(selected.clone()),
+            selected,
+        ))
     }
 
     fn resolve_selected_callable(
@@ -6384,21 +6430,6 @@ impl TypeChecker {
                 found: other.to_string(),
             }),
         }
-    }
-
-    fn resolve_overload(
-        &mut self,
-        signatures: &[FunctionType],
-        generic_args: &[TypeExpr],
-        arguments: &[Expression],
-        function_name: &str,
-    ) -> Result<FunctionType, CompileError> {
-        self.resolve_selected_callable(
-            Callable::Overloaded(signatures),
-            generic_args,
-            arguments,
-            function_name,
-        )
     }
 
     fn infer_class_arguments_from_constructor(
@@ -7423,6 +7454,50 @@ let b = new Point(1);
 let c = new Point(1, 2);
 let k: int = c.scale();
 let m: int = c.scale(3);
+"#,
+        );
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn member_calls_use_resolved_call_metadata() {
+        let result = check(
+            r#"
+class Box {
+    func initialize(x: int) { self.x = x; }
+    func value() -> int { return self.x; }
+    static func make() -> int { return 42; }
+}
+let box = new Box(7);
+let value: int = box.value();
+let created: int = Box.make();
+let values: List<int> = [1, 2];
+let size: int = values.size();
+"#,
+        );
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn constructor_calls_use_resolved_call_metadata() {
+        let result = check(
+            r#"
+class Box<T> {
+    func initialize(value: T) { self.value = value; }
+}
+let inferred: Box<int> = new Box(42);
+let explicit: Box<str> = new Box<str>("kastel");
+"#,
+        );
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn implicit_constructor_uses_resolved_call_metadata() {
+        let result = check(
+            r#"
+class Empty {}
+let value: Empty = new Empty();
 "#,
         );
         assert!(result.is_ok(), "{:?}", result.err());
