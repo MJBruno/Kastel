@@ -1,2 +1,0 @@
-interne : origine
-externe : relancée

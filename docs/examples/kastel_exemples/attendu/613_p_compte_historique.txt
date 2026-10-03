@@ -1,2 +1,0 @@
-solde : 120
-opérations : 3

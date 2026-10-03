@@ -1,4 +1,0 @@
-négatif
-zéro
-pair positif
-impair positif

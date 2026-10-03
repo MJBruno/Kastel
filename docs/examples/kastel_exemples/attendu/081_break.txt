@@ -1,1 +1,0 @@
-premier carré > 50 : 64

@@ -1,4 +1,0 @@
-Ada : 17.0
-Alan : 13.0
-Grace : 17.0
-meilleur : Ada

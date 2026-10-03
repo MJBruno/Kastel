@@ -1,2 +1,0 @@
-Ok(3)
-Err(absent)

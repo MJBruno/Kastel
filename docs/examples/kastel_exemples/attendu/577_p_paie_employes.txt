@@ -1,3 +1,0 @@
-Ada : 2000
-Bob : 3500
-masse salariale : 5500

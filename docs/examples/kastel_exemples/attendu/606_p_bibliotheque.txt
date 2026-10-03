@@ -1,4 +1,0 @@
-Ok(emprunté : Dune)
-Err(déjà emprunté)
-Ok(emprunté : Dune)
-Err(inconnu)

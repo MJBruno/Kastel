@@ -1,2 +1,0 @@
-entier 42
-texte kastel

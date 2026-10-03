@@ -1,3 +1,0 @@
-1 Titre
-2 Sous-titre
-3 Détail

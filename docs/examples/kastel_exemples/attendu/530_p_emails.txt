@@ -1,2 +1,0 @@
-ada@exemple.fr
-bob@test.org

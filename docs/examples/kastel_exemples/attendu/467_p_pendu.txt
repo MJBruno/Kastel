@@ -1,8 +1,0 @@
-_a____  erreurs=0
-_a____  erreurs=1
-_a_t__  erreurs=1
-_a_te_  erreurs=1
-_a_te_  erreurs=2
-ka_te_  erreurs=2
-kaste_  erreurs=2
-kastel  erreurs=2

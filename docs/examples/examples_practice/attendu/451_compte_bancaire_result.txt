@@ -1,4 +1,0 @@
-Ok(100)
-Ok(70)
-Err(fonds insuffisants)
-Err(montant invalide)

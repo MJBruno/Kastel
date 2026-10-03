@@ -1,4 +1,0 @@
-Some(2)
-true
-2
-false

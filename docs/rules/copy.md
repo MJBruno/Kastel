@@ -35,10 +35,8 @@ modify(a);
 println(a[0]); // 100
 ```
 
-
-
-
 ## COPY
+
 ```python
 Primitive immutable
     → pas de copy()
@@ -56,7 +54,7 @@ Instance
     → copy() seulement si explicitement défini
 ```
 
-## Pour TUPLE:
+## Pour TUPLE
 
 ```javascript
 let a = (1, 2, 3);

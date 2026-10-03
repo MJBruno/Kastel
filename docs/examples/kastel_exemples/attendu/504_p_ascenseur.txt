@@ -1,5 +1,0 @@
-de 0 à 5 (5 étages)
-de 5 à 2 (3 étages)
-de 2 à 8 (6 étages)
-de 8 à 0 (8 étages)
-total : 22

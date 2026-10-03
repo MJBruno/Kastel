@@ -1,4 +1,0 @@
-Ok(14)
-Ok(14)
-Err(pile insuffisante)
-Err(opérateur inconnu : ^)

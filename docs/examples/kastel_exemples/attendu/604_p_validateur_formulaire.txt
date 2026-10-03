@@ -1,4 +1,0 @@
-nom requis
-mineur
-email invalide
-formulaire valide

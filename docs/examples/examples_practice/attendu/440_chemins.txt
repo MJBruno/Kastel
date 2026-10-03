@@ -1,4 +1,0 @@
-rapport.final.txt
-txt
-rapport.final
-dossier/sous

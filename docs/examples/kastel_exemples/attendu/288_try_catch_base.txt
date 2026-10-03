@@ -1,2 +1,0 @@
-erreur attrapée : DivisionByZero
-le programme continue

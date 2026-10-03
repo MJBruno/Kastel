@@ -1,2 +1,0 @@
-Ok(7)
-Err(pas un nombre : abc)

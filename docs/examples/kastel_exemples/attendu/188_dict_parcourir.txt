@@ -1,3 +1,0 @@
-pain coûte 1
-lait coûte 2
-oeuf coûte 3

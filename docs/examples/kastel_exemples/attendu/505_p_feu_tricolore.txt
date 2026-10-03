@@ -1,6 +1,0 @@
-t= 0 : rouge
-t= 3 : vert
-t= 6 : orange
-t= 7 : rouge
-t=10 : vert
-t=13 : orange

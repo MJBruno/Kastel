@@ -1,2 +1,0 @@
-valeur : 42
-valeur : kastel

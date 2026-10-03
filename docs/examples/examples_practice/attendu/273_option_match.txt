@@ -1,2 +1,0 @@
-valeur : 9
-aucune valeur

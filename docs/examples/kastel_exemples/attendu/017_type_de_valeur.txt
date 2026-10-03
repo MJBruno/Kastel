@@ -1,6 +1,0 @@
-int
-float
-string
-bool
-list
-None
