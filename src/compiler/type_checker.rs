@@ -8,7 +8,10 @@ use super::{
     capability::Capability,
     compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
-    call_resolution::{validate_arity, CallTarget, Callable, CallableTarget, ResolvedCall},
+    call_resolution::{
+        validate_arity, CallSite, CallTarget, Callable, CallableTarget, ResolvedCall,
+        ResolvedCallTable,
+    },
     overloads::OverloadSet,
     types::{FunctionType, GenericConstraint, Type},
 };
@@ -28,6 +31,11 @@ impl TypeCheckContext {
             module_loader,
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TypeCheckResult {
+    pub(crate) resolved_calls: ResolvedCallTable,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +119,11 @@ pub struct TypeChecker {
     current_interface: bool,
     context: Option<TypeCheckContext>,
 
+    /// Décisions sémantiques des call-sites collectées pendant la vérification.
+    /// Le compilateur les consomme ensuite sans refaire la résolution des
+    /// natives/intrinsèques par leur nom.
+    resolved_calls: ResolvedCallTable,
+
     /// Profondeur d'expression courante (voir `MAX_EXPRESSION_DEPTH`).
     expression_depth: usize,
 
@@ -167,18 +180,33 @@ enum OperatorMethodLookup {
 
 impl TypeChecker {
     pub fn check(statements: &[Statement]) -> Result<(), CompileError> {
-        let mut checker = Self::new();
-        checker.collect_top_level(statements)?;
-        checker.check_statements(statements)
+        Self::check_for_compiler(statements, None).map(|_| ())
     }
 
     pub fn check_with_context(
         statements: &[Statement],
         context: TypeCheckContext,
     ) -> Result<(), CompileError> {
-        let mut checker = Self::new_with_context(context);
+        Self::check_for_compiler(statements, Some(context)).map(|_| ())
+    }
+
+    /// Vérifie un module et conserve les décisions sémantiques des call-sites
+    /// pour le compilateur. Cette API est volontairement séparée des fonctions
+    /// publiques historiques qui ne renvoient qu'un `Result<(), CompileError>`.
+    pub(crate) fn check_for_compiler(
+        statements: &[Statement],
+        context: Option<TypeCheckContext>,
+    ) -> Result<TypeCheckResult, CompileError> {
+        let mut checker = match context {
+            Some(context) => Self::new_with_context(context),
+            None => Self::new(),
+        };
         checker.collect_top_level(statements)?;
-        checker.check_statements(statements)
+        checker.check_statements(statements)?;
+
+        Ok(TypeCheckResult {
+            resolved_calls: checker.resolved_calls,
+        })
     }
 
     /// Analyse un module sans l'exécuter : exports (valeurs), classes en
@@ -321,6 +349,7 @@ impl TypeChecker {
             function_overloads: HashMap::new(),
             local_functions: vec![HashMap::new()],
             context: None,
+            resolved_calls: ResolvedCallTable::default(),
         }
     }
 
@@ -328,6 +357,11 @@ impl TypeChecker {
         let mut checker = Self::new();
         checker.context = Some(context);
         checker
+    }
+
+    fn record_resolved_call(&mut self, line: usize, column: usize, resolved: ResolvedCall) {
+        self.resolved_calls
+            .insert(CallSite::new(line, column), resolved);
     }
 
     /// Point d'entrée de la collecte : enregistre D'ABORD tous les alias de
@@ -4331,20 +4365,22 @@ impl TypeChecker {
                 callee,
                 generic_args,
                 arguments,
-                ..
+                line,
+                column,
             } => {
                 // Toutes les formes d'appels membres passent par un seul point
                 // de décision avant la résolution des callee non-membres.
-                if let Expression::Member { object, name, .. } = callee.as_ref()
+                let resolved = if let Expression::Member { object, name, .. } = callee.as_ref()
                     && let Some(resolved) =
                         self.check_member_call(object, name, generic_args, arguments)?
                 {
-                    let (_, _, return_type) = resolved.into_parts();
-                    return Ok(return_type);
-                }
+                    resolved
+                } else {
+                    self.resolve_call(callee, generic_args, arguments)?
+                };
 
-                let (_, _, return_type) =
-                    self.resolve_call(callee, generic_args, arguments)?.into_parts();
+                let return_type = resolved.return_type.clone();
+                self.record_resolved_call(*line, *column, resolved);
                 Ok(return_type)
             }
 
@@ -4438,7 +4474,8 @@ impl TypeChecker {
                 class_name,
                 generic_args,
                 arguments,
-                ..
+                line,
+                column,
             } => {
                 let resolved =
                     self.resolve_constructor_call(class_name, generic_args, arguments)?;
@@ -4452,7 +4489,8 @@ impl TypeChecker {
                     "constructor target must preserve the resolved class name"
                 );
 
-                let (_, _, return_type) = resolved.into_parts();
+                let return_type = resolved.return_type.clone();
+                self.record_resolved_call(*line, *column, resolved);
                 Ok(return_type)
             }
 
@@ -7376,6 +7414,12 @@ mod tests {
         TypeChecker::check(&statements)
     }
 
+    fn check_for_compiler(source: &str) -> Result<TypeCheckResult, CompileError> {
+        let tokens = Lexer::new(source.to_string()).scan_token().unwrap();
+        let statements = Parser::new(tokens).parse().unwrap();
+        TypeChecker::check_for_compiler(&statements, None)
+    }
+
     #[test]
     fn inference_and_annotations_are_accepted() {
         let result = check(
@@ -9480,6 +9524,74 @@ let list_values: Iterator<int> = [1, 2, 3].iter();
         }
 
         matches!(error, CompileError::InvalidIterable { .. })
+    }
+
+    #[test]
+    fn compiler_check_collects_intrinsic_call_metadata() {
+        let result = check_for_compiler(
+            r#"
+let task = spawn(func() {
+});
+"#,
+        )
+        .expect("spawn doit être valide");
+
+        assert!(result.resolved_calls.iter().any(|(_, resolved)| {
+            matches!(
+                &resolved.target,
+                CallTarget::Native(spec)
+                    if matches!(spec.kind, builtin_types::NativeKind::Intrinsic(
+                        builtin_types::Intrinsic::Spawn
+                    ))
+            )
+        }));
+    }
+
+    #[test]
+    fn compiler_check_collects_constructor_call_metadata() {
+        let result = check_for_compiler(
+            r#"
+class Box {
+    func initialize(value: int) {
+    }
+}
+let box = new Box(42);
+"#,
+        )
+        .expect("new Box(42) doit être valide");
+
+        assert!(result.resolved_calls.iter().any(|(_, resolved)| {
+            matches!(
+                &resolved.target,
+                CallTarget::Constructor { class_name, .. } if class_name == "Box"
+            )
+        }));
+    }
+
+    #[test]
+    fn compiler_check_keeps_user_binding_instead_of_intrinsic_metadata() {
+        let result = check_for_compiler(
+            r#"
+let spawn = func(value) {
+    return value;
+};
+let value = spawn(42);
+"#,
+        )
+        .expect("une variable utilisateur peut masquer spawn");
+
+        assert!(result.resolved_calls.iter().any(|(_, resolved)| {
+            matches!(&resolved.target, CallTarget::Callable(_))
+        }));
+        assert!(!result.resolved_calls.iter().any(|(_, resolved)| {
+            matches!(
+                &resolved.target,
+                CallTarget::Native(spec)
+                    if matches!(spec.kind, builtin_types::NativeKind::Intrinsic(
+                        builtin_types::Intrinsic::Spawn
+                    ))
+            )
+        }));
     }
 
     #[test]

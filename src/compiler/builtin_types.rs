@@ -109,16 +109,6 @@ impl Intrinsic {
     }
 }
 
-pub fn intrinsic_kind(name: &str) -> Option<Intrinsic> {
-    match name {
-        "spawn" => Some(Intrinsic::Spawn),
-        "yield" => Some(Intrinsic::Yield),
-        "sleep" => Some(Intrinsic::Sleep),
-        "select" => Some(Intrinsic::Select),
-        _ => None,
-    }
-}
-
 /// Contrat complet d'une fonction native/intrinsèque.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeSpec {
@@ -479,11 +469,6 @@ pub fn specs() -> Vec<NativeSpec> {
     registry().to_vec()
 }
 
-/// Retourne uniquement la cardinalité statique d'une native/intrinsèque.
-pub fn native_arity(name: &str) -> Option<Arity> {
-    spec(name).map(|spec| spec.arity)
-}
-
 /// Noms des fonctions effectivement enregistrées dans `Compiler` comme
 /// globals natifs. Les intrinsèques du VM sont volontairement exclus.
 pub fn compiler_native_names() -> impl Iterator<Item = &'static str> {
@@ -543,7 +528,10 @@ mod tests {
     #[test]
     fn intrinsic_identity_is_centralized() {
         for intrinsic in Intrinsic::all() {
-            assert_eq!(intrinsic_kind(intrinsic.name()), Some(intrinsic));
+            assert_eq!(
+                spec(intrinsic.name()).map(|native| native.kind),
+                Some(NativeKind::Intrinsic(intrinsic)),
+            );
         }
     }
 
@@ -569,16 +557,18 @@ mod tests {
 
     #[test]
     fn variable_native_arities_are_explicit() {
-        assert_eq!(native_arity("range"), Some(Arity::Range { min: 1, max: 3 }));
-        assert_eq!(native_arity("input"), Some(Arity::Range { min: 0, max: 1 }));
-        assert_eq!(native_arity("exit"), Some(Arity::Range { min: 0, max: 1 }));
-        assert_eq!(native_arity("print"), Some(Arity::AtLeast(1)));
-        assert_eq!(native_arity("println"), Some(Arity::AtLeast(1)));
-        assert_eq!(native_arity("format"), Some(Arity::AtLeast(1)));
-        assert_eq!(native_arity("Set"), Some(Arity::AtLeast(0)));
-        assert_eq!(native_arity("spawn"), Some(Arity::AtLeast(1)));
-        assert_eq!(native_arity("select"), Some(Arity::Range { min: 1, max: 2 }));
-        assert_eq!(native_arity("channel"), Some(Arity::Range { min: 0, max: 1 }));
+        let arity = |name: &str| spec(name).map(|native| native.arity);
+
+        assert_eq!(arity("range"), Some(Arity::Range { min: 1, max: 3 }));
+        assert_eq!(arity("input"), Some(Arity::Range { min: 0, max: 1 }));
+        assert_eq!(arity("exit"), Some(Arity::Range { min: 0, max: 1 }));
+        assert_eq!(arity("print"), Some(Arity::AtLeast(1)));
+        assert_eq!(arity("println"), Some(Arity::AtLeast(1)));
+        assert_eq!(arity("format"), Some(Arity::AtLeast(1)));
+        assert_eq!(arity("Set"), Some(Arity::AtLeast(0)));
+        assert_eq!(arity("spawn"), Some(Arity::AtLeast(1)));
+        assert_eq!(arity("select"), Some(Arity::Range { min: 1, max: 2 }));
+        assert_eq!(arity("channel"), Some(Arity::Range { min: 0, max: 1 }));
 
         assert!(!Arity::Range { min: 1, max: 3 }.accepts(0));
         assert!(Arity::Range { min: 1, max: 3 }.accepts(2));

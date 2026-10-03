@@ -5,10 +5,53 @@
 //! Toutes ces formes passent par la même validation d'arité avant les règles
 //! propres à l'appel (instanciation générique, vérification des types, etc.).
 
+use std::collections::HashMap;
+
 use super::{
     builtin_types::Arity,
     types::{FunctionType, Type},
 };
+
+/// Identifiant stable d'un call-site dans le source Kastel.
+///
+/// Les expressions d'appel et `new` possèdent déjà une position précise dans
+/// l'AST. Le compilateur peut donc réutiliser la décision sémantique sans
+/// réanalyser l'expression ni ajouter un identifiant artificiel à l'AST.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct CallSite {
+    pub(crate) line: usize,
+    pub(crate) column: usize,
+}
+
+impl CallSite {
+    pub(crate) const fn new(line: usize, column: usize) -> Self {
+        Self { line, column }
+    }
+}
+
+/// Table des décisions sémantiques produites par le TypeChecker.
+///
+/// Elle reste indépendante de l'AST et du bytecode : elle associe seulement
+/// un call-site source à son `ResolvedCall`.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ResolvedCallTable {
+    entries: HashMap<CallSite, ResolvedCall>,
+}
+
+impl ResolvedCallTable {
+    pub(crate) fn insert(&mut self, site: CallSite, resolved: ResolvedCall) {
+        self.entries.insert(site, resolved);
+    }
+
+    pub(crate) fn get(&self, site: CallSite) -> Option<&ResolvedCall> {
+        self.entries.get(&site)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&CallSite, &ResolvedCall)> {
+        self.entries.iter()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ArityError {
@@ -104,6 +147,22 @@ impl ResolvedCall {
             CallTarget::Constructor { class_name, callable } => {
                 Some((class_name.as_str(), callable.as_ref()))
             }
+            _ => None,
+        }
+    }
+
+    /// Retourne l'intrinsèque porté par cette résolution, lorsque le call-site
+    /// cible effectivement un intrinsèque du langage.
+    ///
+    /// La connaissance de la représentation `NativeSpec` reste confinée au
+    /// noyau de résolution : le compilateur d'émission n'a plus besoin de
+    /// connaître `NativeKind` ni de relire le registre natif.
+    pub(crate) fn intrinsic(&self) -> Option<super::builtin_types::Intrinsic> {
+        match &self.target {
+            CallTarget::Native(spec) => match spec.kind {
+                super::builtin_types::NativeKind::Intrinsic(intrinsic) => Some(intrinsic),
+                super::builtin_types::NativeKind::Runtime => None,
+            },
             _ => None,
         }
     }
@@ -219,7 +278,10 @@ pub(crate) enum CallTarget {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_arity, CallTarget, Callable, CallableTarget, ResolvedCall};
+    use super::{
+        validate_arity, CallSite, CallTarget, Callable, CallableTarget, ResolvedCall,
+        ResolvedCallTable,
+    };
     use crate::compiler::builtin_types::Arity;
     use crate::compiler::types::{FunctionType, Type};
 
@@ -399,6 +461,100 @@ mod tests {
         assert!(resolved.signature.is_none());
         assert_eq!(resolved.return_type, Type::Range);
         assert!(matches!(resolved.target, CallTarget::Native(_)));
+    }
+
+    #[test]
+    fn resolved_call_exposes_intrinsic_identity() {
+        let spawn = crate::compiler::builtin_types::spec("spawn")
+            .expect("spawn est un intrinsèque enregistré")
+            .clone();
+        let resolved = ResolvedCall::special(
+            CallTarget::Native(spawn),
+            Type::Dynamic,
+        );
+
+        assert_eq!(
+            resolved.intrinsic(),
+            Some(crate::compiler::builtin_types::Intrinsic::Spawn)
+        );
+    }
+
+    #[test]
+    fn resolved_call_does_not_report_runtime_native_as_intrinsic() {
+        let println = crate::compiler::builtin_types::spec("println")
+            .expect("println est une native runtime")
+            .clone();
+        let resolved = ResolvedCall::special(
+            CallTarget::Native(println),
+            Type::None,
+        );
+
+        assert_eq!(resolved.intrinsic(), None);
+    }
+
+    #[test]
+    fn resolved_call_does_not_report_callable_or_dynamic_as_intrinsic() {
+        assert_eq!(ResolvedCall::dynamic().intrinsic(), None);
+
+        let signature = signature(1);
+        let resolved = ResolvedCall::from_signature(
+            CallTarget::Callable(CallableTarget::One(signature.clone())),
+            signature,
+        );
+        assert_eq!(resolved.intrinsic(), None);
+    }
+
+    #[test]
+    fn resolved_call_does_not_report_constructor_as_intrinsic() {
+        let resolved = ResolvedCall::implicit_constructor(
+            "Box".to_string(),
+            Type::Named("Box".to_string()),
+        );
+
+        assert_eq!(resolved.intrinsic(), None);
+    }
+
+    #[test]
+    fn resolved_call_table_is_keyed_by_source_position() {
+        let mut table = ResolvedCallTable::default();
+        let site = CallSite::new(7, 12);
+        let resolved = ResolvedCall::dynamic();
+
+        table.insert(site, resolved);
+
+        let found = table
+            .get(site)
+            .expect("le call-site doit être conservé dans la table");
+        assert_eq!(found.return_type, Type::Dynamic);
+        assert_eq!(table.entries.len(), 1);
+        assert!(table.get(CallSite::new(7, 13)).is_none());
+    }
+
+    #[test]
+    fn distinct_source_positions_can_hold_distinct_resolutions() {
+        let mut table = ResolvedCallTable::default();
+        table.insert(CallSite::new(1, 1), ResolvedCall::dynamic());
+        table.insert(
+            CallSite::new(2, 1),
+            ResolvedCall::special(
+                CallTarget::Native(
+                    crate::compiler::builtin_types::spec("range")
+                        .expect("range est enregistré")
+                        .clone(),
+                ),
+                Type::Range,
+            ),
+        );
+
+        assert!(matches!(
+            table.get(CallSite::new(1, 1)),
+            Some(resolved) if resolved.return_type == Type::Dynamic
+        ));
+        assert!(matches!(
+            table.get(CallSite::new(2, 1)),
+            Some(resolved) if resolved.return_type == Type::Range
+        ));
+        assert_eq!(table.entries.len(), 2);
     }
 
     #[test]

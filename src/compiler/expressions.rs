@@ -4,7 +4,8 @@ use crate::frontend::ast::*;
 use crate::runtime::value::Value;
 
 use super::{
-    builtin_types::{self, Intrinsic},
+    builtin_types::Intrinsic,
+    call_resolution::ResolvedCall,
     compiler::{Compiler, MAX_EXPRESSION_DEPTH},
 };
 
@@ -124,78 +125,66 @@ impl Compiler {
                 column,
                 ..
             } => {
-                // Une déclaration utilisateur visible masque toujours une
-                // native ou une intrinsèque homonyme. La résolution doit donc
-                // être faite avant d'appliquer l'arité et le comportement
-                // spécial du symbole.
-                let builtin_call_kind = if let Expression::Variable(name) = callee.as_ref() {
-                    self.visible_builtin_call_kind(name)?
-                } else {
-                    None
-                };
-
-                if let Expression::Variable(name) = callee.as_ref()
-                    && builtin_call_kind.is_some()
-                    && let Some(arity) = builtin_types::native_arity(name)
-                    && !arity.accepts(arguments.len())
-                {
-                    return Err(CompileError::WrongArgumentCount {
-                        expected: arity.expected_for(arguments.len()) as i32,
-                        found: arguments.len(),
-                    });
-                }
+                // La résolution sémantique a déjà été effectuée par le
+                // TypeChecker. Le compilateur lit uniquement l'identité de
+                // l'intrinsèque depuis `ResolvedCall` au lieu de redéduire
+                // celle-ci à partir du nom du symbole.
+                let intrinsic = self.resolved_call(*line, *column).and_then(ResolvedCall::intrinsic);
 
                 if let Expression::Member { object, name, .. } = callee.as_ref() {
                     return self.compile_method_call(object, name, arguments, *line, *column);
                 }
 
-                if let Expression::Variable(_) = callee.as_ref() {
-                    if builtin_call_kind == Some(builtin_types::NativeKind::Intrinsic(Intrinsic::Spawn)) {
-                        if arguments.len() > u8::MAX as usize {
-                            return Err(CompileError::TooManyArguments);
+                if let Some(intrinsic) = intrinsic {
+                    match intrinsic {
+                        Intrinsic::Spawn => {
+                            if arguments.len() > u8::MAX as usize {
+                                return Err(CompileError::TooManyArguments);
+                            }
+
+                            for argument in arguments {
+                                self.compile_expression(argument)?;
+                            }
+
+                            self.current_line = *line;
+                            self.current_column = *column;
+                            self.emit_bytes(OpCode::Spawn, (arguments.len() - 1) as u8);
+                            return Ok(());
                         }
 
-                        for argument in arguments {
-                            self.compile_expression(argument)?;
-                        }
-
-                        self.current_line = *line;
-                        self.current_column = *column;
-                        self.emit_bytes(OpCode::Spawn, (arguments.len() - 1) as u8);
-                        return Ok(());
-                    }
-
-                    if builtin_call_kind == Some(builtin_types::NativeKind::Intrinsic(Intrinsic::Yield)) {
-                        self.current_line = *line;
-                        self.current_column = *column;
-                        self.emit_opcode(OpCode::Yield);
-                        self.emit_opcode(OpCode::None);
-                        return Ok(());
-                    }
-
-                    if builtin_call_kind == Some(builtin_types::NativeKind::Intrinsic(Intrinsic::Select)) {
-                        // `Select` attend toujours deux valeurs sur la pile :
-                        // timeout (ou None), puis la liste des channels.
-                        if let Some(timeout) = arguments.get(1) {
-                            self.compile_expression(timeout)?;
-                        } else {
+                        Intrinsic::Yield => {
+                            self.current_line = *line;
+                            self.current_column = *column;
+                            self.emit_opcode(OpCode::Yield);
                             self.emit_opcode(OpCode::None);
+                            return Ok(());
                         }
 
-                        self.compile_expression(&arguments[0])?;
-                        self.current_line = *line;
-                        self.current_column = *column;
-                        self.emit_opcode(OpCode::Select);
-                        return Ok(());
-                    }
+                        Intrinsic::Select => {
+                            // `Select` attend toujours deux valeurs sur la
+                            // pile : timeout (ou None), puis la liste des
+                            // channels.
+                            if let Some(timeout) = arguments.get(1) {
+                                self.compile_expression(timeout)?;
+                            } else {
+                                self.emit_opcode(OpCode::None);
+                            }
 
-                    if builtin_call_kind == Some(builtin_types::NativeKind::Intrinsic(Intrinsic::Sleep)) {
-                        self.compile_expression(&arguments[0])?;
-                        self.current_line = *line;
-                        self.current_column = *column;
-                        self.emit_opcode(OpCode::Sleep);
-                        self.emit_opcode(OpCode::None);
-                        return Ok(());
+                            self.compile_expression(&arguments[0])?;
+                            self.current_line = *line;
+                            self.current_column = *column;
+                            self.emit_opcode(OpCode::Select);
+                            return Ok(());
+                        }
+
+                        Intrinsic::Sleep => {
+                            self.compile_expression(&arguments[0])?;
+                            self.current_line = *line;
+                            self.current_column = *column;
+                            self.emit_opcode(OpCode::Sleep);
+                            self.emit_opcode(OpCode::None);
+                            return Ok(());
+                        }
                     }
                 }
 

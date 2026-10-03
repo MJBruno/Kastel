@@ -1833,11 +1833,9 @@ impl Compiler {
         statements: &[Statement],
         context: Option<TypeCheckContext>,
     ) -> Result<Function, CompileError> {
-        match context.clone() {
-            Some(context) => TypeChecker::check_with_context(statements, context)?,
-            None => TypeChecker::check(statements)?,
-        }
-
+        let type_check =
+            TypeChecker::check_for_compiler(statements, context.clone())?;
+        self.resolved_calls = std::rc::Rc::new(type_check.resolved_calls);
         self.type_context = context;
 
         for (index, statement) in statements.iter().enumerate() {

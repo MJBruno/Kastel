@@ -8,7 +8,7 @@ use crate::frontend::ast::Statement;
 use crate::runtime::function::Function;
 // use crate::runtime::upvalue::Upvalue;
 
-use super::builtin_types::{self, NativeKind};
+use super::call_resolution::{CallSite, ResolvedCall, ResolvedCallTable};
 use super::context::{CompilerContext, CompilerContextRef};
 // use super::locals::LocalTable;
 use super::loops::LoopContext;
@@ -83,6 +83,11 @@ pub struct Compiler {
 
     /// Profondeur d'expression courante (voir `MAX_EXPRESSION_DEPTH`).
     pub(crate) expression_depth: usize,
+
+    /// Décisions sémantiques des call-sites produites par le TypeChecker.
+    /// Partagées avec les sous-compilateurs de fonctions afin que la
+    /// génération de bytecode ne redéduise pas les intrinsèques par leur nom.
+    pub(crate) resolved_calls: Rc<ResolvedCallTable>,
 }
 
 #[allow(dead_code)]
@@ -106,6 +111,7 @@ impl Compiler {
             current_line: 0,
             current_column: 0,
             expression_depth: 0,
+            resolved_calls: Rc::new(ResolvedCallTable::default()),
             wildcard_imported: false,
         }
     }
@@ -129,6 +135,7 @@ impl Compiler {
             current_line: 0,
             current_column: 0,
             expression_depth: 0,
+            resolved_calls: Rc::new(ResolvedCallTable::default()),
             wildcard_imported: false,
         }
     }
@@ -156,6 +163,7 @@ impl Compiler {
             current_line: 0,
             current_column: 0,
             expression_depth: 0,
+            resolved_calls: Rc::new(ResolvedCallTable::default()),
             wildcard_imported: false,
         }
     }
@@ -194,43 +202,12 @@ impl Compiler {
         Ok(())
     }
 
-    /// Résout un nom d'appel par rapport à la portée visible avant de lui
-    /// appliquer la sémantique spéciale des natives/intrinsèques.
-    ///
-    /// Une déclaration utilisateur visible doit toujours primer sur le nom
-    /// d'une intrinsèque. Sans cette règle, `let sleep = func(...) { ... }`
-    /// continuerait à être compilé comme l'opcode `Sleep`, indépendamment de
-    /// la valeur réellement résolue par le langage.
-    pub(crate) fn visible_builtin_call_kind(
+    pub(crate) fn resolved_call(
         &self,
-        name: &str,
-    ) -> Result<Option<NativeKind>, CompileError> {
-        let mut context = Some(Rc::clone(&self.context));
-
-        while let Some(current) = context {
-            let (local, enclosing) = {
-                let borrowed = current.borrow();
-                (borrowed.locals.resolve_local(name)?, borrowed.enclosing.clone())
-            };
-
-            if local.is_some() {
-                return Ok(None);
-            }
-
-            context = enclosing;
-        }
-
-        if let Some(global) = self.globals.borrow().get(name) {
-            if global.native {
-                return Ok(Some(NativeKind::Runtime));
-            }
-
-            // Un global utilisateur/importé portant le même nom masque toute
-            // intrinsèque homonyme.
-            return Ok(None);
-        }
-
-        Ok(builtin_types::intrinsic_kind(name).map(NativeKind::Intrinsic))
+        line: usize,
+        column: usize,
+    ) -> Option<&ResolvedCall> {
+        self.resolved_calls.get(CallSite::new(line, column))
     }
 
     // ============================================================
@@ -512,11 +489,9 @@ impl Compiler {
         statements: &[Statement],
         context: Option<TypeCheckContext>,
     ) -> Result<(Function, Vec<String>), CompileError> {
-        match context.clone() {
-            Some(context) => TypeChecker::check_with_context(statements, context)?,
-            None => TypeChecker::check(statements)?,
-        }
-
+        let type_check =
+            TypeChecker::check_for_compiler(statements, context.clone())?;
+        self.resolved_calls = Rc::new(type_check.resolved_calls);
         self.type_context = context;
 
         self.predeclare_global_functions(statements)?;

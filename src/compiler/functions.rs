@@ -191,6 +191,7 @@ impl Compiler {
 
         let mut compiler =
             Compiler::new_function(name.to_string(), Rc::clone(&self.globals), enclosing);
+        compiler.resolved_calls = Rc::clone(&self.resolved_calls);
 
         for param in params {
             compiler.add_parametre(param)?;
