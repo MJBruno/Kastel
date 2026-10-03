@@ -297,6 +297,8 @@ impl VirtualMachine {
                 ComparisonOp::Equal => ordering == 0,
                 ComparisonOp::Greater => ordering > 0,
                 ComparisonOp::Less => ordering < 0,
+                ComparisonOp::LessEqual => ordering <= 0,
+                ComparisonOp::GreaterEqual => ordering >= 0,
             };
 
             self.push(Value::Boolean(value));

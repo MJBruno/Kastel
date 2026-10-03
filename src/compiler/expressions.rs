@@ -494,19 +494,13 @@ impl Compiler {
 
             BinaryOp::Less => OpCode::Less,
 
-            BinaryOp::LessEqual => {
-                self.emit_opcode(OpCode::Greater);
-                self.emit_opcode(OpCode::Not);
-                return;
-            }
+            // `<=` / `>=` sont des opcodes à part entière : les compiler en
+            // `!(a > b)` / `!(a < b)` donnait `NaN <= x == true`.
+            BinaryOp::LessEqual => OpCode::LessEqual,
 
             BinaryOp::Greater => OpCode::Greater,
 
-            BinaryOp::GreaterEqual => {
-                self.emit_opcode(OpCode::Less);
-                self.emit_opcode(OpCode::Not);
-                return;
-            }
+            BinaryOp::GreaterEqual => OpCode::GreaterEqual,
             BinaryOp::Is => OpCode::Is,
             BinaryOp::BitAnd => OpCode::BitAnd,
             BinaryOp::BitOr => OpCode::BitOr,

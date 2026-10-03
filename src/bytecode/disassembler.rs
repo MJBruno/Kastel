@@ -39,6 +39,10 @@ impl Chunk {
             self.simple_instruction("OP_GREATER", offset)
         } else if let OpCode::Less = opcode {
             self.simple_instruction("OP_LESS", offset)
+        } else if let OpCode::LessEqual = opcode {
+            self.simple_instruction("OP_LESS_EQUAL", offset)
+        } else if let OpCode::GreaterEqual = opcode {
+            self.simple_instruction("OP_GREATER_EQUAL", offset)
         } else if let OpCode::Not = opcode {
             self.simple_instruction("OP_NOT", offset)
         } else if let OpCode::Is = opcode {

@@ -5167,19 +5167,22 @@ impl TypeChecker {
                 // Une native standard utilise sa signature déclarée dans
                 // le registre ; aucun second contrat ne doit être déduit
                 // depuis le binding runtime.
-                match self.resolve_callable_signature(
+                let resolved = self.resolve_type_callable(
                     &spec.ty,
                     generic_args,
                     arguments,
                     &function_name,
-                )? {
+                )?;
+                let (_, signature, return_type) = resolved.into_parts();
+
+                match signature {
                     Some(signature) => Ok(ResolvedCall::from_signature(
                         CallTarget::Native(spec),
                         signature,
                     )),
                     None => Ok(ResolvedCall::special(
                         CallTarget::Native(spec),
-                        Type::Dynamic,
+                        return_type,
                     )),
                 }
             }
@@ -5428,18 +5431,14 @@ impl TypeChecker {
                     )
                 );
 
-                let (result_type, is_async) = if let Some(signature) =
-                    self.resolve_callable_signature(
-                        &callee_type,
-                        generic_args,
-                        task_arguments,
-                        &function_name,
-                    )?
-                {
-                    (*signature.return_type, signature.is_async)
-                } else {
-                    (Type::Dynamic, false)
-                };
+                let resolved = self.resolve_type_callable(
+                    &callee_type,
+                    generic_args,
+                    task_arguments,
+                    &function_name,
+                )?;
+                let (_, signature, result_type) = resolved.into_parts();
+                let is_async = signature.as_ref().is_some_and(|signature| signature.is_async);
 
                 if is_async {
                     return Ok(Some(result_type));
@@ -5559,55 +5558,56 @@ impl TypeChecker {
             }
         }
 
-        // Membres des types runtime spécialisés.
-        if let Some(Type::Function(signature)) = object_type.channel_member_type(member_name) {
-            return Ok(Some(self.resolve_member_signature(
-                &signature,
+        // Membres des types runtime spécialisés. Tous utilisent maintenant
+        // le même résolveur que les fonctions appelables ordinaires.
+        if let Some(member_type) = object_type.channel_member_type(member_name) {
+            return Ok(Some(self.resolve_type_callable(
+                &member_type,
                 generic_args,
                 arguments,
                 member_name,
             )?));
         }
 
-        if let Some(Type::Function(signature)) = object_type.mutex_member_type(member_name) {
-            return Ok(Some(self.resolve_member_signature(
-                &signature,
+        if let Some(member_type) = object_type.mutex_member_type(member_name) {
+            return Ok(Some(self.resolve_type_callable(
+                &member_type,
                 generic_args,
                 arguments,
                 member_name,
             )?));
         }
 
-        if let Some(Type::Function(signature)) = object_type.event_member_type(member_name) {
-            return Ok(Some(self.resolve_member_signature(
-                &signature,
+        if let Some(member_type) = object_type.event_member_type(member_name) {
+            return Ok(Some(self.resolve_type_callable(
+                &member_type,
                 generic_args,
                 arguments,
                 member_name,
             )?));
         }
 
-        if let Some(Type::Function(signature)) = object_type.rwlock_member_type(member_name) {
-            return Ok(Some(self.resolve_member_signature(
-                &signature,
+        if let Some(member_type) = object_type.rwlock_member_type(member_name) {
+            return Ok(Some(self.resolve_type_callable(
+                &member_type,
                 generic_args,
                 arguments,
                 member_name,
             )?));
         }
 
-        if let Some(Type::Function(signature)) = object_type.condvar_member_type(member_name) {
-            return Ok(Some(self.resolve_member_signature(
-                &signature,
+        if let Some(member_type) = object_type.condvar_member_type(member_name) {
+            return Ok(Some(self.resolve_type_callable(
+                &member_type,
                 generic_args,
                 arguments,
                 member_name,
             )?));
         }
 
-        if let Some(Type::Function(signature)) = object_type.option_result_member_type(member_name) {
-            return Ok(Some(self.resolve_member_signature(
-                &signature,
+        if let Some(member_type) = object_type.option_result_member_type(member_name) {
+            return Ok(Some(self.resolve_type_callable(
+                &member_type,
                 generic_args,
                 arguments,
                 member_name,
@@ -5623,11 +5623,10 @@ impl TypeChecker {
         }
 
         if !matches!(object_type, Type::Set(_) | Type::SetDynamic)
-            && let Some(Type::Function(signature)) =
-                object_type.collection_member_type(member_name)
+            && let Some(member_type) = object_type.collection_member_type(member_name)
         {
-            return Ok(Some(self.resolve_member_signature(
-                &signature,
+            return Ok(Some(self.resolve_type_callable(
+                &member_type,
                 generic_args,
                 arguments,
                 member_name,
@@ -6343,25 +6342,6 @@ impl TypeChecker {
         Ok(instantiated)
     }
 
-    fn resolve_member_signature(
-        &mut self,
-        signature: &FunctionType,
-        generic_args: &[TypeExpr],
-        arguments: &[Expression],
-        function_name: &str,
-    ) -> Result<ResolvedCall, CompileError> {
-        let selected = self.resolve_selected_callable(
-            Callable::One(signature),
-            generic_args,
-            arguments,
-            function_name,
-        )?;
-        Ok(ResolvedCall::from_callable(
-            CallableTarget::One(selected.clone()),
-            selected,
-        ))
-    }
-
     fn resolve_selected_callable(
         &mut self,
         callable: Callable<'_>,
@@ -6396,35 +6376,41 @@ impl TypeChecker {
         self.instantiate_call_signature(signature, generic_args, arguments, function_name)
     }
 
-    fn resolve_callable_signature(
+    fn resolve_type_callable(
         &mut self,
         callable: &Type,
         generic_args: &[TypeExpr],
         arguments: &[Expression],
         function_name: &str,
-    ) -> Result<Option<FunctionType>, CompileError> {
+    ) -> Result<ResolvedCall, CompileError> {
         match callable {
-            Type::Function(signature) => self
-                .resolve_selected_callable(
+            Type::Function(signature) => {
+                let selected = self.resolve_selected_callable(
                     Callable::One(signature),
                     generic_args,
                     arguments,
                     function_name,
-                )
-                .map(Some),
-            Type::Overloads(signatures) => self
-                .resolve_selected_callable(
-                    Callable::Overloaded(signatures),
+                )?;
+                Ok(ResolvedCall::from_callable(
+                    CallableTarget::One(selected.clone()),
+                    selected,
+                ))
+            }
+            Type::Overloads(signatures) => {
+                let callable = CallableTarget::Overloaded(signatures.clone());
+                let selected = self.resolve_owned_callable(
+                    &callable,
                     generic_args,
                     arguments,
                     function_name,
-                )
-                .map(Some),
+                )?;
+                Ok(ResolvedCall::from_callable(callable, selected))
+            }
             Type::Dynamic => {
                 for argument in arguments {
                     self.check_expression(argument)?;
                 }
-                Ok(None)
+                Ok(ResolvedCall::dynamic())
             }
             other => Err(CompileError::NotCallable {
                 found: other.to_string(),

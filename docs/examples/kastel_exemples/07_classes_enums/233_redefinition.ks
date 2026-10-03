@@ -9,17 +9,22 @@
 //   cercle
 // ==================================================================
 
-class Forme {
+interface Forme {
+    func nom() -> str;
+}
+
+class FormeSimple : Forme {
     func nom() -> str {
         return "forme";
     }
 }
 
-class Cercle: Forme {
+class Cercle : Forme {
     func nom() -> str {
         return "cercle";
     }
 }
 
-println(new Forme().nom());
+println(new FormeSimple().nom());
 println(new Cercle().nom());
+

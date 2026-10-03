@@ -9,20 +9,24 @@
 //   Miaou
 // ==================================================================
 
-class Animal {
-    let nom: str = "animal";
+interface Animal {
+    func se_presenter() -> str;
+}
+
+class Chat : Animal {
+    let nom: str = "chat";
 
     func se_presenter() -> str {
         return "Je suis " + self.nom;
     }
-}
 
-class Chat: Animal {
     func miauler() -> str {
         return "Miaou";
     }
 }
 
 let c = new Chat();
+
 println(c.se_presenter());
 println(c.miauler());
+

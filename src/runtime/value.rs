@@ -102,6 +102,8 @@ pub enum ComparisonOp {
     Equal,
     Greater,
     Less,
+    LessEqual,
+    GreaterEqual,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1548,7 +1550,16 @@ impl Value {
                 Ok(Value::Float(a / b))
             }
 
-            NumericOp::Modulo => Ok(Value::Float(a % b)),
+            // Même règle que la division : un modulo par zéro est une
+            // erreur, pas un NaN silencieux (`1 % 0` et `1.0 % 0.0`
+            // doivent se comporter pareil).
+            NumericOp::Modulo => {
+                if b == 0.0 {
+                    return Err(RuntimeError::DivisionByZero);
+                }
+
+                Ok(Value::Float(a % b))
+            }
         }
     }
 
@@ -1572,45 +1583,84 @@ impl Value {
     // COMPARISON
     // ============================================================
 
-    /// Compare deux valeurs numériques, Integer et Float mélangeables
-    /// (5 < 5.5 doit fonctionner). Passe par f64 pour la comparaison
-    /// inter-types — limite connue : au-delà de 2^53, deux i64 distincts
-    /// peuvent devenir "égaux" une fois convertis en f64. Kastel n'a pas
-    /// vocation à manipuler des entiers de cette taille pour l'instant.
-    pub fn compare_numeric(a: Value, b: Value, op: ComparisonOp) -> Result<Value, RuntimeError> {
-        match (a, b) {
-            (Value::Integer(a), Value::Integer(b)) => {
-                let result = match op {
-                    ComparisonOp::Equal => a == b,
-                    ComparisonOp::Greater => a > b,
-                    ComparisonOp::Less => a < b,
-                };
+    /// Ordre EXACT entre un entier et un flottant, sans conversion de
+    /// l'entier en f64 (qui perd de la précision au-delà de 2^53 et rendait
+    /// `==` — exact — incohérent avec `<`/`>`). `None` si `b` est NaN
+    /// (non ordonné).
+    pub(crate) fn compare_integer_float(a: i64, b: f64) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering;
 
-                Ok(Value::Boolean(result))
+        const I64_MAX_EXCLUSIVE: f64 = 9_223_372_036_854_775_808.0;
+
+        if b.is_nan() {
+            return None;
+        }
+
+        // Hors de l'intervalle des i64 (±infini compris) : l'ordre est évident.
+        if b >= I64_MAX_EXCLUSIVE {
+            return Some(Ordering::Less);
+        }
+
+        if b < -I64_MAX_EXCLUSIVE {
+            return Some(Ordering::Greater);
+        }
+
+        // `b` est dans [i64::MIN, 2^63) : sa partie entière tient dans un i64.
+        let truncated = b.trunc();
+
+        match a.cmp(&(truncated as i64)) {
+            Ordering::Equal => {
+                let fraction = b - truncated;
+
+                if fraction > 0.0 {
+                    Some(Ordering::Less)
+                } else if fraction < 0.0 {
+                    Some(Ordering::Greater)
+                } else {
+                    Some(Ordering::Equal)
+                }
             }
 
-            (Value::Integer(a), Value::Float(b)) => {
-                Ok(Value::Boolean(Self::compare_number(a as f64, b, op)))
-            }
-
-            (Value::Float(a), Value::Integer(b)) => {
-                Ok(Value::Boolean(Self::compare_number(a, b as f64, op)))
-            }
-
-            (Value::Float(a), Value::Float(b)) => {
-                Ok(Value::Boolean(Self::compare_number(a, b, op)))
-            }
-
-            _ => Err(RuntimeError::TypeError),
+            other => Some(other),
         }
     }
 
-    fn compare_number(a: f64, b: f64, op: ComparisonOp) -> bool {
-        match op {
-            ComparisonOp::Equal => a == b,
-            ComparisonOp::Greater => a > b,
-            ComparisonOp::Less => a < b,
+    /// Applique `op` à un ordre éventuellement indéfini (`None` = NaN) :
+    /// toute comparaison avec NaN est fausse, comme en IEEE 754.
+    fn ordering_satisfies(ordering: Option<std::cmp::Ordering>, op: ComparisonOp) -> bool {
+        use std::cmp::Ordering;
+
+        match (ordering, op) {
+            (None, _) => false,
+
+            (Some(ordering), ComparisonOp::Equal) => ordering == Ordering::Equal,
+            (Some(ordering), ComparisonOp::Greater) => ordering == Ordering::Greater,
+            (Some(ordering), ComparisonOp::Less) => ordering == Ordering::Less,
+            (Some(ordering), ComparisonOp::LessEqual) => ordering != Ordering::Greater,
+            (Some(ordering), ComparisonOp::GreaterEqual) => ordering != Ordering::Less,
         }
+    }
+
+    /// Compare deux valeurs numériques, Integer et Float mélangeables
+    /// (5 < 5.5 doit fonctionner). La comparaison Integer/Float est
+    /// EXACTE (voir `compare_integer_float`) et cohérente avec `equals` ;
+    /// toute comparaison impliquant NaN est fausse.
+    pub fn compare_numeric(a: Value, b: Value, op: ComparisonOp) -> Result<Value, RuntimeError> {
+        let ordering = match (a, b) {
+            (Value::Integer(a), Value::Integer(b)) => Some(a.cmp(&b)),
+
+            (Value::Integer(a), Value::Float(b)) => Self::compare_integer_float(a, b),
+
+            (Value::Float(a), Value::Integer(b)) => {
+                Self::compare_integer_float(b, a).map(std::cmp::Ordering::reverse)
+            }
+
+            (Value::Float(a), Value::Float(b)) => a.partial_cmp(&b),
+
+            _ => return Err(RuntimeError::TypeError),
+        };
+
+        Ok(Value::Boolean(Self::ordering_satisfies(ordering, op)))
     }
 
     // ============================================================

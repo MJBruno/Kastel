@@ -29,6 +29,16 @@ fn expect_index(value: &Value) -> Result<usize, RuntimeError> {
     usize::try_from(index).map_err(|_| RuntimeError::IndexOutOfBounds)
 }
 
+/// Taille maximale (en octets) d'une chaîne produite par `repeat`.
+/// Sans limite, `"ab".repeat(9223372036854775807)` faisait paniquer
+/// `str::repeat` (dépassement de capacité) et un grand `count` valide
+/// provoquait un abandon du processus par manque de mémoire.
+const MAX_STRING_BYTES: usize = 256 * 1024 * 1024;
+
+/// Largeur / précision maximales d'un champ de `format` (`{:99999999999}`
+/// allouait un remplissage de plusieurs Go).
+const MAX_FORMAT_FIELD: usize = 1_000_000;
+
 fn expect_non_negative_count(value: &Value) -> Result<usize, RuntimeError> {
     let count = expect_integer(value)?;
 
@@ -178,7 +188,9 @@ fn parse_usize(chars: &[char]) -> Result<usize, RuntimeError> {
         .iter()
         .collect::<String>()
         .parse::<usize>()
-        .map_err(|_| RuntimeError::FormatError("largeur ou précision trop grande".to_string()))
+        .ok()
+        .filter(|value| *value <= MAX_FORMAT_FIELD)
+        .ok_or_else(|| RuntimeError::FormatError("largeur ou précision trop grande".to_string()))
 }
 
 fn format_error(message: impl Into<String>) -> RuntimeError {
@@ -1192,6 +1204,14 @@ pub fn native_repeat(args: &[Value]) -> Result<Value, RuntimeError> {
     let value = expect_string(&args[0])?;
     let count = expect_non_negative_count(&args[1])?;
 
+    value
+        .len()
+        .checked_mul(count)
+        .filter(|total| *total <= MAX_STRING_BYTES)
+        .ok_or_else(|| {
+            RuntimeError::FormatError("chaîne résultante trop grande pour repeat".to_string())
+        })?;
+
     Ok(Value::new_string(value.repeat(count)))
 }
 
@@ -1395,6 +1415,21 @@ mod tests {
 
     fn fmt(template: &str, args: Vec<Value>) -> String {
         format_string(template, &args).expect(template)
+    }
+
+    #[test]
+    fn huge_width_or_precision_is_an_error_not_an_allocation() {
+        assert!(format_string("{:99999999999}", &[Value::Integer(1)]).is_err());
+        assert!(format_string("{:.99999999999f}", &[Value::Float(1.0)]).is_err());
+        assert!(format_string("{:2000000}", &[Value::Integer(1)]).is_err());
+    }
+
+    #[test]
+    fn repeat_overflow_and_huge_counts_are_errors_not_panics() {
+        let text = Value::new_string("ab".to_string());
+        assert!(super::native_repeat(&[text.clone(), Value::Integer(i64::MAX)]).is_err());
+        assert!(super::native_repeat(&[text.clone(), Value::Integer(1 << 40)]).is_err());
+        assert!(super::native_repeat(&[text, Value::Integer(3)]).is_ok());
     }
 
     #[test]

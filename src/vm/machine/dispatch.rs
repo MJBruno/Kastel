@@ -66,6 +66,16 @@ impl VirtualMachine {
                 Ok(false)
             }
 
+            OpCode::LessEqual => {
+                self.compare(ComparisonOp::LessEqual)?;
+                Ok(false)
+            }
+
+            OpCode::GreaterEqual => {
+                self.compare(ComparisonOp::GreaterEqual)?;
+                Ok(false)
+            }
+
             OpCode::Not => {
                 self.not()?;
                 Ok(false)

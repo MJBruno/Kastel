@@ -138,11 +138,18 @@ pub enum OpCode {
 
     /// Attend une `Task<T>` et pousse son résultat sur la pile.
     Await,
+
+    /// `a <= b` — comparaison NATIVE (et non `!(a > b)`) : avec un NaN,
+    /// `NaN <= x` doit valoir `false`.
+    LessEqual,
+
+    /// `a >= b` — comparaison NATIVE (et non `!(a < b)`), même raison.
+    GreaterEqual,
 }
 
 impl OpCode {
     /// Nombre total d'opcodes valides.
-    pub const COUNT: usize = Self::Await as usize + 1;
+    pub const COUNT: usize = Self::GreaterEqual as usize + 1;
 
     /// Conversion rapide d'un octet de bytecode vers OpCode.
     #[inline(always)]
@@ -228,7 +235,9 @@ mod tests {
         assert_eq!(OpCode::Select as u8, 72);
         assert_eq!(OpCode::Sleep as u8, 73);
         assert_eq!(OpCode::Await as u8, 74);
-        assert_eq!(OpCode::COUNT, 75);
+        assert_eq!(OpCode::LessEqual as u8, 75);
+        assert_eq!(OpCode::GreaterEqual as u8, 76);
+        assert_eq!(OpCode::COUNT, 77);
     }
 
     #[test]

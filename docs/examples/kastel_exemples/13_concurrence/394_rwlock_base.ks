@@ -5,18 +5,45 @@
 // read_lock partagé, write_lock exclusif.
 // ------------------------------------------------------------------
 // Sortie attendue :
+//   1
 //   2
 //   true
 //   false
 // ==================================================================
 
 let l = rwlock();
-l.read_lock();
-l.read_lock();
-println(l.reader_count());
-l.read_unlock();
-l.read_unlock();
-l.write_lock();
-println(l.is_write_locked());
-l.write_unlock();
-println(l.is_write_locked());
+
+let reader1 = spawn(func(lock) {
+    lock.read_lock();
+
+    println(lock.reader_count());
+
+    yield();
+
+    lock.read_unlock();
+}, l);
+
+let reader2 = spawn(func(lock) {
+    lock.read_lock();
+
+    println(lock.reader_count());
+
+    yield();
+
+    lock.read_unlock();
+}, l);
+
+reader1.join();
+reader2.join();
+
+let writer = spawn(func(lock) {
+    lock.write_lock();
+
+    println(lock.is_write_locked());
+
+    lock.write_unlock();
+
+    println(lock.is_write_locked());
+}, l);
+
+writer.join();

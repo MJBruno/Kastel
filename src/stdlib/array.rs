@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::{
-    error::runtime_error::RuntimeError, runtime::object::Object,
+    error::runtime_error::RuntimeError, runtime::gc_handle::Gc, runtime::object::Object,
     runtime::value::Value,
 };
 
@@ -415,41 +415,119 @@ pub fn native_sort(args: &[Value]) -> Result<Value, RuntimeError> {
         });
     }
 
+    let Value::Object(array_handle) = &args[0] else {
+        return Err(RuntimeError::TypeError);
+    };
+
     with_array_mut(&args[0], |array| {
-        array.sort_by(compare_values);
+        sort_values(array, array_handle)?;
         Ok(args[0].clone())
     })
 }
 
-fn compare_values(left: &Value, right: &Value) -> Ordering {
-    match (left, right) {
-        (Value::Integer(a), Value::Integer(b)) => a.cmp(b),
+/// Famille de valeurs triables : on ne trie que des nombres entre eux, des
+/// chaînes entre elles ou des booléens entre eux.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SortKind {
+    Number,
+    Text,
+    Boolean,
+}
 
-        (Value::Integer(a), Value::Float(b)) => {
-            (*a as f64).partial_cmp(b).unwrap_or(Ordering::Equal)
-        }
+fn sort_kind(value: &Value, array_handle: &Gc<Object>) -> Option<SortKind> {
+    match value {
+        Value::Integer(_) | Value::Float(_) => Some(SortKind::Number),
 
-        (Value::Float(a), Value::Integer(b)) => {
-            a.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal)
-        }
+        Value::Boolean(_) => Some(SortKind::Boolean),
 
-        (Value::Float(a), Value::Float(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
+        Value::Object(handle) => {
+            // Le tableau est déjà emprunté en écriture par l'appelant : un
+            // tableau qui se contient lui-même ne doit pas être ré-emprunté
+            // (panique `already mutably borrowed`).
+            if Gc::<Object>::ptr_eq(handle, array_handle) {
+                return None;
+            }
 
-        (Value::Object(a), Value::Object(b)) => {
-            let a_borrow = a.borrow();
-            let b_borrow = b.borrow();
-
-            match (&*a_borrow, &*b_borrow) {
-                (Object::String(a), Object::String(b)) => a.cmp(b),
-
-                _ => Ordering::Equal,
+            match &*handle.borrow() {
+                Object::String(_) => Some(SortKind::Text),
+                _ => None,
             }
         }
 
+        _ => None,
+    }
+}
+
+/// Tri en place. Avant ce correctif, `compare_values` renvoyait `Equal` pour
+/// toute paire non comparable (types mélangés, objets, NaN) : le tri était
+/// alors un no-op SILENCIEUX, et la relation obtenue n'étant pas un ordre
+/// total, `sort_by` peut même paniquer (Rust >= 1.81). Désormais :
+///   - une liste hétérogène ou non triable lève `TypeError` ;
+///   - les nombres suivent un ordre total (comparaison Integer/Float exacte,
+///     NaN placé en dernier).
+fn sort_values(array: &mut Vec<Value>, array_handle: &Gc<Object>) -> Result<(), RuntimeError> {
+    if array.len() < 2 {
+        return Ok(());
+    }
+
+    let Some(kind) = sort_kind(&array[0], array_handle) else {
+        return Err(RuntimeError::TypeError);
+    };
+
+    for value in array.iter() {
+        if sort_kind(value, array_handle) != Some(kind) {
+            return Err(RuntimeError::TypeError);
+        }
+    }
+
+    match kind {
+        SortKind::Number => array.sort_by(compare_numbers),
+        SortKind::Boolean => array.sort_by(compare_booleans),
+        SortKind::Text => array.sort_by(compare_texts),
+    }
+
+    Ok(())
+}
+
+fn compare_floats(a: f64, b: f64) -> Ordering {
+    match a.partial_cmp(&b) {
+        Some(ordering) => ordering,
+        // Au moins un NaN : NaN est « plus grand » que tout, et égal à NaN.
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
+
+fn compare_numbers(left: &Value, right: &Value) -> Ordering {
+    match (left, right) {
+        (Value::Integer(a), Value::Integer(b)) => a.cmp(b),
+
+        (Value::Float(a), Value::Float(b)) => compare_floats(*a, *b),
+
+        (Value::Integer(a), Value::Float(b)) => {
+            Value::compare_integer_float(*a, *b).unwrap_or(Ordering::Less)
+        }
+
+        (Value::Float(a), Value::Integer(b)) => Value::compare_integer_float(*b, *a)
+            .map(Ordering::reverse)
+            .unwrap_or(Ordering::Greater),
+
+        _ => Ordering::Equal,
+    }
+}
+
+fn compare_booleans(left: &Value, right: &Value) -> Ordering {
+    match (left, right) {
         (Value::Boolean(a), Value::Boolean(b)) => a.cmp(b),
+        _ => Ordering::Equal,
+    }
+}
 
-        (Value::None, Value::None) => Ordering::Equal,
-
+fn compare_texts(left: &Value, right: &Value) -> Ordering {
+    match (left, right) {
+        (Value::Object(a), Value::Object(b)) => match (&*a.borrow(), &*b.borrow()) {
+            (Object::String(a), Object::String(b)) => a.cmp(b),
+            _ => Ordering::Equal,
+        },
         _ => Ordering::Equal,
     }
 }
@@ -514,3 +592,80 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     let _ = globals;
 }
 
+
+#[cfg(test)]
+mod sort_tests {
+    use super::native_sort;
+    use crate::runtime::object::Object;
+    use crate::runtime::value::Value;
+
+    fn ints(values: &[i64]) -> Value {
+        Value::new_array(values.iter().map(|v| Value::Integer(*v)).collect())
+    }
+
+    fn contents(array: &Value) -> Vec<Value> {
+        match array {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Array(items) => items.clone(),
+                _ => panic!("tableau attendu"),
+            },
+            _ => panic!("tableau attendu"),
+        }
+    }
+
+    #[test]
+    fn sorts_integers() {
+        let array = ints(&[3, 1, 2]);
+        native_sort(&[array.clone()]).unwrap();
+        let sorted: Vec<i64> = contents(&array)
+            .into_iter()
+            .map(|v| match v {
+                Value::Integer(i) => i,
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(sorted, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn mixed_types_are_a_type_error_not_a_silent_noop() {
+        let array = Value::new_array(vec![Value::Integer(1), Value::new_string("a".to_string())]);
+        assert!(native_sort(&[array]).is_err());
+    }
+
+    #[test]
+    fn non_sortable_objects_are_a_type_error() {
+        let a = Value::new_array(vec![]);
+        let b = Value::new_array(vec![]);
+        assert!(native_sort(&[Value::new_array(vec![a, b])]).is_err());
+    }
+
+    #[test]
+    fn nan_does_not_panic_and_sorts_last() {
+        let array = Value::new_array(vec![
+            Value::Float(f64::NAN),
+            Value::Integer(2),
+            Value::Float(1.5),
+            Value::Float(f64::NAN),
+            Value::Integer(1),
+        ]);
+        native_sort(&[array.clone()]).unwrap();
+        let items = contents(&array);
+        assert!(matches!(items[0], Value::Integer(1)));
+        assert!(matches!(items[1], Value::Float(f) if f == 1.5));
+        assert!(matches!(items[2], Value::Integer(2)));
+        assert!(matches!(items[3], Value::Float(f) if f.is_nan()));
+        assert!(matches!(items[4], Value::Float(f) if f.is_nan()));
+    }
+
+    #[test]
+    fn array_containing_itself_is_rejected_without_panicking() {
+        let array = Value::new_array(vec![Value::Integer(1)]);
+        if let Value::Object(handle) = &array {
+            if let Object::Array(items) = &mut *handle.borrow_mut() {
+                items.push(array.clone());
+            }
+        }
+        assert!(native_sort(&[array]).is_err());
+    }
+}
