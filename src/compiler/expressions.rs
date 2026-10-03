@@ -5,7 +5,7 @@ use crate::runtime::value::Value;
 
 use super::{
     builtin_types::Intrinsic,
-    call_resolution::ResolvedCall,
+    call_metadata::ResolvedCall,
     compiler::{Compiler, MAX_EXPRESSION_DEPTH},
 };
 

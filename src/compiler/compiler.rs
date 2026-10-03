@@ -8,7 +8,7 @@ use crate::frontend::ast::Statement;
 use crate::runtime::function::Function;
 // use crate::runtime::upvalue::Upvalue;
 
-use super::call_resolution::{CallSite, ResolvedCall, ResolvedCallTable};
+use super::call_metadata::{CallSite, ResolvedCall, ResolvedCallTable};
 use super::context::{CompilerContext, CompilerContextRef};
 // use super::locals::LocalTable;
 use super::loops::LoopContext;

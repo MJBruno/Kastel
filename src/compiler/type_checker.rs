@@ -8,10 +8,8 @@ use super::{
     capability::Capability,
     compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
-    call_resolution::{
-        validate_arity, CallSite, CallTarget, Callable, CallableTarget, ResolvedCall,
-        ResolvedCallTable,
-    },
+    call_metadata::{CallSite, CallTarget, CallableTarget, ResolvedCall, ResolvedCallTable},
+    call_resolution::{validate_arity, Callable},
     overloads::OverloadSet,
     types::{FunctionType, GenericConstraint, Type},
 };

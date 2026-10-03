@@ -11,6 +11,7 @@ mod expressions;
 mod functions;
 mod locals;
 mod overloads;
+pub(crate) mod call_metadata;
 pub(crate) mod call_resolution;
 mod loops;
 pub(crate) mod module_types;
