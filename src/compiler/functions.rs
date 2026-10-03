@@ -189,9 +189,12 @@ impl Compiler {
     ) -> Result<Function, CompileError> {
         let enclosing = Rc::clone(&self.context);
 
-        let mut compiler =
-            Compiler::new_function(name.to_string(), Rc::clone(&self.globals), enclosing);
-        compiler.resolved_calls = Rc::clone(&self.resolved_calls);
+        let mut compiler = Compiler::new_function(
+            name.to_string(),
+            Rc::clone(&self.globals),
+            enclosing,
+            Rc::clone(&self.resolved_calls),
+        );
 
         for param in params {
             compiler.add_parametre(param)?;
@@ -281,5 +284,62 @@ impl Compiler {
         body: &[Statement],
     ) -> Result<Function, CompileError> {
         self.compile_function(name, params, body)
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::Compiler;
+    use crate::bytecode::chunk::OpCode;
+    use crate::frontend::lexer::lexer::Lexer;
+    use crate::frontend::parser::Parser;
+    use crate::runtime::object::Object;
+    use crate::runtime::value::Value;
+
+    fn parse(source: &str) -> Vec<crate::frontend::ast::Statement> {
+        let tokens = Lexer::new(source.to_string())
+            .scan_token()
+            .expect("le lexer doit accepter le script");
+        Parser::new(tokens)
+            .parse()
+            .expect("le parser doit accepter le script")
+    }
+
+    #[test]
+    fn nested_function_compiler_reuses_resolved_call_metadata() {
+        let statements = parse(
+            r#"
+            func worker() {
+                yield();
+            }
+
+            let task = spawn(worker);
+            task.join();
+            "#,
+        );
+
+        let function = Compiler::new()
+            .compile(&statements)
+            .expect("le compilateur doit compiler le script");
+
+        let worker = function
+            .chunk
+            .constants
+            .iter()
+            .find_map(|value| match value {
+                Value::Object(handle) => match &*handle.borrow() {
+                    Object::Function(worker) if worker.name == "worker" => Some(worker.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("la fonction worker doit être présente dans les constantes");
+
+        assert!(
+            worker.chunk.code.contains(&(OpCode::Yield as u8)),
+            "un call-site intrinsèque dans une fonction imbriquée doit utiliser
+             la métadonnée de résolution partagée et émettre OpCode::Yield"
+        );
     }
 }

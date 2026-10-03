@@ -144,6 +144,7 @@ impl Compiler {
         name: String,
         globals: Rc<RefCell<HashMap<String, Global>>>,
         enclosing: CompilerContextRef,
+        resolved_calls: Rc<ResolvedCallTable>,
     ) -> Self {
         Self {
             globals,
@@ -163,7 +164,7 @@ impl Compiler {
             current_line: 0,
             current_column: 0,
             expression_depth: 0,
-            resolved_calls: Rc::new(ResolvedCallTable::default()),
+            resolved_calls,
             wildcard_imported: false,
         }
     }
