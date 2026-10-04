@@ -20,11 +20,12 @@ pub(crate) trait HimPass {
 /// produisent d'abord les littéraux et le contrôle de flux simplifié, puis
 /// l'élimination des valeurs mortes profite de ces résultats.
 pub(crate) fn run_default_passes(statements: &mut Vec<Statement>) {
-    let passes: [&dyn HimPass; 4] = [
+    let passes: [&dyn HimPass; 5] = [
         &ConstantFolder,
         &ConstantPropagator,
         &DeadCodeEliminator,
         &DeadValueEliminator,
+        &DeadStoreEliminator,
     ];
 
     for pass in passes {
@@ -78,6 +79,23 @@ pub(crate) struct DeadCodeEliminator;
 /// - les champs de classes et les paramètres restent intacts.
 pub(crate) struct DeadValueEliminator;
 
+/// Analyse la vivacité des variables locales d'un bloc HIM.
+///
+/// L'analyse est volontairement conservative pour Kastel : les closures,
+/// appels, allocations et accès dynamiques peuvent observer des valeurs dont
+/// le backend ne peut pas toujours déduire l'usage exact. Une variable est
+/// donc considérée vivante dès qu'une lecture potentielle est détectée.
+#[allow(dead_code)]
+pub(crate) struct LivenessAnalyzer;
+
+/// Supprime les écritures locales triviales qui ne peuvent plus être lues.
+///
+/// La passe ne retire que `x = <littéral>` lorsque `x` est une liaison locale
+/// de la fonction courante et qu'aucune lecture de `x` n'existe sur un chemin
+/// d'exécution ultérieur. Les écritures globales, les cibles membres/indexées
+/// et les initialisateurs potentiellement observables restent intactes.
+pub(crate) struct DeadStoreEliminator;
+
 impl HimPass for ConstantFolder {
     fn run(&self, statements: &mut Vec<Statement>) {
         for statement in statements {
@@ -102,6 +120,747 @@ impl HimPass for DeadCodeEliminator {
 impl HimPass for DeadValueEliminator {
     fn run(&self, statements: &mut Vec<Statement>) {
         eliminate_dead_values_in_nested_functions(statements);
+    }
+}
+
+impl HimPass for DeadStoreEliminator {
+    fn run(&self, statements: &mut Vec<Statement>) {
+        eliminate_dead_stores_in_nested_functions(statements);
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct LivenessSummary {
+    pub(crate) live_in: HashSet<String>,
+}
+
+#[allow(dead_code)]
+impl LivenessAnalyzer {
+    pub(crate) fn analyze_block(&self, statements: &[Statement]) -> LivenessSummary {
+        LivenessSummary {
+            live_in: analyze_block_liveness(statements, &HashSet::new()),
+        }
+    }
+
+    pub(crate) fn analyze_block_with_live_out(
+        &self,
+        statements: &[Statement],
+        live_out: &HashSet<String>,
+    ) -> LivenessSummary {
+        LivenessSummary {
+            live_in: analyze_block_liveness(statements, live_out),
+        }
+    }
+}
+
+fn eliminate_dead_stores_in_nested_functions(statements: &mut [Statement]) {
+    for statement in statements {
+        discover_and_optimize_function(statement);
+    }
+}
+
+fn discover_and_optimize_function(statement: &mut Statement) {
+    match statement {
+        Statement::Positioned { statement, .. } => discover_and_optimize_function(statement),
+        Statement::Block(body) => {
+            for statement in body {
+                discover_and_optimize_function(statement);
+            }
+        }
+        Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            discover_and_optimize_nested_functions_in_expression(condition);
+            for statement in then_branch {
+                discover_and_optimize_function(statement);
+            }
+            if let Some(branch) = else_branch {
+                for statement in branch {
+                    discover_and_optimize_function(statement);
+                }
+            }
+        }
+        Statement::While { condition, body } => {
+            discover_and_optimize_nested_functions_in_expression(condition);
+            for statement in body {
+                discover_and_optimize_function(statement);
+            }
+        }
+        Statement::ForIn { iterable, body, .. } => {
+            discover_and_optimize_nested_functions_in_expression(iterable);
+            for statement in body {
+                discover_and_optimize_function(statement);
+            }
+        }
+        Statement::Match { value, arms } => {
+            discover_and_optimize_nested_functions_in_expression(value);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    discover_and_optimize_nested_functions_in_expression(guard);
+                }
+                for statement in &mut arm.body {
+                    discover_and_optimize_function(statement);
+                }
+            }
+        }
+        Statement::Try {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            for statement in try_body {
+                discover_and_optimize_function(statement);
+            }
+            if let Some(body) = catch_body {
+                for statement in body {
+                    discover_and_optimize_function(statement);
+                }
+            }
+            if let Some(body) = finally_body {
+                for statement in body {
+                    discover_and_optimize_function(statement);
+                }
+            }
+        }
+        Statement::Function { body, params, .. } => {
+            let locals = collect_function_local_bindings(params, body);
+            eliminate_dead_stores_in_block(body, &locals, &HashSet::new());
+        }
+        Statement::Class { fields, methods, .. } => {
+            for field in fields {
+                if let Some(initializer) = &mut field.initializer {
+                    discover_and_optimize_nested_functions_in_expression(initializer);
+                }
+            }
+            for method in methods {
+                let locals = collect_function_local_bindings(&method.params, &method.body);
+                eliminate_dead_stores_in_block(&mut method.body, &locals, &HashSet::new());
+            }
+        }
+        Statement::Enum { methods, .. } => {
+            for method in methods {
+                let locals = collect_function_local_bindings(&method.params, &method.body);
+                eliminate_dead_stores_in_block(&mut method.body, &locals, &HashSet::new());
+            }
+        }
+        Statement::Export { statement } => discover_and_optimize_function(statement),
+        Statement::Let { value, .. }
+        | Statement::Expression { expression: value }
+        | Statement::Throw { value }
+        | Statement::Return {
+            value: Some(value),
+        } => discover_and_optimize_nested_functions_in_expression(value),
+        Statement::Assignment { target, value } => {
+            discover_and_optimize_nested_functions_in_assignment_target(target);
+            discover_and_optimize_nested_functions_in_expression(value);
+        }
+        Statement::Return { value: None }
+        | Statement::Import { .. }
+        | Statement::FromImport { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::Interface { .. }
+        | Statement::Break
+        | Statement::Continue => {}
+    }
+}
+
+fn discover_and_optimize_nested_functions_in_assignment_target(target: &mut AssignmentTarget) {
+    match target {
+        AssignmentTarget::Variable(_) => {}
+        AssignmentTarget::Index { object, index } => {
+            discover_and_optimize_nested_functions_in_expression(object);
+            discover_and_optimize_nested_functions_in_expression(index);
+        }
+        AssignmentTarget::Member { object, .. } => {
+            discover_and_optimize_nested_functions_in_expression(object);
+        }
+    }
+}
+
+fn discover_and_optimize_nested_functions_in_expression(expression: &mut Expression) {
+    match expression {
+        Expression::Function { params, body } => {
+            let locals = collect_function_local_bindings(params, body);
+            eliminate_dead_stores_in_block(body, &locals, &HashSet::new());
+        }
+        Expression::Unary { right, .. } => {
+            discover_and_optimize_nested_functions_in_expression(right);
+        }
+        Expression::Binary { left, right, .. } => {
+            discover_and_optimize_nested_functions_in_expression(left);
+            discover_and_optimize_nested_functions_in_expression(right);
+        }
+        Expression::Call { callee, arguments, .. } => {
+            discover_and_optimize_nested_functions_in_expression(callee);
+            for argument in arguments {
+                discover_and_optimize_nested_functions_in_expression(argument);
+            }
+        }
+        Expression::Member { object, .. } => {
+            discover_and_optimize_nested_functions_in_expression(object);
+        }
+        Expression::Index { object, index, .. } => {
+            discover_and_optimize_nested_functions_in_expression(object);
+            discover_and_optimize_nested_functions_in_expression(index);
+        }
+        Expression::New { arguments, .. } => {
+            for argument in arguments {
+                discover_and_optimize_nested_functions_in_expression(argument);
+            }
+        }
+        Expression::Array(elements) | Expression::Tuple(elements) => {
+            for element in elements {
+                discover_and_optimize_nested_functions_in_expression(element);
+            }
+        }
+        Expression::Dict(fields) | Expression::Record(fields) => {
+            for (_, value) in fields {
+                discover_and_optimize_nested_functions_in_expression(value);
+            }
+        }
+        Expression::Try(expression) | Expression::Await(expression) => {
+            discover_and_optimize_nested_functions_in_expression(expression);
+        }
+        Expression::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            discover_and_optimize_nested_functions_in_expression(condition);
+            discover_and_optimize_nested_functions_in_expression(then_expr);
+            discover_and_optimize_nested_functions_in_expression(else_expr);
+        }
+        Expression::Literal(_) | Expression::Variable(_) | Expression::SelfValue => {}
+    }
+}
+
+fn eliminate_dead_stores_in_block(
+    statements: &mut Vec<Statement>,
+    locals: &HashSet<String>,
+    live_out: &HashSet<String>,
+) -> HashSet<String> {
+    // Important: nous ne faisons pas de DSE récursive dans les blocs de
+    // contrôle du même corps de fonction. Leur `live_out` dépend du CFG
+    // réel (branches, boucles, break/continue, exceptions et finally).
+    // Une analyse locale avec un ensemble vide serait incorrecte et pourrait
+    // supprimer une écriture encore observable, voire créer une boucle infinie.
+    // Les fonctions/closures imbriquées restent toutefois analysées séparément.
+    for statement in statements.iter_mut() {
+        discover_and_optimize_function(statement);
+    }
+
+    let mut live = live_out.clone();
+    let mut index = statements.len();
+
+    while index > 0 {
+        index -= 1;
+
+        if is_dead_local_literal_assignment(&statements[index], locals, &live) {
+            statements.remove(index);
+            continue;
+        }
+
+        live = analyze_statement_liveness(&statements[index], &live);
+    }
+
+    live
+}
+
+fn collect_function_local_bindings(
+    params: &[String],
+    statements: &[Statement],
+) -> HashSet<String> {
+    let mut locals = params.iter().cloned().collect();
+    collect_local_bindings_from_statements(statements, &mut locals);
+    locals
+}
+
+fn collect_local_bindings_from_statements(
+    statements: &[Statement],
+    locals: &mut HashSet<String>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::Positioned { statement, .. } => {
+                collect_local_bindings_from_statements(std::slice::from_ref(statement), locals);
+            }
+            Statement::Let { name, .. } => {
+                locals.insert(name.clone());
+            }
+            Statement::ForIn { variable, body, .. } => {
+                locals.insert(variable.clone());
+                collect_local_bindings_from_statements(body, locals);
+            }
+            Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_local_bindings_from_statements(then_branch, locals);
+                if let Some(branch) = else_branch {
+                    collect_local_bindings_from_statements(branch, locals);
+                }
+            }
+            Statement::While { body, .. } | Statement::Block(body) => {
+                collect_local_bindings_from_statements(body, locals);
+            }
+            Statement::Match { arms, .. } => {
+                for arm in arms {
+                    collect_pattern_bindings(&arm.pattern, locals);
+                    collect_local_bindings_from_statements(&arm.body, locals);
+                }
+            }
+            Statement::Try {
+                try_body,
+                catch_name,
+                catch_body,
+                finally_body,
+                ..
+            } => {
+                collect_local_bindings_from_statements(try_body, locals);
+                if let Some(name) = catch_name {
+                    locals.insert(name.clone());
+                }
+                if let Some(body) = catch_body {
+                    collect_local_bindings_from_statements(body, locals);
+                }
+                if let Some(body) = finally_body {
+                    collect_local_bindings_from_statements(body, locals);
+                }
+            }
+            // Les fonctions imbriquées ont leur propre espace de liaisons.
+            Statement::Function { .. } => {}
+            Statement::Class { .. }
+            | Statement::Enum { .. }
+            | Statement::TypeAlias { .. }
+            | Statement::Interface { .. }
+            | Statement::Import { .. }
+            | Statement::FromImport { .. }
+            | Statement::Export { .. }
+            | Statement::Assignment { .. }
+            | Statement::Expression { .. }
+            | Statement::Return { .. }
+            | Statement::Throw { .. }
+            | Statement::Break
+            | Statement::Continue => {}
+        }
+    }
+}
+
+fn collect_pattern_bindings(pattern: &super::him::Pattern, locals: &mut HashSet<String>) {
+    match pattern {
+        super::him::Pattern::Binding(name) => {
+            locals.insert(name.clone());
+        }
+        super::him::Pattern::Or(patterns)
+        | super::him::Pattern::Array(patterns)
+        | super::him::Pattern::ArrayRest(patterns)
+        | super::him::Pattern::Tuple(patterns) => {
+            for pattern in patterns {
+                collect_pattern_bindings(pattern, locals);
+            }
+        }
+        super::him::Pattern::Range { start, end, .. } => {
+            collect_pattern_bindings(start, locals);
+            collect_pattern_bindings(end, locals);
+        }
+        super::him::Pattern::OptionSome(pattern)
+        | super::him::Pattern::ResultOk(pattern)
+        | super::him::Pattern::ResultErr(pattern) => {
+            collect_pattern_bindings(pattern, locals);
+        }
+        super::him::Pattern::Wildcard
+        | super::him::Pattern::Literal(_)
+        | super::him::Pattern::EnumVariant { .. } => {}
+    }
+}
+
+
+fn is_dead_local_literal_assignment(
+    statement: &Statement,
+    locals: &HashSet<String>,
+    live_after: &HashSet<String>,
+) -> bool {
+    let statement = match statement {
+        Statement::Positioned { statement, .. } => statement.as_ref(),
+        other => other,
+    };
+
+    matches!(
+        statement,
+        Statement::Assignment {
+            target: AssignmentTarget::Variable(name),
+            value: Expression::Literal(_),
+        } if locals.contains(name) && !live_after.contains(name)
+    )
+}
+
+fn analyze_block_liveness(
+    statements: &[Statement],
+    live_out: &HashSet<String>,
+) -> HashSet<String> {
+    let mut live = live_out.clone();
+    for statement in statements.iter().rev() {
+        live = analyze_statement_liveness(statement, &live);
+    }
+    live
+}
+
+fn analyze_statement_liveness(
+    statement: &Statement,
+    live_after: &HashSet<String>,
+) -> HashSet<String> {
+    match statement {
+        Statement::Positioned { statement, .. } => analyze_statement_liveness(statement, live_after),
+
+        Statement::Let { name, value, .. } => {
+            let mut live = live_after.clone();
+            live.remove(name);
+            collect_expression_variables(value, &mut live);
+            live
+        }
+
+        Statement::Assignment { target, value } => {
+            let mut live = live_after.clone();
+            if let AssignmentTarget::Variable(name) = target {
+                live.remove(name);
+            } else {
+                collect_assignment_target_variables(target, &mut live);
+            }
+            collect_expression_variables(value, &mut live);
+            live
+        }
+
+        Statement::Expression { expression } | Statement::Throw { value: expression } => {
+            let mut live = HashSet::new();
+            collect_expression_variables(expression, &mut live);
+            if matches!(statement, Statement::Expression { .. }) {
+                live.extend(live_after.iter().cloned());
+            }
+            live
+        }
+
+        Statement::Return { value } => {
+            let mut live = HashSet::new();
+            if let Some(value) = value {
+                collect_expression_variables(value, &mut live);
+            }
+            live
+        }
+
+        Statement::Block(body) => analyze_block_liveness(body, live_after),
+
+        Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let mut live = HashSet::new();
+            collect_expression_variables(condition, &mut live);
+            live.extend(analyze_block_liveness(then_branch, live_after));
+            if let Some(branch) = else_branch {
+                live.extend(analyze_block_liveness(branch, live_after));
+            } else {
+                live.extend(live_after.iter().cloned());
+            }
+            live
+        }
+
+        Statement::While { condition, body } => {
+            let mut loop_live = live_after.clone();
+            loop {
+                let mut next = live_after.clone();
+                next.extend(analyze_block_liveness(body, &loop_live));
+                collect_expression_variables(condition, &mut next);
+                if next == loop_live {
+                    break next;
+                }
+                loop_live = next;
+            }
+        }
+
+        Statement::ForIn { variable, iterable, body } => {
+            let mut loop_live = live_after.clone();
+            loop {
+                let mut body_live_out = loop_live.clone();
+                body_live_out.remove(variable);
+                let mut body_live_in = analyze_block_liveness(body, &body_live_out);
+                body_live_in.remove(variable);
+
+                let mut next = live_after.clone();
+                next.extend(body_live_in);
+                collect_expression_variables(iterable, &mut next);
+
+                if next == loop_live {
+                    break next;
+                }
+                loop_live = next;
+            }
+        }
+
+        Statement::Match { value, arms } => {
+            let mut live = HashSet::new();
+            collect_expression_variables(value, &mut live);
+            for arm in arms {
+                let body_live = analyze_block_liveness(&arm.body, live_after);
+                let mut arm_live = body_live;
+                if let Some(guard) = &arm.guard {
+                    collect_expression_variables(guard, &mut arm_live);
+                }
+                remove_pattern_from_live(&arm.pattern, &mut arm_live);
+                live.extend(arm_live);
+            }
+            live
+        }
+
+        Statement::Try {
+            try_body,
+            catch_name,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            let finally_live = finally_body
+                .as_ref()
+                .map(|body| analyze_block_liveness(body, live_after))
+                .unwrap_or_else(|| live_after.clone());
+
+            let mut live = analyze_block_liveness(try_body, &finally_live);
+            if let Some(body) = catch_body {
+                let mut catch_live = analyze_block_liveness(body, &finally_live);
+                if let Some(name) = catch_name {
+                    catch_live.remove(name);
+                }
+                live.extend(catch_live);
+            }
+            live.extend(finally_live);
+            live
+        }
+
+        // Une déclaration de fonction/classe peut observer une variable
+        // extérieure via une closure ou un initialiseur. Nous collectons donc
+        // leurs lectures de façon conservative.
+        Statement::Function { body, .. } => {
+            let mut live = live_after.clone();
+            collect_statements_variables(body, &mut live);
+            live
+        }
+
+        Statement::Class { fields, methods, .. } => {
+            let mut live = live_after.clone();
+            for field in fields {
+                if let Some(initializer) = &field.initializer {
+                    collect_expression_variables(initializer, &mut live);
+                }
+            }
+            for method in methods {
+                collect_statements_variables(&method.body, &mut live);
+            }
+            live
+        }
+
+        Statement::Enum { methods, .. } => {
+            let mut live = live_after.clone();
+            for method in methods {
+                collect_statements_variables(&method.body, &mut live);
+            }
+            live
+        }
+
+        Statement::Export { statement } => analyze_statement_liveness(statement, live_after),
+
+        Statement::Import { .. }
+        | Statement::FromImport { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::Interface { .. }
+        | Statement::Break
+        | Statement::Continue => live_after.clone(),
+    }
+}
+
+fn collect_statements_variables(statements: &[Statement], used: &mut HashSet<String>) {
+    for statement in statements {
+        collect_statement_variables(statement, used);
+    }
+}
+
+fn collect_statement_variables(statement: &Statement, used: &mut HashSet<String>) {
+    match statement {
+        Statement::Positioned { statement, .. } => collect_statement_variables(statement, used),
+        Statement::Let { value, .. } => collect_expression_variables(value, used),
+        Statement::Assignment { target, value } => {
+            collect_assignment_target_variables(target, used);
+            collect_expression_variables(value, used);
+        }
+        Statement::Expression { expression } | Statement::Throw { value: expression } => {
+            collect_expression_variables(expression, used);
+        }
+        Statement::Block(body) => collect_statements_variables(body, used),
+        Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expression_variables(condition, used);
+            collect_statements_variables(then_branch, used);
+            if let Some(branch) = else_branch {
+                collect_statements_variables(branch, used);
+            }
+        }
+        Statement::While { condition, body } => {
+            collect_expression_variables(condition, used);
+            collect_statements_variables(body, used);
+        }
+        Statement::ForIn { iterable, body, .. } => {
+            collect_expression_variables(iterable, used);
+            collect_statements_variables(body, used);
+        }
+        Statement::Match { value, arms } => {
+            collect_expression_variables(value, used);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_expression_variables(guard, used);
+                }
+                collect_statements_variables(&arm.body, used);
+            }
+        }
+        Statement::Try {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            collect_statements_variables(try_body, used);
+            if let Some(body) = catch_body {
+                collect_statements_variables(body, used);
+            }
+            if let Some(body) = finally_body {
+                collect_statements_variables(body, used);
+            }
+        }
+        Statement::Function { body, .. } => collect_statements_variables(body, used),
+        Statement::Return { value } => {
+            if let Some(value) = value {
+                collect_expression_variables(value, used);
+            }
+        }
+        Statement::Class { fields, methods, .. } => {
+            for field in fields {
+                if let Some(initializer) = &field.initializer {
+                    collect_expression_variables(initializer, used);
+                }
+            }
+            for method in methods {
+                collect_statements_variables(&method.body, used);
+            }
+        }
+        Statement::Enum { methods, .. } => {
+            for method in methods {
+                collect_statements_variables(&method.body, used);
+            }
+        }
+        Statement::Export { statement } => collect_statement_variables(statement, used),
+        Statement::Import { .. }
+        | Statement::FromImport { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::Interface { .. }
+        | Statement::Break
+        | Statement::Continue => {}
+    }
+}
+
+fn collect_expression_variables(expression: &Expression, used: &mut HashSet<String>) {
+    match expression {
+        Expression::Variable(name) => {
+            used.insert(name.clone());
+        }
+        Expression::Literal(_) | Expression::SelfValue => {}
+        Expression::Unary { right, .. } => collect_expression_variables(right, used),
+        Expression::Binary { left, right, .. } => {
+            collect_expression_variables(left, used);
+            collect_expression_variables(right, used);
+        }
+        Expression::Function { body, .. } => collect_statements_variables(body, used),
+        Expression::Call { callee, arguments, .. } => {
+            collect_expression_variables(callee, used);
+            for argument in arguments {
+                collect_expression_variables(argument, used);
+            }
+        }
+        Expression::Member { object, .. } => collect_expression_variables(object, used),
+        Expression::Index { object, index, .. } => {
+            collect_expression_variables(object, used);
+            collect_expression_variables(index, used);
+        }
+        Expression::New { arguments, .. } => {
+            for argument in arguments {
+                collect_expression_variables(argument, used);
+            }
+        }
+        Expression::Array(elements) | Expression::Tuple(elements) => {
+            for element in elements {
+                collect_expression_variables(element, used);
+            }
+        }
+        Expression::Dict(fields) | Expression::Record(fields) => {
+            for (_, value) in fields {
+                collect_expression_variables(value, used);
+            }
+        }
+        Expression::Try(expression) | Expression::Await(expression) => {
+            collect_expression_variables(expression, used);
+        }
+        Expression::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_expression_variables(condition, used);
+            collect_expression_variables(then_expr, used);
+            collect_expression_variables(else_expr, used);
+        }
+    }
+}
+
+fn collect_assignment_target_variables(target: &AssignmentTarget, used: &mut HashSet<String>) {
+    match target {
+        AssignmentTarget::Variable(_) => {}
+        AssignmentTarget::Index { object, index } => {
+            collect_expression_variables(object, used);
+            collect_expression_variables(index, used);
+        }
+        AssignmentTarget::Member { object, .. } => collect_expression_variables(object, used),
+    }
+}
+
+fn remove_pattern_from_live(pattern: &super::him::Pattern, live: &mut HashSet<String>) {
+    match pattern {
+        super::him::Pattern::Binding(name) => {
+            live.remove(name);
+        }
+        super::him::Pattern::Or(patterns)
+        | super::him::Pattern::Array(patterns)
+        | super::him::Pattern::ArrayRest(patterns)
+        | super::him::Pattern::Tuple(patterns) => {
+            for pattern in patterns {
+                remove_pattern_from_live(pattern, live);
+            }
+        }
+        super::him::Pattern::Range { start, end, .. } => {
+            remove_pattern_from_live(start, live);
+            remove_pattern_from_live(end, live);
+        }
+        super::him::Pattern::OptionSome(pattern)
+        | super::him::Pattern::ResultOk(pattern)
+        | super::him::Pattern::ResultErr(pattern) => {
+            remove_pattern_from_live(pattern, live);
+        }
+        super::him::Pattern::Wildcard
+        | super::him::Pattern::Literal(_)
+        | super::him::Pattern::EnumVariant { .. } => {}
     }
 }
 
@@ -2204,6 +2963,369 @@ mod tests {
             panic!("fonction attendue");
         };
         assert_eq!(body.len(), 1);
+    }
+
+    #[test]
+    fn liveness_marks_unbound_read_as_live() {
+        let statements = vec![Statement::Return {
+            value: Some(Expression::Variable("x".into())),
+        }];
+
+        let summary = LivenessAnalyzer.analyze_block(&statements);
+
+        assert!(summary.live_in.contains("x"));
+    }
+
+    #[test]
+    fn liveness_accounts_for_definitions_before_reads() {
+        let statements = vec![
+            Statement::Assignment {
+                target: AssignmentTarget::Variable("x".into()),
+                value: Expression::Literal(Literal::Integer(1)),
+            },
+            Statement::Return {
+                value: Some(Expression::Variable("x".into())),
+            },
+        ];
+
+        let live_out = HashSet::new();
+        let summary = LivenessAnalyzer.analyze_block_with_live_out(&statements, &live_out);
+
+        assert!(!summary.live_in.contains("x"));
+    }
+
+    #[test]
+    fn keeps_dead_store_inside_match_arm_until_cfg_liveness_is_available() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["value".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "result".into(),
+                    value: Expression::Literal(Literal::Integer(0)),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Match {
+                    value: Expression::Variable("value".into()),
+                    arms: vec![MatchArm {
+                        pattern: super::super::him::Pattern::Wildcard,
+                        guard: None,
+                        body: vec![Statement::Assignment {
+                            target: AssignmentTarget::Variable("result".into()),
+                            value: Expression::Literal(Literal::Integer(1)),
+                        }],
+                    }],
+                },
+                Statement::Return {
+                    value: Some(Expression::Variable("result".into())),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::Match { arms, .. } = &body[1] else {
+            panic!("match attendu");
+        };
+        assert!(matches!(
+            arms[0].body.first(),
+            Some(Statement::Assignment {
+                target: AssignmentTarget::Variable(name),
+                value: Expression::Literal(Literal::Integer(1)),
+            }) if name == "result"
+        ));
+    }
+
+    #[test]
+    fn keeps_loop_catch_store_until_cfg_liveness_is_available() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec![],
+            param_types: vec![],
+            return_type: None,
+            body: vec![Statement::While {
+                condition: Expression::Variable("running".into()),
+                body: vec![Statement::Try {
+                    try_body: vec![Statement::Expression {
+                        expression: Expression::Variable("op".into()),
+                    }],
+                    catch_name: Some("e".into()),
+                    catch_type: None,
+                    catch_body: Some(vec![Statement::Assignment {
+                        target: AssignmentTarget::Variable("running".into()),
+                        value: Expression::Literal(Literal::Bool(false)),
+                    }]),
+                    finally_body: None,
+                }],
+            }],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::While { body, .. } = &body[0] else {
+            panic!("while attendu");
+        };
+        let Statement::Try { catch_body: Some(catch_body), .. } = &body[0] else {
+            panic!("try attendu");
+        };
+        assert!(matches!(
+            catch_body.first(),
+            Some(Statement::Assignment {
+                target: AssignmentTarget::Variable(name),
+                value: Expression::Literal(Literal::Bool(false)),
+            }) if name == "running"
+        ));
+    }
+
+    #[test]
+    fn removes_dead_literal_assignment_to_local() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(1)),
+                },
+                Statement::Return {
+                    value: Some(Expression::Literal(Literal::Integer(0))),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 1);
+        assert!(matches!(body[0], Statement::Return { .. }));
+    }
+
+    #[test]
+    fn keeps_assignment_when_value_is_read_later() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(1)),
+                },
+                Statement::Return {
+                    value: Some(Expression::Variable("x".into())),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 2);
+    }
+
+    #[test]
+    fn removes_only_the_overwritten_dead_store() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(1)),
+                },
+                Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(2)),
+                },
+                Statement::Return {
+                    value: Some(Expression::Variable("x".into())),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 2);
+        assert!(matches!(body[0], Statement::Assignment { .. }));
+    }
+
+    #[test]
+    fn keeps_dead_store_when_closure_can_read_it() {
+        let mut statements = vec![Statement::Function {
+            name: "outer".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(1)),
+                },
+                Statement::Expression {
+                    expression: Expression::Function {
+                        params: vec![],
+                        body: vec![Statement::Return {
+                            value: Some(Expression::Variable("x".into())),
+                        }],
+                    },
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 2);
+    }
+
+    #[test]
+    fn leaves_module_level_assignment_intact() {
+        let mut statements = vec![
+            Statement::Let {
+                name: "module_value".into(),
+                value: Expression::Literal(Literal::Integer(0)),
+                mutable: true,
+                type_annotation: None,
+            },
+            Statement::Assignment {
+                target: AssignmentTarget::Variable("module_value".into()),
+                value: Expression::Literal(Literal::Integer(1)),
+            },
+        ];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        assert_eq!(statements.len(), 2);
+    }
+
+    #[test]
+    fn keeps_member_store_even_when_value_is_not_read_as_a_local() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["obj".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Assignment {
+                    target: AssignmentTarget::Member {
+                        object: Box::new(Expression::Variable("obj".into())),
+                        name: "value".into(),
+                    },
+                    value: Expression::Literal(Literal::Integer(1)),
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 2);
+    }
+
+    #[test]
+    fn default_pipeline_runs_dead_store_elimination() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(7)),
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        run_default_passes(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 1);
+    }
+
+    #[test]
+    fn keeps_assignment_used_from_finally() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(1)),
+                },
+                Statement::Try {
+                    try_body: vec![Statement::Return { value: None }],
+                    catch_name: None,
+                    catch_type: None,
+                    catch_body: None,
+                    finally_body: Some(vec![Statement::Expression {
+                        expression: Expression::Call {
+                            callee: Box::new(Expression::Variable("use_value".into())),
+                            generic_args: vec![],
+                            arguments: vec![Expression::Variable("x".into())],
+                            line: 1,
+                            column: 1,
+                        },
+                    }]),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 2);
     }
 
     #[test]
