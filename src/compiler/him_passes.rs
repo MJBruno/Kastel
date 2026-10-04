@@ -4,6 +4,7 @@
 //! possédée (`him.rs`). Elles ne dépendent ni du parser ni de l'AST.
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 
 use super::him::{AssignmentTarget, BinaryOp, Expression, Literal, MatchArm, Statement};
 
@@ -15,7 +16,7 @@ pub(crate) trait HimPass {
 
 /// Exécute les passes HIM activées par défaut.
 pub(crate) fn run_default_passes(statements: &mut Vec<Statement>) {
-    let passes: [&dyn HimPass; 1] = [&ConstantFolder];
+    let passes: [&dyn HimPass; 2] = [&ConstantFolder, &ConstantPropagator];
 
     for pass in passes {
         pass.run(statements);
@@ -32,11 +33,424 @@ pub(crate) fn run_default_passes(statements: &mut Vec<Statement>) {
 /// - les comparaisons entier/flottant suivent la règle exacte du VM.
 pub(crate) struct ConstantFolder;
 
+/// Propage les valeurs littérales des liaisons immuables et simplifie les
+/// branches dont la condition est devenue constante.
+///
+/// La passe reste volontairement conservatrice :
+/// - seules les liaisons `let` immuables sont propagées ;
+/// - aucune valeur n’est propagée à travers une fonction/closure ;
+/// - les corps de boucles sont analysés avec un environnement isolé ;
+/// - après un `if`, seules les constantes qui existent avec la même valeur
+///   dans les deux branches peuvent survivre ;
+/// - une branche constante est remplacée par son corps ;
+/// - `while false` est supprimé ; `while true` est conservé.
+pub(crate) struct ConstantPropagator;
+
 impl HimPass for ConstantFolder {
     fn run(&self, statements: &mut Vec<Statement>) {
         for statement in statements {
             fold_statement(statement);
         }
+    }
+}
+
+impl HimPass for ConstantPropagator {
+    fn run(&self, statements: &mut Vec<Statement>) {
+        let mut environment = HashMap::new();
+        propagate_block(statements, &mut environment);
+    }
+}
+
+type ConstantEnvironment = HashMap<String, Literal>;
+
+fn propagate_block(statements: &mut Vec<Statement>, environment: &mut ConstantEnvironment) {
+    let original = std::mem::take(statements);
+    let mut transformed = Vec::with_capacity(original.len());
+
+    for mut statement in original {
+        propagate_statement(&mut statement, environment, &mut transformed);
+    }
+
+    *statements = transformed;
+}
+
+fn propagate_statement(
+    statement: &mut Statement,
+    environment: &mut ConstantEnvironment,
+    output: &mut Vec<Statement>,
+) {
+    match statement {
+        Statement::Positioned {
+            line,
+            column,
+            statement: inner,
+        } => {
+            let mut nested_output = Vec::new();
+            propagate_statement(inner, environment, &mut nested_output);
+
+            if nested_output.len() == 1 {
+                output.push(Statement::Positioned {
+                    line: *line,
+                    column: *column,
+                    statement: Box::new(nested_output.remove(0)),
+                });
+            } else {
+                output.extend(nested_output);
+            }
+        }
+
+        Statement::Let {
+            name,
+            value,
+            mutable,
+            ..
+        } => {
+            propagate_expression(value, environment);
+
+            if !*mutable {
+                if let Expression::Literal(literal) = value {
+                    environment.insert(name.clone(), literal.clone());
+                } else {
+                    environment.remove(name);
+                }
+            } else {
+                environment.remove(name);
+            }
+
+            output.push(statement.clone());
+        }
+
+        Statement::Assignment { target, value } => {
+            propagate_assignment_target(target, environment);
+            propagate_expression(value, environment);
+
+            if let AssignmentTarget::Variable(name) = target {
+                environment.remove(name);
+            }
+
+            output.push(statement.clone());
+        }
+
+        Statement::Expression { expression } | Statement::Throw { value: expression } => {
+            propagate_expression(expression, environment);
+            output.push(statement.clone());
+        }
+
+        Statement::Return { value } => {
+            if let Some(value) = value {
+                propagate_expression(value, environment);
+            }
+            output.push(statement.clone());
+        }
+
+        Statement::Block(body) => {
+            let mut nested_environment = environment.clone();
+            propagate_block(body, &mut nested_environment);
+            output.push(statement.clone());
+        }
+
+        Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            propagate_expression(condition, environment);
+
+            let incoming = environment.clone();
+            let mut then_environment = incoming.clone();
+            propagate_block(then_branch, &mut then_environment);
+
+            let mut else_environment = incoming.clone();
+            if let Some(branch) = else_branch {
+                propagate_block(branch, &mut else_environment);
+            }
+
+            if let Expression::Literal(literal) = condition {
+                let selected = if literal_truthy(literal) {
+                    std::mem::take(then_branch)
+                } else {
+                    else_branch.take().unwrap_or_default()
+                };
+
+                // Une branche `if` possède sa propre portée. On conserve
+                // donc le bloc lors de la simplification et on ne laisse pas
+                // ses liaisons locales contaminer l'environnement extérieur.
+                *environment = incoming;
+                output.push(Statement::Block(selected));
+            } else {
+                *environment = merge_environments(&incoming, &then_environment, &else_environment, else_branch.is_some());
+                output.push(statement.clone());
+            }
+        }
+
+        Statement::While { condition, body } => {
+            propagate_expression(condition, environment);
+
+            let mut body_environment = environment.clone();
+            propagate_block(body, &mut body_environment);
+
+            if matches!(condition, Expression::Literal(literal) if !literal_truthy(literal)) {
+                return;
+            }
+
+            output.push(statement.clone());
+        }
+
+        Statement::ForIn { variable, iterable, body } => {
+            propagate_expression(iterable, environment);
+
+            let mut body_environment = environment.clone();
+            body_environment.remove(variable);
+            propagate_block(body, &mut body_environment);
+
+            output.push(statement.clone());
+        }
+
+        Statement::Match { value, arms } => {
+            propagate_expression(value, environment);
+            for arm in arms {
+                let mut arm_environment = environment.clone();
+                remove_pattern_bindings(&arm.pattern, &mut arm_environment);
+                if let Some(guard) = &mut arm.guard {
+                    propagate_expression(guard, &arm_environment);
+                }
+                propagate_block(&mut arm.body, &mut arm_environment);
+            }
+            output.push(statement.clone());
+        }
+
+        Statement::Try {
+            try_body,
+            catch_name,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            let mut try_environment = environment.clone();
+            propagate_block(try_body, &mut try_environment);
+
+            let mut catch_environment = environment.clone();
+            if let Some(name) = catch_name {
+                catch_environment.remove(name);
+            }
+            if let Some(body) = catch_body {
+                propagate_block(body, &mut catch_environment);
+            }
+
+            let mut finally_environment = environment.clone();
+            if let Some(body) = finally_body {
+                propagate_block(body, &mut finally_environment);
+            }
+
+            output.push(statement.clone());
+        }
+
+        Statement::Function { body, params, .. } => {
+            let mut function_environment = ConstantEnvironment::new();
+            for parameter in params {
+                function_environment.remove(parameter);
+            }
+            propagate_block(body, &mut function_environment);
+            output.push(statement.clone());
+        }
+
+        Statement::Export { statement: inner } => {
+            let mut nested_output = Vec::new();
+            let mut nested_environment = environment.clone();
+            propagate_statement(inner, &mut nested_environment, &mut nested_output);
+            if nested_output.len() == 1 {
+                *inner = Box::new(nested_output.remove(0));
+            }
+            output.push(statement.clone());
+        }
+
+        Statement::Class { fields, methods, .. } => {
+            for field in fields {
+                if let Some(initializer) = &mut field.initializer {
+                    let isolated_environment = ConstantEnvironment::new();
+                    propagate_expression(initializer, &isolated_environment);
+                }
+            }
+            for method in methods {
+                let mut method_environment = ConstantEnvironment::new();
+                for parameter in &method.params {
+                    method_environment.remove(parameter);
+                }
+                propagate_block(&mut method.body, &mut method_environment);
+            }
+            output.push(statement.clone());
+        }
+
+        Statement::Enum { methods, .. } => {
+            for method in methods {
+                let mut method_environment = ConstantEnvironment::new();
+                for parameter in &method.params {
+                    method_environment.remove(parameter);
+                }
+                propagate_block(&mut method.body, &mut method_environment);
+            }
+            output.push(statement.clone());
+        }
+
+        Statement::Import { .. }
+        | Statement::FromImport { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::Interface { .. }
+        | Statement::Break
+        | Statement::Continue => {
+            output.push(statement.clone());
+        }
+    }
+}
+
+fn merge_environments(
+    incoming: &ConstantEnvironment,
+    then_environment: &ConstantEnvironment,
+    else_environment: &ConstantEnvironment,
+    has_else: bool,
+) -> ConstantEnvironment {
+    let mut merged = ConstantEnvironment::new();
+
+    for (name, value) in incoming {
+        let same_then = then_environment.get(name).is_some_and(|candidate| literal_equals(value, candidate));
+        let same_else = if has_else {
+            else_environment.get(name).is_some_and(|candidate| literal_equals(value, candidate))
+        } else {
+            true
+        };
+
+        if same_then && same_else {
+            merged.insert(name.clone(), value.clone());
+        }
+    }
+
+    merged
+}
+
+fn propagate_assignment_target(
+    target: &mut AssignmentTarget,
+    environment: &ConstantEnvironment,
+) {
+    match target {
+        AssignmentTarget::Variable(_) => {}
+        AssignmentTarget::Index { object, index } => {
+            propagate_expression(object, environment);
+            propagate_expression(index, environment);
+        }
+        AssignmentTarget::Member { object, .. } => {
+            propagate_expression(object, environment);
+        }
+    }
+}
+
+fn remove_pattern_bindings(pattern: &super::him::Pattern, environment: &mut ConstantEnvironment) {
+    match pattern {
+        super::him::Pattern::Binding(name) => {
+            environment.remove(name);
+        }
+        super::him::Pattern::Or(patterns)
+        | super::him::Pattern::Array(patterns)
+        | super::him::Pattern::ArrayRest(patterns)
+        | super::him::Pattern::Tuple(patterns) => {
+            for pattern in patterns {
+                remove_pattern_bindings(pattern, environment);
+            }
+        }
+        super::him::Pattern::Range { start, end, .. } => {
+            remove_pattern_bindings(start, environment);
+            remove_pattern_bindings(end, environment);
+        }
+        super::him::Pattern::OptionSome(pattern)
+        | super::him::Pattern::ResultOk(pattern)
+        | super::him::Pattern::ResultErr(pattern) => {
+            remove_pattern_bindings(pattern, environment);
+        }
+        super::him::Pattern::Wildcard
+        | super::him::Pattern::Literal(_)
+        | super::him::Pattern::EnumVariant { .. } => {}
+    }
+}
+
+fn propagate_expression(
+    expression: &mut Expression,
+    environment: &ConstantEnvironment,
+) {
+    match expression {
+        Expression::Variable(name) => {
+            if let Some(value) = environment.get(name) {
+                *expression = Expression::Literal(value.clone());
+            }
+        }
+
+        Expression::Unary { right, .. } => {
+            propagate_expression(right, environment);
+            fold_expression(expression);
+        }
+
+        Expression::Binary { left, right, .. } => {
+            propagate_expression(left, environment);
+            propagate_expression(right, environment);
+            fold_expression(expression);
+        }
+
+        Expression::Function { body, params } => {
+            let mut isolated_environment = ConstantEnvironment::new();
+            for parameter in params {
+                isolated_environment.remove(parameter);
+            }
+            propagate_block(body, &mut isolated_environment);
+        }
+
+        Expression::Call { callee, arguments, .. } => {
+            propagate_expression(callee, environment);
+            for argument in arguments {
+                propagate_expression(argument, environment);
+            }
+        }
+
+        Expression::Member { object, .. } => {
+            propagate_expression(object, environment);
+        }
+
+        Expression::Index { object, index, .. } => {
+            propagate_expression(object, environment);
+            propagate_expression(index, environment);
+        }
+
+        Expression::New { arguments, .. } => {
+            for argument in arguments {
+                propagate_expression(argument, environment);
+            }
+        }
+
+        Expression::Array(elements) | Expression::Tuple(elements) => {
+            for element in elements {
+                propagate_expression(element, environment);
+            }
+        }
+
+        Expression::Dict(fields) | Expression::Record(fields) => {
+            for (_, value) in fields {
+                propagate_expression(value, environment);
+            }
+        }
+
+        Expression::Try(expression) | Expression::Await(expression) => {
+            propagate_expression(expression, environment);
+        }
+
+        Expression::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            propagate_expression(condition, environment);
+            propagate_expression(then_expr, environment);
+            propagate_expression(else_expr, environment);
+            fold_expression(expression);
+        }
+
+        Expression::Literal(_) | Expression::SelfValue => {}
     }
 }
 
@@ -687,4 +1101,195 @@ mod tests {
 
         assert_eq!(literal(expression), Literal::String("yes".into()));
     }
+
+    #[test]
+    fn propagates_immutable_literal_bindings() {
+        let mut statements = vec![
+            Statement::Let {
+                name: "x".into(),
+                value: Expression::Literal(Literal::Integer(21)),
+                mutable: false,
+                type_annotation: None,
+            },
+            Statement::Let {
+                name: "y".into(),
+                value: Expression::Binary {
+                    left: Box::new(Expression::Variable("x".into())),
+                    operator: BinaryOp::Multiply,
+                    right: Box::new(Expression::Literal(Literal::Integer(2))),
+                    line: 1,
+                    column: 1,
+                },
+                mutable: false,
+                type_annotation: None,
+            },
+        ];
+
+        ConstantPropagator.run(&mut statements);
+
+        match &statements[1] {
+            Statement::Let { value, .. } => {
+                assert_eq!(value_literal(value), Literal::Integer(42));
+            }
+            other => panic!("let attendu, reçu: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn does_not_propagate_mutable_bindings() {
+        let mut statements = vec![
+            Statement::Let {
+                name: "x".into(),
+                value: Expression::Literal(Literal::Integer(21)),
+                mutable: true,
+                type_annotation: None,
+            },
+            Statement::Let {
+                name: "y".into(),
+                value: Expression::Variable("x".into()),
+                mutable: false,
+                type_annotation: None,
+            },
+        ];
+
+        ConstantPropagator.run(&mut statements);
+
+        match &statements[1] {
+            Statement::Let { value, .. } => {
+                assert!(matches!(value, Expression::Variable(name) if name == "x"));
+            }
+            other => panic!("let attendu, reçu: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn simplifies_constant_if_and_keeps_selected_branch() {
+        let mut statements = vec![Statement::If {
+            condition: Expression::Literal(Literal::Bool(true)),
+            then_branch: vec![Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(7)),
+            }],
+            else_branch: Some(vec![Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(9)),
+            }]),
+        }];
+
+        ConstantPropagator.run(&mut statements);
+
+        assert_eq!(statements.len(), 1);
+        assert!(matches!(statements[0], Statement::Block(_)));
+    }
+
+    #[test]
+    fn removes_while_false() {
+        let mut statements = vec![Statement::While {
+            condition: Expression::Literal(Literal::Bool(false)),
+            body: vec![Statement::Break],
+        }];
+
+        ConstantPropagator.run(&mut statements);
+
+        assert!(statements.is_empty());
+    }
+
+    #[test]
+    fn preserves_constants_around_nonconstant_branches_when_both_paths_agree() {
+        let mut statements = vec![
+            Statement::Let {
+                name: "x".into(),
+                value: Expression::Literal(Literal::Integer(10)),
+                mutable: false,
+                type_annotation: None,
+            },
+            Statement::If {
+                condition: Expression::Variable("flag".into()),
+                then_branch: vec![Statement::Expression {
+                    expression: Expression::Literal(Literal::Integer(1)),
+                }],
+                else_branch: Some(vec![Statement::Expression {
+                    expression: Expression::Literal(Literal::Integer(2)),
+                }]),
+            },
+            Statement::Expression {
+                expression: Expression::Binary {
+                    left: Box::new(Expression::Variable("x".into())),
+                    operator: BinaryOp::Add,
+                    right: Box::new(Expression::Literal(Literal::Integer(1))),
+                    line: 1,
+                    column: 1,
+                },
+            },
+        ];
+
+        ConstantPropagator.run(&mut statements);
+
+        match &statements[2] {
+            Statement::Expression { expression } => {
+                assert_eq!(value_literal(expression), Literal::Integer(11));
+            }
+            other => panic!("expression attendue, reçu: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn constant_if_keeps_branch_scope_and_does_not_leak_locals() {
+        let mut statements = vec![
+            Statement::If {
+                condition: Expression::Literal(Literal::Bool(true)),
+                then_branch: vec![Statement::Let {
+                    name: "inner".into(),
+                    value: Expression::Literal(Literal::Integer(2)),
+                    mutable: false,
+                    type_annotation: None,
+                }],
+                else_branch: None,
+            },
+            Statement::Expression {
+                expression: Expression::Variable("inner".into()),
+            },
+        ];
+
+        ConstantPropagator.run(&mut statements);
+
+        assert!(matches!(statements[0], Statement::Block(_)));
+        assert!(matches!(
+            &statements[1],
+            Statement::Expression {
+                expression: Expression::Variable(name)
+            } if name == "inner"
+        ));
+    }
+
+    #[test]
+    fn preserves_positioned_statements_during_propagation() {
+        let mut statements = vec![Statement::Positioned {
+            line: 12,
+            column: 4,
+            statement: Box::new(Statement::Let {
+                name: "x".into(),
+                value: Expression::Literal(Literal::Integer(7)),
+                mutable: false,
+                type_annotation: None,
+            }),
+        }];
+
+        ConstantPropagator.run(&mut statements);
+
+        assert!(matches!(
+            &statements[0],
+            Statement::Positioned {
+                line: 12,
+                column: 4,
+                statement
+            } if matches!(statement.as_ref(), Statement::Let { .. })
+        ));
+    }
+
+    fn value_literal(expression: &Expression) -> Literal {
+        match expression {
+            Expression::Literal(value) => value.clone(),
+            other => panic!("littéral attendu, reçu: {other:?}"),
+        }
+    }
+
 }
