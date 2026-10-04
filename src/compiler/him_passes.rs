@@ -79,22 +79,55 @@ pub(crate) struct DeadCodeEliminator;
 /// - les champs de classes et les paramètres restent intacts.
 pub(crate) struct DeadValueEliminator;
 
-/// Analyse la vivacité des variables locales d'un bloc HIM.
+/// Supprime les écritures locales mortes à partir de l'analyse de vivacité.
 ///
-/// L'analyse est volontairement conservative pour Kastel : les closures,
-/// appels, allocations et accès dynamiques peuvent observer des valeurs dont
-/// le backend ne peut pas toujours déduire l'usage exact. Une variable est
-/// donc considérée vivante dès qu'une lecture potentielle est détectée.
-#[allow(dead_code)]
+/// Seules les affectations à des variables locales dont la valeur n'est pas
+/// lue sur un chemin futur sont candidates. Les affectations aux membres,
+/// aux index, aux globals et les initialiseurs avec effets de bord restent
+/// conservés.
+pub(crate) struct DeadStoreEliminator;
+
+/// Analyse de vivacité basée sur un petit graphe de contrôle de flux HIM.
+///
+/// Le CFG modélise précisément les séquences, `if`, `while`, `for`,
+/// `break` et `continue`. Les régions dont la sémantique de contrôle est
+/// exceptionnelle ou dynamiquement observable (`match`, `try`, déclarations
+/// de type/fonction) restent volontairement opaques pour la DSE.
 pub(crate) struct LivenessAnalyzer;
 
-/// Supprime les écritures locales triviales qui ne peuvent plus être lues.
-///
-/// La passe ne retire que `x = <littéral>` lorsque `x` est une liaison locale
-/// de la fonction courante et qu'aucune lecture de `x` n'existe sur un chemin
-/// d'exécution ultérieur. Les écritures globales, les cibles membres/indexées
-/// et les initialisateurs potentiellement observables restent intactes.
-pub(crate) struct DeadStoreEliminator;
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct LivenessSummary {
+    pub(crate) live_in: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CfgNode {
+    statement_id: Option<usize>,
+    uses: HashSet<String>,
+    defs: HashSet<String>,
+    successors: Vec<usize>,
+    removable_store: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ControlFlowGraph {
+    nodes: Vec<CfgNode>,
+    entry: Option<usize>,
+    exit: usize,
+}
+
+struct CfgBuilder<'a> {
+    nodes: Vec<CfgNode>,
+    next_statement_id: usize,
+    locals: &'a HashSet<String>,
+    exit: usize,
+}
+
+#[derive(Debug, Clone)]
+struct CfgLiveness {
+    live_in: Vec<HashSet<String>>,
+    live_out: Vec<HashSet<String>>,
+}
 
 impl HimPass for ConstantFolder {
     fn run(&self, statements: &mut Vec<Statement>) {
@@ -129,26 +162,494 @@ impl HimPass for DeadStoreEliminator {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct LivenessSummary {
-    pub(crate) live_in: HashSet<String>,
-}
-
-#[allow(dead_code)]
 impl LivenessAnalyzer {
+    #[cfg(test)]
     pub(crate) fn analyze_block(&self, statements: &[Statement]) -> LivenessSummary {
-        LivenessSummary {
-            live_in: analyze_block_liveness(statements, &HashSet::new()),
-        }
+        self.analyze_block_with_live_out(statements, &HashSet::new())
     }
 
+    #[cfg(test)]
     pub(crate) fn analyze_block_with_live_out(
         &self,
         statements: &[Statement],
         live_out: &HashSet<String>,
     ) -> LivenessSummary {
-        LivenessSummary {
-            live_in: analyze_block_liveness(statements, live_out),
+        // L'analyse publique de test reçoit un bloc autonome, sans la table
+        // des variables locales fournie normalement par le compilateur de
+        // fonction. Dans ce contexte, une affectation simple constitue une
+        // définition locale pour permettre à l'analyse de distinguer une
+        // lecture réellement non liée d'une valeur définie précédemment.
+        let mut locals = HashSet::new();
+        collect_liveness_definition_names(statements, &mut locals);
+        let cfg = ControlFlowGraph::build(statements, &locals);
+        let analysis = self.solve(&cfg, live_out);
+        let live_in = cfg
+            .entry
+            .and_then(|entry| analysis.live_in.get(entry).cloned())
+            .unwrap_or_default();
+
+        LivenessSummary { live_in }
+    }
+
+    fn analyze_function(
+        &self,
+        statements: &[Statement],
+        locals: &HashSet<String>,
+    ) -> (LivenessSummary, HashSet<usize>) {
+        let cfg = ControlFlowGraph::build(statements, locals);
+        let analysis = self.solve(&cfg, &HashSet::new());
+        let live_in = cfg
+            .entry
+            .and_then(|entry| analysis.live_in.get(entry).cloned())
+            .unwrap_or_default();
+        let mut dead_stores = HashSet::new();
+
+        for (node_id, node) in cfg.nodes.iter().enumerate() {
+            let Some(name) = &node.removable_store else {
+                continue;
+            };
+
+            if !analysis.live_out[node_id].contains(name) {
+                if let Some(statement_id) = node.statement_id {
+                    dead_stores.insert(statement_id);
+                }
+            }
+        }
+
+        (LivenessSummary { live_in }, dead_stores)
+    }
+
+    fn solve(&self, cfg: &ControlFlowGraph, exit_live_in: &HashSet<String>) -> CfgLiveness {
+        let mut live_in = vec![HashSet::new(); cfg.nodes.len()];
+        let mut live_out = vec![HashSet::new(); cfg.nodes.len()];
+
+        if let Some(exit) = live_in.get_mut(cfg.exit) {
+            *exit = exit_live_in.clone();
+        }
+
+        loop {
+            let mut changed = false;
+
+            for node_id in (0..cfg.nodes.len()).rev() {
+                if node_id == cfg.exit {
+                    continue;
+                }
+
+                let mut next_live_out = HashSet::new();
+                for successor in &cfg.nodes[node_id].successors {
+                    next_live_out.extend(live_in[*successor].iter().cloned());
+                }
+
+                let mut next_live_in = next_live_out.clone();
+                for definition in &cfg.nodes[node_id].defs {
+                    next_live_in.remove(definition);
+                }
+                next_live_in.extend(cfg.nodes[node_id].uses.iter().cloned());
+
+                if next_live_out != live_out[node_id] {
+                    live_out[node_id] = next_live_out;
+                    changed = true;
+                }
+                if next_live_in != live_in[node_id] {
+                    live_in[node_id] = next_live_in;
+                    changed = true;
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        CfgLiveness { live_in, live_out }
+    }
+}
+
+impl ControlFlowGraph {
+    fn build(statements: &[Statement], locals: &HashSet<String>) -> Self {
+        let mut builder = CfgBuilder {
+            nodes: Vec::new(),
+            next_statement_id: 0,
+            locals,
+            exit: 0,
+        };
+        let exit = builder.add_node(None, HashSet::new(), HashSet::new(), Vec::new(), None);
+        builder.exit = exit;
+        let entry = builder.build_sequence(statements, exit, None, None);
+
+        Self {
+            nodes: builder.nodes,
+            entry,
+            exit,
+        }
+    }
+}
+
+impl<'a> CfgBuilder<'a> {
+    fn add_node(
+        &mut self,
+        statement_id: Option<usize>,
+        uses: HashSet<String>,
+        defs: HashSet<String>,
+        successors: Vec<usize>,
+        removable_store: Option<String>,
+    ) -> usize {
+        let id = self.nodes.len();
+        self.nodes.push(CfgNode {
+            statement_id,
+            uses,
+            defs,
+            successors,
+            removable_store,
+        });
+        id
+    }
+
+    fn reserve_node(&mut self, statement_id: usize) -> usize {
+        self.add_node(
+            Some(statement_id),
+            HashSet::new(),
+            HashSet::new(),
+            Vec::new(),
+            None,
+        )
+    }
+
+    fn build_sequence(
+        &mut self,
+        statements: &[Statement],
+        next: usize,
+        break_target: Option<usize>,
+        continue_target: Option<usize>,
+    ) -> Option<usize> {
+        let mut current = next;
+
+        for statement in statements.iter().rev() {
+            current = self.build_statement(
+                statement,
+                current,
+                break_target,
+                continue_target,
+            );
+        }
+
+        (current != next).then_some(current)
+    }
+
+    fn build_statement(
+        &mut self,
+        statement: &Statement,
+        next: usize,
+        break_target: Option<usize>,
+        continue_target: Option<usize>,
+    ) -> usize {
+        let statement_id = self.next_statement_id;
+        self.next_statement_id += 1;
+        self.build_statement_with_id(
+            statement,
+            statement_id,
+            next,
+            break_target,
+            continue_target,
+        )
+    }
+
+    fn build_statement_with_id(
+        &mut self,
+        statement: &Statement,
+        statement_id: usize,
+        next: usize,
+        break_target: Option<usize>,
+        continue_target: Option<usize>,
+    ) -> usize {
+        match statement {
+            Statement::Positioned { statement, .. } => self.build_statement_with_id(
+                statement,
+                statement_id,
+                next,
+                break_target,
+                continue_target,
+            ),
+
+            Statement::Export { statement } => self.build_statement_with_id(
+                statement,
+                statement_id,
+                next,
+                break_target,
+                continue_target,
+            ),
+
+            Statement::Let { name, value, .. } => {
+                let mut uses = HashSet::new();
+                collect_used_variables_expression(value, &mut uses);
+                let mut defs = HashSet::new();
+                defs.insert(name.clone());
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    defs,
+                    vec![next],
+                    None,
+                )
+            }
+
+            Statement::Assignment { target, value } => {
+                let mut uses = HashSet::new();
+                collect_used_variables_expression(value, &mut uses);
+                let mut defs = HashSet::new();
+                let mut removable_store = None;
+
+                match target {
+                    AssignmentTarget::Variable(name) => {
+                        if self.locals.contains(name) {
+                            defs.insert(name.clone());
+                            if matches!(value, Expression::Literal(_)) {
+                                removable_store = Some(name.clone());
+                            }
+                        }
+                    }
+                    AssignmentTarget::Member { .. } | AssignmentTarget::Index { .. } => {
+                        collect_used_variables_target(target, &mut uses);
+                    }
+                }
+
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    defs,
+                    vec![next],
+                    removable_store,
+                )
+            }
+
+            Statement::Expression { expression } | Statement::Throw { value: expression } => {
+                let mut uses = HashSet::new();
+                collect_used_variables_expression(expression, &mut uses);
+                let successors = if matches!(statement, Statement::Throw { .. }) {
+                    vec![self.exit]
+                } else {
+                    vec![next]
+                };
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    HashSet::new(),
+                    successors,
+                    None,
+                )
+            }
+
+            Statement::Return { value } => {
+                let mut uses = HashSet::new();
+                if let Some(value) = value {
+                    collect_used_variables_expression(value, &mut uses);
+                }
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    HashSet::new(),
+                    vec![self.exit],
+                    None,
+                )
+            }
+
+            Statement::Break => self.add_node(
+                Some(statement_id),
+                HashSet::new(),
+                HashSet::new(),
+                vec![break_target.unwrap_or(self.exit)],
+                None,
+            ),
+
+            Statement::Continue => self.add_node(
+                Some(statement_id),
+                HashSet::new(),
+                HashSet::new(),
+                vec![continue_target.unwrap_or(self.exit)],
+                None,
+            ),
+
+            Statement::Block(body) => {
+                let body_entry = self.build_sequence(
+                    body,
+                    next,
+                    break_target,
+                    continue_target,
+                )
+                .unwrap_or(next);
+                self.add_node(
+                    Some(statement_id),
+                    HashSet::new(),
+                    HashSet::new(),
+                    vec![body_entry],
+                    None,
+                )
+            }
+
+            Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let then_entry = self
+                    .build_sequence(then_branch, next, break_target, continue_target)
+                    .unwrap_or(next);
+                let else_entry = else_branch
+                    .as_ref()
+                    .and_then(|branch| {
+                        self.build_sequence(branch, next, break_target, continue_target)
+                    })
+                    .unwrap_or(next);
+
+                let mut uses = HashSet::new();
+                collect_used_variables_expression(condition, &mut uses);
+                let mut successors = vec![then_entry];
+                if else_entry != then_entry {
+                    successors.push(else_entry);
+                }
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    HashSet::new(),
+                    successors,
+                    None,
+                )
+            }
+
+            Statement::While { condition, body } => {
+                let condition_node = self.reserve_node(statement_id);
+                let body_entry = self
+                    .build_sequence(body, condition_node, Some(next), Some(condition_node))
+                    .unwrap_or(condition_node);
+
+                let mut uses = HashSet::new();
+                collect_used_variables_expression(condition, &mut uses);
+                self.nodes[condition_node].uses = uses;
+                self.nodes[condition_node].successors = vec![body_entry, next];
+                condition_node
+            }
+
+            Statement::ForIn { variable, iterable, body } => {
+                let iteration_node = self.reserve_node(statement_id);
+                let body_entry = self
+                    .build_sequence(body, iteration_node, Some(next), Some(iteration_node))
+                    .unwrap_or(iteration_node);
+
+                let mut uses = HashSet::new();
+                collect_used_variables_expression(iterable, &mut uses);
+                let mut defs = HashSet::new();
+                defs.insert(variable.clone());
+                self.nodes[iteration_node].uses = uses;
+                self.nodes[iteration_node].defs = defs;
+                self.nodes[iteration_node].successors = vec![body_entry, next];
+                iteration_node
+            }
+
+            // Les effets de contrôle de `match` dépendent des patterns et des
+            // gardes, et peuvent aussi introduire des bindings. Tant que nous
+            // n'avons pas leur CFG dédié, on garde toute la région opaque.
+            Statement::Match { value, arms } => {
+                let mut uses = HashSet::new();
+                collect_used_variables_expression(value, &mut uses);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        collect_used_variables_expression(guard, &mut uses);
+                    }
+                    collect_used_variables_statements(&arm.body, &mut uses);
+                }
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    HashSet::new(),
+                    vec![next],
+                    None,
+                )
+            }
+
+            // Une région `try` peut transférer le contrôle vers catch/finally
+            // depuis pratiquement n'importe quel point. Elle reste donc opaque
+            // jusqu'à l'ajout d'un véritable graphe d'exceptions HIM.
+            Statement::Try {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
+                let mut uses = HashSet::new();
+                collect_used_variables_statements(try_body, &mut uses);
+                if let Some(body) = catch_body {
+                    collect_used_variables_statements(body, &mut uses);
+                }
+                if let Some(body) = finally_body {
+                    collect_used_variables_statements(body, &mut uses);
+                }
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    HashSet::new(),
+                    vec![next],
+                    None,
+                )
+            }
+
+            // Les déclarations exécutées dans une fonction peuvent capturer
+            // des variables du scope courant. Elles restent donc des barrières
+            // pour la DSE locale.
+            Statement::Function { body, .. } => {
+                let mut uses = HashSet::new();
+                collect_used_variables_statements(body, &mut uses);
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    HashSet::new(),
+                    vec![next],
+                    None,
+                )
+            }
+
+            Statement::Class { fields, methods, .. } => {
+                let mut uses = HashSet::new();
+                for field in fields {
+                    if let Some(initializer) = &field.initializer {
+                        collect_used_variables_expression(initializer, &mut uses);
+                    }
+                }
+                for method in methods {
+                    collect_used_variables_statements(&method.body, &mut uses);
+                }
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    HashSet::new(),
+                    vec![next],
+                    None,
+                )
+            }
+
+            Statement::Enum { methods, .. } => {
+                let mut uses = HashSet::new();
+                for method in methods {
+                    collect_used_variables_statements(&method.body, &mut uses);
+                }
+                self.add_node(
+                    Some(statement_id),
+                    uses,
+                    HashSet::new(),
+                    vec![next],
+                    None,
+                )
+            }
+
+            Statement::Import { .. }
+            | Statement::FromImport { .. }
+            | Statement::TypeAlias { .. }
+            | Statement::Interface { .. } => self.add_node(
+                Some(statement_id),
+                HashSet::new(),
+                HashSet::new(),
+                vec![next],
+                None,
+            ),
         }
     }
 }
@@ -227,7 +728,7 @@ fn discover_and_optimize_function(statement: &mut Statement) {
         }
         Statement::Function { body, params, .. } => {
             let locals = collect_function_local_bindings(params, body);
-            eliminate_dead_stores_in_block(body, &locals, &HashSet::new());
+            eliminate_dead_stores_in_block(body, &locals);
         }
         Statement::Class { fields, methods, .. } => {
             for field in fields {
@@ -237,13 +738,13 @@ fn discover_and_optimize_function(statement: &mut Statement) {
             }
             for method in methods {
                 let locals = collect_function_local_bindings(&method.params, &method.body);
-                eliminate_dead_stores_in_block(&mut method.body, &locals, &HashSet::new());
+                eliminate_dead_stores_in_block(&mut method.body, &locals);
             }
         }
         Statement::Enum { methods, .. } => {
             for method in methods {
                 let locals = collect_function_local_bindings(&method.params, &method.body);
-                eliminate_dead_stores_in_block(&mut method.body, &locals, &HashSet::new());
+                eliminate_dead_stores_in_block(&mut method.body, &locals);
             }
         }
         Statement::Export { statement } => discover_and_optimize_function(statement),
@@ -284,7 +785,7 @@ fn discover_and_optimize_nested_functions_in_expression(expression: &mut Express
     match expression {
         Expression::Function { params, body } => {
             let locals = collect_function_local_bindings(params, body);
-            eliminate_dead_stores_in_block(body, &locals, &HashSet::new());
+            eliminate_dead_stores_in_block(body, &locals);
         }
         Expression::Unary { right, .. } => {
             discover_and_optimize_nested_functions_in_expression(right);
@@ -337,38 +838,6 @@ fn discover_and_optimize_nested_functions_in_expression(expression: &mut Express
     }
 }
 
-fn eliminate_dead_stores_in_block(
-    statements: &mut Vec<Statement>,
-    locals: &HashSet<String>,
-    live_out: &HashSet<String>,
-) -> HashSet<String> {
-    // Important: nous ne faisons pas de DSE récursive dans les blocs de
-    // contrôle du même corps de fonction. Leur `live_out` dépend du CFG
-    // réel (branches, boucles, break/continue, exceptions et finally).
-    // Une analyse locale avec un ensemble vide serait incorrecte et pourrait
-    // supprimer une écriture encore observable, voire créer une boucle infinie.
-    // Les fonctions/closures imbriquées restent toutefois analysées séparément.
-    for statement in statements.iter_mut() {
-        discover_and_optimize_function(statement);
-    }
-
-    let mut live = live_out.clone();
-    let mut index = statements.len();
-
-    while index > 0 {
-        index -= 1;
-
-        if is_dead_local_literal_assignment(&statements[index], locals, &live) {
-            statements.remove(index);
-            continue;
-        }
-
-        live = analyze_statement_liveness(&statements[index], &live);
-    }
-
-    live
-}
-
 fn collect_function_local_bindings(
     params: &[String],
     statements: &[Statement],
@@ -376,6 +845,82 @@ fn collect_function_local_bindings(
     let mut locals = params.iter().cloned().collect();
     collect_local_bindings_from_statements(statements, &mut locals);
     locals
+}
+
+#[cfg(test)]
+fn collect_liveness_definition_names(
+    statements: &[Statement],
+    locals: &mut HashSet<String>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::Positioned { statement, .. }
+            | Statement::Export { statement } => {
+                collect_liveness_definition_names(std::slice::from_ref(statement), locals);
+            }
+            Statement::Let { name, .. } => {
+                locals.insert(name.clone());
+            }
+            Statement::Assignment {
+                target: AssignmentTarget::Variable(name),
+                ..
+            } => {
+                locals.insert(name.clone());
+            }
+            Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_liveness_definition_names(then_branch, locals);
+                if let Some(branch) = else_branch {
+                    collect_liveness_definition_names(branch, locals);
+                }
+            }
+            Statement::While { body, .. }
+            | Statement::ForIn { body, .. }
+            | Statement::Block(body) => {
+                collect_liveness_definition_names(body, locals);
+            }
+            Statement::Match { arms, .. } => {
+                for arm in arms {
+                    collect_pattern_bindings(&arm.pattern, locals);
+                    collect_liveness_definition_names(&arm.body, locals);
+                }
+            }
+            Statement::Try {
+                try_body,
+                catch_name,
+                catch_body,
+                finally_body,
+                ..
+            } => {
+                collect_liveness_definition_names(try_body, locals);
+                if let Some(name) = catch_name {
+                    locals.insert(name.clone());
+                }
+                if let Some(body) = catch_body {
+                    collect_liveness_definition_names(body, locals);
+                }
+                if let Some(body) = finally_body {
+                    collect_liveness_definition_names(body, locals);
+                }
+            }
+            Statement::Function { .. }
+            | Statement::Class { .. }
+            | Statement::Enum { .. }
+            | Statement::TypeAlias { .. }
+            | Statement::Interface { .. }
+            | Statement::Import { .. }
+            | Statement::FromImport { .. }
+            | Statement::Assignment { .. }
+            | Statement::Expression { .. }
+            | Statement::Return { .. }
+            | Statement::Throw { .. }
+            | Statement::Break
+            | Statement::Continue => {}
+        }
+    }
 }
 
 fn collect_local_bindings_from_statements(
@@ -431,7 +976,6 @@ fn collect_local_bindings_from_statements(
                     collect_local_bindings_from_statements(body, locals);
                 }
             }
-            // Les fonctions imbriquées ont leur propre espace de liaisons.
             Statement::Function { .. } => {}
             Statement::Class { .. }
             | Statement::Enum { .. }
@@ -478,389 +1022,112 @@ fn collect_pattern_bindings(pattern: &super::him::Pattern, locals: &mut HashSet<
     }
 }
 
-
-fn is_dead_local_literal_assignment(
-    statement: &Statement,
+fn eliminate_dead_stores_in_block(
+    statements: &mut Vec<Statement>,
     locals: &HashSet<String>,
-    live_after: &HashSet<String>,
-) -> bool {
-    let statement = match statement {
-        Statement::Positioned { statement, .. } => statement.as_ref(),
-        other => other,
-    };
-
-    matches!(
-        statement,
-        Statement::Assignment {
-            target: AssignmentTarget::Variable(name),
-            value: Expression::Literal(_),
-        } if locals.contains(name) && !live_after.contains(name)
-    )
-}
-
-fn analyze_block_liveness(
-    statements: &[Statement],
-    live_out: &HashSet<String>,
-) -> HashSet<String> {
-    let mut live = live_out.clone();
-    for statement in statements.iter().rev() {
-        live = analyze_statement_liveness(statement, &live);
+) {
+    for statement in statements.iter_mut() {
+        discover_and_optimize_function(statement);
     }
-    live
+
+    let analyzer = LivenessAnalyzer;
+    let (_, dead_stores) = analyzer.analyze_function(statements, locals);
+    if dead_stores.is_empty() {
+        return;
+    }
+
+    let mut statement_id = 0usize;
+    remove_dead_store_nodes(statements, &dead_stores, &mut statement_id);
 }
 
-fn analyze_statement_liveness(
-    statement: &Statement,
-    live_after: &HashSet<String>,
-) -> HashSet<String> {
-    match statement {
-        Statement::Positioned { statement, .. } => analyze_statement_liveness(statement, live_after),
+fn remove_dead_store_nodes(
+    statements: &mut Vec<Statement>,
+    dead_stores: &HashSet<usize>,
+    statement_id: &mut usize,
+) {
+    for index in (0..statements.len()).rev() {
+        let id = *statement_id;
+        *statement_id += 1;
 
-        Statement::Let { name, value, .. } => {
-            let mut live = live_after.clone();
-            live.remove(name);
-            collect_expression_variables(value, &mut live);
-            live
+        if dead_stores.contains(&id) {
+            statements.remove(index);
+            continue;
         }
 
-        Statement::Assignment { target, value } => {
-            let mut live = live_after.clone();
-            if let AssignmentTarget::Variable(name) = target {
-                live.remove(name);
-            } else {
-                collect_assignment_target_variables(target, &mut live);
+        match &mut statements[index] {
+            Statement::Positioned { statement, .. }
+            | Statement::Export { statement } => {
+                remove_dead_store_in_statement(statement, dead_stores, statement_id);
             }
-            collect_expression_variables(value, &mut live);
-            live
-        }
-
-        Statement::Expression { expression } | Statement::Throw { value: expression } => {
-            let mut live = HashSet::new();
-            collect_expression_variables(expression, &mut live);
-            if matches!(statement, Statement::Expression { .. }) {
-                live.extend(live_after.iter().cloned());
+            Statement::Block(body) => {
+                remove_dead_store_nodes(body, dead_stores, statement_id);
             }
-            live
-        }
-
-        Statement::Return { value } => {
-            let mut live = HashSet::new();
-            if let Some(value) = value {
-                collect_expression_variables(value, &mut live);
+            Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                remove_dead_store_nodes(then_branch, dead_stores, statement_id);
+                if let Some(branch) = else_branch {
+                    remove_dead_store_nodes(branch, dead_stores, statement_id);
+                }
             }
-            live
+            Statement::While { body, .. } | Statement::ForIn { body, .. } => {
+                remove_dead_store_nodes(body, dead_stores, statement_id);
+            }
+            // Le CFG reste opaque pour `match`, `try` et les déclarations.
+            Statement::Match { .. }
+            | Statement::Try { .. }
+            | Statement::Function { .. }
+            | Statement::Class { .. }
+            | Statement::Enum { .. }
+            | Statement::Let { .. }
+            | Statement::Assignment { .. }
+            | Statement::Expression { .. }
+            | Statement::Return { .. }
+            | Statement::Throw { .. }
+            | Statement::Import { .. }
+            | Statement::FromImport { .. }
+            | Statement::TypeAlias { .. }
+            | Statement::Interface { .. }
+            | Statement::Break
+            | Statement::Continue => {}
         }
+    }
+}
 
-        Statement::Block(body) => analyze_block_liveness(body, live_after),
+fn remove_dead_store_in_statement(
+    statement: &mut Box<Statement>,
+    dead_stores: &HashSet<usize>,
+    statement_id: &mut usize,
+) {
+    let id = *statement_id;
+    if dead_stores.contains(&id) {
+        // Unreachable for a wrapper node: a removable assignment is represented
+        // by the wrapper's own id and is removed by the parent vector.
+        return;
+    }
 
+    match statement.as_mut() {
+        Statement::Positioned { statement, .. }
+        | Statement::Export { statement } => {
+            remove_dead_store_in_statement(statement, dead_stores, statement_id);
+        }
+        Statement::Block(body) => remove_dead_store_nodes(body, dead_stores, statement_id),
         Statement::If {
-            condition,
             then_branch,
             else_branch,
-        } => {
-            let mut live = HashSet::new();
-            collect_expression_variables(condition, &mut live);
-            live.extend(analyze_block_liveness(then_branch, live_after));
-            if let Some(branch) = else_branch {
-                live.extend(analyze_block_liveness(branch, live_after));
-            } else {
-                live.extend(live_after.iter().cloned());
-            }
-            live
-        }
-
-        Statement::While { condition, body } => {
-            let mut loop_live = live_after.clone();
-            loop {
-                let mut next = live_after.clone();
-                next.extend(analyze_block_liveness(body, &loop_live));
-                collect_expression_variables(condition, &mut next);
-                if next == loop_live {
-                    break next;
-                }
-                loop_live = next;
-            }
-        }
-
-        Statement::ForIn { variable, iterable, body } => {
-            let mut loop_live = live_after.clone();
-            loop {
-                let mut body_live_out = loop_live.clone();
-                body_live_out.remove(variable);
-                let mut body_live_in = analyze_block_liveness(body, &body_live_out);
-                body_live_in.remove(variable);
-
-                let mut next = live_after.clone();
-                next.extend(body_live_in);
-                collect_expression_variables(iterable, &mut next);
-
-                if next == loop_live {
-                    break next;
-                }
-                loop_live = next;
-            }
-        }
-
-        Statement::Match { value, arms } => {
-            let mut live = HashSet::new();
-            collect_expression_variables(value, &mut live);
-            for arm in arms {
-                let body_live = analyze_block_liveness(&arm.body, live_after);
-                let mut arm_live = body_live;
-                if let Some(guard) = &arm.guard {
-                    collect_expression_variables(guard, &mut arm_live);
-                }
-                remove_pattern_from_live(&arm.pattern, &mut arm_live);
-                live.extend(arm_live);
-            }
-            live
-        }
-
-        Statement::Try {
-            try_body,
-            catch_name,
-            catch_body,
-            finally_body,
             ..
         } => {
-            let finally_live = finally_body
-                .as_ref()
-                .map(|body| analyze_block_liveness(body, live_after))
-                .unwrap_or_else(|| live_after.clone());
-
-            let mut live = analyze_block_liveness(try_body, &finally_live);
-            if let Some(body) = catch_body {
-                let mut catch_live = analyze_block_liveness(body, &finally_live);
-                if let Some(name) = catch_name {
-                    catch_live.remove(name);
-                }
-                live.extend(catch_live);
-            }
-            live.extend(finally_live);
-            live
-        }
-
-        // Une déclaration de fonction/classe peut observer une variable
-        // extérieure via une closure ou un initialiseur. Nous collectons donc
-        // leurs lectures de façon conservative.
-        Statement::Function { body, .. } => {
-            let mut live = live_after.clone();
-            collect_statements_variables(body, &mut live);
-            live
-        }
-
-        Statement::Class { fields, methods, .. } => {
-            let mut live = live_after.clone();
-            for field in fields {
-                if let Some(initializer) = &field.initializer {
-                    collect_expression_variables(initializer, &mut live);
-                }
-            }
-            for method in methods {
-                collect_statements_variables(&method.body, &mut live);
-            }
-            live
-        }
-
-        Statement::Enum { methods, .. } => {
-            let mut live = live_after.clone();
-            for method in methods {
-                collect_statements_variables(&method.body, &mut live);
-            }
-            live
-        }
-
-        Statement::Export { statement } => analyze_statement_liveness(statement, live_after),
-
-        Statement::Import { .. }
-        | Statement::FromImport { .. }
-        | Statement::TypeAlias { .. }
-        | Statement::Interface { .. }
-        | Statement::Break
-        | Statement::Continue => live_after.clone(),
-    }
-}
-
-fn collect_statements_variables(statements: &[Statement], used: &mut HashSet<String>) {
-    for statement in statements {
-        collect_statement_variables(statement, used);
-    }
-}
-
-fn collect_statement_variables(statement: &Statement, used: &mut HashSet<String>) {
-    match statement {
-        Statement::Positioned { statement, .. } => collect_statement_variables(statement, used),
-        Statement::Let { value, .. } => collect_expression_variables(value, used),
-        Statement::Assignment { target, value } => {
-            collect_assignment_target_variables(target, used);
-            collect_expression_variables(value, used);
-        }
-        Statement::Expression { expression } | Statement::Throw { value: expression } => {
-            collect_expression_variables(expression, used);
-        }
-        Statement::Block(body) => collect_statements_variables(body, used),
-        Statement::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_expression_variables(condition, used);
-            collect_statements_variables(then_branch, used);
+            remove_dead_store_nodes(then_branch, dead_stores, statement_id);
             if let Some(branch) = else_branch {
-                collect_statements_variables(branch, used);
+                remove_dead_store_nodes(branch, dead_stores, statement_id);
             }
         }
-        Statement::While { condition, body } => {
-            collect_expression_variables(condition, used);
-            collect_statements_variables(body, used);
+        Statement::While { body, .. } | Statement::ForIn { body, .. } => {
+            remove_dead_store_nodes(body, dead_stores, statement_id);
         }
-        Statement::ForIn { iterable, body, .. } => {
-            collect_expression_variables(iterable, used);
-            collect_statements_variables(body, used);
-        }
-        Statement::Match { value, arms } => {
-            collect_expression_variables(value, used);
-            for arm in arms {
-                if let Some(guard) = &arm.guard {
-                    collect_expression_variables(guard, used);
-                }
-                collect_statements_variables(&arm.body, used);
-            }
-        }
-        Statement::Try {
-            try_body,
-            catch_body,
-            finally_body,
-            ..
-        } => {
-            collect_statements_variables(try_body, used);
-            if let Some(body) = catch_body {
-                collect_statements_variables(body, used);
-            }
-            if let Some(body) = finally_body {
-                collect_statements_variables(body, used);
-            }
-        }
-        Statement::Function { body, .. } => collect_statements_variables(body, used),
-        Statement::Return { value } => {
-            if let Some(value) = value {
-                collect_expression_variables(value, used);
-            }
-        }
-        Statement::Class { fields, methods, .. } => {
-            for field in fields {
-                if let Some(initializer) = &field.initializer {
-                    collect_expression_variables(initializer, used);
-                }
-            }
-            for method in methods {
-                collect_statements_variables(&method.body, used);
-            }
-        }
-        Statement::Enum { methods, .. } => {
-            for method in methods {
-                collect_statements_variables(&method.body, used);
-            }
-        }
-        Statement::Export { statement } => collect_statement_variables(statement, used),
-        Statement::Import { .. }
-        | Statement::FromImport { .. }
-        | Statement::TypeAlias { .. }
-        | Statement::Interface { .. }
-        | Statement::Break
-        | Statement::Continue => {}
-    }
-}
-
-fn collect_expression_variables(expression: &Expression, used: &mut HashSet<String>) {
-    match expression {
-        Expression::Variable(name) => {
-            used.insert(name.clone());
-        }
-        Expression::Literal(_) | Expression::SelfValue => {}
-        Expression::Unary { right, .. } => collect_expression_variables(right, used),
-        Expression::Binary { left, right, .. } => {
-            collect_expression_variables(left, used);
-            collect_expression_variables(right, used);
-        }
-        Expression::Function { body, .. } => collect_statements_variables(body, used),
-        Expression::Call { callee, arguments, .. } => {
-            collect_expression_variables(callee, used);
-            for argument in arguments {
-                collect_expression_variables(argument, used);
-            }
-        }
-        Expression::Member { object, .. } => collect_expression_variables(object, used),
-        Expression::Index { object, index, .. } => {
-            collect_expression_variables(object, used);
-            collect_expression_variables(index, used);
-        }
-        Expression::New { arguments, .. } => {
-            for argument in arguments {
-                collect_expression_variables(argument, used);
-            }
-        }
-        Expression::Array(elements) | Expression::Tuple(elements) => {
-            for element in elements {
-                collect_expression_variables(element, used);
-            }
-        }
-        Expression::Dict(fields) | Expression::Record(fields) => {
-            for (_, value) in fields {
-                collect_expression_variables(value, used);
-            }
-        }
-        Expression::Try(expression) | Expression::Await(expression) => {
-            collect_expression_variables(expression, used);
-        }
-        Expression::Ternary {
-            condition,
-            then_expr,
-            else_expr,
-        } => {
-            collect_expression_variables(condition, used);
-            collect_expression_variables(then_expr, used);
-            collect_expression_variables(else_expr, used);
-        }
-    }
-}
-
-fn collect_assignment_target_variables(target: &AssignmentTarget, used: &mut HashSet<String>) {
-    match target {
-        AssignmentTarget::Variable(_) => {}
-        AssignmentTarget::Index { object, index } => {
-            collect_expression_variables(object, used);
-            collect_expression_variables(index, used);
-        }
-        AssignmentTarget::Member { object, .. } => collect_expression_variables(object, used),
-    }
-}
-
-fn remove_pattern_from_live(pattern: &super::him::Pattern, live: &mut HashSet<String>) {
-    match pattern {
-        super::him::Pattern::Binding(name) => {
-            live.remove(name);
-        }
-        super::him::Pattern::Or(patterns)
-        | super::him::Pattern::Array(patterns)
-        | super::him::Pattern::ArrayRest(patterns)
-        | super::him::Pattern::Tuple(patterns) => {
-            for pattern in patterns {
-                remove_pattern_from_live(pattern, live);
-            }
-        }
-        super::him::Pattern::Range { start, end, .. } => {
-            remove_pattern_from_live(start, live);
-            remove_pattern_from_live(end, live);
-        }
-        super::him::Pattern::OptionSome(pattern)
-        | super::him::Pattern::ResultOk(pattern)
-        | super::him::Pattern::ResultErr(pattern) => {
-            remove_pattern_from_live(pattern, live);
-        }
-        super::him::Pattern::Wildcard
-        | super::him::Pattern::Literal(_)
-        | super::him::Pattern::EnumVariant { .. } => {}
+        _ => {}
     }
 }
 
@@ -1009,6 +1276,12 @@ fn is_dead_literal_let(statement: &Statement, used: &HashSet<String>) -> bool {
             ..
         } if !used.contains(name)
     )
+}
+
+fn collect_used_variables_statements(statements: &[Statement], used: &mut HashSet<String>) {
+    for statement in statements {
+        collect_used_variables(statement, used);
+    }
 }
 
 fn collect_used_variables(statement: &Statement, used: &mut HashSet<String>) {
@@ -2992,6 +3265,234 @@ mod tests {
         let summary = LivenessAnalyzer.analyze_block_with_live_out(&statements, &live_out);
 
         assert!(!summary.live_in.contains("x"));
+    }
+
+    #[test]
+    fn cfg_liveness_merges_if_branches() {
+        let statements = vec![
+            Statement::If {
+                condition: Expression::Variable("cond".into()),
+                then_branch: vec![Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(1)),
+                }],
+                else_branch: Some(vec![Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(2)),
+                }]),
+            },
+            Statement::Return {
+                value: Some(Expression::Variable("x".into())),
+            },
+        ];
+
+        let summary = LivenessAnalyzer.analyze_block(&statements);
+
+        assert!(summary.live_in.contains("cond"));
+        assert!(!summary.live_in.contains("x"));
+    }
+
+    #[test]
+    fn dse_removes_dead_store_inside_if_branch() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["cond".into(), "x".into()],
+            param_types: vec![None, None],
+            return_type: None,
+            body: vec![
+                Statement::If {
+                    condition: Expression::Variable("cond".into()),
+                    then_branch: vec![Statement::Assignment {
+                        target: AssignmentTarget::Variable("x".into()),
+                        value: Expression::Literal(Literal::Integer(1)),
+                    }],
+                    else_branch: Some(vec![]),
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::If { then_branch, .. } = &body[0] else {
+            panic!("if attendu");
+        };
+        assert!(then_branch.is_empty());
+    }
+
+    #[test]
+    fn dse_keeps_store_read_after_if() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["cond".into(), "x".into()],
+            param_types: vec![None, None],
+            return_type: None,
+            body: vec![
+                Statement::If {
+                    condition: Expression::Variable("cond".into()),
+                    then_branch: vec![Statement::Assignment {
+                        target: AssignmentTarget::Variable("x".into()),
+                        value: Expression::Literal(Literal::Integer(1)),
+                    }],
+                    else_branch: Some(vec![Statement::Assignment {
+                        target: AssignmentTarget::Variable("x".into()),
+                        value: Expression::Literal(Literal::Integer(2)),
+                    }]),
+                },
+                Statement::Return {
+                    value: Some(Expression::Variable("x".into())),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } = &body[0]
+        else {
+            panic!("if attendu");
+        };
+        assert_eq!(then_branch.len(), 1);
+        assert_eq!(else_branch.as_ref().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn dse_removes_dead_store_from_loop_body() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["cond".into(), "x".into()],
+            param_types: vec![None, None],
+            return_type: None,
+            body: vec![
+                Statement::While {
+                    condition: Expression::Variable("cond".into()),
+                    body: vec![Statement::Assignment {
+                        target: AssignmentTarget::Variable("x".into()),
+                        value: Expression::Literal(Literal::Integer(1)),
+                    }],
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::While { body: loop_body, .. } = &body[0] else {
+            panic!("while attendu");
+        };
+        assert!(loop_body.is_empty());
+    }
+
+    #[test]
+    fn dse_keeps_loop_store_used_by_next_condition() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["cond".into(), "x".into()],
+            param_types: vec![None, None],
+            return_type: None,
+            body: vec![Statement::While {
+                condition: Expression::Variable("x".into()),
+                body: vec![Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(1)),
+                }],
+            }],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::While { body: loop_body, .. } = &body[0] else {
+            panic!("while attendu");
+        };
+        assert_eq!(loop_body.len(), 1);
+    }
+
+    #[test]
+    fn dse_removes_dead_store_before_break() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["cond".into(), "x".into()],
+            param_types: vec![None, None],
+            return_type: None,
+            body: vec![Statement::While {
+                condition: Expression::Variable("cond".into()),
+                body: vec![
+                    Statement::Assignment {
+                        target: AssignmentTarget::Variable("x".into()),
+                        value: Expression::Literal(Literal::Integer(1)),
+                    },
+                    Statement::Break,
+                ],
+            }],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::While { body: loop_body, .. } = &body[0] else {
+            panic!("while attendu");
+        };
+        assert_eq!(loop_body.len(), 1);
+        assert!(matches!(loop_body[0], Statement::Break));
+    }
+
+    #[test]
+    fn dse_keeps_loop_store_used_before_continue_reaches_condition() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![Statement::While {
+                condition: Expression::Variable("x".into()),
+                body: vec![
+                    Statement::Assignment {
+                        target: AssignmentTarget::Variable("x".into()),
+                        value: Expression::Literal(Literal::Integer(1)),
+                    },
+                    Statement::Continue,
+                ],
+            }],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::While { body: loop_body, .. } = &body[0] else {
+            panic!("while attendu");
+        };
+        assert_eq!(loop_body.len(), 2);
     }
 
     #[test]
