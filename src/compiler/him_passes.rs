@@ -4,7 +4,7 @@
 //! possédée (`him.rs`). Elles ne dépendent ni du parser ni de l'AST.
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::him::{AssignmentTarget, BinaryOp, Expression, Literal, MatchArm, Statement};
 
@@ -15,11 +15,16 @@ pub(crate) trait HimPass {
 }
 
 /// Exécute les passes HIM activées par défaut.
+///
+/// L'ordre est volontairement stable : les passes de simplification
+/// produisent d'abord les littéraux et le contrôle de flux simplifié, puis
+/// l'élimination des valeurs mortes profite de ces résultats.
 pub(crate) fn run_default_passes(statements: &mut Vec<Statement>) {
-    let passes: [&dyn HimPass; 3] = [
+    let passes: [&dyn HimPass; 4] = [
         &ConstantFolder,
         &ConstantPropagator,
         &DeadCodeEliminator,
+        &DeadValueEliminator,
     ];
 
     for pass in passes {
@@ -62,6 +67,17 @@ pub(crate) struct ConstantPropagator;
 ///   contrôle même lorsqu'un `return` ou un `throw` précède.
 pub(crate) struct DeadCodeEliminator;
 
+/// Supprime les liaisons locales immuables dont la valeur est un littéral pur
+/// et qui ne sont jamais lues dans leur fonction.
+///
+/// Cette passe reste volontairement très conservative :
+/// - elle ne touche pas aux `let` du module principal ;
+/// - elle ne supprime que les initialisateurs réduits à un littéral ;
+/// - elle tient compte des lectures réalisées par des closures imbriquées ;
+/// - elle ne supprime jamais une affectation mutable ;
+/// - les champs de classes et les paramètres restent intacts.
+pub(crate) struct DeadValueEliminator;
+
 impl HimPass for ConstantFolder {
     fn run(&self, statements: &mut Vec<Statement>) {
         for statement in statements {
@@ -83,7 +99,340 @@ impl HimPass for DeadCodeEliminator {
     }
 }
 
+impl HimPass for DeadValueEliminator {
+    fn run(&self, statements: &mut Vec<Statement>) {
+        eliminate_dead_values_in_nested_functions(statements);
+    }
+}
+
 type ConstantEnvironment = HashMap<String, Literal>;
+
+fn eliminate_dead_values_in_nested_functions(statements: &mut [Statement]) {
+    for statement in statements {
+        match statement {
+            Statement::Positioned { statement, .. } => {
+                eliminate_dead_values_in_nested_functions(std::slice::from_mut(statement.as_mut()));
+            }
+            Statement::Function { body, .. } => {
+                eliminate_dead_values_in_block(body);
+            }
+            Statement::Class { methods, .. } => {
+                for method in methods {
+                    eliminate_dead_values_in_block(&mut method.body);
+                }
+            }
+            Statement::Enum { methods, .. } => {
+                for method in methods {
+                    eliminate_dead_values_in_block(&mut method.body);
+                }
+            }
+            Statement::Export { statement } => {
+                eliminate_dead_values_in_nested_functions(std::slice::from_mut(statement.as_mut()));
+            }
+            Statement::Let { .. }
+            | Statement::Assignment { .. }
+            | Statement::Expression { .. }
+            | Statement::Block(_)
+            | Statement::If { .. }
+            | Statement::While { .. }
+            | Statement::ForIn { .. }
+            | Statement::Match { .. }
+            | Statement::Throw { .. }
+            | Statement::Try { .. }
+            | Statement::Return { .. }
+            | Statement::Import { .. }
+            | Statement::FromImport { .. }
+            | Statement::TypeAlias { .. }
+            | Statement::Interface { .. }
+            | Statement::Break
+            | Statement::Continue => {}
+        }
+    }
+}
+
+fn eliminate_dead_values_in_block(statements: &mut Vec<Statement>) {
+    for statement in statements.iter_mut() {
+        recurse_dead_value_pass(statement);
+    }
+
+    let mut used = HashSet::new();
+    for statement in statements.iter() {
+        collect_used_variables(statement, &mut used);
+    }
+
+    let original = std::mem::take(statements);
+    let mut transformed = Vec::with_capacity(original.len());
+
+    for statement in original {
+        if is_dead_literal_let(&statement, &used) {
+            continue;
+        }
+        transformed.push(statement);
+    }
+
+    *statements = transformed;
+}
+
+fn recurse_dead_value_pass(statement: &mut Statement) {
+    match statement {
+        Statement::Positioned { statement, .. } => recurse_dead_value_pass(statement),
+        Statement::Block(body) => eliminate_dead_values_in_block(body),
+        Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            eliminate_dead_values_in_block(then_branch);
+            if let Some(branch) = else_branch {
+                eliminate_dead_values_in_block(branch);
+            }
+        }
+        Statement::While { body, .. } | Statement::ForIn { body, .. } => {
+            eliminate_dead_values_in_block(body);
+        }
+        Statement::Match { arms, .. } => {
+            for arm in arms {
+                eliminate_dead_values_in_block(&mut arm.body);
+            }
+        }
+        Statement::Try {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            eliminate_dead_values_in_block(try_body);
+            if let Some(body) = catch_body {
+                eliminate_dead_values_in_block(body);
+            }
+            if let Some(body) = finally_body {
+                eliminate_dead_values_in_block(body);
+            }
+        }
+        Statement::Function { body, .. } => eliminate_dead_values_in_block(body),
+        Statement::Class { methods, .. } => {
+            for method in methods {
+                eliminate_dead_values_in_block(&mut method.body);
+            }
+        }
+        Statement::Enum { methods, .. } => {
+            for method in methods {
+                eliminate_dead_values_in_block(&mut method.body);
+            }
+        }
+        Statement::Export { statement } => recurse_dead_value_pass(statement),
+        Statement::Let { .. }
+        | Statement::Assignment { .. }
+        | Statement::Expression { .. }
+        | Statement::Throw { .. }
+        | Statement::Return { .. }
+        | Statement::Import { .. }
+        | Statement::FromImport { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::Interface { .. }
+        | Statement::Break
+        | Statement::Continue => {}
+    }
+}
+
+fn is_dead_literal_let(statement: &Statement, used: &HashSet<String>) -> bool {
+    let statement = match statement {
+        Statement::Positioned { statement, .. } => statement.as_ref(),
+        other => other,
+    };
+
+    matches!(
+        statement,
+        Statement::Let {
+            name,
+            value: Expression::Literal(_),
+            mutable: false,
+            ..
+        } if !used.contains(name)
+    )
+}
+
+fn collect_used_variables(statement: &Statement, used: &mut HashSet<String>) {
+    match statement {
+        Statement::Positioned { statement, .. } => collect_used_variables(statement, used),
+        Statement::Let { value, .. } => collect_used_variables_expression(value, used),
+        Statement::Assignment { target, value } => {
+            collect_used_variables_target(target, used);
+            collect_used_variables_expression(value, used);
+        }
+        Statement::Expression { expression } | Statement::Throw { value: expression } => {
+            collect_used_variables_expression(expression, used);
+        }
+        Statement::Block(body) => {
+            for statement in body {
+                collect_used_variables(statement, used);
+            }
+        }
+        Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_used_variables_expression(condition, used);
+            for statement in then_branch {
+                collect_used_variables(statement, used);
+            }
+            if let Some(branch) = else_branch {
+                for statement in branch {
+                    collect_used_variables(statement, used);
+                }
+            }
+        }
+        Statement::While { condition, body } => {
+            collect_used_variables_expression(condition, used);
+            for statement in body {
+                collect_used_variables(statement, used);
+            }
+        }
+        Statement::ForIn { iterable, body, .. } => {
+            collect_used_variables_expression(iterable, used);
+            for statement in body {
+                collect_used_variables(statement, used);
+            }
+        }
+        Statement::Match { value, arms } => {
+            collect_used_variables_expression(value, used);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_used_variables_expression(guard, used);
+                }
+                for statement in &arm.body {
+                    collect_used_variables(statement, used);
+                }
+            }
+        }
+        Statement::Try {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            for statement in try_body {
+                collect_used_variables(statement, used);
+            }
+            if let Some(body) = catch_body {
+                for statement in body {
+                    collect_used_variables(statement, used);
+                }
+            }
+            if let Some(body) = finally_body {
+                for statement in body {
+                    collect_used_variables(statement, used);
+                }
+            }
+        }
+        Statement::Function { body, .. } => {
+            for statement in body {
+                collect_used_variables(statement, used);
+            }
+        }
+        Statement::Return { value } => {
+            if let Some(value) = value {
+                collect_used_variables_expression(value, used);
+            }
+        }
+        Statement::Export { statement } => collect_used_variables(statement, used),
+        Statement::Class { fields, methods, .. } => {
+            for field in fields {
+                if let Some(initializer) = &field.initializer {
+                    collect_used_variables_expression(initializer, used);
+                }
+            }
+            for method in methods {
+                for statement in &method.body {
+                    collect_used_variables(statement, used);
+                }
+            }
+        }
+        Statement::Enum { methods, .. } => {
+            for method in methods {
+                for statement in &method.body {
+                    collect_used_variables(statement, used);
+                }
+            }
+        }
+        Statement::Import { .. }
+        | Statement::FromImport { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::Interface { .. }
+        | Statement::Break
+        | Statement::Continue => {}
+    }
+}
+
+fn collect_used_variables_target(target: &AssignmentTarget, used: &mut HashSet<String>) {
+    match target {
+        AssignmentTarget::Variable(_) => {}
+        AssignmentTarget::Index { object, index } => {
+            collect_used_variables_expression(object, used);
+            collect_used_variables_expression(index, used);
+        }
+        AssignmentTarget::Member { object, .. } => collect_used_variables_expression(object, used),
+    }
+}
+
+fn collect_used_variables_expression(expression: &Expression, used: &mut HashSet<String>) {
+    match expression {
+        Expression::Variable(name) => {
+            used.insert(name.clone());
+        }
+        Expression::Unary { right, .. } => collect_used_variables_expression(right, used),
+        Expression::Binary { left, right, .. } => {
+            collect_used_variables_expression(left, used);
+            collect_used_variables_expression(right, used);
+        }
+        Expression::Function { body, .. } => {
+            for statement in body {
+                collect_used_variables(statement, used);
+            }
+        }
+        Expression::Call { callee, arguments, .. } => {
+            collect_used_variables_expression(callee, used);
+            for argument in arguments {
+                collect_used_variables_expression(argument, used);
+            }
+        }
+        Expression::Member { object, .. } => collect_used_variables_expression(object, used),
+        Expression::Index { object, index, .. } => {
+            collect_used_variables_expression(object, used);
+            collect_used_variables_expression(index, used);
+        }
+        Expression::New { arguments, .. } => {
+            for argument in arguments {
+                collect_used_variables_expression(argument, used);
+            }
+        }
+        Expression::Array(elements) | Expression::Tuple(elements) => {
+            for element in elements {
+                collect_used_variables_expression(element, used);
+            }
+        }
+        Expression::Dict(fields) | Expression::Record(fields) => {
+            for (_, value) in fields {
+                collect_used_variables_expression(value, used);
+            }
+        }
+        Expression::Try(expression) | Expression::Await(expression) => {
+            collect_used_variables_expression(expression, used);
+        }
+        Expression::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            collect_used_variables_expression(condition, used);
+            collect_used_variables_expression(then_expr, used);
+            collect_used_variables_expression(else_expr, used);
+        }
+        Expression::Literal(_) | Expression::SelfValue => {}
+    }
+}
+
 
 fn propagate_block(statements: &mut Vec<Statement>, environment: &mut ConstantEnvironment) {
     let original = std::mem::take(statements);
@@ -1679,6 +2028,182 @@ mod tests {
         DeadCodeEliminator.run(&mut statements);
 
         assert_eq!(statements.len(), 1);
+    }
+
+    #[test]
+    fn removes_unused_literal_let_inside_function() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec![],
+            param_types: vec![],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "dead".into(),
+                    value: Expression::Literal(Literal::Integer(1)),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadValueEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 1);
+        assert!(matches!(body[0], Statement::Return { .. }));
+    }
+
+    #[test]
+    fn keeps_used_literal_let_inside_function() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec![],
+            param_types: vec![],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "x".into(),
+                    value: Expression::Literal(Literal::Integer(1)),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Return {
+                    value: Some(Expression::Variable("x".into())),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadValueEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 2);
+    }
+
+    #[test]
+    fn keeps_literal_let_captured_by_nested_function() {
+        let mut statements = vec![Statement::Function {
+            name: "outer".into(),
+            generic_params: vec![],
+            params: vec![],
+            param_types: vec![],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "captured".into(),
+                    value: Expression::Literal(Literal::Integer(7)),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Expression {
+                    expression: Expression::Function {
+                        params: vec![],
+                        body: vec![Statement::Return {
+                            value: Some(Expression::Variable("captured".into())),
+                        }],
+                    },
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadValueEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert!(matches!(body[0], Statement::Let { .. }));
+    }
+
+    #[test]
+    fn keeps_nonliteral_initializer_even_when_binding_is_unused() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec![],
+            param_types: vec![],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "x".into(),
+                    value: Expression::Call {
+                        callee: Box::new(Expression::Variable("make".into())),
+                        generic_args: vec![],
+                        arguments: vec![],
+                        line: 1,
+                        column: 1,
+                    },
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadValueEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 2);
+    }
+
+    #[test]
+    fn leaves_module_level_literal_bindings_intact() {
+        let mut statements = vec![Statement::Let {
+            name: "module_value".into(),
+            value: Expression::Literal(Literal::Integer(1)),
+            mutable: false,
+            type_annotation: None,
+        }];
+
+        DeadValueEliminator.run(&mut statements);
+
+        assert_eq!(statements.len(), 1);
+    }
+
+    #[test]
+    fn removes_constant_value_after_default_pipeline() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec![],
+            param_types: vec![],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "dead".into(),
+                    value: Expression::Binary {
+                        left: Box::new(Expression::Literal(Literal::Integer(2))),
+                        operator: BinaryOp::Multiply,
+                        right: Box::new(Expression::Literal(Literal::Integer(3))),
+                        line: 1,
+                        column: 1,
+                    },
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        run_default_passes(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 1);
     }
 
     #[test]
