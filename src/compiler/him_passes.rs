@@ -16,7 +16,11 @@ pub(crate) trait HimPass {
 
 /// Exécute les passes HIM activées par défaut.
 pub(crate) fn run_default_passes(statements: &mut Vec<Statement>) {
-    let passes: [&dyn HimPass; 2] = [&ConstantFolder, &ConstantPropagator];
+    let passes: [&dyn HimPass; 3] = [
+        &ConstantFolder,
+        &ConstantPropagator,
+        &DeadCodeEliminator,
+    ];
 
     for pass in passes {
         pass.run(statements);
@@ -46,6 +50,18 @@ pub(crate) struct ConstantFolder;
 /// - `while false` est supprimé ; `while true` est conservé.
 pub(crate) struct ConstantPropagator;
 
+/// Supprime le code linéairement inaccessible après une instruction
+/// terminatrice et applique la même analyse aux corps imbriqués.
+///
+/// Cette passe est volontairement conservatrice :
+/// - elle ne supprime pas les déclarations ou expressions seulement
+///   "inutilisées" ;
+/// - elle ne considère un `if` comme terminant que lorsque les deux branches
+///   terminent toujours ;
+/// - elle ne supprime jamais le `finally`, qui participe à la sémantique de
+///   contrôle même lorsqu'un `return` ou un `throw` précède.
+pub(crate) struct DeadCodeEliminator;
+
 impl HimPass for ConstantFolder {
     fn run(&self, statements: &mut Vec<Statement>) {
         for statement in statements {
@@ -61,6 +77,12 @@ impl HimPass for ConstantPropagator {
     }
 }
 
+impl HimPass for DeadCodeEliminator {
+    fn run(&self, statements: &mut Vec<Statement>) {
+        eliminate_block(statements);
+    }
+}
+
 type ConstantEnvironment = HashMap<String, Literal>;
 
 fn propagate_block(statements: &mut Vec<Statement>, environment: &mut ConstantEnvironment) {
@@ -72,6 +94,243 @@ fn propagate_block(statements: &mut Vec<Statement>, environment: &mut ConstantEn
     }
 
     *statements = transformed;
+}
+
+/// Réduit un bloc à sa partie atteignable.
+fn eliminate_block(statements: &mut Vec<Statement>) {
+    let original = std::mem::take(statements);
+    let mut reachable = Vec::with_capacity(original.len());
+
+    for mut statement in original {
+        eliminate_statement(&mut statement);
+        let terminates = statement_terminates(&statement);
+        reachable.push(statement);
+
+        if terminates {
+            break;
+        }
+    }
+
+    *statements = reachable;
+}
+
+fn eliminate_statement(statement: &mut Statement) {
+    match statement {
+        Statement::Positioned { statement, .. } => eliminate_statement(statement),
+
+        Statement::Let { value, .. } => eliminate_expression(value),
+        Statement::Assignment { target, value } => {
+            eliminate_assignment_target(target);
+            eliminate_expression(value);
+        }
+        Statement::Expression { expression } | Statement::Throw { value: expression } => {
+            eliminate_expression(expression);
+        }
+        Statement::Block(statements) => eliminate_block(statements),
+
+        Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            eliminate_expression(condition);
+            eliminate_block(then_branch);
+            if let Some(branch) = else_branch {
+                eliminate_block(branch);
+            }
+        }
+
+        Statement::While { condition, body } => {
+            eliminate_expression(condition);
+            eliminate_block(body);
+        }
+
+        Statement::ForIn { iterable, body, .. } => {
+            eliminate_expression(iterable);
+            eliminate_block(body);
+        }
+
+        Statement::Match { value, arms } => {
+            eliminate_expression(value);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    eliminate_expression(guard);
+                }
+                eliminate_block(&mut arm.body);
+            }
+        }
+
+        Statement::Try {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            eliminate_block(try_body);
+            if let Some(body) = catch_body {
+                eliminate_block(body);
+            }
+            if let Some(body) = finally_body {
+                eliminate_block(body);
+            }
+        }
+
+        Statement::Function { body, .. } => eliminate_block(body),
+
+        Statement::Return { value } => {
+            if let Some(value) = value {
+                eliminate_expression(value);
+            }
+        }
+
+        Statement::Export { statement } => eliminate_statement(statement),
+
+        Statement::Class { fields, methods, .. } => {
+            for field in fields {
+                if let Some(initializer) = &mut field.initializer {
+                    eliminate_expression(initializer);
+                }
+            }
+            for method in methods {
+                eliminate_block(&mut method.body);
+            }
+        }
+
+        Statement::Enum { methods, .. } => {
+            for method in methods {
+                eliminate_block(&mut method.body);
+            }
+        }
+
+        Statement::Import { .. }
+        | Statement::FromImport { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::Interface { .. }
+        | Statement::Break
+        | Statement::Continue => {}
+    }
+}
+
+fn statement_terminates(statement: &Statement) -> bool {
+    match statement {
+        Statement::Positioned { statement, .. } => statement_terminates(statement),
+        Statement::Return { .. } | Statement::Throw { .. } | Statement::Break | Statement::Continue => true,
+        Statement::Block(statements) => statements.last().is_some_and(statement_terminates),
+        Statement::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => {
+            statements_terminate(then_branch) && statements_terminate(else_branch)
+        }
+        Statement::While {
+            condition: Expression::Literal(Literal::Bool(true)),
+            body,
+        } => loop_body_terminates(body),
+        Statement::Export { statement } => statement_terminates(statement),
+        _ => false,
+    }
+}
+
+fn statements_terminate(statements: &[Statement]) -> bool {
+    statements.last().is_some_and(statement_terminates)
+}
+
+/// Vérifie qu'une boucle infinie ne peut pas atteindre son point de sortie
+/// normal. `break` et `continue` ne comptent donc pas comme terminaison :
+/// ils quittent ou poursuivent la boucle au lieu de quitter la fonction.
+fn loop_body_terminates(statements: &[Statement]) -> bool {
+    let Some(statement) = statements.last() else {
+        return false;
+    };
+
+    match statement {
+        Statement::Positioned { statement, .. } => loop_statement_terminates(statement),
+        Statement::Return { .. } | Statement::Throw { .. } => true,
+        Statement::Block(statements) => loop_body_terminates(statements),
+        Statement::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => loop_body_terminates(then_branch) && loop_body_terminates(else_branch),
+        Statement::Export { statement } => loop_statement_terminates(statement),
+        _ => false,
+    }
+}
+
+fn loop_statement_terminates(statement: &Statement) -> bool {
+    match statement {
+        Statement::Positioned { statement, .. } => loop_statement_terminates(statement),
+        Statement::Return { .. } | Statement::Throw { .. } => true,
+        Statement::Block(statements) => loop_body_terminates(statements),
+        Statement::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => loop_body_terminates(then_branch) && loop_body_terminates(else_branch),
+        Statement::Export { statement } => loop_statement_terminates(statement),
+        _ => false,
+    }
+}
+
+fn eliminate_assignment_target(target: &mut AssignmentTarget) {
+    match target {
+        AssignmentTarget::Variable(_) => {}
+        AssignmentTarget::Index { object, index } => {
+            eliminate_expression(object);
+            eliminate_expression(index);
+        }
+        AssignmentTarget::Member { object, .. } => eliminate_expression(object),
+    }
+}
+
+fn eliminate_expression(expression: &mut Expression) {
+    match expression {
+        Expression::Literal(_) | Expression::Variable(_) | Expression::SelfValue => {}
+
+        Expression::Unary { right, .. } => eliminate_expression(right),
+        Expression::Binary { left, right, .. } => {
+            eliminate_expression(left);
+            eliminate_expression(right);
+        }
+        Expression::Function { body, .. } => eliminate_block(body),
+        Expression::Call { callee, arguments, .. } => {
+            eliminate_expression(callee);
+            for argument in arguments {
+                eliminate_expression(argument);
+            }
+        }
+        Expression::Member { object, .. } => eliminate_expression(object),
+        Expression::Index { object, index, .. } => {
+            eliminate_expression(object);
+            eliminate_expression(index);
+        }
+        Expression::New { arguments, .. } => {
+            for argument in arguments {
+                eliminate_expression(argument);
+            }
+        }
+        Expression::Array(elements) | Expression::Tuple(elements) => {
+            for element in elements {
+                eliminate_expression(element);
+            }
+        }
+        Expression::Dict(fields) | Expression::Record(fields) => {
+            for (_, value) in fields {
+                eliminate_expression(value);
+            }
+        }
+        Expression::Try(expression) | Expression::Await(expression) => eliminate_expression(expression),
+        Expression::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            eliminate_expression(condition);
+            eliminate_expression(then_expr);
+            eliminate_expression(else_expr);
+        }
+    }
 }
 
 fn propagate_statement(
@@ -1290,6 +1549,171 @@ mod tests {
             Expression::Literal(value) => value.clone(),
             other => panic!("littéral attendu, reçu: {other:?}"),
         }
+    }
+
+
+    #[test]
+    fn removes_statements_after_return() {
+        let mut statements = vec![
+            Statement::Return { value: None },
+            Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(1)),
+            },
+        ];
+
+        DeadCodeEliminator.run(&mut statements);
+
+        assert_eq!(statements.len(), 1);
+        assert!(matches!(statements[0], Statement::Return { .. }));
+    }
+
+    #[test]
+    fn removes_statements_after_throw() {
+        let mut statements = vec![
+            Statement::Throw {
+                value: Expression::Literal(Literal::String("error".into())),
+            },
+            Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(1)),
+            },
+        ];
+
+        DeadCodeEliminator.run(&mut statements);
+
+        assert_eq!(statements.len(), 1);
+        assert!(matches!(statements[0], Statement::Throw { .. }));
+    }
+
+    #[test]
+    fn removes_statements_after_loop_control() {
+        let mut break_body = vec![
+            Statement::Break,
+            Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(1)),
+            },
+        ];
+        DeadCodeEliminator.run(&mut break_body);
+        assert_eq!(break_body.len(), 1);
+
+        let mut continue_body = vec![
+            Statement::Continue,
+            Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(2)),
+            },
+        ];
+        DeadCodeEliminator.run(&mut continue_body);
+        assert_eq!(continue_body.len(), 1);
+    }
+
+    #[test]
+    fn removes_statements_after_if_when_both_branches_terminate() {
+        let mut statements = vec![
+            Statement::If {
+                condition: Expression::Variable("flag".into()),
+                then_branch: vec![Statement::Return { value: None }],
+                else_branch: Some(vec![Statement::Throw {
+                    value: Expression::Literal(Literal::String("boom".into())),
+                }]),
+            },
+            Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(99)),
+            },
+        ];
+
+        DeadCodeEliminator.run(&mut statements);
+
+        assert_eq!(statements.len(), 1);
+    }
+
+    #[test]
+    fn keeps_statements_after_if_when_one_branch_falls_through() {
+        let mut statements = vec![
+            Statement::If {
+                condition: Expression::Variable("flag".into()),
+                then_branch: vec![Statement::Return { value: None }],
+                else_branch: Some(vec![Statement::Expression {
+                    expression: Expression::Literal(Literal::Integer(1)),
+                }]),
+            },
+            Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(2)),
+            },
+        ];
+
+        DeadCodeEliminator.run(&mut statements);
+
+        assert_eq!(statements.len(), 2);
+    }
+
+    #[test]
+    fn keeps_code_after_while_true_with_break() {
+        let mut statements = vec![
+            Statement::While {
+                condition: Expression::Literal(Literal::Bool(true)),
+                body: vec![Statement::Break],
+            },
+            Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(7)),
+            },
+        ];
+
+        DeadCodeEliminator.run(&mut statements);
+
+        assert_eq!(statements.len(), 2);
+    }
+
+    #[test]
+    fn removes_code_after_while_true_with_return() {
+        let mut statements = vec![
+            Statement::While {
+                condition: Expression::Literal(Literal::Bool(true)),
+                body: vec![Statement::Return {
+                    value: Some(Expression::Literal(Literal::Integer(7))),
+                }],
+            },
+            Statement::Expression {
+                expression: Expression::Literal(Literal::Integer(8)),
+            },
+        ];
+
+        DeadCodeEliminator.run(&mut statements);
+
+        assert_eq!(statements.len(), 1);
+    }
+
+    #[test]
+    fn preserves_finally_after_terminating_try_body() {
+        let mut statements = vec![Statement::Try {
+            try_body: vec![
+                Statement::Return { value: None },
+                Statement::Expression {
+                    expression: Expression::Literal(Literal::Integer(1)),
+                },
+            ],
+            catch_name: None,
+            catch_type: None,
+            catch_body: None,
+            finally_body: Some(vec![
+                Statement::Expression {
+                    expression: Expression::Literal(Literal::Integer(2)),
+                },
+                Statement::Return { value: None },
+            ]),
+        }];
+
+        DeadCodeEliminator.run(&mut statements);
+
+        assert_eq!(statements.len(), 1);
+        let Statement::Try {
+            try_body,
+            finally_body,
+            ..
+        } = &statements[0]
+        else {
+            panic!("try attendu");
+        };
+        assert_eq!(try_body.len(), 1);
+        assert_eq!(finally_body.as_ref().expect("finally attendu").len(), 2);
     }
 
 }

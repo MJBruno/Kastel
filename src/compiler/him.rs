@@ -902,8 +902,12 @@ mod tests {
 
     #[test]
     fn applies_default_him_passes_after_lowering() {
-        let statements = parse("let x = 2 + 3 * 4;");
+        let statements = parse(
+            "let x = 2 + 3 * 4;\nreturn x;\nprintln(\"dead\");",
+        );
         let him = HimBuilder::build(&statements, None).expect("HIM valide attendue");
+
+        assert_eq!(him.statements().len(), 2);
 
         match &him.statements()[0] {
             Statement::Positioned { statement, .. } => match statement.as_ref() {
@@ -913,6 +917,13 @@ mod tests {
                 other => panic!("déclaration HIM inattendue: {other:?}"),
             },
             other => panic!("nœud HIM inattendu: {other:?}"),
+        }
+
+        match &him.statements()[1] {
+            Statement::Positioned { statement, .. } => {
+                assert!(matches!(statement.as_ref(), Statement::Return { .. }));
+            }
+            other => panic!("retour HIM inattendu: {other:?}"),
         }
     }
 
