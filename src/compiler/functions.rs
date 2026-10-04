@@ -194,6 +194,7 @@ impl Compiler {
             Rc::clone(&self.globals),
             enclosing,
             Rc::clone(&self.resolved_calls),
+            Rc::clone(&self.resolved_members),
         );
 
         for param in params {
@@ -307,6 +308,94 @@ mod tests {
     }
 
     #[test]
+    fn nested_function_compiler_reuses_resolved_method_metadata() {
+        let statements = parse(
+            r#"
+            class Box {
+                func initialize(raw: int) {
+                    self.raw = raw;
+                }
+
+                func value() -> int {
+                    return self.raw;
+                }
+            }
+
+            func worker(box: Box) -> int {
+                return box.value();
+            }
+
+            let result: int = worker(new Box(7));
+            "#,
+        );
+
+        let function = Compiler::new()
+            .compile(&statements)
+            .expect("le compilateur doit compiler le script");
+
+        let worker = function
+            .chunk
+            .constants
+            .iter()
+            .find_map(|value| match value {
+                Value::Object(handle) => match &*handle.borrow() {
+                    Object::Function(worker) if worker.name == "worker" => Some(worker.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("la fonction worker doit être présente dans les constantes");
+
+        assert!(
+            worker.chunk.code.contains(&(OpCode::InvokeMethod as u8)),
+            "un appel de méthode résolu dans une fonction imbriquée doit émettre
+             OpCode::InvokeMethod à partir de la métadonnée partagée"
+        );
+    }
+
+    #[test]
+    fn nested_function_compiler_reuses_resolved_static_method_metadata() {
+        let statements = parse(
+            r#"
+            class Box {
+                static func make() -> int {
+                    return 42;
+                }
+            }
+
+            func worker() -> int {
+                return Box.make();
+            }
+
+            let result: int = worker();
+            "#,
+        );
+
+        let function = Compiler::new()
+            .compile(&statements)
+            .expect("le compilateur doit compiler le script");
+
+        let worker = function
+            .chunk
+            .constants
+            .iter()
+            .find_map(|value| match value {
+                Value::Object(handle) => match &*handle.borrow() {
+                    Object::Function(worker) if worker.name == "worker" => Some(worker.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("la fonction worker doit être présente dans les constantes");
+
+        assert!(
+            worker.chunk.code.contains(&(OpCode::InvokeMethod as u8)),
+            "un appel de méthode statique résolu dans une fonction imbriquée doit émettre
+             OpCode::InvokeMethod à partir de la métadonnée partagée"
+        );
+    }
+
+    #[test]
     fn nested_function_compiler_reuses_resolved_call_metadata() {
         let statements = parse(
             r#"
@@ -342,4 +431,91 @@ mod tests {
              la métadonnée de résolution partagée et émettre OpCode::Yield"
         );
     }
+
+    #[test]
+    fn nested_function_compiler_reuses_resolved_generic_method_metadata() {
+        let statements = parse(
+            r#"
+            interface Comparable<T> {
+                func compare(other: T) -> int;
+            }
+
+            class Number: Comparable<int> {
+                func compare(other: int) -> int {
+                    return 0;
+                }
+            }
+
+            func worker<T: Comparable<U>, U>(value: T, other: U) -> int {
+                return value.compare(other);
+            }
+
+            let result = worker(new Number(), 42);
+            "#,
+        );
+
+        let function = Compiler::new()
+            .compile(&statements)
+            .expect("le compilateur doit compiler le script");
+
+        let worker = function
+            .chunk
+            .constants
+            .iter()
+            .find_map(|value| match value {
+                Value::Object(handle) => match &*handle.borrow() {
+                    Object::Function(worker) if worker.name == "worker" => Some(worker.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("la fonction worker doit être présente dans les constantes");
+
+        assert!(
+            worker.chunk.code.contains(&(OpCode::InvokeMethod as u8)),
+            "un appel de méthode résolu à travers une contrainte d'interface générique doit utiliser OpCode::InvokeMethod"
+        );
+    }
+
+    #[test]
+    fn nested_function_compiler_reuses_resolved_member_metadata() {
+        let statements = parse(
+            r#"
+            class Box {
+                func initialize(raw: int) {
+                    self.raw = raw;
+                }
+            }
+
+            func worker(box: Box) -> int {
+                return box.raw;
+            }
+
+            let result: int = worker(new Box(7));
+            "#,
+        );
+
+        let function = Compiler::new()
+            .compile(&statements)
+            .expect("le compilateur doit compiler le script");
+
+        let worker = function
+            .chunk
+            .constants
+            .iter()
+            .find_map(|value| match value {
+                Value::Object(handle) => match &*handle.borrow() {
+                    Object::Function(worker) if worker.name == "worker" => Some(worker.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("la fonction worker doit être présente dans les constantes");
+
+        assert!(
+            worker.chunk.code.contains(&(OpCode::GetProperty as u8)),
+            "un accès membre résolu dans une fonction imbriquée doit émettre OpCode::GetProperty"
+        );
+    }
+
 }

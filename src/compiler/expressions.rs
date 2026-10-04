@@ -5,7 +5,7 @@ use crate::runtime::value::Value;
 
 use super::{
     builtin_types::Intrinsic,
-    call_metadata::ResolvedCall,
+    call_metadata::{CallTarget, ResolvedCall, ResolvedMember},
     compiler::{Compiler, MAX_EXPRESSION_DEPTH},
 };
 
@@ -129,11 +129,44 @@ impl Compiler {
                 // TypeChecker. Le compilateur lit uniquement l'identité de
                 // l'intrinsèque depuis `ResolvedCall` au lieu de redéduire
                 // celle-ci à partir du nom du symbole.
-                let intrinsic = self.resolved_call(*line, *column).and_then(ResolvedCall::intrinsic);
+                let resolved = self.resolved_call(*line, *column);
+                let resolved_method_name = resolved.and_then(|resolved| match &resolved.target {
+                    CallTarget::Method { name }
+                    | CallTarget::StaticMethod { name } => Some(name.clone()),
+                    _ => None,
+                });
+                let has_resolved_call = resolved.is_some();
 
                 if let Expression::Member { object, name, .. } = callee.as_ref() {
-                    return self.compile_method_call(object, name, arguments, *line, *column);
+                    if let Some(resolved_name) = resolved_method_name {
+                        return self.compile_method_call(
+                            object,
+                            &resolved_name,
+                            arguments,
+                            *line,
+                            *column,
+                        );
+                    }
+
+                    // Les appels membres synthétiques créés par le compilateur
+                    // (notamment les patterns `Some(x)`, `Ok(x)` et `Err(x)`)
+                    // ne possèdent pas de position source enregistrée dans la
+                    // table de résolution. Conserver le routage historique
+                    // vers `InvokeMethod` lorsque la résolution est absente.
+                    if !has_resolved_call {
+                        return self.compile_method_call(
+                            object,
+                            name,
+                            arguments,
+                            *line,
+                            *column,
+                        );
+                    }
                 }
+
+                let intrinsic = self
+                    .resolved_call(*line, *column)
+                    .and_then(ResolvedCall::intrinsic);
 
                 if let Some(intrinsic) = intrinsic {
                     match intrinsic {
@@ -264,7 +297,12 @@ impl Compiler {
                 // collection s'obtient par `x.size()` (méthode standard).
                 self.compile_expression(object)?;
 
-                let name_constant = self.identifier_constant(name)?;
+                let resolved_name = match self.resolved_member(*line, *column) {
+                    Some(ResolvedMember::Property { name })
+                    | Some(ResolvedMember::Dynamic { name }) => name.clone(),
+                    None => name.clone(),
+                };
+                let name_constant = self.identifier_constant(&resolved_name)?;
 
                 self.current_line = *line;
                 self.current_column = *column;

@@ -156,6 +156,32 @@ mod tests {
     }
 
     #[test]
+    fn call_target_can_represent_method_calls() {
+        let target = CallTarget::Method {
+            name: "value".to_string(),
+        };
+
+        match target {
+            CallTarget::Method { name } => assert_eq!(name, "value"),
+            other => panic!("la cible doit représenter un appel de méthode: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn call_target_can_represent_static_method_calls() {
+        let target = CallTarget::StaticMethod {
+            name: "make".to_string(),
+        };
+
+        match target {
+            CallTarget::StaticMethod { name } => {
+                assert_eq!(name, "make");
+            }
+            other => panic!("la cible doit représenter un appel de méthode statique: {other:?}"),
+        }
+    }
+
+    #[test]
     fn call_target_can_represent_dynamic_calls() {
         assert!(matches!(CallTarget::Dynamic, CallTarget::Dynamic));
     }
@@ -265,6 +291,35 @@ mod tests {
         assert!(matches!(resolved.target, CallTarget::Dynamic));
         assert!(resolved.signature.is_none());
         assert_eq!(resolved.return_type, Type::Dynamic);
+    }
+
+    #[test]
+    fn resolved_call_can_represent_a_static_method() {
+        let signature = signature(0);
+        let resolved = ResolvedCall::from_static_method(
+            "make".to_string(),
+            signature.clone(),
+        );
+
+        assert_eq!(resolved.signature, Some(signature));
+        match resolved.target {
+            CallTarget::StaticMethod { name } => {
+                assert_eq!(name, "make");
+            }
+            other => panic!("unexpected target: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolved_call_can_represent_a_dynamic_method() {
+        let resolved = ResolvedCall::dynamic_method("value".to_string());
+
+        match resolved.target {
+            CallTarget::Method { name } => assert_eq!(name, "value"),
+            other => panic!("unexpected dynamic method target: {other:?}"),
+        }
+        assert_eq!(resolved.return_type, Type::Dynamic);
+        assert!(resolved.signature.is_none());
     }
 
     #[test]

@@ -8,7 +8,10 @@ use super::{
     capability::Capability,
     compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
-    call_metadata::{CallSite, CallTarget, CallableTarget, ResolvedCall, ResolvedCallTable},
+    call_metadata::{
+        CallSite, CallTarget, CallableTarget, ResolvedCall, ResolvedCallTable,
+        ResolvedMember, ResolvedMemberTable,
+    },
     call_resolution::{validate_arity, Callable},
     overloads::OverloadSet,
     types::{FunctionType, GenericConstraint, Type},
@@ -34,6 +37,7 @@ impl TypeCheckContext {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TypeCheckResult {
     pub(crate) resolved_calls: ResolvedCallTable,
+    pub(crate) resolved_members: ResolvedMemberTable,
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +126,9 @@ pub struct TypeChecker {
     /// natives/intrinsèques par leur nom.
     resolved_calls: ResolvedCallTable,
 
+    /// Décisions sémantiques des accès membres collectées pendant la vérification.
+    resolved_members: ResolvedMemberTable,
+
     /// Profondeur d'expression courante (voir `MAX_EXPRESSION_DEPTH`).
     expression_depth: usize,
 
@@ -204,6 +211,7 @@ impl TypeChecker {
 
         Ok(TypeCheckResult {
             resolved_calls: checker.resolved_calls,
+            resolved_members: checker.resolved_members,
         })
     }
 
@@ -348,6 +356,7 @@ impl TypeChecker {
             local_functions: vec![HashMap::new()],
             context: None,
             resolved_calls: ResolvedCallTable::default(),
+            resolved_members: ResolvedMemberTable::default(),
         }
     }
 
@@ -359,6 +368,11 @@ impl TypeChecker {
 
     fn record_resolved_call(&mut self, line: usize, column: usize, resolved: ResolvedCall) {
         self.resolved_calls
+            .insert(CallSite::new(line, column), resolved);
+    }
+
+    fn record_resolved_member(&mut self, line: usize, column: usize, resolved: ResolvedMember) {
+        self.resolved_members
             .insert(CallSite::new(line, column), resolved);
     }
 
@@ -4463,9 +4477,16 @@ impl TypeChecker {
                 }
             }
 
-            Expression::Member { object, name, .. } => {
+            Expression::Member { object, name, line, column } => {
                 let object_type = self.check_expression(object)?;
-                self.member_type(&object_type, name)
+                let member_type = self.member_type(&object_type, name)?;
+                let resolved = if matches!(member_type, Type::Dynamic) {
+                    ResolvedMember::Dynamic { name: name.clone() }
+                } else {
+                    ResolvedMember::Property { name: name.clone() }
+                };
+                self.record_resolved_member(*line, *column, resolved);
+                Ok(member_type)
             }
 
             Expression::New {
@@ -5234,6 +5255,9 @@ impl TypeChecker {
                     signature,
                 ))
             }
+            CallTarget::Method { .. } | CallTarget::StaticMethod { .. } => unreachable!(
+                "method targets are resolved through Expression::Call member routing"
+            ),
             CallTarget::Constructor { .. } => unreachable!(
                 "constructor targets are resolved through Expression::New"
             ),
@@ -5551,6 +5575,36 @@ impl TypeChecker {
         }
     }
 
+    fn resolve_member_type_callable(
+        &mut self,
+        callable: &Type,
+        generic_args: &[TypeExpr],
+        arguments: &[Expression],
+        member_name: &str,
+    ) -> Result<ResolvedCall, CompileError> {
+        let resolved = self.resolve_type_callable(
+            callable,
+            generic_args,
+            arguments,
+            member_name,
+        )?;
+
+        let (target, signature, return_type) = resolved.into_parts();
+
+        match (target, signature) {
+            (CallTarget::Callable(_), Some(signature)) => Ok(
+                ResolvedCall::from_method(member_name.to_string(), signature),
+            ),
+            (CallTarget::Dynamic, None) => {
+                Ok(ResolvedCall::dynamic_method(member_name.to_string()))
+            }
+            (target, signature) => unreachable!(
+                "un appel membre doit produire une cible appelable ou dynamique,
+                 jamais {target:?} avec signature {signature:?} et retour {return_type:?}"
+            ),
+        }
+    }
+
     /// Résout un appel membre en conservant la même métadonnée sémantique
     /// minimale que les appels non-membres. La découverte de la méthode
     /// reste spécifique au type, mais la sélection et la validation de sa
@@ -5571,33 +5625,37 @@ impl TypeChecker {
 
             let signatures = self.find_methods_for_type(&object_type, member_name);
             if !signatures.is_empty() {
-                let callable = CallableTarget::Overloaded(signatures.clone());
                 let signature = self.resolve_owned_callable(
-                    &callable,
+                    &CallableTarget::Overloaded(signatures),
                     generic_args,
                     arguments,
                     &format!("{class_name}.{member_name}"),
                 )?;
-                return Ok(Some(ResolvedCall::from_callable(callable, signature)));
+                return Ok(Some(ResolvedCall::from_method(
+                    member_name.to_string(),
+                    signature,
+                )));
             }
 
             let static_signatures = self.find_static_methods(&class_name, member_name);
             if !static_signatures.is_empty() {
-                let callable = CallableTarget::Overloaded(static_signatures.clone());
                 let signature = self.resolve_owned_callable(
-                    &callable,
+                    &CallableTarget::Overloaded(static_signatures),
                     generic_args,
                     arguments,
                     &format!("{class_name}.{member_name}"),
                 )?;
-                return Ok(Some(ResolvedCall::from_callable(callable, signature)));
+                return Ok(Some(ResolvedCall::from_static_method(
+                    member_name.to_string(),
+                    signature,
+                )));
             }
         }
 
         // Membres des types runtime spécialisés. Tous utilisent maintenant
         // le même résolveur que les fonctions appelables ordinaires.
         if let Some(member_type) = object_type.channel_member_type(member_name) {
-            return Ok(Some(self.resolve_type_callable(
+            return Ok(Some(self.resolve_member_type_callable(
                 &member_type,
                 generic_args,
                 arguments,
@@ -5606,7 +5664,7 @@ impl TypeChecker {
         }
 
         if let Some(member_type) = object_type.mutex_member_type(member_name) {
-            return Ok(Some(self.resolve_type_callable(
+            return Ok(Some(self.resolve_member_type_callable(
                 &member_type,
                 generic_args,
                 arguments,
@@ -5615,7 +5673,7 @@ impl TypeChecker {
         }
 
         if let Some(member_type) = object_type.event_member_type(member_name) {
-            return Ok(Some(self.resolve_type_callable(
+            return Ok(Some(self.resolve_member_type_callable(
                 &member_type,
                 generic_args,
                 arguments,
@@ -5624,7 +5682,7 @@ impl TypeChecker {
         }
 
         if let Some(member_type) = object_type.rwlock_member_type(member_name) {
-            return Ok(Some(self.resolve_type_callable(
+            return Ok(Some(self.resolve_member_type_callable(
                 &member_type,
                 generic_args,
                 arguments,
@@ -5633,7 +5691,7 @@ impl TypeChecker {
         }
 
         if let Some(member_type) = object_type.condvar_member_type(member_name) {
-            return Ok(Some(self.resolve_type_callable(
+            return Ok(Some(self.resolve_member_type_callable(
                 &member_type,
                 generic_args,
                 arguments,
@@ -5642,7 +5700,7 @@ impl TypeChecker {
         }
 
         if let Some(member_type) = object_type.option_result_member_type(member_name) {
-            return Ok(Some(self.resolve_type_callable(
+            return Ok(Some(self.resolve_member_type_callable(
                 &member_type,
                 generic_args,
                 arguments,
@@ -5661,7 +5719,26 @@ impl TypeChecker {
         if !matches!(object_type, Type::Set(_) | Type::SetDynamic)
             && let Some(member_type) = object_type.collection_member_type(member_name)
         {
-            return Ok(Some(self.resolve_type_callable(
+            return Ok(Some(self.resolve_member_type_callable(
+                &member_type,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        // Dernier niveau : tout membre qui est réellement appelable (champ
+        // fonctionnel, méthode fournie par une contrainte générique, export
+        // de module, `to_string()` d'une primitive, ou membre dynamique) est
+        // maintenant représenté explicitement comme un appel membre. Le
+        // compilateur n'a donc plus besoin de déduire le dispatch à partir de
+        // la seule forme AST `Expression::Member`.
+        let member_type = self.member_type(&object_type, member_name)?;
+        if matches!(
+            member_type,
+            Type::Function(_) | Type::Overloads(_) | Type::Dynamic
+        ) {
+            return Ok(Some(self.resolve_member_type_callable(
                 &member_type,
                 generic_args,
                 arguments,
@@ -7488,8 +7565,52 @@ let m: int = c.scale(3);
     }
 
     #[test]
+    fn static_member_calls_use_resolved_static_method_metadata() {
+        let result = check_for_compiler(
+            r#"
+            class Box {
+                static func make() -> int {
+                    return 42;
+                }
+            }
+
+            let value: int = Box.make();
+            "#,
+        )
+        .expect("le type checker doit résoudre la méthode statique");
+
+        assert!(result.resolved_calls.iter().any(|(_, resolved)| {
+            matches!(
+                &resolved.target,
+                CallTarget::StaticMethod { name }
+                    if name == "make"
+            )
+        }));
+    }
+
+    #[test]
+    fn member_accesses_collect_resolved_metadata() {
+        let result = check_for_compiler(
+            r#"
+class Box {
+    let x: int;
+
+    func initialize(x: int) { self.x = x; }
+}
+let box = new Box(7);
+let value: int = box.x;
+"#,
+        )
+        .expect("les accès membres doivent être résolus");
+
+        assert!(result.resolved_members.iter().any(|(_, resolved)| {
+            matches!(resolved, ResolvedMember::Property { name } if name == "x")
+        }));
+    }
+
+    #[test]
     fn member_calls_use_resolved_call_metadata() {
-        let result = check(
+        let result = check_for_compiler(
             r#"
 class Box {
     func initialize(x: int) { self.x = x; }
@@ -7503,7 +7624,52 @@ let values: List<int> = [1, 2];
 let size: int = values.size();
 "#,
         );
-        assert!(result.is_ok(), "{:?}", result.err());
+        assert!(result.is_ok(), "{:?}", result.as_ref().err());
+        let result = result.unwrap();
+        let method_count = result
+            .resolved_calls
+            .iter()
+            .filter(|(_, resolved)| matches!(&resolved.target, CallTarget::Method { .. }))
+            .count();
+        let static_method_count = result
+            .resolved_calls
+            .iter()
+            .filter(|(_, resolved)| matches!(&resolved.target, CallTarget::StaticMethod { .. }))
+            .count();
+        assert_eq!(method_count, 2, "value() et size() doivent être résolus comme méthodes d'instance");
+        assert_eq!(static_method_count, 1, "Box.make() doit être résolu comme méthode statique");
+    }
+
+    #[test]
+    fn member_call_resolution_distinguishes_callable_targets_from_members() {
+        let result = check_for_compiler(
+            r#"
+interface Greeter {
+    func greet() -> str;
+}
+
+class Person : Greeter {
+    func greet() -> str {
+        return "hello";
+    }
+}
+
+func use_greeter<T: Greeter>(value: T) -> str {
+    return value.greet();
+}
+
+let person = new Person();
+let message = use_greeter(person);
+"#,
+        )
+        .expect("les appels membres sur une contrainte d'interface doivent être valides");
+
+        assert!(result.resolved_calls.iter().any(|(_, resolved)| {
+            matches!(
+                &resolved.target,
+                CallTarget::Method { name } if name == "greet"
+            )
+        }));
     }
 
     #[test]

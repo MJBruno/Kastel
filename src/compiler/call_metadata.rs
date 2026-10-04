@@ -60,6 +60,37 @@ impl ResolvedCallTable {
 /// effectivement sélectionnée lorsqu'elle existe, et `return_type` expose le
 /// type résultant du call-site. Cette structure reste volontairement légère :
 /// elle ne constitue pas encore un HIR complet.
+
+#[derive(Debug, Clone)]
+pub(crate) enum ResolvedMember {
+    Property {
+        name: String,
+    },
+    Dynamic {
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ResolvedMemberTable {
+    entries: HashMap<CallSite, ResolvedMember>,
+}
+
+impl ResolvedMemberTable {
+    pub(crate) fn insert(&mut self, site: CallSite, resolved: ResolvedMember) {
+        self.entries.insert(site, resolved);
+    }
+
+    pub(crate) fn get(&self, site: CallSite) -> Option<&ResolvedMember> {
+        self.entries.get(&site)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&CallSite, &ResolvedMember)> {
+        self.entries.iter()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedCall {
     pub(crate) target: CallTarget,
@@ -79,6 +110,18 @@ impl ResolvedCall {
 
     pub(crate) fn from_callable(callable: CallableTarget, signature: FunctionType) -> Self {
         Self::from_signature(CallTarget::Callable(callable), signature)
+    }
+
+    pub(crate) fn from_method(name: String, signature: FunctionType) -> Self {
+        Self::from_signature(CallTarget::Method { name }, signature)
+    }
+
+    pub(crate) fn from_static_method(name: String, signature: FunctionType) -> Self {
+        Self::from_signature(CallTarget::StaticMethod { name }, signature)
+    }
+
+    pub(crate) fn dynamic_method(name: String) -> Self {
+        Self::special(CallTarget::Method { name }, Type::Dynamic)
     }
 
     pub(crate) fn from_constructor(
@@ -180,6 +223,12 @@ impl CallableTarget {
 pub(crate) enum CallTarget {
     Native(NativeSpec),
     Callable(CallableTarget),
+    Method {
+        name: String,
+    },
+    StaticMethod {
+        name: String,
+    },
     Constructor {
         class_name: String,
         callable: Option<CallableTarget>,

@@ -8,7 +8,9 @@ use crate::frontend::ast::Statement;
 use crate::runtime::function::Function;
 // use crate::runtime::upvalue::Upvalue;
 
-use super::call_metadata::{CallSite, ResolvedCall, ResolvedCallTable};
+use super::call_metadata::{
+    CallSite, ResolvedCall, ResolvedCallTable, ResolvedMember, ResolvedMemberTable,
+};
 use super::context::{CompilerContext, CompilerContextRef};
 // use super::locals::LocalTable;
 use super::loops::LoopContext;
@@ -88,6 +90,9 @@ pub struct Compiler {
     /// Partagées avec les sous-compilateurs de fonctions afin que la
     /// génération de bytecode ne redéduise pas les intrinsèques par leur nom.
     pub(crate) resolved_calls: Rc<ResolvedCallTable>,
+
+    /// Décisions sémantiques des accès membres produites par le TypeChecker.
+    pub(crate) resolved_members: Rc<ResolvedMemberTable>,
 }
 
 #[allow(dead_code)]
@@ -112,6 +117,7 @@ impl Compiler {
             current_column: 0,
             expression_depth: 0,
             resolved_calls: Rc::new(ResolvedCallTable::default()),
+            resolved_members: Rc::new(ResolvedMemberTable::default()),
             wildcard_imported: false,
         }
     }
@@ -136,6 +142,7 @@ impl Compiler {
             current_column: 0,
             expression_depth: 0,
             resolved_calls: Rc::new(ResolvedCallTable::default()),
+            resolved_members: Rc::new(ResolvedMemberTable::default()),
             wildcard_imported: false,
         }
     }
@@ -145,6 +152,7 @@ impl Compiler {
         globals: Rc<RefCell<HashMap<String, Global>>>,
         enclosing: CompilerContextRef,
         resolved_calls: Rc<ResolvedCallTable>,
+        resolved_members: Rc<ResolvedMemberTable>,
     ) -> Self {
         Self {
             globals,
@@ -165,6 +173,7 @@ impl Compiler {
             current_column: 0,
             expression_depth: 0,
             resolved_calls,
+            resolved_members,
             wildcard_imported: false,
         }
     }
@@ -209,6 +218,14 @@ impl Compiler {
         column: usize,
     ) -> Option<&ResolvedCall> {
         self.resolved_calls.get(CallSite::new(line, column))
+    }
+
+    pub(crate) fn resolved_member(
+        &self,
+        line: usize,
+        column: usize,
+    ) -> Option<&ResolvedMember> {
+        self.resolved_members.get(CallSite::new(line, column))
     }
 
     // ============================================================
@@ -493,6 +510,7 @@ impl Compiler {
         let type_check =
             TypeChecker::check_for_compiler(statements, context.clone())?;
         self.resolved_calls = Rc::new(type_check.resolved_calls);
+        self.resolved_members = Rc::new(type_check.resolved_members);
         self.type_context = context;
 
         self.predeclare_global_functions(statements)?;
