@@ -241,7 +241,7 @@ pub(crate) enum Statement {
     Continue,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Literal {
     Integer(i64),
     Float(f64),
@@ -312,14 +312,14 @@ pub(crate) enum Expression {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnaryOp {
     Negate,
     Not,
     BitNot,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BinaryOp {
     Add,
     Subtract,
@@ -381,8 +381,11 @@ impl HimBuilder {
     ) -> Result<HimModule, CompileError> {
         let type_check = TypeChecker::check_for_compiler(statements, context.clone())?;
 
+        let mut statements = statements.iter().map(lower_statement).collect();
+        super::him_passes::run_default_passes(&mut statements);
+
         Ok(HimModule {
-            statements: statements.iter().map(lower_statement).collect(),
+            statements,
             context,
             resolved_calls: Rc::new(type_check.resolved_calls),
             resolved_members: Rc::new(type_check.resolved_members),
@@ -894,6 +897,22 @@ mod tests {
             }
             Statement::Let { .. } => {}
             other => panic!("premier nœud HIM inattendu: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn applies_default_him_passes_after_lowering() {
+        let statements = parse("let x = 2 + 3 * 4;");
+        let him = HimBuilder::build(&statements, None).expect("HIM valide attendue");
+
+        match &him.statements()[0] {
+            Statement::Positioned { statement, .. } => match statement.as_ref() {
+                Statement::Let { value, .. } => {
+                    assert!(matches!(value, Expression::Literal(Literal::Integer(14))));
+                }
+                other => panic!("déclaration HIM inattendue: {other:?}"),
+            },
+            other => panic!("nœud HIM inattendu: {other:?}"),
         }
     }
 
