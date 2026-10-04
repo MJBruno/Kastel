@@ -1,6 +1,6 @@
 use crate::bytecode::chunk::OpCode;
 use crate::error::compile_error::CompileError;
-use crate::frontend::ast::{AssignmentTarget, BinaryOp, Expression, Literal, Statement};
+use super::him::{AssignmentTarget, BinaryOp, Expression, Literal, Statement};
 use crate::runtime::value::Value;
 
 use super::compiler::Compiler;

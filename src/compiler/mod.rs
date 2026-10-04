@@ -1,4 +1,5 @@
 pub mod capability;
+pub(crate) mod him;
 #[allow(clippy::module_inception)]
 pub mod compiler;
 

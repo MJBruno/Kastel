@@ -1,12 +1,14 @@
 use crate::bytecode::chunk::OpCode;
 use crate::error::compile_error::CompileError;
-use crate::frontend::ast::*;
+use crate::frontend::ast::Statement as AstStatement;
+use super::him::*;
 use crate::runtime::function::Function;
 use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
+use super::him::HimBuilder;
 use super::module_types::ImportedType;
-use super::type_checker::{TypeCheckContext, TypeChecker};
+use super::type_checker::TypeCheckContext;
 use super::variables::{Global, VariableLocation};
 
 #[allow(dead_code)]
@@ -48,7 +50,7 @@ impl Compiler {
     // STATEMENTS
     // ============================================================
 
-    pub fn compile_statement(&mut self, stmt: &Statement) -> Result<(), CompileError> {
+    pub(crate) fn compile_statement(&mut self, stmt: &Statement) -> Result<(), CompileError> {
         match stmt {
             Statement::Positioned {
                 line,
@@ -1814,7 +1816,7 @@ impl Compiler {
 
     /// REPL sans contexte de résolution (les imports y sont refusés).
     #[allow(dead_code)]
-    pub(crate) fn compile_repl(self, statements: &[Statement]) -> Result<Function, CompileError> {
+    pub(crate) fn compile_repl(self, statements: &[AstStatement]) -> Result<Function, CompileError> {
         self.compile_repl_inner(statements, None)
     }
 
@@ -1822,7 +1824,7 @@ impl Compiler {
     /// fonctionnent (les chemins sont résolus à partir du répertoire courant).
     pub(crate) fn compile_repl_with_context(
         self,
-        statements: &[Statement],
+        statements: &[AstStatement],
         context: TypeCheckContext,
     ) -> Result<Function, CompileError> {
         self.compile_repl_inner(statements, Some(context))
@@ -1830,15 +1832,15 @@ impl Compiler {
 
     fn compile_repl_inner(
         mut self,
-        statements: &[Statement],
+        statements: &[AstStatement],
         context: Option<TypeCheckContext>,
     ) -> Result<Function, CompileError> {
-        let type_check =
-            TypeChecker::check_for_compiler(statements, context.clone())?;
-        self.resolved_calls = std::rc::Rc::new(type_check.resolved_calls);
-        self.type_context = context;
+        let him = HimBuilder::build(statements, context)?;
+        self.resolved_calls = him.resolved_calls();
+        self.resolved_members = him.resolved_members();
+        self.type_context = him.context().cloned();
 
-        for (index, statement) in statements.iter().enumerate() {
+        for (index, statement) in him.statements().iter().enumerate() {
             let is_last = index + 1 == statements.len();
 
             match (is_last, statement) {

@@ -1,6 +1,6 @@
 use crate::bytecode::chunk::OpCode;
 use crate::error::compile_error::CompileError;
-use crate::frontend::ast::{Expression, Statement};
+use super::him::{Expression, Statement};
 
 use super::compiler::Compiler;
 

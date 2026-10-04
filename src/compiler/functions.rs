@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use crate::bytecode::chunk::OpCode;
 use crate::error::compile_error::CompileError;
-use crate::frontend::ast::Expression;
-use crate::frontend::ast::Statement;
+use super::him::Expression;
+use super::him::Statement;
 use crate::runtime::function::Function;
 use crate::runtime::upvalue::Upvalue;
 use crate::runtime::value::Value;

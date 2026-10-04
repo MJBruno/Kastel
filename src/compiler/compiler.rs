@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::bytecode::chunk::{Chunk, OpCode};
 use crate::error::compile_error::CompileError;
-use crate::frontend::ast::Statement;
+use crate::frontend::ast::Statement as AstStatement;
 use crate::runtime::function::Function;
 // use crate::runtime::upvalue::Upvalue;
 
@@ -12,10 +12,11 @@ use super::call_metadata::{
     CallSite, ResolvedCall, ResolvedCallTable, ResolvedMember, ResolvedMemberTable,
 };
 use super::context::{CompilerContext, CompilerContextRef};
+use super::him::{HimBuilder, Statement};
 // use super::locals::LocalTable;
 use super::loops::LoopContext;
 use super::overloads::OverloadSet;
-use super::type_checker::{TypeCheckContext, TypeChecker};
+use super::type_checker::TypeCheckContext;
 use super::variables::Global;
 
 /// Profondeur maximale d'une expression pour le compilateur et le
@@ -182,14 +183,14 @@ impl Compiler {
     // MAIN COMPILER
     // ============================================================
 
-    pub fn compile(self, statements: &[Statement]) -> Result<Function, CompileError> {
+    pub fn compile(self, statements: &[AstStatement]) -> Result<Function, CompileError> {
         let (function, _) = self.compile_module(statements)?;
         Ok(function)
     }
 
     pub fn compile_with_context(
         self,
-        statements: &[Statement],
+        statements: &[AstStatement],
         context: TypeCheckContext,
     ) -> Result<Function, CompileError> {
         let (function, _) = self.compile_module_with_context(statements, context)?;
@@ -489,14 +490,14 @@ impl Compiler {
 
     pub fn compile_module(
         self,
-        statements: &[Statement],
+        statements: &[AstStatement],
     ) -> Result<(Function, Vec<String>), CompileError> {
         self.compile_module_inner(statements, None)
     }
 
     pub fn compile_module_with_context(
         self,
-        statements: &[Statement],
+        statements: &[AstStatement],
         context: TypeCheckContext,
     ) -> Result<(Function, Vec<String>), CompileError> {
         self.compile_module_inner(statements, Some(context))
@@ -504,18 +505,17 @@ impl Compiler {
 
     fn compile_module_inner(
         mut self,
-        statements: &[Statement],
+        statements: &[AstStatement],
         context: Option<TypeCheckContext>,
     ) -> Result<(Function, Vec<String>), CompileError> {
-        let type_check =
-            TypeChecker::check_for_compiler(statements, context.clone())?;
-        self.resolved_calls = Rc::new(type_check.resolved_calls);
-        self.resolved_members = Rc::new(type_check.resolved_members);
-        self.type_context = context;
+        let him = HimBuilder::build(statements, context)?;
+        self.resolved_calls = him.resolved_calls();
+        self.resolved_members = him.resolved_members();
+        self.type_context = him.context().cloned();
 
-        self.predeclare_global_functions(statements)?;
+        self.predeclare_global_functions(him.statements())?;
 
-        for statement in statements {
+        for statement in him.statements() {
             if let Err(error) = self.compile_statement(statement) {
                 return Err(self.attach_location(error));
             }
