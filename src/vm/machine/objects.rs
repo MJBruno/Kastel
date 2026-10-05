@@ -59,6 +59,43 @@ impl VirtualMachine {
         Ok(())
     }
 
+    pub(crate) fn op_get_string_index(&mut self) -> Result<(), RuntimeError> {
+        if self.stack.len() < 2 {
+            return Err(RuntimeError::StackUnderflow);
+        }
+
+        let len = self.stack.len();
+        let string = self.stack[len - 2].clone();
+        let index_value = self.stack[len - 1].clone();
+        let index = match index_value {
+            Value::Integer(index) if index >= 0 => {
+                usize::try_from(index).map_err(|_| RuntimeError::IndexOutOfBounds)?
+            }
+            Value::Integer(_) => return Err(RuntimeError::IndexOutOfBounds),
+            _ => return Err(RuntimeError::TypeError),
+        };
+
+        let value = match &string {
+            Value::Object(handle) => {
+                let object = handle.borrow();
+                let Object::String(text) = &*object else {
+                    return Err(RuntimeError::NotIndexable);
+                };
+
+                text.chars()
+                    .nth(index)
+                    .map(|character| Value::new_string(character.to_string()))
+                    .ok_or(RuntimeError::IndexOutOfBounds)?
+            }
+            _ => return Err(RuntimeError::NotIndexable),
+        };
+
+        self.stack.truncate(len - 2);
+        self.push(value);
+
+        Ok(())
+    }
+
     pub(crate) fn op_get_dict_index(&mut self) -> Result<(), RuntimeError> {
         if self.stack.len() < 2 {
             return Err(RuntimeError::StackUnderflow);

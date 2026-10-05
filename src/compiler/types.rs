@@ -628,6 +628,10 @@ impl Type {
 
             Type::Str => match name {
                 "contains" => method(vec![Type::Dynamic], Type::Bool),
+                "byte_at" => method(vec![Type::Int], Type::Int),
+                "byte_size" => method(vec![], Type::Int),
+                "copy" => method(vec![], Type::Str),
+                "get" => method(vec![Type::Int], Type::Str),
                 _ => None,
             },
 

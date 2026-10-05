@@ -16,7 +16,7 @@ pub type NativeFn = fn(&[Value]) -> Result<Value, RuntimeError>;
 //   TAILLE       size()  is_empty()
 //   RECHERCHE    contains(x)  index_of(x)
 //   MUTATION     add(x)  remove(x)  clear()        (collections mutables)
-//   COPIE        copy()                             (collections mutables)
+//   COPIE        copy()                             (Array, Dict, Set, String)
 //   CONVERSION   to_list()  to_string()
 //   PARCOURS     iter()   (`for x in c` reste la syntaxe principale)
 //
@@ -229,6 +229,32 @@ mod standard_api_tests {
         assert_eq!(size_of(&text("Hello")), 5);
         assert_eq!(size_of(&text("é")), 1);
         assert_eq!(size_of(&text("😀")), 1);
+    }
+
+    #[test]
+    fn string_exposes_byte_and_character_apis() {
+        let value = text("café😀");
+
+        assert_eq!(size_of(&value), 5);
+        assert_eq!(call(&value, "byte_size", &[]).unwrap(), Value::Integer(9));
+        assert_eq!(
+            call(&value, "byte_at", &[Value::Integer(4)]).unwrap(),
+            Value::Integer(0xA9),
+        );
+        assert_eq!(call(&value, "get", &[Value::Integer(3)]).unwrap(), text("é"));
+        assert_eq!(call(&value, "copy", &[]).unwrap(), text("café😀"));
+
+        let copy = call(&value, "copy", &[]).unwrap();
+        let Value::Object(original_handle) = value else {
+            panic!("une chaîne doit être un objet")
+        };
+        let Value::Object(copy_handle) = copy else {
+            panic!("copy() doit renvoyer une chaîne")
+        };
+        assert!(
+            !crate::runtime::gc_handle::Gc::ptr_eq(&original_handle, &copy_handle),
+            "copy() doit créer une allocation distincte"
+        );
     }
 
     #[test]

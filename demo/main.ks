@@ -1,5 +1,9 @@
-let collect = [1, 2, 3, 4, 5, 6]
+let s = "café😀";
 
-for item in collect {
-    println(item)
-}
+s.byte_at(4); // 169
+s.byte_size(); // 9
+s[0]; // "c"
+s[3]; // "é"
+s[4]; // "😀"
+
+let copy = s.copy();

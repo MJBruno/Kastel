@@ -289,6 +289,11 @@ impl VirtualMachine {
                             self.op_get_dict_index()?;
                         }
 
+                        Object::String(_) => {
+                            drop(object);
+                            self.op_get_string_index()?;
+                        }
+
                         _ => {
                             return Err(RuntimeError::NotIndexable);
                         }
@@ -319,6 +324,10 @@ impl VirtualMachine {
                         Object::Dict(_) => {
                             drop(object);
                             self.op_set_dict_index()?;
+                        }
+
+                        Object::String(_) => {
+                            return Err(RuntimeError::ImmutableValue("string"));
                         }
 
                         _ => {

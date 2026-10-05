@@ -988,6 +988,20 @@ pub fn native_size(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::Integer(value.chars().count() as i64))
 }
 
+/// `byte_size()` : nombre d'octets UTF-8 de la chaîne.
+pub fn native_byte_size(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    let value = expect_string(&args[0])?;
+
+    Ok(Value::Integer(value.len() as i64))
+}
+
 pub fn native_get(args: &[Value]) -> Result<Value, RuntimeError> {
     if args.len() != 2 {
         return Err(RuntimeError::WrongArgumentCount {
@@ -1004,6 +1018,42 @@ pub fn native_get(args: &[Value]) -> Result<Value, RuntimeError> {
         .nth(index)
         .map(|character| Value::new_string(character.to_string()))
         .ok_or(RuntimeError::IndexOutOfBounds)
+}
+
+/// `byte_at(index)` lit l'octet UTF-8 brut à la position indiquée et
+/// renvoie sa valeur numérique comprise entre 0 et 255. Contrairement à
+/// `get()` / `str[index]`, l'index est donc un index d'octet et non de
+/// caractère Unicode.
+pub fn native_byte_at(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 2 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 2,
+            found: args.len(),
+        });
+    }
+
+    let value = expect_string(&args[0])?;
+    let index = expect_index(&args[1])?;
+    let byte = value
+        .as_bytes()
+        .get(index)
+        .copied()
+        .ok_or(RuntimeError::IndexOutOfBounds)?;
+
+    Ok(Value::Integer(i64::from(byte)))
+}
+
+/// `copy()` produit une nouvelle allocation de chaîne, même si les chaînes
+/// sont immuables et que l'égalité du langage reste une égalité par contenu.
+pub fn native_copy(args: &[Value]) -> Result<Value, RuntimeError> {
+    if args.len() != 1 {
+        return Err(RuntimeError::WrongArgumentCount {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    Ok(Value::new_string(expect_string(&args[0])?))
 }
 
 pub fn native_contains_method(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -1337,12 +1387,18 @@ pub fn dispatch_method(name: &str, args: &[Value]) -> Result<Option<Value>, Runt
         // API standard des collections.
         "size" => Some(native_size(args)?),
 
+        "byte_size" => Some(native_byte_size(args)?),
+
+        "copy" => Some(native_copy(args)?),
+
         "to_string" => Some(super::to_string_method(args)?),
 
         // Nom supprimé.
         "length" => return Err(super::renamed_method_error("length", "size()")),
 
         "get" => Some(native_get(args)?),
+
+        "byte_at" => Some(native_byte_at(args)?),
 
         "contains" => Some(native_contains_method(args)?),
 

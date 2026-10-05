@@ -415,6 +415,28 @@ mod collections {
         assert!(result.is_ok());
         assert_eq!(integer(global(&vm, "n")), 4);
     }
+
+    #[test]
+    fn string_supports_character_index_byte_api_and_copy() {
+        let (vm, result) = run_script(
+            r#"
+            let s = "café😀";
+            let first = s[0];
+            let accented = s[3];
+            let last = s[4];
+            let bytes = s.byte_size();
+            let last_accent_byte = s.byte_at(4);
+            let cloned = s.copy();
+            "#
+        );
+        assert!(result.is_ok());
+        assert_eq!(global(&vm, "first").to_string(), "c");
+        assert_eq!(global(&vm, "accented").to_string(), "é");
+        assert_eq!(global(&vm, "last").to_string(), "😀");
+        assert_eq!(integer(global(&vm, "bytes")), 9);
+        assert_eq!(integer(global(&vm, "last_accent_byte")), 0xA9);
+        assert_eq!(global(&vm, "cloned").to_string(), "café😀");
+    }
 }
 
 mod classes {
