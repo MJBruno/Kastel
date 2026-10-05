@@ -584,9 +584,14 @@ impl Type {
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
                     "add" | "remove" => method(vec![Type::Dynamic], Type::Bool),
-                    "remove_at" | "get" => method(vec![Type::Dynamic], element),
-                    "first" | "last" | "pop" => method(vec![], element),
+                    "remove_at" | "get" => method(vec![Type::Dynamic], element.clone()),
+                    "first" | "last" | "pop" => method(vec![], element.clone()),
                     "index_of" => method(vec![Type::Dynamic], Type::Int),
+                    "insert" => method(vec![Type::Dynamic, Type::Dynamic], Type::Int),
+                    "set" => method(vec![Type::Dynamic, Type::Dynamic], Type::None),
+                    "slice" => method(vec![Type::Dynamic, Type::Dynamic], self.clone()),
+                    "reverse" | "sort" => method(vec![], self.clone()),
+                    "join" => method(vec![Type::Str], Type::Str),
                     _ => None,
                 }
             }
@@ -600,14 +605,16 @@ impl Type {
                     "contains" => method(vec![Type::Dynamic], Type::Bool),
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
-                    "get" | "remove" => method(vec![Type::Dynamic], value),
+                    "get" | "remove" => method(vec![Type::Dynamic], value.clone()),
                     "set" => method(vec![Type::Dynamic, Type::Dynamic], Type::None),
                     "keys" => method(vec![], Type::Array(Box::new(key))),
-                    "values" => method(vec![], Type::Array(Box::new(value))),
+                    "values" => method(vec![], Type::Array(Box::new(value.clone()))),
                     "entries" => method(
                         vec![],
                         Type::Array(Box::new(Type::Array(Box::new(Type::Dynamic)))),
                     ),
+                    "get_or" => method(vec![Type::Dynamic, Type::Dynamic], value),
+                    "update" => method(vec![Type::Dynamic], Type::None),
                     _ => None,
                 }
             }
@@ -627,11 +634,30 @@ impl Type {
             }
 
             Type::Str => match name {
-                "contains" => method(vec![Type::Dynamic], Type::Bool),
+                "contains" | "starts_with" | "ends_with" | "is_digit" | "is_alpha"
+                | "is_alphanumeric" => {
+                    let params = if matches!(name, "contains" | "starts_with" | "ends_with") {
+                        vec![Type::Str]
+                    } else {
+                        vec![]
+                    };
+                    method(params, Type::Bool)
+                }
                 "byte_at" => method(vec![Type::Int], Type::Int),
                 "byte_size" => method(vec![], Type::Int),
                 "copy" => method(vec![], Type::Str),
-                "get" => method(vec![Type::Int], Type::Str),
+                "get" | "char_at" => method(vec![Type::Int], Type::Str),
+                "index_of" | "last_index_of" => method(vec![Type::Str], Type::Int),
+                "slice" | "substring" => method(vec![Type::Int, Type::Int], Type::Str),
+                "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "reverse" => {
+                    method(vec![], Type::Str)
+                }
+                "replace" | "replace_all" => method(vec![Type::Str, Type::Str], Type::Str),
+                "split" => method(vec![Type::Str], Type::Array(Box::new(Type::Str))),
+                "join" => method(vec![Type::Dynamic], Type::Str),
+                "repeat" => method(vec![Type::Int], Type::Str),
+                "to_int" => method(vec![], Type::Int),
+                "to_float" => method(vec![], Type::Float),
                 _ => None,
             },
 
@@ -1379,6 +1405,85 @@ mod tests {
             left.merge(&right),
             Type::Tuple(vec![Type::Float, Type::Int])
         );
+    }
+
+    #[test]
+    fn standard_collection_method_signatures_match_runtime_surface() {
+        let list = Type::Array(Box::new(Type::Int));
+        let dict = Type::Dict(Box::new(Type::Str), Box::new(Type::Int));
+        let tuple = Type::Tuple(vec![Type::Int, Type::Str]);
+        let string = Type::Str;
+
+        let expect = |ty: &Type, name: &str, params: Vec<Type>, result: Type| {
+            assert_eq!(
+                ty.collection_member_type(name),
+                Some(Type::Function(FunctionType {
+                    generic_params: vec![],
+                    is_async: false,
+                    generic_constraints: vec![],
+                    params,
+                    return_type: Box::new(result),
+                }))
+            );
+        };
+
+        expect(
+            &list,
+            "insert",
+            vec![Type::Dynamic, Type::Dynamic],
+            Type::Int,
+        );
+        expect(
+            &list,
+            "set",
+            vec![Type::Dynamic, Type::Dynamic],
+            Type::None,
+        );
+        expect(
+            &list,
+            "slice",
+            vec![Type::Dynamic, Type::Dynamic],
+            list.clone(),
+        );
+        expect(&list, "join", vec![Type::Str], Type::Str);
+        expect(&list, "sort", vec![], list.clone());
+
+        expect(
+            &dict,
+            "get_or",
+            vec![Type::Dynamic, Type::Dynamic],
+            Type::Int,
+        );
+        expect(&dict, "update", vec![Type::Dynamic], Type::None);
+
+        // Un tuple hétérogène produit une `List<dynamic>` au runtime :
+        // la liste résultante peut contenir chacun des types du tuple.
+        expect(
+            &tuple,
+            "to_list",
+            vec![],
+            Type::Array(Box::new(Type::Dynamic)),
+        );
+
+        let homogeneous_tuple = Type::Tuple(vec![Type::Int, Type::Int]);
+        expect(
+            &homogeneous_tuple,
+            "to_list",
+            vec![],
+            Type::Array(Box::new(Type::Int)),
+        );
+
+        expect(&string, "starts_with", vec![Type::Str], Type::Bool);
+        expect(&string, "index_of", vec![Type::Str], Type::Int);
+        expect(&string, "slice", vec![Type::Int, Type::Int], Type::Str);
+        expect(
+            &string,
+            "split",
+            vec![Type::Str],
+            Type::Array(Box::new(Type::Str)),
+        );
+        expect(&string, "repeat", vec![Type::Int], Type::Str);
+        expect(&string, "to_float", vec![], Type::Float);
     }
 
     #[test]
