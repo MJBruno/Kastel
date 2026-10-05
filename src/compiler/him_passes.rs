@@ -8,28 +8,59 @@ use std::collections::{HashMap, HashSet};
 
 use super::him::{AssignmentTarget, BinaryOp, Expression, Literal, MatchArm, Statement};
 
+/// Version fonctionnelle de la HIM figée pour le cycle actuel de Kastel.
+///
+/// Toute modification de l'ordre ou du contenu du pipeline doit être traitée
+/// comme une évolution de la HIM elle-même et non comme une simple optimisation
+/// locale. Le pipeline par défaut est donc centralisé et testé comme un contrat.
+pub(crate) const HIM_VERSION: &str = "1.0";
+pub(crate) const HIM_PIPELINE_VERSION: u32 = 1;
+
+/// Identifiants des passes autorisées dans le pipeline HIM par défaut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HimPassId {
+    ConstantFolder,
+    ConstantPropagator,
+    CopyPropagator,
+    DeadCodeEliminator,
+    DeadValueEliminator,
+    DeadStoreEliminator,
+}
+
+/// Pipeline HIM officiel et gelé.
+///
+/// Ne pas ajouter de passe ici sans augmenter `HIM_PIPELINE_VERSION`. Une
+/// nouvelle phase d'optimisation devra d'abord être conçue comme une évolution
+/// explicite du contrat HIM.
+pub(crate) const DEFAULT_HIM_PIPELINE: [HimPassId; 6] = [
+    HimPassId::ConstantFolder,
+    HimPassId::ConstantPropagator,
+    HimPassId::CopyPropagator,
+    HimPassId::DeadCodeEliminator,
+    HimPassId::DeadValueEliminator,
+    HimPassId::DeadStoreEliminator,
+];
+
 /// Contrat commun d'une passe de transformation HIM.
 pub(crate) trait HimPass {
     /// Transforme le module en place.
     fn run(&self, statements: &mut Vec<Statement>);
 }
 
-/// Exécute les passes HIM activées par défaut.
-///
-/// L'ordre est volontairement stable : les passes de simplification
-/// produisent d'abord les littéraux et le contrôle de flux simplifié, puis
-/// l'élimination des valeurs mortes profite de ces résultats.
+/// Exécute le pipeline HIM officiel, dans son ordre figé.
 pub(crate) fn run_default_passes(statements: &mut Vec<Statement>) {
-    let passes: [&dyn HimPass; 5] = [
-        &ConstantFolder,
-        &ConstantPropagator,
-        &DeadCodeEliminator,
-        &DeadValueEliminator,
-        &DeadStoreEliminator,
-    ];
+    debug_assert_eq!(HIM_VERSION, "1.0");
+    debug_assert_eq!(HIM_PIPELINE_VERSION, 1);
 
-    for pass in passes {
-        pass.run(statements);
+    for pass_id in DEFAULT_HIM_PIPELINE {
+        match pass_id {
+            HimPassId::ConstantFolder => ConstantFolder.run(statements),
+            HimPassId::ConstantPropagator => ConstantPropagator.run(statements),
+            HimPassId::CopyPropagator => CopyPropagator.run(statements),
+            HimPassId::DeadCodeEliminator => DeadCodeEliminator.run(statements),
+            HimPassId::DeadValueEliminator => DeadValueEliminator.run(statements),
+            HimPassId::DeadStoreEliminator => DeadStoreEliminator.run(statements),
+        }
     }
 }
 
@@ -68,31 +99,38 @@ pub(crate) struct ConstantPropagator;
 ///   contrôle même lorsqu'un `return` ou un `throw` précède.
 pub(crate) struct DeadCodeEliminator;
 
-/// Supprime les liaisons locales immuables dont la valeur est un littéral pur
-/// et qui ne sont jamais lues dans leur fonction.
+/// Supprime les liaisons locales immuables dont la valeur est pure et qui
+/// ne sont jamais lues dans leur fonction.
 ///
 /// Cette passe reste volontairement très conservative :
 /// - elle ne touche pas aux `let` du module principal ;
-/// - elle ne supprime que les initialisateurs réduits à un littéral ;
+/// - elle ne supprime que les initialisateurs non lanceurs/purs reconnus par
+///   `is_pure_non_throwing_expression` ;
 /// - elle tient compte des lectures réalisées par des closures imbriquées ;
-/// - elle ne supprime jamais une affectation mutable ;
 /// - les champs de classes et les paramètres restent intacts.
 pub(crate) struct DeadValueEliminator;
 
-/// Supprime les écritures locales mortes à partir de l'analyse de vivacité.
+/// Propage les alias immuables de variables dans les fonctions, méthodes et
+/// closures déjà présentes dans la HIM. Cette passe ne remplace jamais une
+/// variable mutable et respecte les nouvelles portées introduites par
+/// `for-in`, `match` et `catch`.
+pub(crate) struct CopyPropagator;
+
+/// Supprime les écritures locales mortes et les bindings `let` littéraux morts
+/// à partir de l'analyse de vivacité.
 ///
 /// Seules les affectations à des variables locales dont la valeur n'est pas
-/// lue sur un chemin futur sont candidates. Les affectations aux membres,
-/// aux index, aux globals et les initialiseurs avec effets de bord restent
-/// conservés.
+/// lue sur un chemin futur, et les `let` immuables dont l'initialiseur est un
+/// littéral pur, sont candidates. Les affectations aux membres, aux index,
+/// aux globals et les initialiseurs avec effets de bord restent conservés.
 pub(crate) struct DeadStoreEliminator;
 
 /// Analyse de vivacité basée sur un petit graphe de contrôle de flux HIM.
 ///
-/// Le CFG modélise précisément les séquences, `if`, `while`, `for`,
-/// `break` et `continue`. Les régions dont la sémantique de contrôle est
-/// exceptionnelle ou dynamiquement observable (`match`, `try`, déclarations
-/// de type/fonction) restent volontairement opaques pour la DSE.
+/// Le CFG modélise les séquences, `if`, `while`, `for`, `match`, `try/catch/finally`,
+/// `break` et `continue`. Les déclarations de type/fonction restent des
+/// barrières pour la DSE, notamment à cause des captures et de leur portée
+/// d'exécution particulière.
 pub(crate) struct LivenessAnalyzer;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -121,6 +159,15 @@ struct CfgBuilder<'a> {
     next_statement_id: usize,
     locals: &'a HashSet<String>,
     exit: usize,
+    /// Cibles d'exception actuellement visibles depuis la région construite.
+    /// Plusieurs cibles sont nécessaires pour les `catch` typés : une
+    /// exception peut être capturée, ou contourner le `catch` et poursuivre
+    /// vers le handler englobant / `finally`.
+    exception_targets: Vec<usize>,
+    /// Entrée du `finally` à exécuter avant un `return`/`break`/`continue`
+    /// provenant de la région protégée. `None` signifie qu'aucun `finally`
+    /// courant ne doit être inline dans ce transfert de contrôle.
+    control_finally: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -141,6 +188,12 @@ impl HimPass for ConstantPropagator {
     fn run(&self, statements: &mut Vec<Statement>) {
         let mut environment = HashMap::new();
         propagate_block(statements, &mut environment);
+    }
+}
+
+impl HimPass for CopyPropagator {
+    fn run(&self, statements: &mut Vec<Statement>) {
+        propagate_aliases_in_nested_functions(statements);
     }
 }
 
@@ -272,6 +325,8 @@ impl ControlFlowGraph {
             next_statement_id: 0,
             locals,
             exit: 0,
+            exception_targets: Vec::new(),
+            control_finally: None,
         };
         let exit = builder.add_node(None, HashSet::new(), HashSet::new(), Vec::new(), None);
         builder.exit = exit;
@@ -313,6 +368,41 @@ impl<'a> CfgBuilder<'a> {
             Vec::new(),
             None,
         )
+    }
+
+    fn reserve_aux_node(&mut self) -> usize {
+        self.add_node(
+            None,
+            HashSet::new(),
+            HashSet::new(),
+            Vec::new(),
+            None,
+        )
+    }
+
+    fn successors_with_exceptions(&self, normal: Option<usize>) -> Vec<usize> {
+        let mut successors = Vec::new();
+
+        if let Some(normal) = normal {
+            successors.push(normal);
+        } else if self.exception_targets.is_empty() {
+            successors.push(self.exit);
+        }
+
+        for target in &self.exception_targets {
+            if !successors.contains(target) {
+                successors.push(*target);
+            }
+        }
+
+        successors
+    }
+
+    fn control_transfer_target(
+        &self,
+        direct_target: usize,
+    ) -> usize {
+        self.control_finally.unwrap_or(direct_target)
     }
 
     fn build_sequence(
@@ -379,17 +469,29 @@ impl<'a> CfgBuilder<'a> {
                 continue_target,
             ),
 
-            Statement::Let { name, value, .. } => {
+            Statement::Let {
+                name,
+                value,
+                mutable,
+                ..
+            } => {
                 let mut uses = HashSet::new();
                 collect_used_variables_expression(value, &mut uses);
                 let mut defs = HashSet::new();
                 defs.insert(name.clone());
+                let removable_store =
+                    if !*mutable && is_pure_non_throwing_expression(value) {
+                        Some(name.clone())
+                    } else {
+                        None
+                    };
+                let successors = self.successors_with_exceptions(Some(next));
                 self.add_node(
                     Some(statement_id),
                     uses,
                     defs,
-                    vec![next],
-                    None,
+                    successors,
+                    removable_store,
                 )
             }
 
@@ -403,7 +505,7 @@ impl<'a> CfgBuilder<'a> {
                     AssignmentTarget::Variable(name) => {
                         if self.locals.contains(name) {
                             defs.insert(name.clone());
-                            if matches!(value, Expression::Literal(_)) {
+                            if is_pure_non_throwing_expression(value) {
                                 removable_store = Some(name.clone());
                             }
                         }
@@ -413,11 +515,12 @@ impl<'a> CfgBuilder<'a> {
                     }
                 }
 
+                let successors = self.successors_with_exceptions(Some(next));
                 self.add_node(
                     Some(statement_id),
                     uses,
                     defs,
-                    vec![next],
+                    successors,
                     removable_store,
                 )
             }
@@ -426,9 +529,9 @@ impl<'a> CfgBuilder<'a> {
                 let mut uses = HashSet::new();
                 collect_used_variables_expression(expression, &mut uses);
                 let successors = if matches!(statement, Statement::Throw { .. }) {
-                    vec![self.exit]
+                    self.successors_with_exceptions(None)
                 } else {
-                    vec![next]
+                    self.successors_with_exceptions(Some(next))
                 };
                 self.add_node(
                     Some(statement_id),
@@ -444,30 +547,49 @@ impl<'a> CfgBuilder<'a> {
                 if let Some(value) = value {
                     collect_used_variables_expression(value, &mut uses);
                 }
+                let control_target = self.control_transfer_target(self.exit);
+                let mut successors = self.successors_with_exceptions(Some(control_target));
+                if control_target == self.exit && !self.exception_targets.is_empty() {
+                    // La valeur d'un `return` peut lever une exception avant
+                    // que le transfert vers `finally` n'ait lieu.
+                    successors.retain(|target| *target != control_target);
+                    successors.insert(0, control_target);
+                    for target in &self.exception_targets {
+                        if !successors.contains(target) {
+                            successors.push(*target);
+                        }
+                    }
+                }
                 self.add_node(
                     Some(statement_id),
                     uses,
                     HashSet::new(),
-                    vec![self.exit],
+                    successors,
                     None,
                 )
             }
 
-            Statement::Break => self.add_node(
-                Some(statement_id),
-                HashSet::new(),
-                HashSet::new(),
-                vec![break_target.unwrap_or(self.exit)],
-                None,
-            ),
+            Statement::Break => {
+                let target = self.control_transfer_target(break_target.unwrap_or(self.exit));
+                self.add_node(
+                    Some(statement_id),
+                    HashSet::new(),
+                    HashSet::new(),
+                    vec![target],
+                    None,
+                )
+            }
 
-            Statement::Continue => self.add_node(
-                Some(statement_id),
-                HashSet::new(),
-                HashSet::new(),
-                vec![continue_target.unwrap_or(self.exit)],
-                None,
-            ),
+            Statement::Continue => {
+                let target = self.control_transfer_target(continue_target.unwrap_or(self.exit));
+                self.add_node(
+                    Some(statement_id),
+                    HashSet::new(),
+                    HashSet::new(),
+                    vec![target],
+                    None,
+                )
+            }
 
             Statement::Block(body) => {
                 let body_entry = self.build_sequence(
@@ -507,6 +629,11 @@ impl<'a> CfgBuilder<'a> {
                 if else_entry != then_entry {
                     successors.push(else_entry);
                 }
+                for target in &self.exception_targets {
+                    if !successors.contains(target) {
+                        successors.push(*target);
+                    }
+                }
                 self.add_node(
                     Some(statement_id),
                     uses,
@@ -525,7 +652,13 @@ impl<'a> CfgBuilder<'a> {
                 let mut uses = HashSet::new();
                 collect_used_variables_expression(condition, &mut uses);
                 self.nodes[condition_node].uses = uses;
-                self.nodes[condition_node].successors = vec![body_entry, next];
+                let mut successors = vec![body_entry, next];
+                for target in &self.exception_targets {
+                    if !successors.contains(target) {
+                        successors.push(*target);
+                    }
+                }
+                self.nodes[condition_node].successors = successors;
                 condition_node
             }
 
@@ -541,53 +674,218 @@ impl<'a> CfgBuilder<'a> {
                 defs.insert(variable.clone());
                 self.nodes[iteration_node].uses = uses;
                 self.nodes[iteration_node].defs = defs;
-                self.nodes[iteration_node].successors = vec![body_entry, next];
+                let mut successors = vec![body_entry, next];
+                for target in &self.exception_targets {
+                    if !successors.contains(target) {
+                        successors.push(*target);
+                    }
+                }
+                self.nodes[iteration_node].successors = successors;
                 iteration_node
             }
 
-            // Les effets de contrôle de `match` dépendent des patterns et des
-            // gardes, et peuvent aussi introduire des bindings. Tant que nous
-            // n'avons pas leur CFG dédié, on garde toute la région opaque.
             Statement::Match { value, arms } => {
-                let mut uses = HashSet::new();
-                collect_used_variables_expression(value, &mut uses);
-                for arm in arms {
-                    if let Some(guard) = &arm.guard {
-                        collect_used_variables_expression(guard, &mut uses);
-                    }
-                    collect_used_variables_statements(&arm.body, &mut uses);
-                }
-                self.add_node(
+                // Le sujet du `match` est évalué une seule fois, puis le flux
+                // entre successivement dans les tests des arms. Un échec de
+                // pattern ou de guard passe à l'arm suivant ; une arm qui
+                // termine normalement rejoint `next`.
+                //
+                // Les noeuds auxiliaires n'ont pas de `statement_id`, ce qui
+                // permet de conserver exactement les IDs source utilisés par
+                // `remove_dead_store_nodes`: le statement `Match` est suivi
+                // des statements de ses arms dans leur ordre source.
+                let subject_node = self.add_node(
                     Some(statement_id),
-                    uses,
+                    {
+                        let mut uses = HashSet::new();
+                        collect_used_variables_expression(value, &mut uses);
+                        uses
+                    },
                     HashSet::new(),
-                    vec![next],
+                    Vec::new(),
                     None,
-                )
+                );
+
+                if arms.is_empty() {
+                    self.nodes[subject_node].successors = vec![next];
+                    return subject_node;
+                }
+
+                let arm_nodes = arms
+                    .iter()
+                    .map(|_| self.reserve_aux_node())
+                    .collect::<Vec<_>>();
+
+                for index in 0..arms.len() {
+                    let arm = &arms[index];
+                    let next_arm = arm_nodes.get(index + 1).copied().unwrap_or(next);
+
+                    let body_entry = self
+                        .build_sequence(&arm.body, next, break_target, continue_target)
+                        .unwrap_or(next);
+
+                    let mut pattern_defs = HashSet::new();
+                    collect_pattern_binding_names_for_liveness(&arm.pattern, &mut pattern_defs);
+
+                    let guard_entry = if let Some(guard) = &arm.guard {
+                        let mut uses = HashSet::new();
+                        collect_used_variables_expression(guard, &mut uses);
+                        let mut successors = vec![body_entry, next_arm];
+                        for target in &self.exception_targets {
+                            if !successors.contains(target) {
+                                successors.push(*target);
+                            }
+                        }
+                        let guard_node = self.add_node(
+                            None,
+                            uses,
+                            HashSet::new(),
+                            successors,
+                            None,
+                        );
+                        Some(guard_node)
+                    } else {
+                        None
+                    };
+
+                    let pattern_node = arm_nodes[index];
+                    self.nodes[pattern_node].uses.clear();
+                    self.nodes[pattern_node].defs = pattern_defs;
+                    let mut successors = vec![guard_entry.unwrap_or(body_entry), next_arm];
+                    for target in &self.exception_targets {
+                        if !successors.contains(target) {
+                            successors.push(*target);
+                        }
+                    }
+                    self.nodes[pattern_node].successors = successors;
+                    self.nodes[pattern_node].removable_store = None;
+                }
+
+                self.nodes[subject_node].successors = vec![arm_nodes[0]];
+                subject_node
             }
 
-            // Une région `try` peut transférer le contrôle vers catch/finally
-            // depuis pratiquement n'importe quel point. Elle reste donc opaque
-            // jusqu'à l'ajout d'un véritable graphe d'exceptions HIM.
+            // Le `try` est représenté comme une vraie région de contrôle :
+            // les chemins normaux vont vers `finally` puis `next`, les
+            // exceptions du corps peuvent aller vers `catch` et/ou
+            // `finally`, et les exceptions du `catch` vont vers `finally`
+            // ou le handler englobant.
             Statement::Try {
                 try_body,
+                catch_name,
+                catch_type,
                 catch_body,
                 finally_body,
-                ..
             } => {
-                let mut uses = HashSet::new();
-                collect_used_variables_statements(try_body, &mut uses);
-                if let Some(body) = catch_body {
-                    collect_used_variables_statements(body, &mut uses);
+                let outer_exception_targets = self.exception_targets.clone();
+                let outer_control_finally = self.control_finally;
+
+                // Les noeuds d'entrée sont auxiliaires : ils ne consomment pas
+                // de `statement_id`, afin de conserver exactement la numérotation
+                // attendue par `remove_dead_store_nodes`.
+                let finally_entry = finally_body.as_ref().map(|_| self.reserve_aux_node());
+                let catch_entry = catch_body.as_ref().map(|_| self.reserve_aux_node());
+
+                let try_normal_target = finally_entry.unwrap_or(next);
+                let catch_normal_target = finally_entry.unwrap_or(next);
+
+                let try_exception_targets = if let Some(catch_entry) = catch_entry {
+                    let mut targets = vec![catch_entry];
+                    if finally_entry.is_some() {
+                        if let Some(finally_entry) = finally_entry {
+                            targets.push(finally_entry);
+                        }
+                    } else if catch_type.is_some() {
+                        targets.extend(outer_exception_targets.iter().copied());
+                    }
+                    targets
+                } else if let Some(finally_entry) = finally_entry {
+                    vec![finally_entry]
+                } else {
+                    outer_exception_targets.clone()
+                };
+
+                self.exception_targets = try_exception_targets;
+                self.control_finally = finally_entry;
+                let try_entry = self
+                    .build_sequence(try_body, try_normal_target, break_target, continue_target)
+                    .unwrap_or(try_normal_target);
+
+                // Un `catch` sans `finally` ne peut pas réintercepter une
+                // exception lancée dans son propre corps. Avec `finally`,
+                // l'exception quitte le `catch` vers ce `finally`.
+                if let Some(catch_entry) = catch_entry {
+                    self.exception_targets = finally_entry
+                        .map(|entry| vec![entry])
+                        .unwrap_or_else(|| outer_exception_targets.clone());
+                    self.control_finally = finally_entry;
+
+                    let catch_body_entry = self
+                        .build_sequence(
+                            catch_body.as_deref().unwrap_or_default(),
+                            catch_normal_target,
+                            break_target,
+                            continue_target,
+                        )
+                        .unwrap_or(catch_normal_target);
+
+                    let mut defs = HashSet::new();
+                    if let Some(name) = catch_name {
+                        defs.insert(name.clone());
+                    }
+                    self.nodes[catch_entry].defs = defs;
+                    self.nodes[catch_entry].successors = vec![catch_body_entry];
                 }
-                if let Some(body) = finally_body {
-                    collect_used_variables_statements(body, &mut uses);
+
+                // Le `finally` est construit sous le handler englobant : une
+                // exception qui survient dans `finally` ne doit jamais revenir
+                // dans le `catch` du même `try`.
+                if let Some(finally_entry) = finally_entry {
+                    self.exception_targets = outer_exception_targets.clone();
+                    self.control_finally = outer_control_finally;
+
+                    // La fin normale du `finally` peut représenter plusieurs
+                    // destinations : continuation normale, `break`, `continue`
+                    // ou `return` provenant de la région protégée. Utiliser un
+                    // noeud de jonction conserve tous ces chemins pour la
+                    // liveness, même si le `finally` réel est partagé par des
+                    // entrées de contrôle différentes.
+                    let finally_continuation = self.reserve_aux_node();
+                    let mut continuations = vec![next, self.exit];
+                    if let Some(target) = break_target {
+                        if !continuations.contains(&target) {
+                            continuations.push(target);
+                        }
+                    }
+                    if let Some(target) = continue_target {
+                        if !continuations.contains(&target) {
+                            continuations.push(target);
+                        }
+                    }
+                    self.nodes[finally_continuation].successors = continuations;
+
+                    let finally_body_entry = self
+                        .build_sequence(
+                            finally_body.as_deref().unwrap_or_default(),
+                            finally_continuation,
+                            break_target,
+                            continue_target,
+                        )
+                        .unwrap_or(finally_continuation);
+
+                    self.nodes[finally_entry].successors = vec![finally_body_entry];
                 }
+
+                // Le statement `try` lui-même est une entrée synthétique vers
+                // le corps protégé. Il ne porte ni définition ni lecture : ce
+                // sont les noeuds réels des corps qui décrivent la liveness.
+                self.exception_targets = outer_exception_targets;
+                self.control_finally = outer_control_finally;
                 self.add_node(
                     Some(statement_id),
-                    uses,
                     HashSet::new(),
-                    vec![next],
+                    HashSet::new(),
+                    vec![try_entry],
                     None,
                 )
             }
@@ -708,6 +1006,7 @@ fn discover_and_optimize_function(statement: &mut Statement) {
         }
         Statement::Try {
             try_body,
+            catch_name: _,
             catch_body,
             finally_body,
             ..
@@ -994,6 +1293,37 @@ fn collect_local_bindings_from_statements(
     }
 }
 
+fn collect_pattern_binding_names_for_liveness(
+    pattern: &super::him::Pattern,
+    bindings: &mut HashSet<String>,
+) {
+    match pattern {
+        super::him::Pattern::Binding(name) => {
+            bindings.insert(name.clone());
+        }
+        super::him::Pattern::Or(patterns)
+        | super::him::Pattern::Array(patterns)
+        | super::him::Pattern::ArrayRest(patterns)
+        | super::him::Pattern::Tuple(patterns) => {
+            for pattern in patterns {
+                collect_pattern_binding_names_for_liveness(pattern, bindings);
+            }
+        }
+        super::him::Pattern::Range { start, end, .. } => {
+            collect_pattern_binding_names_for_liveness(start, bindings);
+            collect_pattern_binding_names_for_liveness(end, bindings);
+        }
+        super::him::Pattern::OptionSome(pattern)
+        | super::him::Pattern::ResultOk(pattern)
+        | super::him::Pattern::ResultErr(pattern) => {
+            collect_pattern_binding_names_for_liveness(pattern, bindings);
+        }
+        super::him::Pattern::Wildcard
+        | super::him::Pattern::Literal(_)
+        | super::him::Pattern::EnumVariant { .. } => {}
+    }
+}
+
 fn collect_pattern_bindings(pattern: &super::him::Pattern, locals: &mut HashSet<String>) {
     match pattern {
         super::him::Pattern::Binding(name) => {
@@ -1075,10 +1405,26 @@ fn remove_dead_store_nodes(
             Statement::While { body, .. } | Statement::ForIn { body, .. } => {
                 remove_dead_store_nodes(body, dead_stores, statement_id);
             }
-            // Le CFG reste opaque pour `match`, `try` et les déclarations.
-            Statement::Match { .. }
-            | Statement::Try { .. }
-            | Statement::Function { .. }
+            Statement::Match { arms, .. } => {
+                for arm in arms {
+                    remove_dead_store_nodes(&mut arm.body, dead_stores, statement_id);
+                }
+            }
+            Statement::Try {
+                try_body,
+                catch_body,
+                finally_body,
+                ..
+            } => {
+                remove_dead_store_nodes(try_body, dead_stores, statement_id);
+                if let Some(body) = catch_body {
+                    remove_dead_store_nodes(body, dead_stores, statement_id);
+                }
+                if let Some(body) = finally_body {
+                    remove_dead_store_nodes(body, dead_stores, statement_id);
+                }
+            }
+            Statement::Function { .. }
             | Statement::Class { .. }
             | Statement::Enum { .. }
             | Statement::Let { .. }
@@ -1127,11 +1473,418 @@ fn remove_dead_store_in_statement(
         Statement::While { body, .. } | Statement::ForIn { body, .. } => {
             remove_dead_store_nodes(body, dead_stores, statement_id);
         }
+        Statement::Try {
+            try_body,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            remove_dead_store_nodes(try_body, dead_stores, statement_id);
+            if let Some(body) = catch_body {
+                remove_dead_store_nodes(body, dead_stores, statement_id);
+            }
+            if let Some(body) = finally_body {
+                remove_dead_store_nodes(body, dead_stores, statement_id);
+            }
+        }
         _ => {}
     }
 }
 
 type ConstantEnvironment = HashMap<String, Literal>;
+
+
+fn propagate_aliases_in_nested_functions(statements: &mut [Statement]) {
+    for statement in statements {
+        match statement {
+            Statement::Positioned { statement, .. }
+            | Statement::Export { statement } => {
+                propagate_aliases_in_nested_functions(std::slice::from_mut(statement.as_mut()));
+            }
+            Statement::Function { body, .. } => {
+                propagate_aliases_in_block(body);
+            }
+            Statement::Class { methods, .. } => {
+                for method in methods {
+                    propagate_aliases_in_block(&mut method.body);
+                }
+            }
+            Statement::Enum { methods, .. } => {
+                for method in methods {
+                    propagate_aliases_in_block(&mut method.body);
+                }
+            }
+            Statement::Let { .. }
+            | Statement::Assignment { .. }
+            | Statement::Expression { .. }
+            | Statement::Block(_)
+            | Statement::If { .. }
+            | Statement::While { .. }
+            | Statement::ForIn { .. }
+            | Statement::Match { .. }
+            | Statement::Throw { .. }
+            | Statement::Try { .. }
+            | Statement::Return { .. }
+            | Statement::Import { .. }
+            | Statement::FromImport { .. }
+            | Statement::TypeAlias { .. }
+            | Statement::Interface { .. }
+            | Statement::Break
+            | Statement::Continue => {}
+        }
+    }
+}
+
+fn propagate_aliases_in_block(statements: &mut Vec<Statement>) {
+    let mut environment = HashMap::new();
+    propagate_aliases_block(statements, &mut environment);
+}
+
+type AliasEnvironment = HashMap<String, String>;
+
+fn propagate_aliases_block(statements: &mut Vec<Statement>, environment: &mut AliasEnvironment) {
+    let original = std::mem::take(statements);
+    let mut transformed = Vec::with_capacity(original.len());
+
+    for mut statement in original {
+        propagate_aliases_statement(&mut statement, environment, &mut transformed);
+    }
+
+    *statements = transformed;
+}
+
+fn propagate_aliases_statement(
+    statement: &mut Statement,
+    environment: &mut AliasEnvironment,
+    output: &mut Vec<Statement>,
+) {
+    match statement {
+        Statement::Positioned {
+            line,
+            column,
+            statement: inner,
+        } => {
+            let mut nested_output = Vec::new();
+            propagate_aliases_statement(inner, environment, &mut nested_output);
+
+            if nested_output.len() == 1 {
+                output.push(Statement::Positioned {
+                    line: *line,
+                    column: *column,
+                    statement: Box::new(nested_output.remove(0)),
+                });
+            } else {
+                for nested in nested_output {
+                    output.push(nested);
+                }
+            }
+        }
+
+        Statement::Let {
+            name,
+            value,
+            mutable,
+            ..
+        } => {
+            propagate_aliases_expression(value, environment);
+
+            if *mutable {
+                invalidate_alias(environment, name);
+            } else if let Expression::Variable(source) = value {
+                let canonical = canonical_alias(source, environment);
+                environment.insert(name.clone(), canonical);
+            } else {
+                invalidate_alias(environment, name);
+            }
+
+            output.push(statement.clone());
+        }
+
+        Statement::Assignment { target, value } => {
+            propagate_aliases_target(target, environment);
+            propagate_aliases_expression(value, environment);
+
+            if let AssignmentTarget::Variable(name) = target {
+                invalidate_alias(environment, name);
+            }
+
+            output.push(statement.clone());
+        }
+
+        Statement::Expression { expression }
+        | Statement::Throw { value: expression } => {
+            propagate_aliases_expression(expression, environment);
+            output.push(statement.clone());
+        }
+
+        Statement::Return { value } => {
+            if let Some(value) = value {
+                propagate_aliases_expression(value, environment);
+            }
+            output.push(statement.clone());
+        }
+
+        Statement::Block(body) => {
+            let mut nested_environment = environment.clone();
+            propagate_aliases_block(body, &mut nested_environment);
+            output.push(statement.clone());
+        }
+
+        Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            propagate_aliases_expression(condition, environment);
+
+            let incoming = environment.clone();
+            let mut then_environment = incoming.clone();
+            propagate_aliases_block(then_branch, &mut then_environment);
+
+            let mut else_environment = incoming.clone();
+            if let Some(branch) = else_branch {
+                propagate_aliases_block(branch, &mut else_environment);
+            }
+
+            if else_branch.is_some() {
+                *environment = merge_alias_environments(
+                    &then_environment,
+                    &else_environment,
+                );
+            } else {
+                *environment = incoming;
+            }
+
+            output.push(statement.clone());
+        }
+
+        Statement::While { condition, body } => {
+            propagate_aliases_expression(condition, environment);
+
+            let mut body_environment = environment.clone();
+            propagate_aliases_block(body, &mut body_environment);
+
+            output.push(statement.clone());
+        }
+
+        Statement::ForIn { variable, iterable, body } => {
+            propagate_aliases_expression(iterable, environment);
+
+            let mut body_environment = environment.clone();
+            invalidate_alias(&mut body_environment, variable);
+            propagate_aliases_block(body, &mut body_environment);
+
+            output.push(statement.clone());
+        }
+
+        Statement::Match { value, arms } => {
+            propagate_aliases_expression(value, environment);
+            for arm in arms {
+                let mut arm_environment = environment.clone();
+                let mut pattern_bindings = HashSet::new();
+                collect_pattern_binding_names_for_aliases(&arm.pattern, &mut pattern_bindings);
+                for name in pattern_bindings {
+                    invalidate_alias(&mut arm_environment, &name);
+                }
+                if let Some(guard) = &mut arm.guard {
+                    propagate_aliases_expression(guard, &mut arm_environment);
+                }
+                propagate_aliases_block(&mut arm.body, &mut arm_environment);
+            }
+            output.push(statement.clone());
+        }
+
+        Statement::Try {
+            try_body,
+            catch_name,
+            catch_body,
+            finally_body,
+            ..
+        } => {
+            let incoming = environment.clone();
+
+            let mut try_environment = incoming.clone();
+            propagate_aliases_block(try_body, &mut try_environment);
+
+            if let Some(body) = catch_body {
+                let mut catch_environment = incoming.clone();
+                if let Some(name) = catch_name {
+                    invalidate_alias(&mut catch_environment, name);
+                }
+                propagate_aliases_block(body, &mut catch_environment);
+            }
+
+            if let Some(body) = finally_body {
+                let mut finally_environment = incoming.clone();
+                propagate_aliases_block(body, &mut finally_environment);
+            }
+
+            *environment = incoming;
+            output.push(statement.clone());
+        }
+
+        Statement::Export { statement: inner } => {
+            propagate_aliases_statement(inner, environment, output);
+        }
+
+        Statement::Function { body, .. } => {
+            propagate_aliases_in_block(body);
+            output.push(statement.clone());
+        }
+        Statement::Class { methods, .. } => {
+            for method in methods {
+                propagate_aliases_in_block(&mut method.body);
+            }
+            output.push(statement.clone());
+        }
+        Statement::Enum { methods, .. } => {
+            for method in methods {
+                propagate_aliases_in_block(&mut method.body);
+            }
+            output.push(statement.clone());
+        }
+
+        Statement::Import { .. }
+        | Statement::FromImport { .. }
+        | Statement::TypeAlias { .. }
+        | Statement::Interface { .. }
+        | Statement::Break
+        | Statement::Continue => output.push(statement.clone()),
+    }
+}
+
+fn propagate_aliases_expression(expression: &mut Expression, environment: &AliasEnvironment) {
+    match expression {
+        Expression::Variable(name) => {
+            if let Some(canonical) = environment.get(name) {
+                *name = canonical.clone();
+            }
+        }
+        Expression::Unary { right, .. } => propagate_aliases_expression(right, environment),
+        Expression::Binary { left, right, .. } => {
+            propagate_aliases_expression(left, environment);
+            propagate_aliases_expression(right, environment);
+        }
+        Expression::Function { .. } => {}
+        Expression::Call { callee, arguments, .. } => {
+            propagate_aliases_expression(callee, environment);
+            for argument in arguments {
+                propagate_aliases_expression(argument, environment);
+            }
+        }
+        Expression::Member { object, .. } => propagate_aliases_expression(object, environment),
+        Expression::Index { object, index, .. } => {
+            propagate_aliases_expression(object, environment);
+            propagate_aliases_expression(index, environment);
+        }
+        Expression::New { arguments, .. } => {
+            for argument in arguments {
+                propagate_aliases_expression(argument, environment);
+            }
+        }
+        Expression::Array(elements) | Expression::Tuple(elements) => {
+            for element in elements {
+                propagate_aliases_expression(element, environment);
+            }
+        }
+        Expression::Dict(fields) | Expression::Record(fields) => {
+            for (_, value) in fields {
+                propagate_aliases_expression(value, environment);
+            }
+        }
+        Expression::Try(expression) | Expression::Await(expression) => {
+            propagate_aliases_expression(expression, environment);
+        }
+        Expression::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            propagate_aliases_expression(condition, environment);
+            propagate_aliases_expression(then_expr, environment);
+            propagate_aliases_expression(else_expr, environment);
+        }
+        Expression::Literal(_) | Expression::SelfValue => {}
+    }
+}
+
+fn propagate_aliases_target(target: &mut AssignmentTarget, environment: &AliasEnvironment) {
+    match target {
+        AssignmentTarget::Variable(_) => {}
+        AssignmentTarget::Index { object, index } => {
+            propagate_aliases_expression(object, environment);
+            propagate_aliases_expression(index, environment);
+        }
+        AssignmentTarget::Member { object, .. } => {
+            propagate_aliases_expression(object, environment);
+        }
+    }
+}
+
+fn collect_pattern_binding_names_for_aliases(
+    pattern: &super::him::Pattern,
+    bindings: &mut HashSet<String>,
+) {
+    match pattern {
+        super::him::Pattern::Binding(name) => {
+            bindings.insert(name.clone());
+        }
+        super::him::Pattern::Or(patterns)
+        | super::him::Pattern::Array(patterns)
+        | super::him::Pattern::ArrayRest(patterns)
+        | super::him::Pattern::Tuple(patterns) => {
+            for pattern in patterns {
+                collect_pattern_binding_names_for_aliases(pattern, bindings);
+            }
+        }
+        super::him::Pattern::Range { start, end, .. } => {
+            collect_pattern_binding_names_for_aliases(start, bindings);
+            collect_pattern_binding_names_for_aliases(end, bindings);
+        }
+        super::him::Pattern::OptionSome(pattern)
+        | super::him::Pattern::ResultOk(pattern)
+        | super::him::Pattern::ResultErr(pattern) => {
+            collect_pattern_binding_names_for_aliases(pattern, bindings);
+        }
+        super::him::Pattern::Wildcard
+        | super::him::Pattern::Literal(_)
+        | super::him::Pattern::EnumVariant { .. } => {}
+    }
+}
+
+fn canonical_alias(name: &str, environment: &AliasEnvironment) -> String {
+    let mut current = name;
+    let mut visited = HashSet::new();
+
+    while let Some(next) = environment.get(current) {
+        if !visited.insert(current.to_string()) {
+            break;
+        }
+        current = next;
+    }
+
+    current.to_string()
+}
+
+fn invalidate_alias(environment: &mut AliasEnvironment, name: &str) {
+    environment.remove(name);
+    environment.retain(|_, target| target != name);
+}
+
+fn merge_alias_environments(
+    then_environment: &AliasEnvironment,
+    else_environment: &AliasEnvironment,
+) -> AliasEnvironment {
+    let mut merged = AliasEnvironment::new();
+
+    for (name, then_target) in then_environment {
+        if else_environment.get(name) == Some(then_target) {
+            merged.insert(name.clone(), then_target.clone());
+        }
+    }
+
+    merged
+}
 
 fn eliminate_dead_values_in_nested_functions(statements: &mut [Statement]) {
     for statement in statements {
@@ -1190,7 +1943,9 @@ fn eliminate_dead_values_in_block(statements: &mut Vec<Statement>) {
     let mut transformed = Vec::with_capacity(original.len());
 
     for statement in original {
-        if is_dead_literal_let(&statement, &used) {
+        if is_dead_pure_let(&statement, &used)
+            || is_dead_pure_expression_statement(&statement)
+        {
             continue;
         }
         transformed.push(statement);
@@ -1261,7 +2016,20 @@ fn recurse_dead_value_pass(statement: &mut Statement) {
     }
 }
 
-fn is_dead_literal_let(statement: &Statement, used: &HashSet<String>) -> bool {
+fn is_dead_pure_expression_statement(statement: &Statement) -> bool {
+    let statement = match statement {
+        Statement::Positioned { statement, .. } => statement.as_ref(),
+        other => other,
+    };
+
+    matches!(
+        statement,
+        Statement::Expression { expression }
+            if is_pure_non_throwing_expression(expression)
+    )
+}
+
+fn is_dead_pure_let(statement: &Statement, used: &HashSet<String>) -> bool {
     let statement = match statement {
         Statement::Positioned { statement, .. } => statement.as_ref(),
         other => other,
@@ -1271,11 +2039,59 @@ fn is_dead_literal_let(statement: &Statement, used: &HashSet<String>) -> bool {
         statement,
         Statement::Let {
             name,
-            value: Expression::Literal(_),
+            value,
             mutable: false,
             ..
-        } if !used.contains(name)
+        } if !used.contains(name) && is_pure_non_throwing_expression(value)
     )
+}
+
+/// Retourne `true` uniquement pour les expressions dont l'évaluation n'appelle
+/// aucun code utilisateur et ne peut pas lever une erreur runtime connue par
+/// le VM. Cette liste volontairement étroite permet de supprimer une valeur
+/// devenue morte sans modifier les effets observables du programme.
+fn is_pure_non_throwing_expression(expression: &Expression) -> bool {
+    match expression {
+        Expression::Literal(_) | Expression::Variable(_) | Expression::SelfValue => true,
+
+        Expression::Unary { operator, right, .. } => {
+            matches!(operator, super::him::UnaryOp::Not)
+                && is_pure_non_throwing_expression(right)
+        }
+
+        Expression::Binary {
+            operator,
+            left,
+            right,
+            ..
+        } => {
+            matches!(operator, BinaryOp::And | BinaryOp::Or)
+                && is_pure_non_throwing_expression(left)
+                && is_pure_non_throwing_expression(right)
+        }
+
+        Expression::Ternary {
+            condition,
+            then_expr,
+            else_expr,
+        } => {
+            is_pure_non_throwing_expression(condition)
+                && is_pure_non_throwing_expression(then_expr)
+                && is_pure_non_throwing_expression(else_expr)
+        }
+
+        Expression::Function { .. }
+        | Expression::Call { .. }
+        | Expression::Member { .. }
+        | Expression::Index { .. }
+        | Expression::New { .. }
+        | Expression::Array(_)
+        | Expression::Tuple(_)
+        | Expression::Dict(_)
+        | Expression::Record(_)
+        | Expression::Try(_)
+        | Expression::Await(_) => false,
+    }
 }
 
 fn collect_used_variables_statements(statements: &[Statement], used: &mut HashSet<String>) {
@@ -2700,6 +3516,443 @@ mod tests {
     }
 
     #[test]
+    fn dse_removes_dead_literal_binding_with_cfg_liveness() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["cond".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::If {
+                    condition: Expression::Variable("cond".into()),
+                    then_branch: vec![Statement::Let {
+                        name: "dead".into(),
+                        value: Expression::Literal(Literal::Integer(42)),
+                        mutable: false,
+                        type_annotation: None,
+                    }],
+                    else_branch: None,
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::If { then_branch, .. } = &body[0] else {
+            panic!("if attendu");
+        };
+        assert!(then_branch.is_empty());
+    }
+
+    #[test]
+    fn dse_keeps_literal_binding_read_on_a_future_path() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["cond".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "x".into(),
+                    value: Expression::Literal(Literal::Integer(42)),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::If {
+                    condition: Expression::Variable("cond".into()),
+                    then_branch: vec![Statement::Return {
+                        value: Some(Expression::Variable("x".into())),
+                    }],
+                    else_branch: Some(vec![Statement::Return { value: None }]),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert!(matches!(body[0], Statement::Let { .. }));
+    }
+
+    #[test]
+    fn dse_removes_dead_pure_variable_binding() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["source".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "dead".into(),
+                    value: Expression::Variable("source".into()),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert!(body.iter().all(|statement| !matches!(
+            statement,
+            Statement::Let { name, .. } if name == "dead"
+        )));
+    }
+
+
+
+    #[test]
+    fn copy_propagator_respects_for_binding_shadowing() {
+        let mut body = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["source".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "item".into(),
+                    value: Expression::Variable("source".into()),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::ForIn {
+                    variable: "item".into(),
+                    iterable: Expression::Variable("items".into()),
+                    body: vec![Statement::Expression {
+                        expression: Expression::Variable("item".into()),
+                    }],
+                },
+            ],
+            is_async: false,
+        }];
+
+        CopyPropagator.run(&mut body);
+        let Statement::Function { body, .. } = &body[0] else {
+            panic!("expected function");
+        };
+        let Statement::ForIn { body, .. } = &body[1] else {
+            panic!("expected for-in");
+        };
+        assert!(matches!(
+            &body[0],
+            Statement::Expression {
+                expression: Expression::Variable(name)
+            } if name == "item"
+        ));
+    }
+
+    #[test]
+    fn copy_propagator_respects_match_binding_shadowing() {
+        let mut body = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["source".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "value".into(),
+                    value: Expression::Variable("source".into()),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Match {
+                    value: Expression::Variable("subject".into()),
+                    arms: vec![MatchArm {
+                        pattern: super::super::him::Pattern::Binding("value".into()),
+                        guard: None,
+                        body: vec![Statement::Expression {
+                            expression: Expression::Variable("value".into()),
+                        }],
+                    }],
+                },
+            ],
+            is_async: false,
+        }];
+
+        CopyPropagator.run(&mut body);
+        let Statement::Function { body, .. } = &body[0] else {
+            panic!("expected function");
+        };
+        let Statement::Match { arms, .. } = &body[1] else {
+            panic!("expected match");
+        };
+        assert!(matches!(
+            &arms[0].body[0],
+            Statement::Expression {
+                expression: Expression::Variable(name)
+            } if name == "value"
+        ));
+    }
+
+    #[test]
+    fn copy_propagator_respects_catch_binding_shadowing() {
+        let mut body = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["source".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "error".into(),
+                    value: Expression::Variable("source".into()),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Try {
+                    try_body: vec![Statement::Throw {
+                        value: Expression::Literal(Literal::Integer(1)),
+                    }],
+                    catch_name: Some("error".into()),
+                    catch_type: None,
+                    catch_body: Some(vec![Statement::Expression {
+                        expression: Expression::Variable("error".into()),
+                    }]),
+                    finally_body: None,
+                },
+            ],
+            is_async: false,
+        }];
+
+        CopyPropagator.run(&mut body);
+        let Statement::Function { body, .. } = &body[0] else {
+            panic!("expected function");
+        };
+        let Statement::Try { catch_body: Some(body), .. } = &body[1] else {
+            panic!("expected try");
+        };
+        assert!(matches!(
+            &body[0],
+            Statement::Expression {
+                expression: Expression::Variable(name)
+            } if name == "error"
+        ));
+    }
+
+    #[test]
+    fn copy_propagator_removes_redundant_immutable_aliases() {
+        let mut body = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["source".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "a".into(),
+                    value: Expression::Variable("source".into()),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Let {
+                    name: "b".into(),
+                    value: Expression::Variable("a".into()),
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Expression {
+                    expression: Expression::Variable("b".into()),
+                },
+            ],
+            is_async: false,
+        }];
+
+        CopyPropagator.run(&mut body);
+        let Statement::Function { body, .. } = &body[0] else {
+            panic!("expected function");
+        };
+        assert!(matches!(
+            &body[2],
+            Statement::Expression {
+                expression: Expression::Variable(name)
+            } if name == "source"
+        ));
+    }
+
+    #[test]
+    fn copy_propagator_does_not_cross_a_mutable_reassignment() {
+        let mut body = vec![
+            Statement::Let {
+                name: "a".into(),
+                value: Expression::Variable("source".into()),
+                mutable: true,
+                type_annotation: None,
+            },
+            Statement::Let {
+                name: "b".into(),
+                value: Expression::Variable("a".into()),
+                mutable: false,
+                type_annotation: None,
+            },
+            Statement::Assignment {
+                target: AssignmentTarget::Variable("a".into()),
+                value: Expression::Variable("other".into()),
+            },
+            Statement::Expression {
+                expression: Expression::Variable("b".into()),
+            },
+        ];
+
+        CopyPropagator.run(&mut body);
+        assert!(matches!(
+            &body[3],
+            Statement::Expression {
+                expression: Expression::Variable(name)
+            } if name == "b"
+        ));
+    }
+
+    #[test]
+    fn dead_value_eliminator_removes_pure_expression_statement() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["source".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Expression {
+                    expression: Expression::Unary {
+                        operator: super::super::him::UnaryOp::Not,
+                        right: Box::new(Expression::Variable("source".into())),
+                        line: 1,
+                        column: 1,
+                    },
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadValueEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 1);
+        assert!(matches!(body[0], Statement::Return { value: None }));
+    }
+
+    #[test]
+    fn dead_value_eliminator_keeps_effectful_expression_statement() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["value".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Expression {
+                    expression: Expression::Member {
+                        object: Box::new(Expression::Variable("value".into())),
+                        name: "size".into(),
+                        line: 1,
+                        column: 1,
+                    },
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadValueEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert_eq!(body.len(), 2);
+        assert!(matches!(&body[0], Statement::Expression { .. }));
+    }
+
+    #[test]
+    fn dse_removes_dead_nonthrowing_logical_binding() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["left".into(), "right".into()],
+            param_types: vec![None, None],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "dead".into(),
+                    value: Expression::Binary {
+                        left: Box::new(Expression::Variable("left".into())),
+                        operator: BinaryOp::And,
+                        right: Box::new(Expression::Variable("right".into())),
+                        line: 1,
+                        column: 1,
+                    },
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert!(body.iter().all(|statement| !matches!(
+            statement,
+            Statement::Let { name, .. } if name == "dead"
+        )));
+    }
+
+    #[test]
+    fn dse_keeps_dead_binding_when_initializer_can_have_runtime_effects() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["value".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Let {
+                    name: "dead".into(),
+                    value: Expression::Member {
+                        object: Box::new(Expression::Variable("value".into())),
+                        name: "size".into(),
+                        line: 1,
+                        column: 1,
+                    },
+                    mutable: false,
+                    type_annotation: None,
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert!(matches!(&body[0], Statement::Let { name, .. } if name == "dead"));
+    }
+
+    #[test]
     fn folds_exact_integer_float_equality() {
         assert!(literal_equals(
             &Literal::Integer(9_007_199_254_740_992),
@@ -3293,6 +4546,145 @@ mod tests {
     }
 
     #[test]
+    fn cfg_liveness_tracks_match_arm_definitions_and_fallbacks() {
+        let statements = vec![
+            Statement::Match {
+                value: Expression::Variable("value".into()),
+                arms: vec![
+                    MatchArm {
+                        pattern: super::super::him::Pattern::Literal(Literal::Integer(1)),
+                        guard: None,
+                        body: vec![Statement::Assignment {
+                            target: AssignmentTarget::Variable("x".into()),
+                            value: Expression::Literal(Literal::Integer(10)),
+                        }],
+                    },
+                    MatchArm {
+                        pattern: super::super::him::Pattern::Wildcard,
+                        guard: None,
+                        body: vec![Statement::Return {
+                            value: Some(Expression::Variable("x".into())),
+                        }],
+                    },
+                ],
+            },
+        ];
+
+        let summary = LivenessAnalyzer.analyze_block(&statements);
+
+        assert!(summary.live_in.contains("value"));
+        assert!(summary.live_in.contains("x"));
+    }
+
+    #[test]
+    fn cfg_liveness_keeps_match_guard_dependency() {
+        let statements = vec![
+            Statement::Match {
+                value: Expression::Variable("value".into()),
+                arms: vec![MatchArm {
+                    pattern: super::super::him::Pattern::Binding("item".into()),
+                    guard: Some(Expression::Variable("item".into())),
+                    body: vec![Statement::Return { value: None }],
+                }],
+            },
+        ];
+
+        let summary = LivenessAnalyzer.analyze_block(&statements);
+
+        assert!(summary.live_in.contains("value"));
+        assert!(!summary.live_in.contains("item"));
+    }
+
+    #[test]
+    fn dse_removes_dead_store_inside_match_arm() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["value".into(), "x".into()],
+            param_types: vec![None, None],
+            return_type: None,
+            body: vec![Statement::Match {
+                value: Expression::Variable("value".into()),
+                arms: vec![
+                    MatchArm {
+                        pattern: super::super::him::Pattern::Literal(Literal::Integer(1)),
+                        guard: None,
+                        body: vec![Statement::Assignment {
+                            target: AssignmentTarget::Variable("x".into()),
+                            value: Expression::Literal(Literal::Integer(10)),
+                        }],
+                    },
+                    MatchArm {
+                        pattern: super::super::him::Pattern::Wildcard,
+                        guard: None,
+                        body: vec![Statement::Return { value: None }],
+                    },
+                ],
+            }],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::Match { arms, .. } = &body[0] else {
+            panic!("match attendu");
+        };
+        assert!(arms[0].body.is_empty());
+    }
+
+    #[test]
+    fn dse_keeps_match_store_read_after_match() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["value".into(), "x".into()],
+            param_types: vec![None, None],
+            return_type: None,
+            body: vec![
+                Statement::Match {
+                    value: Expression::Variable("value".into()),
+                    arms: vec![
+                        MatchArm {
+                            pattern: super::super::him::Pattern::Literal(Literal::Integer(1)),
+                            guard: None,
+                            body: vec![Statement::Assignment {
+                                target: AssignmentTarget::Variable("x".into()),
+                                value: Expression::Literal(Literal::Integer(10)),
+                            }],
+                        },
+                        MatchArm {
+                            pattern: super::super::him::Pattern::Wildcard,
+                            guard: None,
+                            body: vec![Statement::Assignment {
+                                target: AssignmentTarget::Variable("x".into()),
+                                value: Expression::Literal(Literal::Integer(20)),
+                            }],
+                        },
+                    ],
+                },
+                Statement::Return {
+                    value: Some(Expression::Variable("x".into())),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::Match { arms, .. } = &body[0] else {
+            panic!("match attendu");
+        };
+        assert_eq!(arms[0].body.len(), 1);
+        assert_eq!(arms[1].body.len(), 1);
+    }
+
+    #[test]
     fn dse_removes_dead_store_inside_if_branch() {
         let mut statements = vec![Statement::Function {
             name: "f".into(),
@@ -3764,6 +5156,23 @@ mod tests {
     }
 
     #[test]
+    fn default_him_pipeline_is_frozen() {
+        assert_eq!(HIM_VERSION, "1.0");
+        assert_eq!(HIM_PIPELINE_VERSION, 1);
+        assert_eq!(
+            DEFAULT_HIM_PIPELINE,
+            [
+                HimPassId::ConstantFolder,
+                HimPassId::ConstantPropagator,
+                HimPassId::CopyPropagator,
+                HimPassId::DeadCodeEliminator,
+                HimPassId::DeadValueEliminator,
+                HimPassId::DeadStoreEliminator,
+            ]
+        );
+    }
+
+    #[test]
     fn default_pipeline_runs_dead_store_elimination() {
         let mut statements = vec![Statement::Function {
             name: "f".into(),
@@ -3862,6 +5271,221 @@ mod tests {
         };
         assert_eq!(try_body.len(), 1);
         assert_eq!(finally_body.as_ref().expect("finally attendu").len(), 2);
+    }
+
+
+    // Ces tests observent la vivacité à l'entrée du bloc. Une définition de
+    // `x` placée avant la région testée tuerait légitimement `x` dans `live_in`;
+    // on utilise donc ici les lectures de `x` comme demande de liveness directe.
+    #[test]
+    fn cfg_liveness_tracks_try_catch_and_finally_paths() {
+        let statements = vec![
+            Statement::Try {
+                try_body: vec![Statement::Expression {
+                    expression: Expression::Variable("operation".into()),
+                }],
+                catch_name: Some("error".into()),
+                catch_type: None,
+                catch_body: Some(vec![Statement::Expression {
+                    expression: Expression::Variable("x".into()),
+                }]),
+                finally_body: Some(vec![Statement::Expression {
+                    expression: Expression::Variable("x".into()),
+                }]),
+            },
+        ];
+
+        let summary = LivenessAnalyzer.analyze_block(&statements);
+
+        assert!(summary.live_in.contains("x"));
+        assert!(summary.live_in.contains("operation"));
+    }
+
+    #[test]
+    fn cfg_liveness_routes_return_through_finally() {
+        let statements = vec![
+            Statement::Try {
+                try_body: vec![Statement::Return { value: None }],
+                catch_name: None,
+                catch_type: None,
+                catch_body: None,
+                finally_body: Some(vec![Statement::Expression {
+                    expression: Expression::Variable("x".into()),
+                }]),
+            },
+        ];
+
+        let summary = LivenessAnalyzer.analyze_block(&statements);
+
+        assert!(summary.live_in.contains("x"));
+    }
+
+    #[test]
+    fn dse_removes_dead_store_inside_try_with_finally() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Try {
+                    try_body: vec![Statement::Assignment {
+                        target: AssignmentTarget::Variable("x".into()),
+                        value: Expression::Literal(Literal::Integer(1)),
+                    }],
+                    catch_name: None,
+                    catch_type: None,
+                    catch_body: None,
+                    finally_body: Some(vec![]),
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        let Statement::Try { try_body, .. } = &body[0] else {
+            panic!("try attendu");
+        };
+        assert!(try_body.is_empty());
+    }
+
+    #[test]
+    fn dse_keeps_store_read_from_catch_body() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(1)),
+                },
+                Statement::Try {
+                    try_body: vec![Statement::Expression {
+                        expression: Expression::Variable("operation".into()),
+                    }],
+                    catch_name: None,
+                    catch_type: None,
+                    catch_body: Some(vec![Statement::Expression {
+                        expression: Expression::Variable("x".into()),
+                    }]),
+                    finally_body: None,
+                },
+                Statement::Return { value: None },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert!(matches!(
+            body.first(),
+            Some(Statement::Assignment {
+                target: AssignmentTarget::Variable(name),
+                value: Expression::Literal(Literal::Integer(1)),
+            }) if name == "x"
+        ));
+    }
+
+    #[test]
+    fn dse_keeps_store_read_from_finally_body() {
+        let mut statements = vec![Statement::Function {
+            name: "f".into(),
+            generic_params: vec![],
+            params: vec!["x".into()],
+            param_types: vec![None],
+            return_type: None,
+            body: vec![
+                Statement::Assignment {
+                    target: AssignmentTarget::Variable("x".into()),
+                    value: Expression::Literal(Literal::Integer(1)),
+                },
+                Statement::Try {
+                    try_body: vec![Statement::Return { value: None }],
+                    catch_name: None,
+                    catch_type: None,
+                    catch_body: None,
+                    finally_body: Some(vec![Statement::Expression {
+                        expression: Expression::Variable("x".into()),
+                    }]),
+                },
+            ],
+            is_async: false,
+        }];
+
+        DeadStoreEliminator.run(&mut statements);
+
+        let Statement::Function { body, .. } = &statements[0] else {
+            panic!("fonction attendue");
+        };
+        assert!(matches!(
+            body.first(),
+            Some(Statement::Assignment {
+                target: AssignmentTarget::Variable(name),
+                value: Expression::Literal(Literal::Integer(1)),
+            }) if name == "x"
+        ));
+    }
+
+
+    #[test]
+    fn cfg_liveness_preserves_continue_path_through_finally() {
+        let statements = vec![
+            Statement::While {
+                condition: Expression::Variable("x".into()),
+                body: vec![
+                    Statement::Try {
+                        try_body: vec![Statement::Continue],
+                        catch_name: None,
+                        catch_type: None,
+                        catch_body: None,
+                        finally_body: Some(vec![]),
+                    },
+                    Statement::Return { value: None },
+                ],
+            },
+        ];
+
+        let summary = LivenessAnalyzer.analyze_block(&statements);
+
+        assert!(summary.live_in.contains("x"));
+    }
+
+    #[test]
+    fn cfg_liveness_preserves_break_path_through_finally() {
+        let statements = vec![
+            Statement::While {
+                condition: Expression::Literal(Literal::Bool(true)),
+                body: vec![
+                    Statement::Try {
+                        try_body: vec![Statement::Break],
+                        catch_name: None,
+                        catch_type: None,
+                        catch_body: None,
+                        finally_body: Some(vec![]),
+                    },
+                    Statement::Return { value: None },
+                ],
+            },
+            Statement::Return {
+                value: Some(Expression::Variable("x".into())),
+            },
+        ];
+
+        let summary = LivenessAnalyzer.analyze_block(&statements);
+
+        assert!(summary.live_in.contains("x"));
     }
 
 }
