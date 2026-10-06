@@ -141,7 +141,100 @@ pub fn native_file_size(args: &[Value]) -> Result<Value, RuntimeError> {
 
     let metadata = fs::metadata(&path).map_err(|error| io_error("size", &path, error))?;
 
-    Ok(Value::Integer(metadata.len() as i64))
+    let size = i64::try_from(metadata.len()).map_err(|_| {
+        RuntimeError::ModuleError(format!(
+            "file.size: {path}: file size exceeds Kastel integer range"
+        ))
+    })?;
+
+    Ok(Value::Integer(size))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file_path() -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after UNIX_EPOCH")
+            .as_nanos();
+
+        std::env::temp_dir().join(format!(
+            "kastel_stdlib_file_test_{}_{}.txt",
+            std::process::id(),
+            stamp
+        ))
+    }
+
+    fn string(value: &str) -> Value {
+        Value::new_string(value.to_string())
+    }
+
+    #[test]
+    fn file_lifecycle_covers_read_write_append_lines_exists_size_and_delete() {
+        let path = temp_file_path();
+        let path_value = string(path.to_string_lossy().as_ref());
+
+        assert!(!matches!(
+            native_file_exists(&[path_value.clone()]).unwrap(),
+            Value::Boolean(true)
+        ));
+
+        native_file_write(&[path_value.clone(), string("a\nb")]).unwrap();
+        assert_eq!(
+            native_file_read(&[path_value.clone()]).unwrap(),
+            string("a\nb")
+        );
+
+        let lines = native_file_read_lines(&[path_value.clone()]).unwrap();
+        let Value::Object(handle) = lines else {
+            panic!("file_read_lines() must return an array")
+        };
+        let crate::runtime::object::Object::Array(items) = &*handle.borrow() else {
+            panic!("file_read_lines() must return an array")
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0], string("a"));
+        assert_eq!(items[1], string("b"));
+
+        assert!(matches!(
+            native_file_exists(&[path_value.clone()]).unwrap(),
+            Value::Boolean(true)
+        ));
+        assert_eq!(native_file_size(&[path_value.clone()]).unwrap(), Value::Integer(3));
+
+        native_file_append(&[path_value.clone(), string("\nc")]).unwrap();
+        assert_eq!(
+            native_file_read(&[path_value.clone()]).unwrap(),
+            string("a\nb\nc")
+        );
+        assert_eq!(native_file_size(&[path_value.clone()]).unwrap(), Value::Integer(5));
+
+        native_file_delete(&[path_value.clone()]).unwrap();
+        assert!(!matches!(
+            native_file_exists(&[path_value.clone()]).unwrap(),
+            Value::Boolean(true)
+        ));
+    }
+
+    #[test]
+    fn file_operations_enforce_argument_types_and_arities() {
+        assert!(matches!(
+            native_file_read(&[]),
+            Err(RuntimeError::WrongArgumentCount { expected: 1, found: 0 })
+        ));
+        assert!(matches!(
+            native_file_write(&[Value::Integer(1), string("x")]),
+            Err(RuntimeError::TypeError)
+        ));
+        assert!(matches!(
+            native_file_append(&[string("x")]),
+            Err(RuntimeError::WrongArgumentCount { expected: 2, found: 1 })
+        ));
+    }
 }
 
 // ====================================================================

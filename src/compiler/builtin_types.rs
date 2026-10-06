@@ -593,6 +593,110 @@ mod tests {
     }
 
     #[test]
+    fn io_file_and_path_contracts_match_the_runtime_surface() {
+        use Type::*;
+
+        assert_eq!(
+            all().remove("print"),
+            Some(Type::Dynamic)
+        );
+        assert_eq!(all().remove("println"), Some(Type::Dynamic));
+        assert_eq!(all().remove("input"), Some(Type::Dynamic));
+
+        assert_eq!(all().remove("file_read"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Str),
+        })));
+        assert_eq!(all().remove("file_read_lines"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Array(Box::new(Str))),
+        })));
+        assert_eq!(all().remove("file_write"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str, Str],
+            return_type: Box::new(None),
+        })));
+        assert_eq!(all().remove("file_append"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str, Str],
+            return_type: Box::new(None),
+        })));
+        assert_eq!(all().remove("file_exists"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Bool),
+        })));
+        assert_eq!(all().remove("file_delete"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(None),
+        })));
+        assert_eq!(all().remove("file_size"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Int),
+        })));
+
+        assert_eq!(all().remove("path_join"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Dynamic],
+            return_type: Box::new(Str),
+        })));
+        for name in [
+            "path_exists",
+            "path_is_dir",
+            "path_is_file",
+        ] {
+            assert_eq!(
+                all().remove(name),
+                Some(Function(FunctionType {
+                    generic_params: vec![],
+                    is_async: false,
+                    generic_constraints: vec![],
+                    params: vec![Str],
+                    return_type: Box::new(Bool),
+                }))
+            );
+        }
+        for name in [
+            "path_absolute",
+            "path_basename",
+            "path_dirname",
+            "path_extension",
+            "path_stem",
+        ] {
+            assert_eq!(
+                all().remove(name),
+                Some(Function(FunctionType {
+                    generic_params: vec![],
+                    is_async: false,
+                    generic_constraints: vec![],
+                    params: vec![Str],
+                    return_type: Box::new(Str),
+                }))
+            );
+        }
+    }
+
+    #[test]
     fn process_run_has_a_structural_record_result() {
         let ty = all().remove("process_run").expect("process_run doit exister");
 

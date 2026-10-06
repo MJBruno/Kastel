@@ -409,11 +409,11 @@ impl JsonParser {
                     Some('"') => result.push('"'),
                     Some('\\') => result.push('\\'),
                     Some('/') => result.push('/'),
-                    Some('n') => result.push('\n'),
-                    Some('t') => result.push('\t'),
-                    Some('r') => result.push('\r'),
                     Some('b') => result.push('\u{8}'),
                     Some('f') => result.push('\u{c}'),
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
                     Some('u') => {
                         let mut code: u32 = 0;
 
@@ -426,10 +426,16 @@ impl JsonParser {
                             code = code * 16 + digit;
                         }
 
-                        result.push(char::from_u32(code).unwrap_or('\u{FFFD}'));
+                        let character = char::from_u32(code)
+                            .ok_or_else(|| self.error("code Unicode invalide"))?;
+                        result.push(character);
                     }
                     _ => return Err(self.error("échappement invalide")),
                 },
+
+                Some(c) if c <= '\u{1f}' => {
+                    return Err(self.error("caractère de contrôle non échappé dans une chaîne"));
+                }
 
                 Some(c) => result.push(c),
             }
@@ -467,13 +473,31 @@ impl JsonParser {
             self.pos += 1;
         }
 
-        while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
-            self.pos += 1;
+        match self.peek() {
+            Some('0') => {
+                self.pos += 1;
+
+                if matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                    return Err(self.error("zéro initial interdit dans un nombre JSON"));
+                }
+            }
+            Some('1'..='9') => {
+                self.pos += 1;
+
+                while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                    self.pos += 1;
+                }
+            }
+            _ => return Err(self.error("chiffre attendu dans le nombre JSON")),
         }
 
         if self.peek() == Some('.') {
             is_float = true;
             self.pos += 1;
+
+            if !matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                return Err(self.error("chiffre attendu après le point décimal"));
+            }
 
             while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
                 self.pos += 1;
@@ -486,6 +510,10 @@ impl JsonParser {
 
             if matches!(self.peek(), Some('+' | '-')) {
                 self.pos += 1;
+            }
+
+            if !matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+                return Err(self.error("chiffre attendu dans l'exposant"));
             }
 
             while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
@@ -521,3 +549,66 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "json_decode", native_json_decode);
 }
 
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn string(value: &str) -> Value {
+        Value::new_string(value.to_string())
+    }
+
+    #[test]
+    fn json_round_trips_nested_values() {
+        let value = Value::new_record(vec![
+            ("name".to_string(), string("Kastel")),
+            (
+                "items".to_string(),
+                Value::new_array(vec![Value::Integer(1), Value::Boolean(true), Value::None]),
+            ),
+        ]);
+
+        let encoded = native_json_encode(&[value]).unwrap();
+        let encoded_text = encoded.as_string_value().unwrap();
+        let decoded = native_json_decode(&[string(&encoded_text)]).unwrap();
+
+        assert_eq!(
+            native_json_encode(&[decoded]).unwrap().as_string_value(),
+            Some(encoded_text)
+        );
+    }
+
+    #[test]
+    fn json_preserves_integer_and_float_numbers() {
+        assert_eq!(native_json_decode(&[string("42")]).unwrap(), Value::Integer(42));
+
+        match native_json_decode(&[string("-1.25e2")]).unwrap() {
+            Value::Float(value) => assert_eq!(value, -125.0),
+            other => panic!("nombre flottant attendu, reçu {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_rejects_invalid_number_shapes() {
+        for input in ["-", "01", "1.", "1e", "1e+", "1e-"] {
+            assert!(
+                native_json_decode(&[string(input)]).is_err(),
+                "JSON invalide accepté: {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn json_rejects_unescaped_control_characters_and_trailing_data() {
+        assert!(native_json_decode(&[string("\"bad\nstring\"")]).is_err());
+        assert!(native_json_decode(&[string("true false")]).is_err());
+    }
+
+    #[test]
+    fn json_reports_wrong_argument_types_and_arities() {
+        assert!(matches!(native_json_encode(&[]), Err(RuntimeError::WrongArgumentCount { .. })));
+        assert!(matches!(native_json_decode(&[Value::Integer(1)]), Err(RuntimeError::TypeError)));
+        assert!(matches!(native_json_decode(&[]), Err(RuntimeError::WrongArgumentCount { .. })));
+    }
+}

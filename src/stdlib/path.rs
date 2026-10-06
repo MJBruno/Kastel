@@ -173,6 +173,108 @@ pub fn native_path_stem(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(Value::new_string(stem))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::object::Object;
+
+    fn string(value: &str) -> Value {
+        Value::new_string(value.to_string())
+    }
+
+    fn strings(values: &[&str]) -> Vec<Value> {
+        values.iter().map(|value| string(value)).collect()
+    }
+
+    #[test]
+    fn path_join_accepts_list_and_tuple_segments() {
+        let list = Value::new_array(strings(&["tmp", "kastel", "demo.ks"]));
+        let tuple = Value::new_tuple(strings(&["tmp", "kastel", "demo.ks"]));
+
+        let expected = PathBuf::from("tmp").join("kastel").join("demo.ks");
+        let expected = expected.to_string_lossy().into_owned();
+
+        assert_eq!(
+            native_path_join(&[list]).unwrap(),
+            string(&expected)
+        );
+        assert_eq!(
+            native_path_join(&[tuple]).unwrap(),
+            string(&expected)
+        );
+    }
+
+    #[test]
+    fn path_metadata_helpers_match_rust_path_semantics() {
+        let path = if cfg!(windows) {
+            r"tmp\kastel\demo.test.ks"
+        } else {
+            "tmp/kastel/demo.test.ks"
+        };
+
+        assert_eq!(native_path_basename(&[string(path)]).unwrap(), string("demo.test.ks"));
+        assert_eq!(native_path_extension(&[string(path)]).unwrap(), string("ks"));
+        assert_eq!(native_path_stem(&[string(path)]).unwrap(), string("demo.test"));
+
+        let dirname = native_path_dirname(&[string(path)]).unwrap();
+        let expected_parent = Path::new(path)
+            .parent()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        assert_eq!(dirname, string(&expected_parent));
+    }
+
+    #[test]
+    fn path_predicates_and_absolute_are_consistent() {
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join(format!(
+            "kastel_stdlib_path_test_{}",
+            std::process::id()
+        ));
+
+        std::fs::create_dir_all(&path).unwrap();
+        let file = path.join("item.ks");
+        std::fs::write(&file, "ok").unwrap();
+
+        let dir_value = string(path.to_string_lossy().as_ref());
+        let file_value = string(file.to_string_lossy().as_ref());
+
+        assert_eq!(native_path_exists(&[dir_value.clone()]).unwrap(), Value::Boolean(true));
+        assert_eq!(native_path_is_dir(&[dir_value.clone()]).unwrap(), Value::Boolean(true));
+        assert_eq!(native_path_is_file(&[dir_value]).unwrap(), Value::Boolean(false));
+        assert_eq!(native_path_is_file(&[file_value.clone()]).unwrap(), Value::Boolean(true));
+        assert_eq!(native_path_is_dir(&[file_value.clone()]).unwrap(), Value::Boolean(false));
+
+        let absolute = native_path_absolute(&[file_value]).unwrap();
+        let Value::Object(handle) = absolute else {
+            panic!("path_absolute() must return a string")
+        };
+        let Object::String(value) = &*handle.borrow() else {
+            panic!("path_absolute() must return a string")
+        };
+        assert!(Path::new(value).is_absolute());
+
+        std::fs::remove_file(&file).unwrap();
+        std::fs::remove_dir_all(&path).unwrap();
+    }
+
+    #[test]
+    fn path_operations_reject_wrong_shapes() {
+        assert!(matches!(
+            native_path_join(&[Value::Integer(1)]),
+            Err(RuntimeError::TypeError)
+        ));
+        assert!(matches!(
+            native_path_exists(&[]),
+            Err(RuntimeError::WrongArgumentCount { expected: 1, found: 0 })
+        ));
+        assert!(matches!(
+            native_path_basename(&[Value::Integer(1)]),
+            Err(RuntimeError::TypeError)
+        ));
+    }
+}
+
 // ====================================================================
 // ENREGISTREMENT
 // ====================================================================

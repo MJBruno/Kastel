@@ -92,3 +92,58 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     register_one(globals, "process_run", native_process_run);
 }
 
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::object::Object;
+
+    fn string(value: &str) -> Value {
+        Value::new_string(value.to_string())
+    }
+
+    fn strings(values: &[&str]) -> Value {
+        Value::new_array(values.iter().map(|value| string(value)).collect())
+    }
+
+    #[test]
+    fn process_run_rejects_invalid_shapes_before_launching() {
+        assert!(matches!(native_process_run(&[]), Err(RuntimeError::WrongArgumentCount { .. })));
+        assert!(matches!(
+            native_process_run(&[string("echo")]),
+            Err(RuntimeError::WrongArgumentCount { .. })
+        ));
+        assert!(matches!(
+            native_process_run(&[Value::Integer(1), strings(&[])]),
+            Err(RuntimeError::TypeError)
+        ));
+        assert!(matches!(
+            native_process_run(&[string("echo"), Value::Integer(1)]),
+            Err(RuntimeError::TypeError)
+        ));
+    }
+
+    #[test]
+    fn process_run_executes_the_current_test_binary_without_a_shell() {
+        let executable = std::env::current_exe().expect("current_exe disponible");
+        let executable = executable.to_string_lossy().into_owned();
+
+        let result = native_process_run(&[string(&executable), strings(&["--help"])])
+            .expect("le binaire de test doit pouvoir être lancé");
+
+        match result {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Record(fields) => {
+                    let success = fields
+                        .iter()
+                        .find(|(name, _)| name == "success")
+                        .map(|(_, value)| value);
+                    assert_eq!(success, Some(&Value::Boolean(true)));
+                }
+                other => panic!("record attendu, reçu {other:?}"),
+            },
+            other => panic!("record attendu, reçu {other:?}"),
+        }
+    }
+}

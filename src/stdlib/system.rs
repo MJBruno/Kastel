@@ -228,3 +228,48 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("env".to_string(), Value::NativeFunction(native_env));
 }
 
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn string(value: &str) -> Value {
+        Value::new_string(value.to_string())
+    }
+
+    #[test]
+    fn clock_is_a_finite_non_negative_epoch_timestamp() {
+        let value = native_clock(&[]).unwrap();
+
+        match value {
+            Value::Float(value) => {
+                assert!(value.is_finite());
+                assert!(value >= 0.0);
+            }
+            other => panic!("float attendu, reçu {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cwd_matches_the_host_current_directory() {
+        let value = native_cwd(&[]).unwrap();
+        let expected = std::env::current_dir().unwrap().to_string_lossy().into_owned();
+
+        assert_eq!(value, Value::new_string(expected));
+    }
+
+    #[test]
+    fn environment_lookup_distinguishes_missing_variables() {
+        let value = native_env(&[string("KASTEL_STD_NON_EXISTENT_ENV_9F2D")]).unwrap();
+        assert_eq!(value, Value::None);
+    }
+
+    #[test]
+    fn system_natives_enforce_argument_contracts() {
+        assert!(matches!(native_clock(&[Value::None]), Err(RuntimeError::WrongArgumentCount { .. })));
+        assert!(matches!(native_cwd(&[Value::None]), Err(RuntimeError::WrongArgumentCount { .. })));
+        assert!(matches!(native_env(&[]), Err(RuntimeError::WrongArgumentCount { .. })));
+        assert!(matches!(native_env(&[Value::Integer(1)]), Err(RuntimeError::TypeError)));
+    }
+}

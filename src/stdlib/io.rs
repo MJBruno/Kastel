@@ -83,3 +83,50 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("input".to_string(), Value::NativeFunction(native_input));
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn string(value: &str) -> Value {
+        Value::new_string(value.to_string())
+    }
+
+    #[test]
+    fn rendering_accepts_single_values_and_format_arguments() {
+        assert_eq!(render_arguments(&[string("hello")]).unwrap(), "hello");
+        assert_eq!(
+            render_arguments(&[Value::Integer(42)]).unwrap(),
+            "42"
+        );
+        assert_eq!(
+            render_arguments(&[
+                string("hello {} {}"),
+                string("kastel"),
+                Value::Integer(1),
+            ])
+            .unwrap(),
+            "hello kastel 1"
+        );
+    }
+
+    #[test]
+    fn rendering_requires_a_first_argument_and_a_string_format_for_multiple_values() {
+        assert!(matches!(
+            render_arguments(&[]),
+            Err(RuntimeError::WrongArgumentCount { expected: 1, found: 0 })
+        ));
+        assert!(matches!(
+            render_arguments(&[Value::Integer(1), Value::Integer(2)]),
+            Err(RuntimeError::TypeError)
+        ));
+    }
+
+    #[test]
+    fn native_input_accepts_zero_or_one_argument() {
+        assert!(matches!(
+            native_input(&[string("prompt"), string("extra")]),
+            Err(RuntimeError::WrongArgumentCount { expected: 1, found: 2 })
+        ));
+    }
+}
+
