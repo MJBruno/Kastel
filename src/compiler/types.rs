@@ -1595,6 +1595,53 @@ mod tests {
     }
 
     #[test]
+    fn http_native_signatures_match_runtime_surface() {
+        let specs = crate::compiler::builtin_types::specs();
+        let get = specs.iter().find(|spec| spec.name == "http_get").expect("http_get");
+        let request = specs
+            .iter()
+            .find(|spec| spec.name == "http_request")
+            .expect("http_request");
+
+        let response = Type::Record(vec![
+            ("status".into(), Type::Int),
+            (
+                "headers".into(),
+                Type::Dict(Box::new(Type::Str), Box::new(Type::Str)),
+            ),
+            ("body".into(), Type::Array(Box::new(Type::Int))),
+            ("version".into(), Type::Str),
+            ("reason".into(), Type::Str),
+        ]);
+
+        assert_eq!(
+            get.ty,
+            Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![Type::Str],
+                return_type: Box::new(response.clone()),
+            })
+        );
+        assert_eq!(
+            request.ty,
+            Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![
+                    Type::Str,
+                    Type::Str,
+                    Type::Dict(Box::new(Type::Str), Box::new(Type::Str)),
+                    Type::Dynamic,
+                ],
+                return_type: Box::new(response),
+            })
+        );
+    }
+
+    #[test]
     fn network_method_signatures_match_runtime_surface() {
         let stream = Type::Named("TcpStream".into());
         let listener = Type::Named("TcpListener".into());

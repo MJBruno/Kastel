@@ -53,6 +53,7 @@ pub mod dict;
 pub mod event;
 pub mod file;
 pub mod io;
+pub mod http;
 pub mod iterator;
 pub mod json;
 pub mod math;
@@ -75,6 +76,7 @@ pub mod wait_group;
 /// Enregistre toutes les fonctions natives dans les globals du runtime.
 pub fn register_natives(globals: &mut HashMap<String, Value>) {
     io::register(globals);
+    http::register(globals);
     math::register(globals);
     string::register(globals);
     array::register(globals);

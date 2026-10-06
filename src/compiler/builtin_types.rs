@@ -388,6 +388,21 @@ fn build_specs() -> Vec<NativeSpec> {
     specs.push(runtime("json_encode", unary(Dynamic, Str)));
     specs.push(runtime("json_decode", unary(Str, Dynamic)));
 
+    // HTTP/1.1 client. `headers` est un Dict<str,str> et `body` accepte
+    // `None`, `str`, `List<int>` ou `Tuple<int>` au runtime.
+    let http_response = Record(vec![
+        ("status".into(), Int),
+        ("headers".into(), Dict(Box::new(Str), Box::new(Str))),
+        ("body".into(), Array(Box::new(Int))),
+        ("version".into(), Str),
+        ("reason".into(), Str),
+    ]);
+    specs.push(runtime("http_get", unary(Str, http_response.clone())));
+    specs.push(runtime(
+        "http_request",
+        function(&[Str, Str, Dict(Box::new(Str), Box::new(Str)), Dynamic], http_response),
+    ));
+
     // Fichiers.
     specs.push(runtime("file_read", unary(Str, Str)));
     specs.push(runtime("file_read_lines", unary(Str, Array(Box::new(Str)))));
@@ -601,8 +616,10 @@ mod tests {
             assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
         }
 
-        assert_eq!(names.len(), 80);
+        assert_eq!(names.len(), 82);
         assert!(names.contains("process_run"));
+        assert!(names.contains("http_get"));
+        assert!(names.contains("http_request"));
         assert!(!names.contains(Intrinsic::Spawn.name()));
         assert!(!names.contains(Intrinsic::Yield.name()));
         assert!(!names.contains(Intrinsic::Sleep.name()));
