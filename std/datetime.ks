@@ -1,35 +1,39 @@
 // std/datetime.ks
 //
-// Kastel n'a pas de type date/heure natif : ce module en construit un
-// au-dessus de deux briques natives seulement (clock(), qui renvoie
-// les secondes écoulées depuis epoch Unix UTC en `float` — donc avec
-// une fraction de seconde utilisable — et de l'arithmétique entière).
-// Toute la classe DateTime travaille en MILLISECONDES depuis epoch
-// (`epoch_millis`), pas en secondes : `.millisecond()` est donc exact,
-// pas dérivé d'une résolution seconde arrondie.
+// Date et heure civiles UTC, avec une précision de stockage et de
+// construction à la MILLISECONDE.
+//
+// Le module s'appuie uniquement sur clock() (secondes Unix en float) et
+// l'arithmétique entière. La classe DateTime stocke toujours le nombre
+// de millisecondes depuis 1970-01-01T00:00:00Z.
+//
+// Précision contractuelle :
+//   - DateTime conserve exactement les millisecondes fournies.
+//   - now_millis() convertit la fraction de seconde fournie par clock().
+//   - aucune précision microseconde/nanoseconde n'est prétendue.
 //
 // La conversion jours <-> date civile (année/mois/jour) utilise
-// l'algorithme de Howard Hinnant (domaine public,
-// http://howardhinnant.github.io/date_algorithms.html), correct sur
-// tout le calendrier grégorien proleptique, dates avant 1970 et années
-// négatives incluses.
+// l'algorithme de Howard Hinnant (domaine public), correct sur le
+// calendrier grégorien proleptique, y compris avant 1970 et pour les
+// années négatives.
 
 // ------------------------------------------------------------------
 // Arithmétique entière auxiliaire
 // ------------------------------------------------------------------
 
-// Division entière arrondie vers -infini (idiv natif fait déjà ça,
-// simple alias pour la lisibilité du calendrier ci-dessous).
+// Division entière arrondie vers -infini (idiv natif).
 func floor_div(a: int, b: int) -> int {
     return idiv(a, b);
 }
 
-// `%` seul peut renvoyer un reste négatif pour un dividende négatif
-// (ex. dates avant 1970) ; le calendrier a besoin d'un reste toujours
-// positif.
+// Reste normalisé dans [0, b) pour b > 0.
 func floor_mod(a: int, b: int) -> int {
     return a - idiv(a, b) * b;
 }
+
+// ------------------------------------------------------------------
+// Calendrier et validation
+// ------------------------------------------------------------------
 
 export func is_gregorian_leap_year(year: int) -> bool {
     if floor_mod(year, 4) != 0 {
@@ -41,7 +45,12 @@ export func is_gregorian_leap_year(year: int) -> bool {
     return floor_mod(year, 400) == 0;
 }
 
+// Nombre de jours dans le mois.
+// Retourne 0 pour un mois hors de 1..12.
 export func days_in_month(year: int, month: int) -> int {
+    if month < 1 || month > 12 {
+        return 0;
+    }
     if month == 1 || month == 3 || month == 5 || month == 7
         || month == 8 || month == 10 || month == 12 {
         return 31;
@@ -54,6 +63,66 @@ export func days_in_month(year: int, month: int) -> int {
     }
     return 28;
 }
+
+export func is_valid_date(year: int, month: int, day: int) -> bool {
+    if month < 1 || month > 12 {
+        return false;
+    }
+    let max_day = days_in_month(year, month);
+    return day >= 1 && day <= max_day;
+}
+
+export func validate_date(year: int, month: int, day: int) -> Result<bool, str> {
+    if month < 1 || month > 12 {
+        return Err("mois invalide: " + str(month));
+    }
+
+    let max_day = days_in_month(year, month);
+    if day < 1 || day > max_day {
+        return Err(
+            "jour invalide pour " + str(year) + "-" + pad2(month) + ": " + str(day)
+        );
+    }
+
+    return Ok(true);
+}
+
+export func is_valid_time(
+    hour: int,
+    minute: int,
+    second: int,
+    millisecond: int
+) -> bool {
+    return hour >= 0 && hour <= 23
+        && minute >= 0 && minute <= 59
+        && second >= 0 && second <= 59
+        && millisecond >= 0 && millisecond <= 999;
+}
+
+export func validate_time(
+    hour: int,
+    minute: int,
+    second: int,
+    millisecond: int
+) -> Result<bool, str> {
+    if hour < 0 || hour > 23 {
+        return Err("heure invalide: " + str(hour));
+    }
+    if minute < 0 || minute > 59 {
+        return Err("minute invalide: " + str(minute));
+    }
+    if second < 0 || second > 59 {
+        return Err("seconde invalide: " + str(second));
+    }
+    if millisecond < 0 || millisecond > 999 {
+        return Err("milliseconde invalide: " + str(millisecond));
+    }
+    return Ok(true);
+}
+
+// ------------------------------------------------------------------
+// Conversion date civile <-> jours
+// ------------------------------------------------------------------
 
 // Jours écoulés depuis 1970-01-01 -> (année, mois, jour).
 func civil_from_days(days: int) {
@@ -80,8 +149,7 @@ func civil_from_days(days: int) {
     return (y, m, d);
 }
 
-// (année, mois, jour) -> jours écoulés depuis 1970-01-01. Réciproque
-// exacte de civil_from_days pour toute date valide.
+// (année, mois, jour) -> jours écoulés depuis 1970-01-01.
 func days_from_civil(year: int, month: int, day: int) -> int {
     let y = year;
     if month <= 2 {
@@ -106,6 +174,10 @@ func days_from_civil(year: int, month: int, day: int) -> int {
     return era * 146097 + doe - 719468;
 }
 
+// ------------------------------------------------------------------
+// Formatage et horodatage courant
+// ------------------------------------------------------------------
+
 func pad2(n: int) -> str {
     if n < 10 {
         return "0" + str(n);
@@ -123,8 +195,9 @@ func pad3(n: int) -> str {
     return str(n);
 }
 
-// Horodatage courant en millisecondes depuis epoch Unix UTC, sans
-// construire de DateTime — pratique pour mesurer une durée écoulée.
+// Horodatage courant en millisecondes depuis Unix epoch UTC.
+// Pour mesurer une durée, préférer la différence de deux DateTime/temps
+// plutôt qu'une horloge monotone : clock() est une horloge civile.
 export func now_millis() -> int {
     return floor(clock() * 1000.0);
 }
@@ -136,9 +209,6 @@ export func now_millis() -> int {
 export class DateTime {
     private let epoch_millis: int = 0;
 
-    // Constructeur privé : toute instance passe par une des fabriques
-    // statiques ci-dessous, qui valident leurs entrées (from_ymdhms*
-    // renvoie un Result plutôt que de construire une date invalide).
     private func initialize(epoch_millis: int) {
         self.epoch_millis = epoch_millis;
     }
@@ -179,27 +249,22 @@ export class DateTime {
         second: int,
         millisecond: int
     ) -> Result<DateTime, str> {
-        if month < 1 || month > 12 {
-            return Err("mois invalide: " + str(month));
+        match validate_date(year, month, day) {
+            Ok(_) => {
+                // Validation complète de l'heure ci-dessous.
+            }
+            Err(error) => {
+                return Err(error);
+            }
         }
 
-        let max_day = days_in_month(year, month);
-        if day < 1 || day > max_day {
-            return Err(
-                "jour invalide pour " + str(year) + "-" + pad2(month) + ": " + str(day)
-            );
-        }
-        if hour < 0 || hour > 23 {
-            return Err("heure invalide: " + str(hour));
-        }
-        if minute < 0 || minute > 59 {
-            return Err("minute invalide: " + str(minute));
-        }
-        if second < 0 || second > 59 {
-            return Err("seconde invalide: " + str(second));
-        }
-        if millisecond < 0 || millisecond > 999 {
-            return Err("milliseconde invalide: " + str(millisecond));
+        match validate_time(hour, minute, second, millisecond) {
+            Ok(_) => {
+                // Tous les composants temporels sont valides.
+            }
+            Err(error) => {
+                return Err(error);
+            }
         }
 
         let days = days_from_civil(year, month, day);
@@ -212,12 +277,12 @@ export class DateTime {
         return Ok(new DateTime(millis));
     }
 
-    // Secondes depuis epoch (arrondi vers le bas ; voir timestamp_millis
-    // pour la valeur exacte).
+    // Secondes depuis epoch, arrondies vers -infini.
     func timestamp() -> int {
         return floor_div(self.epoch_millis, 1000);
     }
 
+    // Millisecondes exactes depuis epoch.
     func timestamp_millis() -> int {
         return self.epoch_millis;
     }
@@ -232,7 +297,7 @@ export class DateTime {
 
     func year() -> int {
         match civil_from_days(self.days_since_epoch()) {
-            (y, m, d) => {
+            (y, _, _) => {
                 return y;
             }
         }
@@ -240,7 +305,7 @@ export class DateTime {
 
     func month() -> int {
         match civil_from_days(self.days_since_epoch()) {
-            (y, m, d) => {
+            (_, m, _) => {
                 return m;
             }
         }
@@ -248,12 +313,14 @@ export class DateTime {
 
     func day() -> int {
         match civil_from_days(self.days_since_epoch()) {
-            (y, m, d) => {
+            (_, _, d) => {
                 return d;
             }
         }
     }
 
+    // Composantes horaires garanties dans les plages :
+    // hour 0..23, minute 0..59, second 0..59, millisecond 0..999.
     func hour() -> int {
         return idiv(self.millis_of_day(), 3600000);
     }
@@ -270,14 +337,19 @@ export class DateTime {
         return self.millis_of_day() % 1000;
     }
 
-    // 0 = dimanche ... 6 = samedi (1970-01-01 était un jeudi, d'où +4).
+    // Millisecondes écoulées depuis minuit.
+    func time_millis() -> int {
+        return self.millis_of_day();
+    }
+
+    // 0 = dimanche ... 6 = samedi (1970-01-01 était un jeudi).
     func weekday() -> int {
         return floor_mod(self.days_since_epoch() + 4, 7);
     }
 
     func is_weekend() -> bool {
-        let day = self.weekday();
-        return day == 0 || day == 6;
+        let weekday = self.weekday();
+        return weekday == 0 || weekday == 6;
     }
 
     func is_leap_year() -> bool {
@@ -292,12 +364,19 @@ export class DateTime {
         return self.add_milliseconds(delta * 1000);
     }
 
+    func add_minutes(delta: int) -> DateTime {
+        return self.add_milliseconds(delta * 60000);
+    }
+
+    func add_hours(delta: int) -> DateTime {
+        return self.add_milliseconds(delta * 3600000);
+    }
+
     func add_days(delta: int) -> DateTime {
         return self.add_milliseconds(delta * 86400000);
     }
 
-    // Différence signée en millisecondes (self - other), positive si
-    // self est postérieur à other.
+    // Différences signées : self - other.
     func difference_millis(other: DateTime) -> int {
         return self.epoch_millis - other.epoch_millis;
     }
@@ -306,22 +385,26 @@ export class DateTime {
         return self.difference_millis(other) / 1000.0;
     }
 
+    func difference_minutes(other: DateTime) -> float {
+        return self.difference_millis(other) / 60000.0;
+    }
+
+    func difference_hours(other: DateTime) -> float {
+        return self.difference_millis(other) / 3600000.0;
+    }
+
     func to_string() -> str {
         return str(self.year()) + "-" + pad2(self.month()) + "-" + pad2(self.day())
             + " " + pad2(self.hour()) + ":" + pad2(self.minute()) + ":" + pad2(self.second());
     }
 
-    // Comme to_string(), avec les millisecondes (format proche
-    // ISO 8601, toujours en UTC implicite : pas de suffixe de fuseau).
+    // Format proche ISO 8601, en UTC implicite, avec millisecondes.
     func to_iso_string() -> str {
         return str(self.year()) + "-" + pad2(self.month()) + "-" + pad2(self.day())
             + "T" + pad2(self.hour()) + ":" + pad2(self.minute()) + ":" + pad2(self.second())
             + "." + pad3(self.millisecond());
     }
 
-    // Nommées `equals`/`compare` : Kastel branche automatiquement
-    // ==, <, <=, >, >= dessus (capabilities Eq/Ord), pas besoin de les
-    // déclarer explicitement ailleurs.
     func equals(other: DateTime) -> bool {
         return self.epoch_millis == other.epoch_millis;
     }
