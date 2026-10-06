@@ -918,6 +918,107 @@ impl Type {
         }
     }
 
+    /// Signatures statiques de `TcpStream`.
+    pub fn tcp_stream_member_type(&self, name: &str) -> Option<Type> {
+        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("TcpStream")) {
+            return None;
+        }
+
+        let function = |params: Vec<Type>, result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params,
+                return_type: Box::new(result),
+            })
+        };
+
+        match name {
+            "read" => Some(function(
+                vec![Type::Int],
+                Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![Type::Array(Box::new(Type::Int))],
+                },
+            )),
+            "write" => Some(function(vec![Type::Dynamic], Type::Int)),
+            "local_addr" | "peer_addr" => Some(function(vec![], Type::Str)),
+            "close" => Some(function(vec![], Type::None)),
+            _ => None,
+        }
+    }
+
+    /// Signatures statiques de `TcpListener`.
+    pub fn tcp_listener_member_type(&self, name: &str) -> Option<Type> {
+        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("TcpListener")) {
+            return None;
+        }
+
+        let function = |params: Vec<Type>, result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params,
+                return_type: Box::new(result),
+            })
+        };
+
+        match name {
+            "accept" => Some(function(
+                vec![],
+                Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![Type::Named("TcpStream".into())],
+                },
+            )),
+            "local_addr" => Some(function(vec![], Type::Str)),
+            "close" => Some(function(vec![], Type::None)),
+            _ => None,
+        }
+    }
+
+    /// Signatures statiques de `UdpSocket`.
+    pub fn udp_socket_member_type(&self, name: &str) -> Option<Type> {
+        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("UdpSocket")) {
+            return None;
+        }
+
+        let function = |params: Vec<Type>, result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params,
+                return_type: Box::new(result),
+            })
+        };
+
+        let packet = Type::Tuple(vec![
+            Type::Array(Box::new(Type::Int)),
+            Type::Str,
+            Type::Int,
+        ]);
+
+        match name {
+            "send_to" => Some(function(
+                vec![Type::Dynamic, Type::Str, Type::Int],
+                Type::Int,
+            )),
+            "recv_from" => Some(function(
+                vec![Type::Int],
+                Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![packet],
+                },
+            )),
+            "local_addr" => Some(function(vec![], Type::Str)),
+            "close" => Some(function(vec![], Type::None)),
+            _ => None,
+        }
+    }
+
     /// Signatures statiques des opérations fondamentales de `Option<T>` et `Result<T,E>`.
     pub fn option_result_member_type(&self, name: &str) -> Option<Type> {
         let function = |generic_params: &[&str], params: Vec<Type>, result: Type| {
@@ -1484,6 +1585,60 @@ mod tests {
         );
         expect(&string, "repeat", vec![Type::Int], Type::Str);
         expect(&string, "to_float", vec![], Type::Float);
+    }
+
+    #[test]
+    fn network_method_signatures_match_runtime_surface() {
+        let stream = Type::Named("TcpStream".into());
+        let listener = Type::Named("TcpListener".into());
+        let udp = Type::Named("UdpSocket".into());
+
+        assert_eq!(
+            stream.tcp_stream_member_type("read"),
+            Some(Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![Type::Int],
+                return_type: Box::new(Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![Type::Array(Box::new(Type::Int))],
+                }),
+            }))
+        );
+        assert_eq!(
+            stream.tcp_stream_member_type("write"),
+            Some(Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![Type::Dynamic],
+                return_type: Box::new(Type::Int),
+            }))
+        );
+        assert_eq!(
+            listener.tcp_listener_member_type("accept"),
+            Some(Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![],
+                return_type: Box::new(Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![Type::Named("TcpStream".into())],
+                }),
+            }))
+        );
+        assert_eq!(
+            udp.udp_socket_member_type("send_to"),
+            Some(Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![Type::Dynamic, Type::Str, Type::Int],
+                return_type: Box::new(Type::Int),
+            }))
+        );
     }
 
     #[test]

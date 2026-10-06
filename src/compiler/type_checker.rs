@@ -4875,6 +4875,18 @@ impl TypeChecker {
             return Ok(signature);
         }
 
+        if let Some(signature) = object_type.tcp_stream_member_type(name) {
+            return Ok(signature);
+        }
+
+        if let Some(signature) = object_type.tcp_listener_member_type(name) {
+            return Ok(signature);
+        }
+
+        if let Some(signature) = object_type.udp_socket_member_type(name) {
+            return Ok(signature);
+        }
+
         if let Some(signature) = object_type.option_result_member_type(name) {
             return Ok(signature);
         }
@@ -5691,6 +5703,33 @@ impl TypeChecker {
         }
 
         if let Some(member_type) = object_type.condvar_member_type(member_name) {
+            return Ok(Some(self.resolve_member_type_callable(
+                &member_type,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        if let Some(member_type) = object_type.tcp_stream_member_type(member_name) {
+            return Ok(Some(self.resolve_member_type_callable(
+                &member_type,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        if let Some(member_type) = object_type.tcp_listener_member_type(member_name) {
+            return Ok(Some(self.resolve_member_type_callable(
+                &member_type,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
+        if let Some(member_type) = object_type.udp_socket_member_type(member_name) {
             return Ok(Some(self.resolve_member_type_callable(
                 &member_type,
                 generic_args,

@@ -57,6 +57,7 @@ pub mod iterator;
 pub mod json;
 pub mod math;
 pub mod mutex;
+pub mod net;
 pub mod option;
 pub mod os;
 pub mod path;
@@ -97,6 +98,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     path::register(globals);
     os::register(globals);
     process::register(globals);
+    net::register(globals);
     option::register(globals);
     result::register(globals);
 }

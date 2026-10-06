@@ -9,6 +9,7 @@ pub mod gc_handle;
 pub mod hashed;
 pub mod iterator;
 pub mod mutex;
+pub mod net;
 pub mod object;
 pub mod rwlock;
 pub mod semaphore;

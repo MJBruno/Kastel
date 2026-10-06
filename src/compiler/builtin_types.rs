@@ -418,6 +418,23 @@ fn build_specs() -> Vec<NativeSpec> {
         Arity::Range { min: 0, max: 1 },
     ));
 
+    // Réseau. Les ressources sont des types runtime spécialisés et leurs
+    // méthodes sont résolues par `Type` comme pour `Channel`/`Mutex`. Les
+    // sockets de lecture sont non bloquants : `None` signifie qu'aucune donnée
+    // n'est disponible immédiatement.
+    specs.push(runtime(
+        "tcp_connect",
+        function(&[Str, Int], Named("TcpStream".into())),
+    ));
+    specs.push(runtime(
+        "tcp_listen",
+        function(&[Str, Int], Named("TcpListener".into())),
+    ));
+    specs.push(runtime(
+        "udp_bind",
+        function(&[Str, Int], Named("UdpSocket".into())),
+    ));
+
     // Processus externes. Le second argument accepte Array<str> ou Tuple<str>
     // au runtime ; Dynamic représente correctement cette surface polymorphe
     // tant que Kastel ne possède pas de type séquence commun.
@@ -584,7 +601,7 @@ mod tests {
             assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
         }
 
-        assert_eq!(names.len(), 77);
+        assert_eq!(names.len(), 80);
         assert!(names.contains("process_run"));
         assert!(!names.contains(Intrinsic::Spawn.name()));
         assert!(!names.contains(Intrinsic::Yield.name()));

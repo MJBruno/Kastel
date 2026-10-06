@@ -1022,6 +1022,7 @@ impl VirtualMachine {
                         Object::RwLock(_) => 21,
                         Object::Event(_) => 22,
                         Object::Condvar(_) => 23,
+                        Object::Network(_) => 24,
                         _ => 5,
                     }
                 };
@@ -2366,6 +2367,18 @@ impl VirtualMachine {
                         }
                     }
 
+                    return Ok(());
+                }
+
+                if object_kind == 24 {
+                    let result = crate::stdlib::net::dispatch_method(&method_name, &args)?;
+                    let Some(result) = result else {
+                        return Err(RuntimeError::ObjectFieldNotFound {
+                            name: method_name,
+                            suggestion: None,
+                        });
+                    };
+                    self.push(result);
                     return Ok(());
                 }
 

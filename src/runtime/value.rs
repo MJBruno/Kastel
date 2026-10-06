@@ -221,6 +221,10 @@ impl Value {
         ))))
     }
 
+    pub fn new_network(network: crate::runtime::net::NetworkState) -> Self {
+        Self::new_heap_object(Object::Network(Rc::new(RefCell::new(network))))
+    }
+
     pub fn new_barrier(parties: usize) -> Self {
         Self::new_heap_object(Object::Barrier(Rc::new(RefCell::new(
             crate::runtime::barrier::BarrierState::new(parties),
@@ -1277,6 +1281,7 @@ impl std::fmt::Display for Value {
                     Object::Condvar(condvar) => {
                         write!(f, "Condvar(waiters={})", condvar.borrow().waiter_count())
                     }
+                    Object::Network(network) => write!(f, "{}", network.borrow().display_name()),
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1443,6 +1448,7 @@ impl Value {
                 Object::RwLock(_) => "RwLock",
                 Object::Event(_) => "Event",
                 Object::Condvar(_) => "Condvar",
+                Object::Network(network) => network.borrow().type_name(),
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",

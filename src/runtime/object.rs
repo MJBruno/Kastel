@@ -70,6 +70,11 @@ pub enum Object {
     /// Variable de condition associée à un mutex coopératif.
     Condvar(Rc<RefCell<CondvarState>>),
 
+    /// Ressource réseau opaque. L'état interne contient les sockets OS mais
+    /// ne contient aucune `Value` : le GC n'a donc pas de graphe supplémentaire
+    /// à parcourir pour ces objets.
+    Network(Rc<RefCell<crate::runtime::net::NetworkState>>),
+
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
     /// le GC), mais aucune méthode de mutation ne l'expose : voir
@@ -344,6 +349,10 @@ impl Object {
 
             Object::Condvar(condvar) => {
                 condvar.borrow_mut().waiters.clear();
+            }
+
+            Object::Network(network) => {
+                network.borrow_mut().close();
             }
 
             Object::Tuple(elements) => {
