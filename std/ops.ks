@@ -137,7 +137,7 @@ export interface Ord {
 // ================================================================
 //
 // CORRECTIF : `x[y]` (OpCode::GetIndex) et `x[y] = z` (OpCode::SetIndex)
-// ne regardent le type concret QUE pour Array/Tuple/Dict
+// ne regardent le type concret QUE pour List/Tuple/Dict
 // (vm/machine/dispatch.rs) ; une instance de classe utilisateur tombe
 // directement dans le cas `_ => Err(NotIndexable)`, sans jamais chercher
 // de methode `index`/`set_index`. Meme constat que pour Neg/BitNot

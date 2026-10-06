@@ -152,7 +152,10 @@ func encode_field(field: str, delimiter: str) -> str {
 
 // Ecrit `rows` en CSV (fin de ligne \n, y compris apres la derniere
 // ligne). Les valeurs non-str sont converties avec str().
-export func stringify(rows: List<List<any>>, delimiter: str) -> str {
+export func stringify(rows: List<List<dynamic>>, delimiter: str) -> Result<str, str> {
+    if delimiter.size() != 1 || delimiter == "\"" || delimiter == "\n" || delimiter == "\r" {
+        return Err("csv.stringify: le separateur doit etre un caractere valide");
+    }
     let output = "";
     for row in rows {
         let fields = [];
@@ -161,7 +164,7 @@ export func stringify(rows: List<List<any>>, delimiter: str) -> str {
         }
         output = output + fields.join(delimiter) + "\n";
     }
-    return output;
+    return Ok(output);
 }
 
 export func read_file(path: str, delimiter: str) -> Result<List<List<str>>, str> {
@@ -172,11 +175,19 @@ export func read_file(path: str, delimiter: str) -> Result<List<List<str>>, str>
     }
 }
 
-export func write_file(path: str, rows: List<List<any>>, delimiter: str) -> Result<bool, str> {
-    try {
-        file_write(path, stringify(rows, delimiter));
-        return Ok(true);
-    } catch (error) {
-        return Err(error);
+export func write_file(path: str, rows: List<List<dynamic>>, delimiter: str) -> Result<bool, str> {
+    match stringify(rows, delimiter) {
+        Ok(text) => {
+            try {
+                file_write(path, text);
+                return Ok(true);
+            } catch (error) {
+                return Err(error);
+            }
+        }
+        Err(error) => {
+            return Err(error);
+        }
     }
 }
+

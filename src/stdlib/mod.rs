@@ -64,6 +64,7 @@ pub mod os;
 pub mod path;
 pub mod process;
 pub mod record;
+pub mod regex;
 pub mod result;
 pub mod rwlock;
 pub mod semaphore;
@@ -103,6 +104,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     net::register(globals);
     option::register(globals);
     result::register(globals);
+    regex::register(globals);
 }
 
 /// Enregistre les natives connues du compilateur.

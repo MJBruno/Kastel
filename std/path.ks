@@ -1,34 +1,50 @@
 // std/path.ks
-//
-// Manipulation de chemins, natif pour tout ce qui touche à la
-// normalisation/aux séparateurs OS (voir src/stdlib/path.rs), pur
-// Kastel pour le reste.
-//
-// Extension/stem/dirname en Option<str> : voir std.fs.
-//
-// Usage :
-//
-//   import std.path;
-//   let full = path.join(["dossier", "sous-dossier", "fichier.txt"]);
-//   println(path.extension(full));    // txt
-//   println(path.basename(full));     // fichier.txt
+// API officielle de manipulation des chemins.
 
-export const join = path_join;
-export const exists = path_exists;
-export const is_dir = path_is_dir;
-export const is_file = path_is_file;
-export const absolute = path_absolute;
-export const basename = path_basename;
-export const dirname = path_dirname;
-export const extension = path_extension;
-export const stem = path_stem;
-
-// join() prend un tableau (pas de varargs en Kastel) — raccourci
-// pour joindre juste deux segments sans construire le tableau soi-même.
-export func join2(a, b) {
-    return join([a, b]);
+export func join(segments: List<str>) -> str {
+    return path_join(segments);
 }
 
-export func has_extension(filepath, wanted) {
-    return extension(filepath) == wanted;
+export func exists(path: str) -> bool {
+    return path_exists(path);
+}
+
+export func is_dir(path: str) -> bool {
+    return path_is_dir(path);
+}
+
+export func is_file(path: str) -> bool {
+    return path_is_file(path);
+}
+
+export func absolute(path: str) -> Result<str, str> {
+    try {
+        return Ok(path_absolute(path));
+    } catch (error) {
+        return Err(error);
+    }
+}
+
+export func basename(path: str) -> str {
+    return path_basename(path);
+}
+
+export func dirname(path: str) -> str {
+    return path_dirname(path);
+}
+
+export func extension(path: str) -> Option<str> {
+    let value = path_extension(path);
+    if value.size() == 0 {
+        return None;
+    }
+    return Some(value);
+}
+
+export func stem(path: str) -> Option<str> {
+    let value = path_stem(path);
+    if value.size() == 0 {
+        return None;
+    }
+    return Some(value);
 }

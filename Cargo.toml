@@ -9,3 +9,4 @@ trace_gc = []
 profile = []
 
 [dependencies]
+regex = "1"

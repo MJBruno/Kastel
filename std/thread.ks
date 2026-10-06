@@ -1,17 +1,14 @@
-// Concurrence de haut niveau.
-//
-// Les appels directs `thread.spawn`, `thread.yield` et `thread.sleep` sont
-// compilés comme les intrinsèques du VM. Ces fonctions exportées fournissent
-// le contrat de module et gardent les mêmes noms disponibles dans le module.
+// std/thread.ks
+// API coopérative officielle.
 
-export func spawn(task) {
+export func spawn_task(task: dynamic) -> Task<dynamic> {
     return spawn(task);
 }
 
-export func yield() {
+export func yield_now() -> None {
     yield();
 }
 
-export func sleep(milliseconds: int) {
+export func sleep_ms(milliseconds: int) -> None {
     sleep(milliseconds);
 }

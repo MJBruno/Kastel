@@ -33,7 +33,7 @@ export class ProcessOutput {
 
     // `raw` est le Record natif { stdout, stderr, code, success }
     // renvoyé par process_run().
-    static func from_native(raw) -> ProcessOutput {
+    static func from_native(raw: { stdout: str, stderr: str, code: int, success: bool }) -> ProcessOutput {
         return new ProcessOutput(raw.stdout, raw.stderr, raw.code, raw.success);
     }
 

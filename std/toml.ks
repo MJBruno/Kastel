@@ -236,7 +236,7 @@ func ensure_table(root, path: List<str>) -> Result<any, str> {
     return Ok(current);
 }
 
-export func parse(text: str) -> Result<Dict<str, any>, str> {
+export func parse(text: str) -> Result<Dict<str, dynamic>, str> {
     let root = {};
     let current = root;
     let line_number = 0;
@@ -385,7 +385,7 @@ func write_table(table, prefix: str, output: List<str>) -> Result<bool, str> {
 // guillemets) ; elles doivent donc etre des identifiants TOML "nus"
 // (lettres, chiffres, _ et -), sinon la sortie ne serait pas du TOML
 // valide.
-export func stringify(data: Dict<str, any>) -> Result<str, str> {
+export func stringify(data: Dict<str, dynamic>) -> Result<str, str> {
     let lines = [];
     match write_table(data, "", lines) {
         Ok(_) => {
@@ -397,7 +397,7 @@ export func stringify(data: Dict<str, any>) -> Result<str, str> {
     }
 }
 
-export func read_file(path: str) -> Result<Dict<str, any>, str> {
+export func read_file(path: str) -> Result<Dict<str, dynamic>, str> {
     try {
         return parse(file_read(path));
     } catch (error) {
@@ -405,7 +405,7 @@ export func read_file(path: str) -> Result<Dict<str, any>, str> {
     }
 }
 
-export func write_file(path: str, data: Dict<str, any>) -> Result<bool, str> {
+export func write_file(path: str, data: Dict<str, dynamic>) -> Result<bool, str> {
     match stringify(data) {
         Ok(text) => {
             try {

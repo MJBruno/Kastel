@@ -1,4 +1,4 @@
-// std/statistic.ks
+// std/statistics.ks
 //
 // Statistiques descriptives de base sur des List<float>. Les mesures
 // qui n'ont pas de sens sur un jeu de données vide (mean, median, ...)
@@ -219,8 +219,10 @@ export func correlation(xs: List<float>, ys: List<float>) -> Result<float, str> 
 }
 
 // Régression linéaire simple (moindres carrés) : ys ~= slope * xs +
-// intercept. Renvoie (slope, intercept).
-export func linear_regression(xs: List<float>, ys: List<float>) {
+// intercept. Renvoie un record { slope, intercept }.
+export type LinearRegression = { slope: float, intercept: float };
+
+export func linear_regression(xs: List<float>, ys: List<float>) -> Result<LinearRegression, str> {
     if xs.size() != ys.size() {
         return Err("linear_regression: les deux series doivent avoir la meme taille");
     }
@@ -248,5 +250,5 @@ export func linear_regression(xs: List<float>, ys: List<float>) {
     let slope = numerator / denominator;
     let intercept = mean_y - slope * mean_x;
 
-    return Ok((slope, intercept));
+    return Ok({ slope: slope, intercept: intercept });
 }

@@ -529,7 +529,7 @@ func write_node(value, indent: int, output: List<str>) -> Result<bool, str> {
     }
 }
 
-export func stringify(value) -> Result<str, str> {
+export func stringify(value: dynamic) -> Result<str, str> {
     let output = [];
     match write_node(value, 0, output) {
         Ok(_) => {
@@ -549,7 +549,7 @@ export func read_file(path: str) -> Result<any, str> {
     }
 }
 
-export func write_file(path: str, value) -> Result<bool, str> {
+export func write_file(path: str, value: dynamic) -> Result<bool, str> {
     match stringify(value) {
         Ok(text) => {
             try {

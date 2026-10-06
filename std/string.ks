@@ -1,11 +1,9 @@
-// std/strings.ks
+// std/string.ks
 //
-// Utilitaires de chaînes de caractères au-dessus des méthodes
-// natives de string (upper, lower, length, substring, ...).
-//
-// Usage : from std.strings import capitalize, is_palindrome;
+// Utilitaires officiels de chaînes au-dessus du type natif `str`.
+// API canonique Kastel 1.0 : noms et signatures explicites.
 
-export func capitalize(text) {
+export func capitalize(text: str) -> str {
     if text.size() == 0 {
         return text;
     }
@@ -13,38 +11,61 @@ export func capitalize(text) {
     return text.substring(0, 1).upper() + text.substring(1, text.size() - 1);
 }
 
-export func pad_left(text, width, fill) {
-    let result = text;
-
-    while result.size() < width {
-        result = fill + result;
+// Ajoute `fill` jusqu'à atteindre exactement `width` caractères.
+// Une largeur négative ou une chaîne de remplissage vide est une erreur.
+export func pad_left(text: str, width: int, fill: str) -> Result<str, str> {
+    if width < 0 {
+        return Err("pad_left: width doit être >= 0");
+    }
+    if fill.size() == 0 {
+        if text.size() >= width {
+            return Ok(text);
+        }
+        return Err("pad_left: fill ne peut pas être vide");
     }
 
-    return result;
-}
-
-export func pad_right(text, width, fill) {
     let result = text;
-
     while result.size() < width {
-        result = result + fill;
+        let missing = width - result.size();
+        let prefix = fill;
+        if fill.size() > missing {
+            prefix = fill.substring(0, missing);
+        }
+        result = prefix + result;
     }
 
-    return result;
+    return Ok(result);
 }
 
-// reverse() est une methode native de string : plus simple et plus
-// sur qu'une boucle manuelle sur char_at() (pas de piege d'index).
-export func is_palindrome(text) {
+// Variante droite de pad_left().
+export func pad_right(text: str, width: int, fill: str) -> Result<str, str> {
+    if width < 0 {
+        return Err("pad_right: width doit être >= 0");
+    }
+    if fill.size() == 0 {
+        if text.size() >= width {
+            return Ok(text);
+        }
+        return Err("pad_right: fill ne peut pas être vide");
+    }
+
+    let result = text;
+    while result.size() < width {
+        let missing = width - result.size();
+        let suffix = fill;
+        if fill.size() > missing {
+            suffix = fill.substring(0, missing);
+        }
+        result = result + suffix;
+    }
+
+    return Ok(result);
+}
+
+export func is_palindrome(text: str) -> bool {
     let normalized = text.lower();
     return normalized == normalized.reverse();
 }
-
-// ------------------------------------------------------------------
-// Conversions sures (Result) -- to_int()/to_float() natifs levent une
-// exception peu parlante ("Operand must be numbers.") sur une chaine
-// non numerique ; ces wrappers renvoient un message explicite.
-// ------------------------------------------------------------------
 
 export func parse_int(text: str) -> Result<int, str> {
     try {
@@ -62,11 +83,6 @@ export func parse_float(text: str) -> Result<float, str> {
     }
 }
 
-// ------------------------------------------------------------------
-// Recherche -- index_of()/last_index_of() natifs renvoient -1 quand
-// absent, sentinelle qu'on remonte ici en Option<int>.
-// ------------------------------------------------------------------
-
 export func find(text: str, needle: str) -> Option<int> {
     let index = text.index_of(needle);
     if index < 0 {
@@ -83,8 +99,6 @@ export func find_last(text: str, needle: str) -> Option<int> {
     return Some(index);
 }
 
-// char_at() natif leve une exception hors bornes ; cette version
-// renvoie None plutot que de forcer un try/catch pour un simple test.
 export func char_at_opt(text: str, index: int) -> Option<str> {
     if index < 0 || index >= text.size() {
         return None;
@@ -92,23 +106,20 @@ export func char_at_opt(text: str, index: int) -> Option<str> {
     return Some(text.substring(index, 1));
 }
 
-// Coupe `text` a `max_length` caracteres et ajoute `ellipsis` si une
-// coupe a eu lieu (sinon `text` est renvoye tel quel, `ellipsis` non
-// compte dans la limite).
-export func truncate(text: str, max_length: int, ellipsis: str) -> str {
-    if text.size() <= max_length {
-        return text;
+export func truncate(text: str, max_length: int, ellipsis: str) -> Result<str, str> {
+    if max_length < 0 {
+        return Err("truncate: max_length doit être >= 0");
     }
-    return text.substring(0, max_length) + ellipsis;
+    if text.size() <= max_length {
+        return Ok(text);
+    }
+    return Ok(text.substring(0, max_length) + ellipsis);
 }
 
-// Identifiant "slug" pratique pour une URL/un nom de fichier :
-// minuscule, espaces et caracteres non alphanumeriques remplaces par
-// un tiret, tirets consecutifs fusionnes, pas de tiret en bord.
 export func slug(text: str) -> str {
     let lowered = text.lower();
     let result = "";
-    let previous_was_dash = true; // evite un tiret en tete
+    let previous_was_dash = true;
 
     let i = 0;
     while i < lowered.size() {
@@ -130,8 +141,7 @@ export func slug(text: str) -> str {
     return result;
 }
 
-// Nombre d'occurrences NON chevauchantes de `needle` dans `text`.
-export func count_occurrences(text, needle) {
+export func count_occurrences(text: str, needle: str) -> int {
     if needle.size() == 0 {
         return 0;
     }

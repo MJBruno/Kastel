@@ -388,6 +388,57 @@ fn build_specs() -> Vec<NativeSpec> {
     specs.push(runtime("json_encode", unary(Dynamic, Str)));
     specs.push(runtime("json_decode", unary(Str, Dynamic)));
 
+    // Regular expressions. `RegexMatch` reste une structurelle du point de
+    // vue du compilateur : le module `std.regex` lui donne le nom officiel.
+    let regex_match = Record(vec![
+        ("start".into(), Int),
+        ("end".into(), Int),
+        ("text".into(), Str),
+        ("groups".into(), Array(Box::new(Generic {
+            name: "Option".into(),
+            arguments: vec![Str],
+        }))),
+    ]);
+    specs.push(runtime("regex_is_match", binary(Str, Str, Generic {
+        name: "Result".into(),
+        arguments: vec![Bool, Str],
+    })));
+    specs.push(runtime("regex_find", function(
+        &[Str, Str],
+        Generic {
+            name: "Result".into(),
+            arguments: vec![
+                Generic {
+                    name: "Option".into(),
+                    arguments: vec![regex_match.clone()],
+                },
+                Str,
+            ],
+        },
+    )));
+    specs.push(runtime("regex_find_all", function(
+        &[Str, Str],
+        Generic {
+            name: "Result".into(),
+            arguments: vec![Array(Box::new(regex_match.clone())), Str],
+        },
+    )));
+    specs.push(runtime("regex_replace", function(
+        &[Str, Str, Str],
+        Generic {
+            name: "Result".into(),
+            arguments: vec![Str, Str],
+        },
+    )));
+    specs.push(runtime("regex_split", function(
+        &[Str, Str],
+        Generic {
+            name: "Result".into(),
+            arguments: vec![Array(Box::new(Str)), Str],
+        },
+    )));
+    specs.push(runtime("regex_escape", unary(Str, Str)));
+
     // HTTP/1.1 client. `headers` est un Dict<str,str> et `body` accepte
     // `None`, `str`, `List<int>` ou `Tuple<int>` au runtime.
     let http_response = Record(vec![
@@ -616,10 +667,16 @@ mod tests {
             assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
         }
 
-        assert_eq!(names.len(), 82);
+        assert_eq!(names.len(), 88);
         assert!(names.contains("process_run"));
         assert!(names.contains("http_get"));
         assert!(names.contains("http_request"));
+        assert!(names.contains("regex_is_match"));
+        assert!(names.contains("regex_find"));
+        assert!(names.contains("regex_find_all"));
+        assert!(names.contains("regex_replace"));
+        assert!(names.contains("regex_split"));
+        assert!(names.contains("regex_escape"));
         assert!(!names.contains(Intrinsic::Spawn.name()));
         assert!(!names.contains(Intrinsic::Yield.name()));
         assert!(!names.contains(Intrinsic::Sleep.name()));
@@ -728,6 +785,34 @@ mod tests {
                 }))
             );
         }
+    }
+
+    #[test]
+    fn regex_native_signatures_match_runtime_surface() {
+        use Type::*;
+        let regex_match = Record(vec![
+            ("start".into(), Int),
+            ("end".into(), Int),
+            ("text".into(), Str),
+            ("groups".into(), Array(Box::new(Generic {
+                name: "Option".into(),
+                arguments: vec![Str],
+            }))),
+        ]);
+        let find = all().remove("regex_find").expect("regex_find doit exister");
+        assert_eq!(find, Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str, Str],
+            return_type: Box::new(Generic {
+                name: "Result".into(),
+                arguments: vec![
+                    Generic { name: "Option".into(), arguments: vec![regex_match] },
+                    Str,
+                ],
+            }),
+        }));
     }
 
     #[test]

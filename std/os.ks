@@ -1,27 +1,30 @@
 // std/os.ks
-//
-// Interaction avec le système/processus. `env`/`cwd`/`clock` sont
-// déjà des natives globales (src/stdlib/system.rs) ; `os_name`,
-// `os_arch`, `args` et `exit` sont nouvelles (src/stdlib/os.rs).
-//
-// Pas de `system(...)` (commande shell arbitraire) : exclu
-// volontairement. Pour lancer un programme externe SANS shell (donc sans
-// injection de commande), voir std.process.
-//
-// Usage :
-//
-//   import std.os;
-//   println(os.name());
-//   println(os.env("HOME"));
-//   if os.args().size() < 2 {
-//       println("usage: kastel script.ks <fichier>");
-//       os.exit(1);
-//   }
+// Interaction officielle avec l'environnement du processus.
 
-export const name = os_name;
-export const arch = os_arch;
-export const args = args;
-export const exit = exit;
-export const env = env;
-export const cwd = cwd;
-export const clock = clock;
+export func platform_name() -> str {
+    return os_name();
+}
+
+export func architecture() -> str {
+    return os_arch();
+}
+
+export func arguments() -> List<str> {
+    return args();
+}
+
+export func terminate(code: int) -> None {
+    exit(code);
+}
+
+export func environment(name: str) -> dynamic {
+    return env(name);
+}
+
+export func current_directory() -> str {
+    return cwd();
+}
+
+export func clock_seconds() -> float {
+    return clock();
+}

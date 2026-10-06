@@ -49,7 +49,7 @@ export func index_of_opt<T>(values: List<T>, target: T) -> Option<int> {
     return Some(index);
 }
 
-export func find<T>(values: List<T>, predicate) -> Option<T> {
+export func find<T>(values: List<T>, predicate: dynamic) -> Option<T> {
     for value in values {
         if predicate(value) {
             return Some(value);
@@ -58,7 +58,7 @@ export func find<T>(values: List<T>, predicate) -> Option<T> {
     return None;
 }
 
-export func find_index<T>(values: List<T>, predicate) -> Option<int> {
+export func find_index<T>(values: List<T>, predicate: dynamic) -> Option<int> {
     let index = 0;
     for value in values {
         if predicate(value) {
@@ -72,7 +72,7 @@ export func find_index<T>(values: List<T>, predicate) -> Option<int> {
 // Applique `transform` (T -> Result<U, E>) à chaque élément dans
 // l'ordre, s'arrête à la première Err rencontrée, sinon renvoie
 // Ok(liste complète des résultats).
-export func try_map<T, U, E>(values: List<T>, transform) -> Result<List<U>, E> {
+export func try_map<T, U, E>(values: List<T>, transform: dynamic) -> Result<List<U>, E> {
     let results = [];
     for value in values {
         match transform(value) {
@@ -88,7 +88,9 @@ export func try_map<T, U, E>(values: List<T>, transform) -> Result<List<U>, E> {
 }
 
 // Sépare `values` en (éléments qui valident predicate, les autres).
-export func partition<T>(values: List<T>, predicate) {
+export type Partition<T> = { matched: List<T>, rejected: List<T> };
+
+export func partition<T>(values: List<T>, predicate: dynamic) -> Partition<T> {
     let matched = [];
     let rejected = [];
     for value in values {
@@ -98,7 +100,7 @@ export func partition<T>(values: List<T>, predicate) {
             rejected.add(value);
         }
     }
-    return (matched, rejected);
+    return { matched: matched, rejected: rejected };
 }
 
 // Ne garde que les Some(...) d'une liste d'Option<T>, en ignorant les
@@ -146,7 +148,7 @@ export func try_remove<K, V>(entries: Dict<K, V>, key: K) -> Option<V> {
 
 // Associe les elements de deux listes position par position ; s'arrete
 // a la plus courte. Renvoie une List de Tuple (a, b).
-export func zip<A, B>(left: List<A>, right: List<B>) {
+export func zip<A, B>(left: List<A>, right: List<B>) -> List<Tuple> {
     let pairs = [];
     let limit = left.size();
     if right.size() < limit {
@@ -161,7 +163,7 @@ export func zip<A, B>(left: List<A>, right: List<B>) {
 }
 
 // map puis aplatit d'un niveau : `transform` renvoie une List par element.
-export func flat_map<T, U>(values: List<T>, transform) -> List<U> {
+export func flat_map<T, U>(values: List<T>, transform: dynamic) -> List<U> {
     let results = [];
     for value in values {
         for item in transform(value) {
@@ -193,7 +195,7 @@ export func chunks<T>(values: List<T>, size: int) -> Result<List<List<T>>, str> 
 }
 
 // Regroupe par cle : Dict<K, List<T>>. `key_of` : T -> K.
-export func group_by<T, K>(values: List<T>, key_of) -> Dict<K, List<T>> {
+export func group_by<T, K>(values: List<T>, key_of: dynamic) -> Dict<K, List<T>> {
     let groups = {};
     for value in values {
         let key = key_of(value);
