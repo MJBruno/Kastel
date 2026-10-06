@@ -19,9 +19,9 @@ Les fichiers Rust supplémentaires de cette distribution sont :
 - `src/stdlib/mod.rs`
 - `src/compiler/builtin_types.rs`
 
-Le moteur regex utilise la dépendance Rust `regex = "1"`. Ajouter cette ligne
-au `[dependencies]` du manifeste du projet si le `Cargo.toml` local contient
-d'autres réglages spécifiques au dépôt.
+Le moteur regex est implémenté directement dans le runtime Kastel/Rust et ne
+dépend d'aucune crate externe. Le `Cargo.toml` officiel conserve donc une section
+`[dependencies]` vide.
 
 ## Validation
 
@@ -43,3 +43,10 @@ cargo run -q --bin kastel tests_std_1_0.ks
 - HTTP 1.1 client séparé de TLS ;
 - documentation et tests de régression ;
 - API cassante assumée avant gel 1.0.
+
+## Regex sans dépendance externe
+
+`std.regex` est implémenté directement dans `src/stdlib/regex.rs`. Le moteur
+prend en charge les littéraux, classes, classes abrégées, groupes capturants,
+alternatives, ancres, quantificateurs gourmands/non-gourmands et remplacements
+par groupes. Les fonctions retournent les erreurs de motif via `Result`.

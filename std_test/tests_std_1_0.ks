@@ -35,6 +35,24 @@ match regex.find("(Kastel) ([0-9]+)", "Kastel 2026") {
     }
 }
 
+match regex.is_match("[", "abc") {
+    Err(_) => {
+        testing.assert_true(true, "regex invalid pattern is a Result error");
+    }
+    _ => {
+        throw "invalid regex should fail";
+    }
+}
+
+match regex.replace("([a-z]+)-([0-9]+)", "kastel-42", "$2:$1") {
+    Ok(value) => {
+        testing.assert_true(value == "42:kastel", "regex replacement captures");
+    }
+    Err(error) => {
+        throw error;
+    }
+}
+
 match statistics.linear_regression([1.0, 2.0, 3.0], [2.0, 4.0, 6.0]) {
     Ok(value) => {
         testing.assert_true(value.slope == 2.0, "regression slope");

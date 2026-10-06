@@ -728,7 +728,22 @@ mod tests {
 
         assert_eq!(field(&response, "status"), Value::Integer(201));
         assert_eq!(field(&response, "reason"), string("Created"));
-        assert!(matches!(field(&response, "body"), Value::Object(handle) if matches!(&*handle.borrow(), Object::Array(items) if items == &vec![int(b'h' as i64), int(b'i' as i64), int(b'!' as i64), int(b'o' as i64), int(b'k' as i64)])));
+        match field(&response, "body") {
+            Value::Object(handle) => match &*handle.borrow() {
+                Object::Array(items) => assert_eq!(
+                    items,
+                    &vec![
+                        int(b'h' as i64),
+                        int(b'i' as i64),
+                        int(b'!' as i64),
+                        int(b'o' as i64),
+                        int(b'k' as i64),
+                    ],
+                ),
+                other => panic!("expected HTTP body array, got {other:?}"),
+            },
+            other => panic!("expected HTTP body object, got {other:?}"),
+        };
 
         server.join().expect("server thread");
     }
