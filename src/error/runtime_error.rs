@@ -50,6 +50,13 @@ pub enum RuntimeError {
 
     ModuleError(String),
 
+    /// Erreur réseau native enrichie avec l'opération et la catégorie OS.
+    NetworkError {
+        operation: &'static str,
+        kind: &'static str,
+        message: String,
+    },
+
     /// Erreur dans un spécificateur de format de chaîne (`{:.2f}`, `{:#x}`, etc.).
     FormatError(String),
 
@@ -324,6 +331,10 @@ impl std::fmt::Display for RuntimeError {
                 write!(f, "Module error: {message}")
             }
 
+            RuntimeError::NetworkError { operation, kind, message } => {
+                write!(f, "Network error during {operation} ({kind}): {message}")
+            }
+
             RuntimeError::FormatError(message) => {
                 write!(f, "Format error: {message}")
             }
@@ -493,6 +504,7 @@ impl RuntimeError {
             RuntimeError::NotObject => "NotObject",
             RuntimeError::ImmutableValue(_) => "ImmutableValue",
             RuntimeError::ModuleError(_) => "ModuleError",
+            RuntimeError::NetworkError { .. } => "NetworkError",
             RuntimeError::FormatError(_) => "FormatError",
             RuntimeError::ObjectFieldNotFound { .. } => "ObjectFieldNotFound",
             RuntimeError::NotIterable => "NotIterable",
@@ -694,6 +706,12 @@ impl RuntimeError {
             RuntimeError::ModuleError(message) => {
                 Diagnostic::new(format!("erreur de module : {message}"), 0, 0)
             }
+
+            RuntimeError::NetworkError { operation, kind, message } => Diagnostic::new(
+                format!("erreur réseau pendant {operation} ({kind}) : {message}"),
+                0,
+                0,
+            ),
 
             RuntimeError::Thrown(value) => {
                 Diagnostic::new(format!("exception non interceptée : {value}"), 0, 0).with_help(

@@ -944,6 +944,9 @@ impl Type {
             )),
             "write" => Some(function(vec![Type::Dynamic], Type::Int)),
             "local_addr" | "peer_addr" => Some(function(vec![], Type::Str)),
+            "shutdown" => Some(function(vec![Type::Str], Type::None)),
+            "set_nodelay" => Some(function(vec![Type::Bool], Type::None)),
+            "nodelay" | "is_closed" => Some(function(vec![], Type::Bool)),
             "close" => Some(function(vec![], Type::None)),
             _ => None,
         }
@@ -974,6 +977,7 @@ impl Type {
                 },
             )),
             "local_addr" => Some(function(vec![], Type::Str)),
+            "is_closed" => Some(function(vec![], Type::Bool)),
             "close" => Some(function(vec![], Type::None)),
             _ => None,
         }
@@ -1006,6 +1010,8 @@ impl Type {
                 vec![Type::Dynamic, Type::Str, Type::Int],
                 Type::Int,
             )),
+            "send" => Some(function(vec![Type::Dynamic], Type::Int)),
+            "connect" => Some(function(vec![Type::Str, Type::Int], Type::None)),
             "recv_from" => Some(function(
                 vec![Type::Int],
                 Type::Generic {
@@ -1013,7 +1019,8 @@ impl Type {
                     arguments: vec![packet],
                 },
             )),
-            "local_addr" => Some(function(vec![], Type::Str)),
+            "local_addr" | "peer_addr" => Some(function(vec![], Type::Str)),
+            "is_closed" => Some(function(vec![], Type::Bool)),
             "close" => Some(function(vec![], Type::None)),
             _ => None,
         }
@@ -1637,6 +1644,46 @@ mod tests {
                 generic_constraints: vec![],
                 params: vec![Type::Dynamic, Type::Str, Type::Int],
                 return_type: Box::new(Type::Int),
+            }))
+        );
+        assert_eq!(
+            stream.tcp_stream_member_type("shutdown"),
+            Some(Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![Type::Str],
+                return_type: Box::new(Type::None),
+            }))
+        );
+        assert_eq!(
+            stream.tcp_stream_member_type("set_nodelay"),
+            Some(Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![Type::Bool],
+                return_type: Box::new(Type::None),
+            }))
+        );
+        assert_eq!(
+            udp.udp_socket_member_type("connect"),
+            Some(Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![Type::Str, Type::Int],
+                return_type: Box::new(Type::None),
+            }))
+        );
+        assert_eq!(
+            udp.udp_socket_member_type("peer_addr"),
+            Some(Type::Function(FunctionType {
+                generic_params: vec![],
+                is_async: false,
+                generic_constraints: vec![],
+                params: vec![],
+                return_type: Box::new(Type::Str),
             }))
         );
     }

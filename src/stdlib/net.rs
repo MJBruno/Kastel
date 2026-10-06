@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, UdpSocket};
+use std::net::{Shutdown, TcpListener, TcpStream, UdpSocket};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -78,12 +78,45 @@ fn bytes_value(bytes: &[u8]) -> Value {
     )
 }
 
-fn network_error(operation: &str, error: std::io::Error) -> RuntimeError {
-    RuntimeError::ModuleError(format!("net.{operation}: {error}"))
+fn io_error_kind_name(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        std::io::ErrorKind::NotFound => "NotFound",
+        std::io::ErrorKind::PermissionDenied => "PermissionDenied",
+        std::io::ErrorKind::ConnectionRefused => "ConnectionRefused",
+        std::io::ErrorKind::ConnectionReset => "ConnectionReset",
+        std::io::ErrorKind::ConnectionAborted => "ConnectionAborted",
+        std::io::ErrorKind::NotConnected => "NotConnected",
+        std::io::ErrorKind::AddrInUse => "AddrInUse",
+        std::io::ErrorKind::AddrNotAvailable => "AddrNotAvailable",
+        std::io::ErrorKind::BrokenPipe => "BrokenPipe",
+        std::io::ErrorKind::AlreadyExists => "AlreadyExists",
+        std::io::ErrorKind::WouldBlock => "WouldBlock",
+        std::io::ErrorKind::InvalidInput => "InvalidInput",
+        std::io::ErrorKind::InvalidData => "InvalidData",
+        std::io::ErrorKind::TimedOut => "TimedOut",
+        std::io::ErrorKind::WriteZero => "WriteZero",
+        std::io::ErrorKind::Interrupted => "Interrupted",
+        std::io::ErrorKind::UnexpectedEof => "UnexpectedEof",
+        std::io::ErrorKind::Unsupported => "Unsupported",
+        std::io::ErrorKind::Other => "Other",
+        _ => "Other",
+    }
+}
+
+fn network_error(operation: &'static str, error: std::io::Error) -> RuntimeError {
+    RuntimeError::NetworkError {
+        operation,
+        kind: io_error_kind_name(error.kind()),
+        message: error.to_string(),
+    }
 }
 
 fn closed_error() -> RuntimeError {
-    RuntimeError::ModuleError("net: socket is closed".into())
+    RuntimeError::NetworkError {
+        operation: "socket",
+        kind: "Closed",
+        message: "socket is closed".into(),
+    }
 }
 
 pub fn native_tcp_connect(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -195,6 +228,62 @@ fn tcp_stream_method(name: &str, args: &[Value], network: &Rc<RefCell<NetworkSta
             }
         }
 
+        "shutdown" => {
+            require_args(args, 1)?;
+            let mode = expect_string(&args[1])?;
+            let shutdown = match mode.as_str() {
+                "read" => Shutdown::Read,
+                "write" => Shutdown::Write,
+                "both" => Shutdown::Both,
+                _ => return Err(RuntimeError::TypeError),
+            };
+            let mut state = network.borrow_mut();
+            let NetworkState::TcpStream { socket, .. } = &mut *state else {
+                return Err(RuntimeError::TypeError);
+            };
+            let stream = socket.as_ref().ok_or_else(closed_error)?;
+            stream
+                .shutdown(shutdown)
+                .map_err(|error| network_error("tcp_shutdown", error))?;
+            Ok(Value::None)
+        }
+
+        "set_nodelay" => {
+            require_args(args, 1)?;
+            let enabled = match args[1] {
+                Value::Boolean(value) => value,
+                _ => return Err(RuntimeError::TypeError),
+            };
+            let state = network.borrow();
+            let NetworkState::TcpStream { socket, .. } = &*state else {
+                return Err(RuntimeError::TypeError);
+            };
+            let stream = socket.as_ref().ok_or_else(closed_error)?;
+            stream
+                .set_nodelay(enabled)
+                .map_err(|error| network_error("set_nodelay", error))?;
+            Ok(Value::None)
+        }
+
+        "nodelay" => {
+            require_args(args, 0)?;
+            let state = network.borrow();
+            let NetworkState::TcpStream { socket, .. } = &*state else {
+                return Err(RuntimeError::TypeError);
+            };
+            let stream = socket.as_ref().ok_or_else(closed_error)?;
+            Ok(Value::Boolean(
+                stream
+                    .nodelay()
+                    .map_err(|error| network_error("nodelay", error))?,
+            ))
+        }
+
+        "is_closed" => {
+            require_args(args, 0)?;
+            Ok(Value::Boolean(network.borrow().is_closed()))
+        }
+
         "local_addr" => {
             require_args(args, 0)?;
             let state = network.borrow();
@@ -273,6 +362,11 @@ fn tcp_listener_method(
             Ok(Value::new_string(address.to_string()))
         }
 
+        "is_closed" => {
+            require_args(args, 0)?;
+            Ok(Value::Boolean(network.borrow().is_closed()))
+        }
+
         "close" => {
             require_args(args, 0)?;
             network.borrow_mut().close();
@@ -327,6 +421,49 @@ fn udp_socket_method(name: &str, args: &[Value], network: &Rc<RefCell<NetworkSta
             }
         }
 
+        "connect" => {
+            require_args(args, 2)?;
+            let host = expect_string(&args[1])?;
+            let port = expect_port(&args[2])?;
+            let mut state = network.borrow_mut();
+            let NetworkState::UdpSocket { socket, .. } = &mut *state else {
+                return Err(RuntimeError::TypeError);
+            };
+            let socket = socket.as_ref().ok_or_else(closed_error)?;
+            socket
+                .connect((host.as_str(), port))
+                .map_err(|error| network_error("udp_connect", error))?;
+            Ok(Value::None)
+        }
+
+        "send" => {
+            require_args(args, 1)?;
+            let bytes = expect_bytes(&args[1])?;
+            let mut state = network.borrow_mut();
+            let NetworkState::UdpSocket { socket, .. } = &mut *state else {
+                return Err(RuntimeError::TypeError);
+            };
+            let socket = socket.as_ref().ok_or_else(closed_error)?;
+            match socket.send(&bytes) {
+                Ok(written) => Ok(Value::Integer(written as i64)),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(Value::Integer(0)),
+                Err(error) => Err(network_error("udp_send", error)),
+            }
+        }
+
+        "peer_addr" => {
+            require_args(args, 0)?;
+            let state = network.borrow();
+            let NetworkState::UdpSocket { socket, .. } = &*state else {
+                return Err(RuntimeError::TypeError);
+            };
+            let socket = socket.as_ref().ok_or_else(closed_error)?;
+            let address = socket
+                .peer_addr()
+                .map_err(|error| network_error("udp_peer_addr", error))?;
+            Ok(Value::new_string(address.to_string()))
+        }
+
         "local_addr" => {
             require_args(args, 0)?;
             let state = network.borrow();
@@ -338,6 +475,11 @@ fn udp_socket_method(name: &str, args: &[Value], network: &Rc<RefCell<NetworkSta
                 .local_addr()
                 .map_err(|error| network_error("local_addr", error))?;
             Ok(Value::new_string(address.to_string()))
+        }
+
+        "is_closed" => {
+            require_args(args, 0)?;
+            Ok(Value::Boolean(network.borrow().is_closed()))
         }
 
         "close" => {
@@ -524,6 +666,91 @@ mod tests {
         assert!(matches!(packet, Value::Object(handle) if matches!(&*handle.borrow(), Object::Option(Some(Value::Object(tuple))) if matches!(&*tuple.borrow(), Object::Tuple(items) if items.len() == 3))));
 
         dispatch_method("close", std::slice::from_ref(&sender)).unwrap();
+        dispatch_method("close", std::slice::from_ref(&receiver)).unwrap();
+    }
+
+    #[test]
+    fn tcp_shutdown_nodelay_and_closed_state_are_stable() {
+        let listener = native_tcp_listen(&[string("127.0.0.1"), int(0)]).unwrap();
+        let address = dispatch_method("local_addr", std::slice::from_ref(&listener))
+            .unwrap()
+            .unwrap();
+        let (host, port) = parse_socket_address(&address);
+        let client = native_tcp_connect(&[string(&host), int(port)]).unwrap();
+
+        let accepted = loop {
+            let value = dispatch_method("accept", std::slice::from_ref(&listener))
+                .unwrap()
+                .unwrap();
+            if matches!(value, Value::None) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                continue;
+            }
+            let Value::Object(option_handle) = value else {
+                panic!("accept doit retourner Option<TcpStream>");
+            };
+            let object = option_handle.borrow();
+            let Object::Option(Some(Value::Object(stream_handle))) = &*object else {
+                panic!("accept doit retourner Some(TcpStream)");
+            };
+            break Value::Object(stream_handle.clone());
+        };
+
+        assert_eq!(dispatch_method("nodelay", std::slice::from_ref(&client)).unwrap(), Some(Value::Boolean(false)));
+        assert_eq!(dispatch_method("set_nodelay", &[client.clone(), Value::Boolean(true)]).unwrap(), Some(Value::None));
+        assert_eq!(dispatch_method("nodelay", std::slice::from_ref(&client)).unwrap(), Some(Value::Boolean(true)));
+
+        assert_eq!(dispatch_method("shutdown", &[client.clone(), string("write")]).unwrap(), Some(Value::None));
+        assert_eq!(dispatch_method("is_closed", std::slice::from_ref(&client)).unwrap(), Some(Value::Boolean(false)));
+
+        assert_eq!(dispatch_method("close", std::slice::from_ref(&client)).unwrap(), Some(Value::None));
+        assert_eq!(dispatch_method("is_closed", std::slice::from_ref(&client)).unwrap(), Some(Value::Boolean(true)));
+        assert!(matches!(
+            dispatch_method("peer_addr", std::slice::from_ref(&client)),
+            Err(RuntimeError::NetworkError { kind: "Closed", .. })
+        ));
+
+        dispatch_method("close", std::slice::from_ref(&accepted)).unwrap();
+        dispatch_method("close", std::slice::from_ref(&listener)).unwrap();
+    }
+
+    #[test]
+    fn udp_connect_send_and_peer_address_work() {
+        let sender = native_udp_bind(&[string("127.0.0.1"), int(0)]).unwrap();
+        let receiver = native_udp_bind(&[string("127.0.0.1"), int(0)]).unwrap();
+        let address = dispatch_method("local_addr", std::slice::from_ref(&receiver))
+            .unwrap()
+            .unwrap();
+        let (host, port) = parse_socket_address(&address);
+
+        assert_eq!(
+            dispatch_method("connect", &[sender.clone(), string(&host), int(port)]).unwrap(),
+            Some(Value::None)
+        );
+        assert_eq!(
+            dispatch_method("peer_addr", std::slice::from_ref(&sender)).unwrap(),
+            Some(Value::new_string(address.as_string_value().unwrap()))
+        );
+        assert_eq!(
+            dispatch_method("send", &[sender.clone(), bytes(&[7, 8, 9])]).unwrap(),
+            Some(Value::Integer(3))
+        );
+
+        let mut packet = Value::None;
+        for _ in 0..200 {
+            packet = dispatch_method("recv_from", &[receiver.clone(), int(16)])
+                .unwrap()
+                .unwrap();
+            if !matches!(packet, Value::None) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(matches!(packet, Value::Object(handle) if matches!(&*handle.borrow(), Object::Option(Some(Value::Object(tuple))) if matches!(&*tuple.borrow(), Object::Tuple(items) if items.len() == 3))));
+
+        assert_eq!(dispatch_method("is_closed", std::slice::from_ref(&sender)).unwrap(), Some(Value::Boolean(false)));
+        assert_eq!(dispatch_method("close", std::slice::from_ref(&sender)).unwrap(), Some(Value::None));
+        assert_eq!(dispatch_method("is_closed", std::slice::from_ref(&sender)).unwrap(), Some(Value::Boolean(true)));
         dispatch_method("close", std::slice::from_ref(&receiver)).unwrap();
     }
 

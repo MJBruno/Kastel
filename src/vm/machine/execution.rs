@@ -234,6 +234,7 @@ impl VirtualMachine {
             | RuntimeError::NotIndexable
             | RuntimeError::NotObject
             | RuntimeError::ModuleError(_)
+            | RuntimeError::NetworkError { .. }
             | RuntimeError::FormatError(_)
             | RuntimeError::ObjectFieldNotFound { .. }
             | RuntimeError::NotIterable
