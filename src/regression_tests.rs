@@ -353,6 +353,26 @@ mod collections {
     }
 
     #[test]
+    fn for_in_supports_tuple_destructuring() {
+        let (vm, result) = run_script(
+            r#"
+let pairs: List<Tuple<int, str>> = [(1, "a"), (2, "b")];
+let total = 0;
+let joined = "";
+
+for (number, name) in pairs {
+    total = total + number;
+    joined = joined + name;
+}
+"#,
+        );
+
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(integer(global(&vm, "total")), 3);
+        assert_eq!(global(&vm, "joined").to_string(), "ab");
+    }
+
+    #[test]
     fn tuple_is_immutable() {
         let (_vm, result) = run_script("let t = (1, 2); t[0] = 5;");
         assert!(

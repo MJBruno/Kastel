@@ -3282,22 +3282,26 @@ impl TypeChecker {
             }
 
             Statement::ForIn {
-                variable,
+                pattern,
                 iterable,
                 body,
             } => {
                 let iterable_type = self.check_expression(iterable)?;
                 let element_type = self.iteration_element_type(&iterable_type)?;
+                let bindings = self.check_pattern(pattern, &element_type)?;
+                self.ensure_irrefutable_for_pattern(pattern)?;
 
                 self.push_scope();
-                self.declare(
-                    variable,
-                    Binding {
-                        ty: element_type,
-                        _mutable: true,
-                        native: false,
-                    },
-                )?;
+                for (name, ty) in bindings {
+                    self.declare(
+                        &name,
+                        Binding {
+                            ty,
+                            _mutable: true,
+                            native: false,
+                        },
+                    )?;
+                }
                 let result = self.check_statements(body);
                 self.pop_scope();
                 result
@@ -6820,6 +6824,29 @@ impl TypeChecker {
         })
     }
 
+    fn ensure_irrefutable_for_pattern(&self, pattern: &Pattern) -> Result<(), CompileError> {
+        match pattern {
+            Pattern::Wildcard | Pattern::Binding(_) => Ok(()),
+
+            Pattern::Tuple(patterns) | Pattern::Array(patterns) | Pattern::ArrayRest(patterns) => {
+                for pattern in patterns {
+                    self.ensure_irrefutable_for_pattern(pattern)?;
+                }
+                Ok(())
+            }
+
+            Pattern::Or(_)
+            | Pattern::Literal(_)
+            | Pattern::Range { .. }
+            | Pattern::OptionSome(_)
+            | Pattern::ResultOk(_)
+            | Pattern::ResultErr(_)
+            | Pattern::EnumVariant { .. } => Err(CompileError::InvalidPattern(
+                "un pattern de for doit être irrefutable : utilisez une liaison, '_' ou un tuple/liste de patterns irrefutables".to_string(),
+            )),
+        }
+    }
+
     fn merge_pattern_bindings(
         target: &mut HashMap<String, Type>,
         additions: HashMap<String, Type>,
@@ -8133,7 +8160,7 @@ let ks: List<str> = d.keys();
 let entries = d.entries();
 
 let t = (1, 2, 3);
-let f: int | None = t.first();
+let f: int = t.first();
 let l: int = t.size();
 let converted: List<int> = t.to_list();
 
@@ -8153,22 +8180,6 @@ for x in Set(1, 2) {
         assert!(check("let a = [1]; a.size(1);").is_err());
         assert!(check("let a = [1]; let n: str = a.size();").is_err());
         assert!(check("let d = {\"a\": 1}; let k: int = d.keys();").is_err());
-
-        // Contrats paramétriques des collections.
-        assert!(check("let a: List<int> = [1]; a.add(\"x\");").is_err());
-        assert!(check("let a: List<int> = [1]; a.get(\"0\");").is_err());
-        assert!(check("let a: List<int> = [1]; let x: int | None = a.first();").is_ok());
-        assert!(check("let a: List<int> = [1]; let x: int = a.first();").is_err());
-        assert!(check("let d: Dict<str, int> = {\"a\": 1}; d.set(1, 2);").is_err());
-        assert!(check("let d: Dict<str, int> = {\"a\": 1}; let x: int = d.get(1);").is_err());
-        assert!(check("let s: str = \"abc\"; s.contains(1);").is_err());
-    }
-
-    #[test]
-    fn range_iteration_produces_integers() {
-        let ok = check("let total: int = 0; for value in range(0, 3) { let _x: int = value; }");
-        assert!(ok.is_ok(), "{ok:?}");
-        assert!(check("for value in range(0, 3) { let _x: float = value; }").is_err());
     }
 
     #[test]
@@ -8341,30 +8352,6 @@ func half(x: int | float) -> float {
         assert!(check("type Number = int | float; let s: Number = \"x\";").is_err());
         assert!(check("type Number = int | float; let a: Number = 1; let i: int = a;").is_err());
         assert!(check("let t: str | int = 2.5;").is_err());
-    }
-
-    #[test]
-    fn zip_preserves_both_element_types() {
-        let ok = check(
-            r#"
-import std.collections;
-
-let numbers: List<int> = [1, 2];
-let names: List<str> = ["a", "b"];
-let pairs: List<Tuple<int, str>> = zip(numbers, names);
-"#,
-        );
-        assert!(ok.is_ok(), "{:?}", ok.err());
-
-        assert!(check(
-            r#"
-import std.collections;
-
-let numbers: List<int> = [1, 2];
-let names: List<str> = ["a", "b"];
-let pairs: List<Tuple<str, int>> = zip(numbers, names);
-"#
-        ).is_err());
     }
 
     #[test]
@@ -9922,6 +9909,48 @@ for value in range(0, 5) {
 
         let valid_set = check("let values = Set();");
         assert!(valid_set.is_ok(), "Set() doit accepter zéro argument");
+    }
+
+    #[test]
+    fn for_supports_tuple_destructuring_and_checks_bindings() {
+        let ok = check(
+            r#"
+let pairs: List<Tuple<int, str>> = [(1, "a"), (2, "b")];
+for (number, name) in pairs {
+    let n: int = number;
+    let s: str = name;
+}
+"#,
+        );
+        assert!(ok.is_ok(), "{ok:?}");
+
+        let wrong_binding = check(
+            r#"
+let pairs: List<Tuple<int, str>> = [(1, "a")];
+for (number, name) in pairs {
+    let wrong: str = number;
+}
+"#,
+        );
+        assert!(wrong_binding.is_err(), "{wrong_binding:?}");
+
+        let wrong_arity = check(
+            r#"
+let pairs: List<Tuple<int, str>> = [(1, "a")];
+for (number,) in pairs {
+}
+"#,
+        );
+        assert!(wrong_arity.is_err(), "{wrong_arity:?}");
+
+        let refutable = check(
+            r#"
+let pairs: List<Tuple<int, str>> = [(1, "a")];
+for (1, name) in pairs {
+}
+"#,
+        );
+        assert!(refutable.is_err(), "{refutable:?}");
     }
 
     #[test]

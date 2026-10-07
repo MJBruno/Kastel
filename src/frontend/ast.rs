@@ -240,7 +240,7 @@ pub enum Statement {
     },
 
     ForIn {
-        variable: String,
+        pattern: Pattern,
         iterable: Expression,
         body: Vec<Statement>,
     },

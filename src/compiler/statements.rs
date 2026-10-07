@@ -254,11 +254,11 @@ impl Compiler {
             }
 
             Statement::ForIn {
-                variable,
+                pattern,
                 iterable,
                 body,
             } => {
-                self.compile_for_in(variable, iterable, body)?;
+                self.compile_for_in(pattern, iterable, body)?;
             }
 
             Statement::Match { value, arms } => {

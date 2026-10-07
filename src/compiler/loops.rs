@@ -1,6 +1,6 @@
 use crate::bytecode::chunk::OpCode;
 use crate::error::compile_error::CompileError;
-use super::him::{AssignmentTarget, BinaryOp, Expression, Literal, Statement};
+use super::him::{AssignmentTarget, BinaryOp, Expression, Literal, Pattern, Statement};
 use crate::runtime::value::Value;
 
 use super::compiler::Compiler;
@@ -279,6 +279,38 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_for_pattern_bindings(
+        &mut self,
+        pattern: &Pattern,
+        source: &Expression,
+    ) -> Result<(), CompileError> {
+        match pattern {
+            Pattern::Wildcard => Ok(()),
+
+            Pattern::Binding(name) => {
+                self.compile_local_var(name, Some(source), true)
+            }
+
+            Pattern::Tuple(patterns) | Pattern::Array(patterns) | Pattern::ArrayRest(patterns) => {
+                for (index, child) in patterns.iter().enumerate() {
+                    let index_expression = Expression::Literal(Literal::Integer(index as i64));
+                    let element = Expression::Index {
+                        object: Box::new(source.clone()),
+                        index: Box::new(index_expression),
+                        line: 0,
+                        column: 0,
+                    };
+                    self.compile_for_pattern_bindings(child, &element)?;
+                }
+                Ok(())
+            }
+
+            _ => Err(CompileError::InvalidPattern(
+                "ce pattern de for n'est pas irrefutable".to_string(),
+            )),
+        }
+    }
+
     // ============================================================
     //                       CONDITION + JUMP
     // ============================================================
@@ -298,7 +330,7 @@ impl Compiler {
 
     pub(crate) fn compile_for_in(
         &mut self,
-        variable: &str,
+        pattern: &Pattern,
         iterable: &Expression,
         body: &[Statement],
     ) -> Result<(), CompileError> {
@@ -346,22 +378,23 @@ impl Compiler {
         self.begin_scope();
 
         // --------------------------------------------------------
-        // variable = @for_iterator.next()
+        // @for_value = @for_iterator.next()
         // --------------------------------------------------------
 
         self.emit_bytes(OpCode::GetLocal, iterator_slot);
-
         self.emit_opcode(OpCode::IteratorNext);
 
+        let value_name = "@for_value";
         self.context
             .borrow_mut()
             .locals
-            .declare_local(variable, self.scope_depth, true)?;
-
+            .declare_local(value_name, self.scope_depth, true)?;
         self.context
             .borrow_mut()
             .locals
             .mark_initialized(self.scope_depth);
+
+        self.compile_for_pattern_bindings(pattern, &Expression::Variable(value_name.to_string()))?;
 
         for statement in body {
             self.compile_statement(statement)?;

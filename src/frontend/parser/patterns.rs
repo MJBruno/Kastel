@@ -59,7 +59,7 @@ impl Parser {
     /// Parse un pattern complet. `|` reste réservé au OR-pattern, alors que
     /// les opérateurs logiques appartiennent aux expressions et ne sont donc
     /// jamais consommés ici.
-    fn parse_pattern(&mut self) -> Result<Pattern, ParserError> {
+    pub(super) fn parse_pattern(&mut self) -> Result<Pattern, ParserError> {
         let mut patterns = vec![self.parse_pattern_atom()?];
 
         while self.match_token(TokenKind::Pipe) {

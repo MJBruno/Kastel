@@ -371,13 +371,7 @@ impl<'a> CfgBuilder<'a> {
     }
 
     fn reserve_aux_node(&mut self) -> usize {
-        self.add_node(
-            None,
-            HashSet::new(),
-            HashSet::new(),
-            Vec::new(),
-            None,
-        )
+        self.add_node(None, HashSet::new(), HashSet::new(), Vec::new(), None)
     }
 
     fn successors_with_exceptions(&self, normal: Option<usize>) -> Vec<usize> {
@@ -398,10 +392,7 @@ impl<'a> CfgBuilder<'a> {
         successors
     }
 
-    fn control_transfer_target(
-        &self,
-        direct_target: usize,
-    ) -> usize {
+    fn control_transfer_target(&self, direct_target: usize) -> usize {
         self.control_finally.unwrap_or(direct_target)
     }
 
@@ -415,12 +406,7 @@ impl<'a> CfgBuilder<'a> {
         let mut current = next;
 
         for statement in statements.iter().rev() {
-            current = self.build_statement(
-                statement,
-                current,
-                break_target,
-                continue_target,
-            );
+            current = self.build_statement(statement, current, break_target, continue_target);
         }
 
         (current != next).then_some(current)
@@ -435,13 +421,7 @@ impl<'a> CfgBuilder<'a> {
     ) -> usize {
         let statement_id = self.next_statement_id;
         self.next_statement_id += 1;
-        self.build_statement_with_id(
-            statement,
-            statement_id,
-            next,
-            break_target,
-            continue_target,
-        )
+        self.build_statement_with_id(statement, statement_id, next, break_target, continue_target)
     }
 
     fn build_statement_with_id(
@@ -479,20 +459,13 @@ impl<'a> CfgBuilder<'a> {
                 collect_used_variables_expression(value, &mut uses);
                 let mut defs = HashSet::new();
                 defs.insert(name.clone());
-                let removable_store =
-                    if !*mutable && is_pure_non_throwing_expression(value) {
-                        Some(name.clone())
-                    } else {
-                        None
-                    };
+                let removable_store = if !*mutable && is_pure_non_throwing_expression(value) {
+                    Some(name.clone())
+                } else {
+                    None
+                };
                 let successors = self.successors_with_exceptions(Some(next));
-                self.add_node(
-                    Some(statement_id),
-                    uses,
-                    defs,
-                    successors,
-                    removable_store,
-                )
+                self.add_node(Some(statement_id), uses, defs, successors, removable_store)
             }
 
             Statement::Assignment { target, value } => {
@@ -516,13 +489,7 @@ impl<'a> CfgBuilder<'a> {
                 }
 
                 let successors = self.successors_with_exceptions(Some(next));
-                self.add_node(
-                    Some(statement_id),
-                    uses,
-                    defs,
-                    successors,
-                    removable_store,
-                )
+                self.add_node(Some(statement_id), uses, defs, successors, removable_store)
             }
 
             Statement::Expression { expression } | Statement::Throw { value: expression } => {
@@ -533,13 +500,7 @@ impl<'a> CfgBuilder<'a> {
                 } else {
                     self.successors_with_exceptions(Some(next))
                 };
-                self.add_node(
-                    Some(statement_id),
-                    uses,
-                    HashSet::new(),
-                    successors,
-                    None,
-                )
+                self.add_node(Some(statement_id), uses, HashSet::new(), successors, None)
             }
 
             Statement::Return { value } => {
@@ -560,13 +521,7 @@ impl<'a> CfgBuilder<'a> {
                         }
                     }
                 }
-                self.add_node(
-                    Some(statement_id),
-                    uses,
-                    HashSet::new(),
-                    successors,
-                    None,
-                )
+                self.add_node(Some(statement_id), uses, HashSet::new(), successors, None)
             }
 
             Statement::Break => {
@@ -592,13 +547,9 @@ impl<'a> CfgBuilder<'a> {
             }
 
             Statement::Block(body) => {
-                let body_entry = self.build_sequence(
-                    body,
-                    next,
-                    break_target,
-                    continue_target,
-                )
-                .unwrap_or(next);
+                let body_entry = self
+                    .build_sequence(body, next, break_target, continue_target)
+                    .unwrap_or(next);
                 self.add_node(
                     Some(statement_id),
                     HashSet::new(),
@@ -634,13 +585,7 @@ impl<'a> CfgBuilder<'a> {
                         successors.push(*target);
                     }
                 }
-                self.add_node(
-                    Some(statement_id),
-                    uses,
-                    HashSet::new(),
-                    successors,
-                    None,
-                )
+                self.add_node(Some(statement_id), uses, HashSet::new(), successors, None)
             }
 
             Statement::While { condition, body } => {
@@ -662,7 +607,11 @@ impl<'a> CfgBuilder<'a> {
                 condition_node
             }
 
-            Statement::ForIn { variable, iterable, body } => {
+            Statement::ForIn {
+                pattern,
+                iterable,
+                body,
+            } => {
                 let iteration_node = self.reserve_node(statement_id);
                 let body_entry = self
                     .build_sequence(body, iteration_node, Some(next), Some(iteration_node))
@@ -671,7 +620,7 @@ impl<'a> CfgBuilder<'a> {
                 let mut uses = HashSet::new();
                 collect_used_variables_expression(iterable, &mut uses);
                 let mut defs = HashSet::new();
-                defs.insert(variable.clone());
+                collect_pattern_bindings(pattern, &mut defs);
                 self.nodes[iteration_node].uses = uses;
                 self.nodes[iteration_node].defs = defs;
                 let mut successors = vec![body_entry, next];
@@ -736,13 +685,8 @@ impl<'a> CfgBuilder<'a> {
                                 successors.push(*target);
                             }
                         }
-                        let guard_node = self.add_node(
-                            None,
-                            uses,
-                            HashSet::new(),
-                            successors,
-                            None,
-                        );
+                        let guard_node =
+                            self.add_node(None, uses, HashSet::new(), successors, None);
                         Some(guard_node)
                     } else {
                         None
@@ -896,16 +840,12 @@ impl<'a> CfgBuilder<'a> {
             Statement::Function { body, .. } => {
                 let mut uses = HashSet::new();
                 collect_used_variables_statements(body, &mut uses);
-                self.add_node(
-                    Some(statement_id),
-                    uses,
-                    HashSet::new(),
-                    vec![next],
-                    None,
-                )
+                self.add_node(Some(statement_id), uses, HashSet::new(), vec![next], None)
             }
 
-            Statement::Class { fields, methods, .. } => {
+            Statement::Class {
+                fields, methods, ..
+            } => {
                 let mut uses = HashSet::new();
                 for field in fields {
                     if let Some(initializer) = &field.initializer {
@@ -915,13 +855,7 @@ impl<'a> CfgBuilder<'a> {
                 for method in methods {
                     collect_used_variables_statements(&method.body, &mut uses);
                 }
-                self.add_node(
-                    Some(statement_id),
-                    uses,
-                    HashSet::new(),
-                    vec![next],
-                    None,
-                )
+                self.add_node(Some(statement_id), uses, HashSet::new(), vec![next], None)
             }
 
             Statement::Enum { methods, .. } => {
@@ -929,13 +863,7 @@ impl<'a> CfgBuilder<'a> {
                 for method in methods {
                     collect_used_variables_statements(&method.body, &mut uses);
                 }
-                self.add_node(
-                    Some(statement_id),
-                    uses,
-                    HashSet::new(),
-                    vec![next],
-                    None,
-                )
+                self.add_node(Some(statement_id), uses, HashSet::new(), vec![next], None)
             }
 
             Statement::Import { .. }
@@ -1029,7 +957,9 @@ fn discover_and_optimize_function(statement: &mut Statement) {
             let locals = collect_function_local_bindings(params, body);
             eliminate_dead_stores_in_block(body, &locals);
         }
-        Statement::Class { fields, methods, .. } => {
+        Statement::Class {
+            fields, methods, ..
+        } => {
             for field in fields {
                 if let Some(initializer) = &mut field.initializer {
                     discover_and_optimize_nested_functions_in_expression(initializer);
@@ -1050,9 +980,9 @@ fn discover_and_optimize_function(statement: &mut Statement) {
         Statement::Let { value, .. }
         | Statement::Expression { expression: value }
         | Statement::Throw { value }
-        | Statement::Return {
-            value: Some(value),
-        } => discover_and_optimize_nested_functions_in_expression(value),
+        | Statement::Return { value: Some(value) } => {
+            discover_and_optimize_nested_functions_in_expression(value)
+        }
         Statement::Assignment { target, value } => {
             discover_and_optimize_nested_functions_in_assignment_target(target);
             discover_and_optimize_nested_functions_in_expression(value);
@@ -1093,7 +1023,9 @@ fn discover_and_optimize_nested_functions_in_expression(expression: &mut Express
             discover_and_optimize_nested_functions_in_expression(left);
             discover_and_optimize_nested_functions_in_expression(right);
         }
-        Expression::Call { callee, arguments, .. } => {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
             discover_and_optimize_nested_functions_in_expression(callee);
             for argument in arguments {
                 discover_and_optimize_nested_functions_in_expression(argument);
@@ -1137,24 +1069,17 @@ fn discover_and_optimize_nested_functions_in_expression(expression: &mut Express
     }
 }
 
-fn collect_function_local_bindings(
-    params: &[String],
-    statements: &[Statement],
-) -> HashSet<String> {
+fn collect_function_local_bindings(params: &[String], statements: &[Statement]) -> HashSet<String> {
     let mut locals = params.iter().cloned().collect();
     collect_local_bindings_from_statements(statements, &mut locals);
     locals
 }
 
 #[cfg(test)]
-fn collect_liveness_definition_names(
-    statements: &[Statement],
-    locals: &mut HashSet<String>,
-) {
+fn collect_liveness_definition_names(statements: &[Statement], locals: &mut HashSet<String>) {
     for statement in statements {
         match statement {
-            Statement::Positioned { statement, .. }
-            | Statement::Export { statement } => {
+            Statement::Positioned { statement, .. } | Statement::Export { statement } => {
                 collect_liveness_definition_names(std::slice::from_ref(statement), locals);
             }
             Statement::Let { name, .. } => {
@@ -1222,10 +1147,7 @@ fn collect_liveness_definition_names(
     }
 }
 
-fn collect_local_bindings_from_statements(
-    statements: &[Statement],
-    locals: &mut HashSet<String>,
-) {
+fn collect_local_bindings_from_statements(statements: &[Statement], locals: &mut HashSet<String>) {
     for statement in statements {
         match statement {
             Statement::Positioned { statement, .. } => {
@@ -1234,8 +1156,8 @@ fn collect_local_bindings_from_statements(
             Statement::Let { name, .. } => {
                 locals.insert(name.clone());
             }
-            Statement::ForIn { variable, body, .. } => {
-                locals.insert(variable.clone());
+            Statement::ForIn { pattern, body, .. } => {
+                collect_pattern_bindings(pattern, locals);
                 collect_local_bindings_from_statements(body, locals);
             }
             Statement::If {
@@ -1352,10 +1274,7 @@ fn collect_pattern_bindings(pattern: &super::him::Pattern, locals: &mut HashSet<
     }
 }
 
-fn eliminate_dead_stores_in_block(
-    statements: &mut Vec<Statement>,
-    locals: &HashSet<String>,
-) {
+fn eliminate_dead_stores_in_block(statements: &mut Vec<Statement>, locals: &HashSet<String>) {
     for statement in statements.iter_mut() {
         discover_and_optimize_function(statement);
     }
@@ -1385,8 +1304,7 @@ fn remove_dead_store_nodes(
         }
 
         match &mut statements[index] {
-            Statement::Positioned { statement, .. }
-            | Statement::Export { statement } => {
+            Statement::Positioned { statement, .. } | Statement::Export { statement } => {
                 remove_dead_store_in_statement(statement, dead_stores, statement_id);
             }
             Statement::Block(body) => {
@@ -1455,8 +1373,7 @@ fn remove_dead_store_in_statement(
     }
 
     match statement.as_mut() {
-        Statement::Positioned { statement, .. }
-        | Statement::Export { statement } => {
+        Statement::Positioned { statement, .. } | Statement::Export { statement } => {
             remove_dead_store_in_statement(statement, dead_stores, statement_id);
         }
         Statement::Block(body) => remove_dead_store_nodes(body, dead_stores, statement_id),
@@ -1493,12 +1410,10 @@ fn remove_dead_store_in_statement(
 
 type ConstantEnvironment = HashMap<String, Literal>;
 
-
 fn propagate_aliases_in_nested_functions(statements: &mut [Statement]) {
     for statement in statements {
         match statement {
-            Statement::Positioned { statement, .. }
-            | Statement::Export { statement } => {
+            Statement::Positioned { statement, .. } | Statement::Export { statement } => {
                 propagate_aliases_in_nested_functions(std::slice::from_mut(statement.as_mut()));
             }
             Statement::Function { body, .. } => {
@@ -1611,8 +1526,7 @@ fn propagate_aliases_statement(
             output.push(statement.clone());
         }
 
-        Statement::Expression { expression }
-        | Statement::Throw { value: expression } => {
+        Statement::Expression { expression } | Statement::Throw { value: expression } => {
             propagate_aliases_expression(expression, environment);
             output.push(statement.clone());
         }
@@ -1647,10 +1561,7 @@ fn propagate_aliases_statement(
             }
 
             if else_branch.is_some() {
-                *environment = merge_alias_environments(
-                    &then_environment,
-                    &else_environment,
-                );
+                *environment = merge_alias_environments(&then_environment, &else_environment);
             } else {
                 *environment = incoming;
             }
@@ -1667,11 +1578,19 @@ fn propagate_aliases_statement(
             output.push(statement.clone());
         }
 
-        Statement::ForIn { variable, iterable, body } => {
+        Statement::ForIn {
+            pattern,
+            iterable,
+            body,
+        } => {
             propagate_aliases_expression(iterable, environment);
 
             let mut body_environment = environment.clone();
-            invalidate_alias(&mut body_environment, variable);
+            let mut bindings = HashSet::new();
+            collect_pattern_binding_names_for_aliases(pattern, &mut bindings);
+            for name in bindings {
+                invalidate_alias(&mut body_environment, &name);
+            }
             propagate_aliases_block(body, &mut body_environment);
 
             output.push(statement.clone());
@@ -1766,7 +1685,9 @@ fn propagate_aliases_expression(expression: &mut Expression, environment: &Alias
             propagate_aliases_expression(right, environment);
         }
         Expression::Function { .. } => {}
-        Expression::Call { callee, arguments, .. } => {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
             propagate_aliases_expression(callee, environment);
             for argument in arguments {
                 propagate_aliases_expression(argument, environment);
@@ -1943,9 +1864,7 @@ fn eliminate_dead_values_in_block(statements: &mut Vec<Statement>) {
     let mut transformed = Vec::with_capacity(original.len());
 
     for statement in original {
-        if is_dead_pure_let(&statement, &used)
-            || is_dead_pure_expression_statement(&statement)
-        {
+        if is_dead_pure_let(&statement, &used) || is_dead_pure_expression_statement(&statement) {
             continue;
         }
         transformed.push(statement);
@@ -2054,10 +1973,9 @@ fn is_pure_non_throwing_expression(expression: &Expression) -> bool {
     match expression {
         Expression::Literal(_) | Expression::Variable(_) | Expression::SelfValue => true,
 
-        Expression::Unary { operator, right, .. } => {
-            matches!(operator, super::him::UnaryOp::Not)
-                && is_pure_non_throwing_expression(right)
-        }
+        Expression::Unary {
+            operator, right, ..
+        } => matches!(operator, super::him::UnaryOp::Not) && is_pure_non_throwing_expression(right),
 
         Expression::Binary {
             operator,
@@ -2185,7 +2103,9 @@ fn collect_used_variables(statement: &Statement, used: &mut HashSet<String>) {
             }
         }
         Statement::Export { statement } => collect_used_variables(statement, used),
-        Statement::Class { fields, methods, .. } => {
+        Statement::Class {
+            fields, methods, ..
+        } => {
             for field in fields {
                 if let Some(initializer) = &field.initializer {
                     collect_used_variables_expression(initializer, used);
@@ -2239,7 +2159,9 @@ fn collect_used_variables_expression(expression: &Expression, used: &mut HashSet
                 collect_used_variables(statement, used);
             }
         }
-        Expression::Call { callee, arguments, .. } => {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
             collect_used_variables_expression(callee, used);
             for argument in arguments {
                 collect_used_variables_expression(argument, used);
@@ -2280,7 +2202,6 @@ fn collect_used_variables_expression(expression: &Expression, used: &mut HashSet
         Expression::Literal(_) | Expression::SelfValue => {}
     }
 }
-
 
 fn propagate_block(statements: &mut Vec<Statement>, environment: &mut ConstantEnvironment) {
     let original = std::mem::take(statements);
@@ -2382,7 +2303,9 @@ fn eliminate_statement(statement: &mut Statement) {
 
         Statement::Export { statement } => eliminate_statement(statement),
 
-        Statement::Class { fields, methods, .. } => {
+        Statement::Class {
+            fields, methods, ..
+        } => {
             for field in fields {
                 if let Some(initializer) = &mut field.initializer {
                     eliminate_expression(initializer);
@@ -2411,15 +2334,16 @@ fn eliminate_statement(statement: &mut Statement) {
 fn statement_terminates(statement: &Statement) -> bool {
     match statement {
         Statement::Positioned { statement, .. } => statement_terminates(statement),
-        Statement::Return { .. } | Statement::Throw { .. } | Statement::Break | Statement::Continue => true,
+        Statement::Return { .. }
+        | Statement::Throw { .. }
+        | Statement::Break
+        | Statement::Continue => true,
         Statement::Block(statements) => statements.last().is_some_and(statement_terminates),
         Statement::If {
             then_branch,
             else_branch: Some(else_branch),
             ..
-        } => {
-            statements_terminate(then_branch) && statements_terminate(else_branch)
-        }
+        } => statements_terminate(then_branch) && statements_terminate(else_branch),
         Statement::While {
             condition: Expression::Literal(Literal::Bool(true)),
             body,
@@ -2491,7 +2415,9 @@ fn eliminate_expression(expression: &mut Expression) {
             eliminate_expression(right);
         }
         Expression::Function { body, .. } => eliminate_block(body),
-        Expression::Call { callee, arguments, .. } => {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
             eliminate_expression(callee);
             for argument in arguments {
                 eliminate_expression(argument);
@@ -2517,7 +2443,9 @@ fn eliminate_expression(expression: &mut Expression) {
                 eliminate_expression(value);
             }
         }
-        Expression::Try(expression) | Expression::Await(expression) => eliminate_expression(expression),
+        Expression::Try(expression) | Expression::Await(expression) => {
+            eliminate_expression(expression)
+        }
         Expression::Ternary {
             condition,
             then_expr,
@@ -2634,7 +2562,12 @@ fn propagate_statement(
                 *environment = incoming;
                 output.push(Statement::Block(selected));
             } else {
-                *environment = merge_environments(&incoming, &then_environment, &else_environment, else_branch.is_some());
+                *environment = merge_environments(
+                    &incoming,
+                    &then_environment,
+                    &else_environment,
+                    else_branch.is_some(),
+                );
                 output.push(statement.clone());
             }
         }
@@ -2652,11 +2585,15 @@ fn propagate_statement(
             output.push(statement.clone());
         }
 
-        Statement::ForIn { variable, iterable, body } => {
+        Statement::ForIn {
+            pattern,
+            iterable,
+            body,
+        } => {
             propagate_expression(iterable, environment);
 
             let mut body_environment = environment.clone();
-            body_environment.remove(variable);
+            remove_pattern_bindings(pattern, &mut body_environment);
             propagate_block(body, &mut body_environment);
 
             output.push(statement.clone());
@@ -2720,7 +2657,9 @@ fn propagate_statement(
             output.push(statement.clone());
         }
 
-        Statement::Class { fields, methods, .. } => {
+        Statement::Class {
+            fields, methods, ..
+        } => {
             for field in fields {
                 if let Some(initializer) = &mut field.initializer {
                     let isolated_environment = ConstantEnvironment::new();
@@ -2768,9 +2707,13 @@ fn merge_environments(
     let mut merged = ConstantEnvironment::new();
 
     for (name, value) in incoming {
-        let same_then = then_environment.get(name).is_some_and(|candidate| literal_equals(value, candidate));
+        let same_then = then_environment
+            .get(name)
+            .is_some_and(|candidate| literal_equals(value, candidate));
         let same_else = if has_else {
-            else_environment.get(name).is_some_and(|candidate| literal_equals(value, candidate))
+            else_environment
+                .get(name)
+                .is_some_and(|candidate| literal_equals(value, candidate))
         } else {
             true
         };
@@ -2783,10 +2726,7 @@ fn merge_environments(
     merged
 }
 
-fn propagate_assignment_target(
-    target: &mut AssignmentTarget,
-    environment: &ConstantEnvironment,
-) {
+fn propagate_assignment_target(target: &mut AssignmentTarget, environment: &ConstantEnvironment) {
     match target {
         AssignmentTarget::Variable(_) => {}
         AssignmentTarget::Index { object, index } => {
@@ -2827,10 +2767,7 @@ fn remove_pattern_bindings(pattern: &super::him::Pattern, environment: &mut Cons
     }
 }
 
-fn propagate_expression(
-    expression: &mut Expression,
-    environment: &ConstantEnvironment,
-) {
+fn propagate_expression(expression: &mut Expression, environment: &ConstantEnvironment) {
     match expression {
         Expression::Variable(name) => {
             if let Some(value) = environment.get(name) {
@@ -2857,7 +2794,9 @@ fn propagate_expression(
             propagate_block(body, &mut isolated_environment);
         }
 
-        Expression::Call { callee, arguments, .. } => {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
             propagate_expression(callee, environment);
             for argument in arguments {
                 propagate_expression(argument, environment);
@@ -3001,7 +2940,9 @@ fn fold_statement(statement: &mut Statement) {
 
         Statement::Export { statement } => fold_statement(statement),
 
-        Statement::Class { fields, methods, .. } => {
+        Statement::Class {
+            fields, methods, ..
+        } => {
             for field in fields {
                 if let Some(initializer) = &mut field.initializer {
                     fold_expression(initializer);
@@ -3053,11 +2994,11 @@ fn fold_match_arm(arm: &mut MatchArm) {
 
 fn fold_expression(expression: &mut Expression) {
     match expression {
-        Expression::Literal(_)
-        | Expression::Variable(_)
-        | Expression::SelfValue => {}
+        Expression::Literal(_) | Expression::Variable(_) | Expression::SelfValue => {}
 
-        Expression::Unary { operator, right, .. } => {
+        Expression::Unary {
+            operator, right, ..
+        } => {
             fold_expression(right);
 
             let replacement = match right.as_ref() {
@@ -3205,9 +3146,7 @@ fn fold_binary(operator: BinaryOp, left: &Literal, right: &Literal) -> Option<Li
 
         BinaryOp::Less => fold_compare(left, right, |ordering| ordering == Ordering::Less),
         BinaryOp::LessEqual => fold_compare(left, right, |ordering| ordering != Ordering::Greater),
-        BinaryOp::Greater => {
-            fold_compare(left, right, |ordering| ordering == Ordering::Greater)
-        }
+        BinaryOp::Greater => fold_compare(left, right, |ordering| ordering == Ordering::Greater),
         BinaryOp::GreaterEqual => fold_compare(left, right, |ordering| ordering != Ordering::Less),
 
         BinaryOp::And => {
@@ -3291,12 +3230,8 @@ fn fold_divide(left: &Literal, right: &Literal) -> Option<Literal> {
         (Literal::Integer(a), Literal::Float(b)) if *b != 0.0 => {
             Some(Literal::Float(*a as f64 / *b))
         }
-        (Literal::Float(a), Literal::Integer(b)) if *b != 0 => {
-            Some(Literal::Float(*a / *b as f64))
-        }
-        (Literal::Float(a), Literal::Float(b)) if *b != 0.0 => {
-            Some(Literal::Float(*a / *b))
-        }
+        (Literal::Float(a), Literal::Integer(b)) if *b != 0 => Some(Literal::Float(*a / *b as f64)),
+        (Literal::Float(a), Literal::Float(b)) if *b != 0.0 => Some(Literal::Float(*a / *b)),
         _ => None,
     }
 }
@@ -3313,12 +3248,8 @@ fn fold_modulo(left: &Literal, right: &Literal) -> Option<Literal> {
         (Literal::Integer(a), Literal::Float(b)) if *b != 0.0 => {
             Some(Literal::Float((*a as f64) % *b))
         }
-        (Literal::Float(a), Literal::Integer(b)) if *b != 0 => {
-            Some(Literal::Float(*a % *b as f64))
-        }
-        (Literal::Float(a), Literal::Float(b)) if *b != 0.0 => {
-            Some(Literal::Float(*a % *b))
-        }
+        (Literal::Float(a), Literal::Integer(b)) if *b != 0 => Some(Literal::Float(*a % *b as f64)),
+        (Literal::Float(a), Literal::Float(b)) if *b != 0.0 => Some(Literal::Float(*a % *b)),
         _ => None,
     }
 }
@@ -3329,9 +3260,7 @@ fn fold_bitwise(
     operation: impl FnOnce(i64, i64) -> i64,
 ) -> Option<Literal> {
     match (left, right) {
-        (Literal::Integer(a), Literal::Integer(b)) => {
-            Some(Literal::Integer(operation(*a, *b)))
-        }
+        (Literal::Integer(a), Literal::Integer(b)) => Some(Literal::Integer(operation(*a, *b))),
         _ => None,
     }
 }
@@ -3445,7 +3374,7 @@ fn literal_truthy(literal: &Literal) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::compiler::him::Pattern;
     fn literal(expression: Expression) -> Literal {
         match expression {
             Expression::Literal(value) => value,
@@ -3471,7 +3400,10 @@ mod tests {
 
         fold_expression(&mut expression);
 
-        assert!(matches!(expression, Expression::Literal(Literal::Integer(14))));
+        assert!(matches!(
+            expression,
+            Expression::Literal(Literal::Integer(14))
+        ));
     }
 
     #[test]
@@ -3483,17 +3415,22 @@ mod tests {
         )
         .expect("concaténation attendue");
 
-        assert_eq!(literal(Expression::Literal(result)), Literal::String("Kastel".into()));
+        assert_eq!(
+            literal(Expression::Literal(result)),
+            Literal::String("Kastel".into())
+        );
     }
 
     #[test]
     fn never_folds_division_by_zero() {
-        assert!(fold_binary(
-            BinaryOp::Divide,
-            &Literal::Integer(10),
-            &Literal::Integer(0),
-        )
-        .is_none());
+        assert!(
+            fold_binary(
+                BinaryOp::Divide,
+                &Literal::Integer(10),
+                &Literal::Integer(0),
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -3615,8 +3552,6 @@ mod tests {
         )));
     }
 
-
-
     #[test]
     fn copy_propagator_respects_for_binding_shadowing() {
         let mut body = vec![Statement::Function {
@@ -3633,7 +3568,7 @@ mod tests {
                     type_annotation: None,
                 },
                 Statement::ForIn {
-                    variable: "item".into(),
+                    pattern: Pattern::Binding("item".into()),
                     iterable: Expression::Variable("items".into()),
                     body: vec![Statement::Expression {
                         expression: Expression::Variable("item".into()),
@@ -3736,7 +3671,11 @@ mod tests {
         let Statement::Function { body, .. } = &body[0] else {
             panic!("expected function");
         };
-        let Statement::Try { catch_body: Some(body), .. } = &body[1] else {
+        let Statement::Try {
+            catch_body: Some(body),
+            ..
+        } = &body[1]
+        else {
             panic!("expected try");
         };
         assert!(matches!(
@@ -4185,7 +4124,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn removes_statements_after_return() {
         let mut statements = vec![
@@ -4547,28 +4485,26 @@ mod tests {
 
     #[test]
     fn cfg_liveness_tracks_match_arm_definitions_and_fallbacks() {
-        let statements = vec![
-            Statement::Match {
-                value: Expression::Variable("value".into()),
-                arms: vec![
-                    MatchArm {
-                        pattern: super::super::him::Pattern::Literal(Literal::Integer(1)),
-                        guard: None,
-                        body: vec![Statement::Assignment {
-                            target: AssignmentTarget::Variable("x".into()),
-                            value: Expression::Literal(Literal::Integer(10)),
-                        }],
-                    },
-                    MatchArm {
-                        pattern: super::super::him::Pattern::Wildcard,
-                        guard: None,
-                        body: vec![Statement::Return {
-                            value: Some(Expression::Variable("x".into())),
-                        }],
-                    },
-                ],
-            },
-        ];
+        let statements = vec![Statement::Match {
+            value: Expression::Variable("value".into()),
+            arms: vec![
+                MatchArm {
+                    pattern: super::super::him::Pattern::Literal(Literal::Integer(1)),
+                    guard: None,
+                    body: vec![Statement::Assignment {
+                        target: AssignmentTarget::Variable("x".into()),
+                        value: Expression::Literal(Literal::Integer(10)),
+                    }],
+                },
+                MatchArm {
+                    pattern: super::super::him::Pattern::Wildcard,
+                    guard: None,
+                    body: vec![Statement::Return {
+                        value: Some(Expression::Variable("x".into())),
+                    }],
+                },
+            ],
+        }];
 
         let summary = LivenessAnalyzer.analyze_block(&statements);
 
@@ -4578,16 +4514,14 @@ mod tests {
 
     #[test]
     fn cfg_liveness_keeps_match_guard_dependency() {
-        let statements = vec![
-            Statement::Match {
-                value: Expression::Variable("value".into()),
-                arms: vec![MatchArm {
-                    pattern: super::super::him::Pattern::Binding("item".into()),
-                    guard: Some(Expression::Variable("item".into())),
-                    body: vec![Statement::Return { value: None }],
-                }],
-            },
-        ];
+        let statements = vec![Statement::Match {
+            value: Expression::Variable("value".into()),
+            arms: vec![MatchArm {
+                pattern: super::super::him::Pattern::Binding("item".into()),
+                guard: Some(Expression::Variable("item".into())),
+                body: vec![Statement::Return { value: None }],
+            }],
+        }];
 
         let summary = LivenessAnalyzer.analyze_block(&statements);
 
@@ -4787,7 +4721,10 @@ mod tests {
         let Statement::Function { body, .. } = &statements[0] else {
             panic!("fonction attendue");
         };
-        let Statement::While { body: loop_body, .. } = &body[0] else {
+        let Statement::While {
+            body: loop_body, ..
+        } = &body[0]
+        else {
             panic!("while attendu");
         };
         assert!(loop_body.is_empty());
@@ -4816,7 +4753,10 @@ mod tests {
         let Statement::Function { body, .. } = &statements[0] else {
             panic!("fonction attendue");
         };
-        let Statement::While { body: loop_body, .. } = &body[0] else {
+        let Statement::While {
+            body: loop_body, ..
+        } = &body[0]
+        else {
             panic!("while attendu");
         };
         assert_eq!(loop_body.len(), 1);
@@ -4848,7 +4788,10 @@ mod tests {
         let Statement::Function { body, .. } = &statements[0] else {
             panic!("fonction attendue");
         };
-        let Statement::While { body: loop_body, .. } = &body[0] else {
+        let Statement::While {
+            body: loop_body, ..
+        } = &body[0]
+        else {
             panic!("while attendu");
         };
         assert_eq!(loop_body.len(), 1);
@@ -4881,7 +4824,10 @@ mod tests {
         let Statement::Function { body, .. } = &statements[0] else {
             panic!("fonction attendue");
         };
-        let Statement::While { body: loop_body, .. } = &body[0] else {
+        let Statement::While {
+            body: loop_body, ..
+        } = &body[0]
+        else {
             panic!("while attendu");
         };
         assert_eq!(loop_body.len(), 2);
@@ -4971,7 +4917,11 @@ mod tests {
         let Statement::While { body, .. } = &body[0] else {
             panic!("while attendu");
         };
-        let Statement::Try { catch_body: Some(catch_body), .. } = &body[0] else {
+        let Statement::Try {
+            catch_body: Some(catch_body),
+            ..
+        } = &body[0]
+        else {
             panic!("try attendu");
         };
         assert!(matches!(
@@ -5273,27 +5223,24 @@ mod tests {
         assert_eq!(finally_body.as_ref().expect("finally attendu").len(), 2);
     }
 
-
     // Ces tests observent la vivacité à l'entrée du bloc. Une définition de
     // `x` placée avant la région testée tuerait légitimement `x` dans `live_in`;
     // on utilise donc ici les lectures de `x` comme demande de liveness directe.
     #[test]
     fn cfg_liveness_tracks_try_catch_and_finally_paths() {
-        let statements = vec![
-            Statement::Try {
-                try_body: vec![Statement::Expression {
-                    expression: Expression::Variable("operation".into()),
-                }],
-                catch_name: Some("error".into()),
-                catch_type: None,
-                catch_body: Some(vec![Statement::Expression {
-                    expression: Expression::Variable("x".into()),
-                }]),
-                finally_body: Some(vec![Statement::Expression {
-                    expression: Expression::Variable("x".into()),
-                }]),
-            },
-        ];
+        let statements = vec![Statement::Try {
+            try_body: vec![Statement::Expression {
+                expression: Expression::Variable("operation".into()),
+            }],
+            catch_name: Some("error".into()),
+            catch_type: None,
+            catch_body: Some(vec![Statement::Expression {
+                expression: Expression::Variable("x".into()),
+            }]),
+            finally_body: Some(vec![Statement::Expression {
+                expression: Expression::Variable("x".into()),
+            }]),
+        }];
 
         let summary = LivenessAnalyzer.analyze_block(&statements);
 
@@ -5303,17 +5250,15 @@ mod tests {
 
     #[test]
     fn cfg_liveness_routes_return_through_finally() {
-        let statements = vec![
-            Statement::Try {
-                try_body: vec![Statement::Return { value: None }],
-                catch_name: None,
-                catch_type: None,
-                catch_body: None,
-                finally_body: Some(vec![Statement::Expression {
-                    expression: Expression::Variable("x".into()),
-                }]),
-            },
-        ];
+        let statements = vec![Statement::Try {
+            try_body: vec![Statement::Return { value: None }],
+            catch_name: None,
+            catch_type: None,
+            catch_body: None,
+            finally_body: Some(vec![Statement::Expression {
+                expression: Expression::Variable("x".into()),
+            }]),
+        }];
 
         let summary = LivenessAnalyzer.analyze_block(&statements);
 
@@ -5438,24 +5383,21 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn cfg_liveness_preserves_continue_path_through_finally() {
-        let statements = vec![
-            Statement::While {
-                condition: Expression::Variable("x".into()),
-                body: vec![
-                    Statement::Try {
-                        try_body: vec![Statement::Continue],
-                        catch_name: None,
-                        catch_type: None,
-                        catch_body: None,
-                        finally_body: Some(vec![]),
-                    },
-                    Statement::Return { value: None },
-                ],
-            },
-        ];
+        let statements = vec![Statement::While {
+            condition: Expression::Variable("x".into()),
+            body: vec![
+                Statement::Try {
+                    try_body: vec![Statement::Continue],
+                    catch_name: None,
+                    catch_type: None,
+                    catch_body: None,
+                    finally_body: Some(vec![]),
+                },
+                Statement::Return { value: None },
+            ],
+        }];
 
         let summary = LivenessAnalyzer.analyze_block(&statements);
 
@@ -5487,5 +5429,4 @@ mod tests {
 
         assert!(summary.live_in.contains("x"));
     }
-
 }

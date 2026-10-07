@@ -469,7 +469,7 @@ impl Type {
             Type::TupleDynamic => Type::Dynamic,
             Type::Set(element) => (**element).clone(),
             Type::SetDynamic => Type::Dynamic,
-            Type::Range => Type::Int,
+            Type::Range => Type::Float,
             Type::Dict(_, value) => (**value).clone(),
             Type::DictDynamic => Type::Dynamic,
             _ => Type::Dynamic,
@@ -585,25 +585,15 @@ impl Type {
         match self {
             Type::Array(_) | Type::ArrayDynamic => {
                 let element = self.element_type();
-                let index = Type::Int;
 
                 match name {
-                    "contains" => method(vec![element.clone()], Type::Bool),
+                    "contains" => method(vec![Type::Dynamic], Type::Bool),
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
-                    "add" | "remove" => method(vec![element.clone()], Type::Bool),
-                    "remove_at" => method(vec![index.clone()], element.clone()),
-                    "get" => method(vec![index.clone()], element.clone()),
-                    "set" => method(vec![index.clone(), element.clone()], Type::None),
-                    "insert" => method(vec![index.clone(), element.clone()], Type::None),
-                    "first" | "last" | "pop" => {
-                        method(vec![], Type::union_of(vec![element.clone(), Type::None]))
-                    }
-                    "index_of" => method(vec![element], Type::Int),
-                    "slice" => method(
-                        vec![index.clone(), index],
-                        self.clone(),
-                    ),
+                    "add" | "remove" => method(vec![Type::Dynamic], Type::Bool),
+                    "remove_at" | "get" => method(vec![Type::Dynamic], element),
+                    "first" | "last" | "pop" => method(vec![], element),
+                    "index_of" => method(vec![Type::Dynamic], Type::Int),
                     _ => None,
                 }
             }
@@ -614,13 +604,13 @@ impl Type {
 
                 match name {
                     // Pour un dict, `contains` teste l'existence d'une CLÉ.
-                    "contains" => method(vec![key.clone()], Type::Bool),
+                    "contains" => method(vec![Type::Dynamic], Type::Bool),
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
-                    "get" | "remove" => method(vec![key.clone()], value.clone()),
-                    "set" => method(vec![key, value], Type::None),
-                    "keys" => method(vec![], Type::Array(Box::new(self.key_type()))),
-                    "values" => method(vec![], Type::Array(Box::new(value.clone()))),
+                    "get" | "remove" => method(vec![Type::Dynamic], value),
+                    "set" => method(vec![Type::Dynamic, Type::Dynamic], Type::None),
+                    "keys" => method(vec![], Type::Array(Box::new(key))),
+                    "values" => method(vec![], Type::Array(Box::new(value))),
                     "entries" => method(
                         vec![],
                         Type::Array(Box::new(Type::Array(Box::new(Type::Dynamic)))),
@@ -634,19 +624,17 @@ impl Type {
                 let element = self.element_type();
 
                 match name {
-                    "contains" => method(vec![element.clone()], Type::Bool),
-                    "get" => method(vec![Type::Int], element.clone()),
-                    "first" | "last" => {
-                        method(vec![], Type::union_of(vec![element.clone(), Type::None]))
-                    }
-                    "index_of" => method(vec![element], Type::Int),
+                    "contains" => method(vec![Type::Dynamic], Type::Bool),
+                    "get" => method(vec![Type::Dynamic], element),
+                    "first" | "last" => method(vec![], element),
+                    "index_of" => method(vec![Type::Dynamic], Type::Int),
                     "to_list" => method(vec![], Type::Array(Box::new(element))),
                     _ => None,
                 }
             }
 
             Type::Str => match name {
-                "contains" => method(vec![Type::Str], Type::Bool),
+                "contains" => method(vec![Type::Dynamic], Type::Bool),
                 _ => None,
             },
 

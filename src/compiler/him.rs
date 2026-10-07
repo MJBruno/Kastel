@@ -174,7 +174,7 @@ pub(crate) enum Statement {
         body: Vec<Statement>,
     },
     ForIn {
-        variable: String,
+        pattern: Pattern,
         iterable: Expression,
         body: Vec<Statement>,
     },
@@ -442,11 +442,11 @@ fn lower_statement(statement: &ast::Statement) -> Statement {
             body: body.iter().map(lower_statement).collect(),
         },
         ast::Statement::ForIn {
-            variable,
+            pattern,
             iterable,
             body,
         } => Statement::ForIn {
-            variable: variable.clone(),
+            pattern: lower_pattern(pattern),
             iterable: lower_expression(iterable),
             body: body.iter().map(lower_statement).collect(),
         },

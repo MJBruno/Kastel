@@ -374,10 +374,9 @@ impl Parser {
     // ============================================================
 
     fn parse_for_statement(&mut self) -> Result<Statement, ParserError> {
-        let variable =
-            self.consume(TokenKind::Identifier, "Nom de variable attendu après 'for'")?;
+        let pattern = self.parse_pattern()?;
 
-        self.consume(TokenKind::In, "'in' attendu après le nom de variable")?;
+        self.consume(TokenKind::In, "'in' attendu après le pattern du for")?;
 
         let iterable = self.parse_expression()?;
 
@@ -386,7 +385,7 @@ impl Parser {
         let body = self.parse_block_statement()?;
 
         Ok(Statement::ForIn {
-            variable: variable.lexeme,
+            pattern,
             iterable,
             body,
         })
