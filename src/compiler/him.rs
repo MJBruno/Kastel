@@ -36,6 +36,7 @@ pub(crate) enum TypeExpr {
     },
     Union(Vec<TypeExpr>),
     Record(Vec<(String, TypeExpr)>),
+    Tuple(Vec<TypeExpr>),
 }
 
 #[derive(Debug, Clone)]
@@ -560,22 +561,38 @@ fn lower_generic_param(param: &ast::GenericParam) -> GenericParam {
     }
 }
 
+// src/compiler/him.rs
+
 fn lower_type_expr(type_expr: &ast::TypeExpr) -> TypeExpr {
     match type_expr {
         ast::TypeExpr::Named(name) => TypeExpr::Named(name.clone()),
+
         ast::TypeExpr::Generic { name, arguments } => TypeExpr::Generic {
             name: name.clone(),
             arguments: arguments.iter().map(lower_type_expr).collect(),
         },
+
         ast::TypeExpr::Union(types) => {
             TypeExpr::Union(types.iter().map(lower_type_expr).collect())
         }
+
         ast::TypeExpr::Record(fields) => TypeExpr::Record(
             fields
                 .iter()
-                .map(|(name, type_expr)| (name.clone(), lower_type_expr(type_expr)))
+                .map(|(name, type_expr)| {
+                    (name.clone(), lower_type_expr(type_expr))
+                })
                 .collect(),
         ),
+
+        ast::TypeExpr::Tuple(elements) => {
+            TypeExpr::Tuple(
+                elements
+                    .iter()
+                    .map(lower_type_expr)
+                    .collect(),
+            )
+        }
     }
 }
 
@@ -861,6 +878,9 @@ fn lower_binary_op(operator: &ast::BinaryOp) -> BinaryOp {
         ast::BinaryOp::ShiftRight => BinaryOp::ShiftRight,
     }
 }
+
+
+
 
 #[cfg(test)]
 mod tests {

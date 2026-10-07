@@ -5,14 +5,14 @@ use crate::frontend::ast::*;
 
 use super::{
     builtin_types,
+    call_metadata::{
+        CallSite, CallTarget, CallableTarget, ResolvedCall, ResolvedCallTable, ResolvedMember,
+        ResolvedMemberTable,
+    },
+    call_resolution::{Callable, validate_arity},
     capability::Capability,
     compiler::MAX_EXPRESSION_DEPTH,
     module_types::{ImportedType, ModuleTypeInterface, ModuleTypeLoader},
-    call_metadata::{
-        CallSite, CallTarget, CallableTarget, ResolvedCall, ResolvedCallTable,
-        ResolvedMember, ResolvedMemberTable,
-    },
-    call_resolution::{validate_arity, Callable},
     overloads::OverloadSet,
     types::{FunctionType, GenericConstraint, Type},
 };
@@ -705,6 +705,15 @@ impl TypeChecker {
                             name.clone(),
                             self.resolve_type_in_environment(field, environment, depth + 1),
                         )
+                    })
+                    .collect(),
+            ),
+
+            TypeExpr::Tuple(elements) => Type::Tuple(
+                elements
+                    .iter()
+                    .map(|element| {
+                        self.resolve_type_in_environment(element, environment, depth + 1)
                     })
                     .collect(),
             ),
@@ -1428,6 +1437,17 @@ impl TypeChecker {
                 for (_, field_type) in fields {
                     self.validate_alias_constraints_in_type_expr(
                         field_type,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                Ok(())
+            }
+            TypeExpr::Tuple(elements) => {
+                for element in elements {
+                    self.validate_alias_constraints_in_type_expr(
+                        element,
                         environment,
                         active_constraints,
                         subject_name,
@@ -2780,7 +2800,8 @@ impl TypeChecker {
 
                     let mut method_map: HashMap<String, OverloadSet<FunctionType>> = HashMap::new();
                     let mut field_map: HashMap<String, Type> = HashMap::new();
-                    let mut static_method_map: HashMap<String, OverloadSet<FunctionType>> = HashMap::new();
+                    let mut static_method_map: HashMap<String, OverloadSet<FunctionType>> =
+                        HashMap::new();
                     let mut static_field_map: HashMap<String, Type> = HashMap::new();
                     let mut private_members: HashSet<String> = HashSet::new();
                     let mut protected_members: HashSet<String> = HashSet::new();
@@ -3176,17 +3197,34 @@ impl TypeChecker {
                 mutable,
                 type_annotation,
             } => {
-                let actual = self.check_expression(value)?;
                 let declared = type_annotation
                     .as_ref()
-                    .map(|annotation| self.resolve_type(annotation))
-                    .unwrap_or_else(|| actual.clone());
+                    .map(|annotation| self.resolve_type(annotation));
+
+                let actual = match (&declared, value) {
+                    // Un dictionnaire vide n'a aucune information permettant
+                    // d'inférer K et V depuis ses éléments.
+                    //
+                    // Dans :
+                    //     let groups: Dict<K, List<T>> = {};
+                    //
+                    // le type déclaré constitue donc directement le type statique
+                    // du dictionnaire vide.
+                    (Some(expected), Expression::Dict(fields)) if fields.is_empty() => {
+                        expected.clone()
+                    }
+
+                    _ => self.check_expression(value)?,
+                };
+
+                let declared = declared.unwrap_or_else(|| actual.clone());
 
                 self.validate_type_constraints_in_context(
                     &declared,
                     &self.generic_constraints,
                     name,
                 )?;
+
                 self.ensure_assignable(&actual, &declared)?;
 
                 self.declare(
@@ -3877,8 +3915,10 @@ impl TypeChecker {
                     },
                 )?;
 
-                self.local_functions[parent_scope_index]
-                    .insert(name.to_string(), OverloadSet::from_one(declared_signature.clone()));
+                self.local_functions[parent_scope_index].insert(
+                    name.to_string(),
+                    OverloadSet::from_one(declared_signature.clone()),
+                );
             }
         }
 
@@ -4144,8 +4184,8 @@ impl TypeChecker {
                 class.methods.get_mut(&method.name)
             };
 
-            if let Some(signature) = overloads
-                .and_then(|set| set.get_by_arity_mut(method.params.len()))
+            if let Some(signature) =
+                overloads.and_then(|set| set.get_by_arity_mut(method.params.len()))
                 && method.return_type.is_none()
             {
                 *signature.return_type = inferred_return;
@@ -4477,7 +4517,12 @@ impl TypeChecker {
                 }
             }
 
-            Expression::Member { object, name, line, column } => {
+            Expression::Member {
+                object,
+                name,
+                line,
+                column,
+            } => {
                 let object_type = self.check_expression(object)?;
                 let member_type = self.member_type(&object_type, name)?;
                 let resolved = if matches!(member_type, Type::Dynamic) {
@@ -4875,18 +4920,6 @@ impl TypeChecker {
             return Ok(signature);
         }
 
-        if let Some(signature) = object_type.tcp_stream_member_type(name) {
-            return Ok(signature);
-        }
-
-        if let Some(signature) = object_type.tcp_listener_member_type(name) {
-            return Ok(signature);
-        }
-
-        if let Some(signature) = object_type.udp_socket_member_type(name) {
-            return Ok(signature);
-        }
-
         if let Some(signature) = object_type.option_result_member_type(name) {
             return Ok(signature);
         }
@@ -5164,11 +5197,7 @@ impl TypeChecker {
                 .cloned()
                 .zip(class_arguments.iter().cloned())
                 .collect::<HashMap<_, _>>();
-            self.validate_constraint_set(
-                &info.generic_constraints,
-                &substitutions,
-                &class_name,
-            )?;
+            self.validate_constraint_set(&info.generic_constraints, &substitutions, &class_name)?;
         }
 
         let instance_type = if class_generic_names.is_empty() {
@@ -5210,7 +5239,10 @@ impl TypeChecker {
             });
         }
 
-        Ok(ResolvedCall::implicit_constructor(class_name, instance_type))
+        Ok(ResolvedCall::implicit_constructor(
+            class_name,
+            instance_type,
+        ))
     }
 
     /// Résout un appel non-membre en une petite valeur sémantique réutilisable.
@@ -5236,12 +5268,8 @@ impl TypeChecker {
                 // Une native standard utilise sa signature déclarée dans
                 // le registre ; aucun second contrat ne doit être déduit
                 // depuis le binding runtime.
-                let resolved = self.resolve_type_callable(
-                    &spec.ty,
-                    generic_args,
-                    arguments,
-                    &function_name,
-                )?;
+                let resolved =
+                    self.resolve_type_callable(&spec.ty, generic_args, arguments, &function_name)?;
                 let (_, signature, return_type) = resolved.into_parts();
 
                 match signature {
@@ -5249,10 +5277,7 @@ impl TypeChecker {
                         CallTarget::Native(spec),
                         signature,
                     )),
-                    None => Ok(ResolvedCall::special(
-                        CallTarget::Native(spec),
-                        return_type,
-                    )),
+                    None => Ok(ResolvedCall::special(CallTarget::Native(spec), return_type)),
                 }
             }
             CallTarget::Callable(callable) => {
@@ -5267,12 +5292,12 @@ impl TypeChecker {
                     signature,
                 ))
             }
-            CallTarget::Method { .. } | CallTarget::StaticMethod { .. } => unreachable!(
-                "method targets are resolved through Expression::Call member routing"
-            ),
-            CallTarget::Constructor { .. } => unreachable!(
-                "constructor targets are resolved through Expression::New"
-            ),
+            CallTarget::Method { .. } | CallTarget::StaticMethod { .. } => {
+                unreachable!("method targets are resolved through Expression::Call member routing")
+            }
+            CallTarget::Constructor { .. } => {
+                unreachable!("constructor targets are resolved through Expression::New")
+            }
             CallTarget::Dynamic => {
                 for argument in arguments {
                     self.check_expression(argument)?;
@@ -5299,9 +5324,7 @@ impl TypeChecker {
         }
 
         match self.check_expression(callee)? {
-            Type::Function(signature) => {
-                Ok(CallTarget::Callable(CallableTarget::One(signature)))
-            }
+            Type::Function(signature) => Ok(CallTarget::Callable(CallableTarget::One(signature))),
             Type::Overloads(signatures) => {
                 Ok(CallTarget::Callable(CallableTarget::Overloaded(signatures)))
             }
@@ -5317,7 +5340,10 @@ impl TypeChecker {
     /// La présence d'un binding utilisateur du même nom empêche toute interprétation
     /// spéciale : seules les bindings explicitement marquées `native` peuvent
     /// emprunter la table des contrats natifs.
-    fn visible_native_spec(&self, callee: &Expression) -> Option<&'static builtin_types::NativeSpec> {
+    fn visible_native_spec(
+        &self,
+        callee: &Expression,
+    ) -> Option<&'static builtin_types::NativeSpec> {
         let Expression::Variable(name) = callee else {
             return None;
         };
@@ -5385,11 +5411,9 @@ impl TypeChecker {
                     }
                 }
 
-                let channels_type = self.check_expression(
-                    arguments
-                        .first()
-                        .expect("l'arité de select doit être validée avant l'accès au premier argument"),
-                )?;
+                let channels_type = self.check_expression(arguments.first().expect(
+                    "l'arité de select doit être validée avant l'accès au premier argument",
+                ))?;
 
                 let is_channel = |ty: &Type| {
                     matches!(ty, Type::Dynamic)
@@ -5450,9 +5474,8 @@ impl TypeChecker {
                         _ => Err(CompileError::WrongArgumentType {
                             function: spec.name.into(),
                             index: 0,
-                            expected:
-                                "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
-                                    .into(),
+                            expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
+                                .into(),
                             found: case_type.to_string(),
                         }),
                     }
@@ -5464,7 +5487,9 @@ impl TypeChecker {
                             return Err(CompileError::WrongArgumentType {
                                 function: spec.name.into(),
                                 index: 0,
-                                expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>".into(),
+                                expected:
+                                    "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
+                                        .into(),
                                 found: channels_type.to_string(),
                             });
                         }
@@ -5475,15 +5500,18 @@ impl TypeChecker {
                         return Err(CompileError::WrongArgumentType {
                             function: spec.name.into(),
                             index: 0,
-                            expected:
-                                "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
-                                    .into(),
+                            expected: "List<Channel<dynamic>> or List<(Channel<dynamic>, dynamic)>"
+                                .into(),
                             found: channels_type.to_string(),
                         });
                     }
                 }
 
-                Ok(Some(Type::Tuple(vec![Type::Int, Type::Dynamic, Type::Bool])))
+                Ok(Some(Type::Tuple(vec![
+                    Type::Int,
+                    Type::Dynamic,
+                    Type::Bool,
+                ])))
             }
 
             builtin_types::NativeKind::Intrinsic(builtin_types::Intrinsic::Spawn) => {
@@ -5510,7 +5538,9 @@ impl TypeChecker {
                     &function_name,
                 )?;
                 let (_, signature, result_type) = resolved.into_parts();
-                let is_async = signature.as_ref().is_some_and(|signature| signature.is_async);
+                let is_async = signature
+                    .as_ref()
+                    .is_some_and(|signature| signature.is_async);
 
                 if is_async {
                     return Ok(Some(result_type));
@@ -5594,19 +5624,16 @@ impl TypeChecker {
         arguments: &[Expression],
         member_name: &str,
     ) -> Result<ResolvedCall, CompileError> {
-        let resolved = self.resolve_type_callable(
-            callable,
-            generic_args,
-            arguments,
-            member_name,
-        )?;
+        let resolved =
+            self.resolve_type_callable(callable, generic_args, arguments, member_name)?;
 
         let (target, signature, return_type) = resolved.into_parts();
 
         match (target, signature) {
-            (CallTarget::Callable(_), Some(signature)) => Ok(
-                ResolvedCall::from_method(member_name.to_string(), signature),
-            ),
+            (CallTarget::Callable(_), Some(signature)) => Ok(ResolvedCall::from_method(
+                member_name.to_string(),
+                signature,
+            )),
             (CallTarget::Dynamic, None) => {
                 Ok(ResolvedCall::dynamic_method(member_name.to_string()))
             }
@@ -5703,33 +5730,6 @@ impl TypeChecker {
         }
 
         if let Some(member_type) = object_type.condvar_member_type(member_name) {
-            return Ok(Some(self.resolve_member_type_callable(
-                &member_type,
-                generic_args,
-                arguments,
-                member_name,
-            )?));
-        }
-
-        if let Some(member_type) = object_type.tcp_stream_member_type(member_name) {
-            return Ok(Some(self.resolve_member_type_callable(
-                &member_type,
-                generic_args,
-                arguments,
-                member_name,
-            )?));
-        }
-
-        if let Some(member_type) = object_type.tcp_listener_member_type(member_name) {
-            return Ok(Some(self.resolve_member_type_callable(
-                &member_type,
-                generic_args,
-                arguments,
-                member_name,
-            )?));
-        }
-
-        if let Some(member_type) = object_type.udp_socket_member_type(member_name) {
             return Ok(Some(self.resolve_member_type_callable(
                 &member_type,
                 generic_args,
@@ -6501,12 +6501,13 @@ impl TypeChecker {
         arguments: &[Expression],
         function_name: &str,
     ) -> Result<FunctionType, CompileError> {
-        let signature = callable
-            .select(arguments.len())
-            .map_err(|error| CompileError::WrongArgumentCount {
-                expected: error.expected,
-                found: error.found,
-            })?;
+        let signature =
+            callable
+                .select(arguments.len())
+                .map_err(|error| CompileError::WrongArgumentCount {
+                    expected: error.expected,
+                    found: error.found,
+                })?;
 
         self.instantiate_call_signature(signature, generic_args, arguments, function_name)
     }
@@ -6518,12 +6519,13 @@ impl TypeChecker {
         arguments: &[Expression],
         function_name: &str,
     ) -> Result<FunctionType, CompileError> {
-        let signature = callable
-            .select(arguments.len())
-            .map_err(|error| CompileError::WrongArgumentCount {
-                expected: error.expected,
-                found: error.found,
-            })?;
+        let signature =
+            callable
+                .select(arguments.len())
+                .map_err(|error| CompileError::WrongArgumentCount {
+                    expected: error.expected,
+                    found: error.found,
+                })?;
 
         self.instantiate_call_signature(signature, generic_args, arguments, function_name)
     }
@@ -6550,12 +6552,8 @@ impl TypeChecker {
             }
             Type::Overloads(signatures) => {
                 let callable = CallableTarget::Overloaded(signatures.clone());
-                let selected = self.resolve_owned_callable(
-                    &callable,
-                    generic_args,
-                    arguments,
-                    function_name,
-                )?;
+                let selected =
+                    self.resolve_owned_callable(&callable, generic_args, arguments, function_name)?;
                 Ok(ResolvedCall::from_callable(callable, selected))
             }
             Type::Dynamic => {
@@ -7558,8 +7556,13 @@ let result = add(10, 20);
 
     #[test]
     fn explicitly_typed_none_function_may_fall_through_without_return() {
-        assert!(check(r#"func ping() -> None { }
-let value = ping();"#).is_ok());
+        assert!(
+            check(
+                r#"func ping() -> None { }
+let value = ping();"#
+            )
+            .is_ok()
+        );
 
         assert!(check(r#"func must_return() -> int { }"#).is_err());
     }
@@ -7675,8 +7678,14 @@ let size: int = values.size();
             .iter()
             .filter(|(_, resolved)| matches!(&resolved.target, CallTarget::StaticMethod { .. }))
             .count();
-        assert_eq!(method_count, 2, "value() et size() doivent être résolus comme méthodes d'instance");
-        assert_eq!(static_method_count, 1, "Box.make() doit être résolu comme méthode statique");
+        assert_eq!(
+            method_count, 2,
+            "value() et size() doivent être résolus comme méthodes d'instance"
+        );
+        assert_eq!(
+            static_method_count, 1,
+            "Box.make() doit être résolu comme méthode statique"
+        );
     }
 
     #[test]
@@ -8124,7 +8133,7 @@ let ks: List<str> = d.keys();
 let entries = d.entries();
 
 let t = (1, 2, 3);
-let f: int = t.first();
+let f: int | None = t.first();
 let l: int = t.size();
 let converted: List<int> = t.to_list();
 
@@ -8144,6 +8153,59 @@ for x in Set(1, 2) {
         assert!(check("let a = [1]; a.size(1);").is_err());
         assert!(check("let a = [1]; let n: str = a.size();").is_err());
         assert!(check("let d = {\"a\": 1}; let k: int = d.keys();").is_err());
+
+        // Contrats paramétriques des collections.
+        assert!(check("let a: List<int> = [1]; a.add(\"x\");").is_err());
+        assert!(check("let a: List<int> = [1]; a.get(\"0\");").is_err());
+        assert!(check("let a: List<int> = [1]; let x: int | None = a.first();").is_ok());
+        assert!(check("let a: List<int> = [1]; let x: int = a.first();").is_err());
+        assert!(check("let d: Dict<str, int> = {\"a\": 1}; d.set(1, 2);").is_err());
+        assert!(check("let d: Dict<str, int> = {\"a\": 1}; let x: int = d.get(1);").is_err());
+        assert!(check("let s: str = \"abc\"; s.contains(1);").is_err());
+    }
+
+    #[test]
+    fn range_iteration_produces_integers() {
+        let integer = check(
+            r#"
+for value in range(0, 3) {
+    let current: int = value;
+}
+"#,
+        );
+
+        assert!(
+            integer.is_ok(),
+            "une valeur produite par range() doit être assignable à int: {integer:?}"
+        );
+
+        // La promotion int -> float est volontairement autorisée par Kastel.
+        let promoted = check(
+            r#"
+for value in range(0, 3) {
+    let current: float = value;
+}
+"#,
+        );
+
+        assert!(
+            promoted.is_ok(),
+            "int -> float doit rester une promotion numérique valide: {promoted:?}"
+        );
+
+        // Ce test distingue réellement un élément int d'un élément float.
+        let wrong = check(
+            r#"
+for value in range(0, 3) {
+    let current: str = value;
+}
+"#,
+        );
+
+        assert!(
+            wrong.is_err(),
+            "une valeur produite par range() ne doit pas être assignable à str"
+        );
     }
 
     #[test]
@@ -9783,9 +9845,12 @@ let value = spawn(42);
         )
         .expect("une variable utilisateur peut masquer spawn");
 
-        assert!(result.resolved_calls.iter().any(|(_, resolved)| {
-            matches!(&resolved.target, CallTarget::Callable(_))
-        }));
+        assert!(
+            result
+                .resolved_calls
+                .iter()
+                .any(|(_, resolved)| { matches!(&resolved.target, CallTarget::Callable(_)) })
+        );
         assert!(!result.resolved_calls.iter().any(|(_, resolved)| {
             matches!(
                 &resolved.target,
@@ -9811,14 +9876,20 @@ for value in range(0, 5) {
 "#,
         );
 
-        assert!(result.is_ok(), "un appel direct à range() doit être typé Range: {result:?}");
+        assert!(
+            result.is_ok(),
+            "un appel direct à range() doit être typé Range: {result:?}"
+        );
     }
 
     #[test]
     fn range_rejects_a_known_non_integer_argument() {
         let result = check("let value = range(0, \"stop\");");
 
-        assert!(result.is_err(), "range() doit refuser un argument statiquement connu comme str");
+        assert!(
+            result.is_err(),
+            "range() doit refuser un argument statiquement connu comme str"
+        );
     }
 
     #[test]
@@ -9827,7 +9898,10 @@ for value in range(0, 5) {
         assert!(range.is_ok(), "range doit être résolu via le contrat natif");
 
         let channel = check("let c: Channel<int> = channel<int>(4);");
-        assert!(channel.is_ok(), "channel doit être résolu via le contrat natif");
+        assert!(
+            channel.is_ok(),
+            "channel doit être résolu via le contrat natif"
+        );
 
         let set = check("let values: Set<int> = Set(1, 2, 3);");
         assert!(set.is_ok(), "Set doit être résolu via le contrat natif");
@@ -9836,7 +9910,10 @@ for value in range(0, 5) {
     #[test]
     fn variable_arity_natives_are_checked_statically() {
         let invalid_range = check("let value = range();");
-        assert!(invalid_range.is_err(), "range() doit être refusé statiquement");
+        assert!(
+            invalid_range.is_err(),
+            "range() doit être refusé statiquement"
+        );
 
         let invalid_range_too_many = check("let value = range(1, 2, 3, 4);");
         assert!(
@@ -9845,7 +9922,10 @@ for value in range(0, 5) {
         );
 
         let invalid_input = check(r#"let value = input("prompt", "extra");"#);
-        assert!(invalid_input.is_err(), "input() accepte au plus un argument");
+        assert!(
+            invalid_input.is_err(),
+            "input() accepte au plus un argument"
+        );
 
         let invalid_exit = check("exit(0, 1);");
         assert!(invalid_exit.is_err(), "exit() accepte au plus un argument");

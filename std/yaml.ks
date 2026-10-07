@@ -76,7 +76,7 @@ func unquote_double(text: str) -> Result<str, str> {
     return Ok(result);
 }
 
-func parse_scalar(raw: str) -> Result<any, str> {
+func parse_scalar(raw: str) -> Result<dynamic, str> {
     let text = raw.trim();
 
     if text == "" || text == "null" || text == "~" || text == "Null" || text == "NULL" {
@@ -197,14 +197,14 @@ func is_sequence_item(content: str) -> bool {
 }
 
 // lines : List de [indent, contenu, numero_de_ligne]. Renvoie Ok([valeur, prochain_index]).
-func parse_block(lines, start: int, indent: int) -> Result<any, str> {
+func parse_block(lines, start: int, indent: int) -> Result<dynamic, str> {
     if is_sequence_item(lines[start][1]) {
         return parse_sequence(lines, start, indent);
     }
     return parse_mapping(lines, start, indent);
 }
 
-func parse_sequence(lines, start: int, indent: int) -> Result<any, str> {
+func parse_sequence(lines, start: int, indent: int) -> Result<dynamic, str> {
     let items = [];
     let index = start;
 
@@ -260,7 +260,7 @@ func parse_sequence(lines, start: int, indent: int) -> Result<any, str> {
     return Ok([items, index]);
 }
 
-func parse_mapping(lines, start: int, indent: int) -> Result<any, str> {
+func parse_mapping(lines, start: int, indent: int) -> Result<dynamic, str> {
     let mapping = {};
     let index = start;
 
@@ -343,7 +343,7 @@ func parse_mapping(lines, start: int, indent: int) -> Result<any, str> {
     return Ok([mapping, index]);
 }
 
-export func parse(text: str) -> Result<any, str> {
+export func parse(text: str) -> Result<dynamic, str> {
     let lines = [];
     let number = 0;
 
@@ -541,7 +541,7 @@ export func stringify(value: dynamic) -> Result<str, str> {
     }
 }
 
-export func read_file(path: str) -> Result<any, str> {
+export func read_file(path: str) -> Result<dynamic, str> {
     try {
         return parse(file_read(path));
     } catch (error) {

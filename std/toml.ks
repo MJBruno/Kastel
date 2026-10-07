@@ -24,6 +24,7 @@
 
 // Retire un commentaire de fin de ligne, en ignorant les `#` dans une
 // chaîne.
+
 func strip_comment(line: str) -> str {
     let quote = "";
     let i = 0;
@@ -46,6 +47,7 @@ func strip_comment(line: str) -> str {
 }
 
 // Decoupe `text` sur `,` au niveau racine (hors chaines et hors [...]).
+
 func split_top_level(text: str) -> List<str> {
     let parts = [];
     let current = "";
@@ -117,7 +119,7 @@ func parse_basic_string(text: str) -> Result<str, str> {
     return Ok(result);
 }
 
-func parse_value(raw: str) -> Result<any, str> {
+func parse_value(raw: str) -> Result<dynamic, str> {
     let text = raw.trim();
     if text.size() == 0 {
         return Err("toml: valeur manquante");
@@ -218,7 +220,8 @@ func parse_key(raw: str) -> Result<str, str> {
 
 // Descend dans `root` en creant les tables manquantes ; renvoie la
 // table finale.
-func ensure_table(root, path: List<str>) -> Result<any, str> {
+
+func ensure_table(root, path: List<str>) -> Result<dynamic, str> {
     let current = root;
     for name in path {
         if current.contains(name) {
@@ -236,69 +239,156 @@ func ensure_table(root, path: List<str>) -> Result<any, str> {
     return Ok(current);
 }
 
-export func parse(text: str) -> Result<Dict<str, dynamic>, str> {
+func find_assignment_separator(line: str) -> Option<int> {
+    let quote = "";
+    let i = 0;
+
+    while i < line.size() {
+        let ch = line.substring(i, 1);
+
+        if quote != "" {
+            if ch == "\\" && quote == "\"" {
+                i = i + 1;
+            } else if ch == quote {
+                quote = "";
+            }
+        } else if ch == "\"" || ch == "'" {
+            quote = ch;
+        } else if ch == "=" {
+            return Some(i);
+        }
+
+        i = i + 1;
+    }
+
+    return None;
+}
+
+export func parse(text: str) -> Result<Dict<str, dynamic> , str> {
     let root = {};
     let current = root;
     let line_number = 0;
 
     for raw_line in text.split("\n") {
         line_number = line_number + 1;
+
         let line = strip_comment(raw_line).trim();
+
         if line.size() == 0 {
             continue;
         }
 
         if line.starts_with("[[") {
-            return Err("toml ligne " + str(line_number) + ": tableaux de tables [[..]] non supportes");
+            return Err(
+                "toml ligne "
+                +str(line_number)
+                +": tableaux de tables [[..]] non supportes"
+            );
         }
 
         if line.starts_with("[") {
             if !line.ends_with("]") {
-                return Err("toml ligne " + str(line_number) + ": en-tete de table non termine");
+                return Err(
+                    "toml ligne "
+                    +str(line_number)
+                    +": en-tete de table non termine"
+                );
             }
+
             let names = [];
-            for part in line.substring(1, line.size() - 2).split(".") {
+
+            for part in line.substring(
+                1,
+                line.size() - 2
+            ).split(".") {
                 match parse_key(part) {
                     Ok(name) => {
                         names.add(name);
                     }
+
                     Err(message) => {
-                        return Err("toml ligne " + str(line_number) + ": " + message);
+                        return Err(
+                            "toml ligne "
+                            +str(line_number)
+                            +": "
+                            +message
+                        );
                     }
                 }
             }
+
             match ensure_table(root, names) {
                 Ok(table) => {
                     current = table;
                 }
+
                 Err(message) => {
-                    return Err("toml ligne " + str(line_number) + ": " + message);
+                    return Err(
+                        "toml ligne "
+                        +str(line_number)
+                        +": "
+                        +message
+                    );
                 }
             }
+
             continue;
         }
 
-        let equals_at = line.index_of("=");
-        if equals_at < 0 {
-            return Err("toml ligne " + str(line_number) + ": '=' attendu");
-        }
+        match find_assignment_separator(line) {
+            Some(equals_at) => {
+                match parse_key(
+                    line.substring(0, equals_at)
+                ) {
+                    Ok(key) => {
+                        if current.contains(key) {
+                            return Err(
+                                "toml ligne "
+                                +str(line_number)
+                                +": cle en double '"
+                                +key
+                                +"'"
+                            );
+                        }
 
-        match parse_key(line.substring(0, equals_at)) {
-            Ok(key) => {
-                if current.contains(key) {
-                    return Err("toml ligne " + str(line_number) + ": cle en double '" + key + "'");
-                }
-                match parse_value(line.substring(equals_at + 1, line.size() - equals_at - 1)) {
-                    Ok(value) => {
-                        current.set(key, value);
+                        match parse_value(
+                            line.substring(
+                                equals_at + 1,
+                                line.size() - equals_at - 1
+                            )
+                        ) {
+                            Ok(value) => {
+                                current.set(key, value);
+                            }
+
+                            Err(message) => {
+                                return Err(
+                                    "toml ligne "
+                                    +str(line_number)
+                                    +": "
+                                    +message
+                                );
+                            }
+                        }
                     }
+
                     Err(message) => {
-                        return Err("toml ligne " + str(line_number) + ": " + message);
+                        return Err(
+                            "toml ligne "
+                            +str(line_number)
+                            +": "
+                            +message
+                        );
                     }
                 }
             }
-            Err(message) => {
-                return Err("toml ligne " + str(line_number) + ": " + message);
+
+            None => {
+                return Err(
+                    "toml ligne "
+                    +str(line_number)
+                    +": '=' attendu"
+                );
             }
         }
     }
@@ -385,6 +475,7 @@ func write_table(table, prefix: str, output: List<str>) -> Result<bool, str> {
 // guillemets) ; elles doivent donc etre des identifiants TOML "nus"
 // (lettres, chiffres, _ et -), sinon la sortie ne serait pas du TOML
 // valide.
+
 export func stringify(data: Dict<str, dynamic>) -> Result<str, str> {
     let lines = [];
     match write_table(data, "", lines) {
@@ -397,7 +488,7 @@ export func stringify(data: Dict<str, dynamic>) -> Result<str, str> {
     }
 }
 
-export func read_file(path: str) -> Result<Dict<str, dynamic>, str> {
+export func read_file(path: str) -> Result<Dict<str, dynamic> , str> {
     try {
         return parse(file_read(path));
     } catch (error) {

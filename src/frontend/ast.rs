@@ -20,6 +20,10 @@ pub enum TypeExpr {
 
     /// Type objet (enregistrement) : `{ name: str, age: int }`.
     Record(Vec<(String, TypeExpr)>),
+
+    /// Type tuple : `(int, str)`, `()`, `(int,)`.
+    /// Une parenthèse sans virgule, `(int)`, reste un simple groupement de type.
+    Tuple(Vec<TypeExpr>),
 }
 
 #[derive(Debug, Clone)]

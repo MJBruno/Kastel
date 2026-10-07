@@ -1,0 +1,10 @@
+{
+    "name": "Kastel",
+    "version": 1,
+    "stable": true,
+    "features": [
+        "VM",
+        "GC",
+        "HTTP"
+    ]
+}

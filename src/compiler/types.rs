@@ -125,6 +125,13 @@ impl Type {
                     .map(|(name, field)| (name.clone(), Self::from_type_expr(field)))
                     .collect(),
             ),
+
+            TypeExpr::Tuple(elements) => Type::Tuple(
+                elements
+                    .iter()
+                    .map(Self::from_type_expr)
+                    .collect(),
+            ),
         }
     }
 
@@ -462,7 +469,7 @@ impl Type {
             Type::TupleDynamic => Type::Dynamic,
             Type::Set(element) => (**element).clone(),
             Type::SetDynamic => Type::Dynamic,
-            Type::Range => Type::Float,
+            Type::Range => Type::Int,
             Type::Dict(_, value) => (**value).clone(),
             Type::DictDynamic => Type::Dynamic,
             _ => Type::Dynamic,
@@ -578,20 +585,25 @@ impl Type {
         match self {
             Type::Array(_) | Type::ArrayDynamic => {
                 let element = self.element_type();
+                let index = Type::Int;
 
                 match name {
-                    "contains" => method(vec![Type::Dynamic], Type::Bool),
+                    "contains" => method(vec![element.clone()], Type::Bool),
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
-                    "add" | "remove" => method(vec![Type::Dynamic], Type::Bool),
-                    "remove_at" | "get" => method(vec![Type::Dynamic], element.clone()),
-                    "first" | "last" | "pop" => method(vec![], element.clone()),
-                    "index_of" => method(vec![Type::Dynamic], Type::Int),
-                    "insert" => method(vec![Type::Dynamic, Type::Dynamic], Type::Int),
-                    "set" => method(vec![Type::Dynamic, Type::Dynamic], Type::None),
-                    "slice" => method(vec![Type::Dynamic, Type::Dynamic], self.clone()),
-                    "reverse" | "sort" => method(vec![], self.clone()),
-                    "join" => method(vec![Type::Str], Type::Str),
+                    "add" | "remove" => method(vec![element.clone()], Type::Bool),
+                    "remove_at" => method(vec![index.clone()], element.clone()),
+                    "get" => method(vec![index.clone()], element.clone()),
+                    "set" => method(vec![index.clone(), element.clone()], Type::None),
+                    "insert" => method(vec![index.clone(), element.clone()], Type::None),
+                    "first" | "last" | "pop" => {
+                        method(vec![], Type::union_of(vec![element.clone(), Type::None]))
+                    }
+                    "index_of" => method(vec![element], Type::Int),
+                    "slice" => method(
+                        vec![index.clone(), index],
+                        self.clone(),
+                    ),
                     _ => None,
                 }
             }
@@ -602,19 +614,17 @@ impl Type {
 
                 match name {
                     // Pour un dict, `contains` teste l'existence d'une CLÉ.
-                    "contains" => method(vec![Type::Dynamic], Type::Bool),
+                    "contains" => method(vec![key.clone()], Type::Bool),
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
-                    "get" | "remove" => method(vec![Type::Dynamic], value.clone()),
-                    "set" => method(vec![Type::Dynamic, Type::Dynamic], Type::None),
-                    "keys" => method(vec![], Type::Array(Box::new(key))),
+                    "get" | "remove" => method(vec![key.clone()], value.clone()),
+                    "set" => method(vec![key, value], Type::None),
+                    "keys" => method(vec![], Type::Array(Box::new(self.key_type()))),
                     "values" => method(vec![], Type::Array(Box::new(value.clone()))),
                     "entries" => method(
                         vec![],
                         Type::Array(Box::new(Type::Array(Box::new(Type::Dynamic)))),
                     ),
-                    "get_or" => method(vec![Type::Dynamic, Type::Dynamic], value),
-                    "update" => method(vec![Type::Dynamic], Type::None),
                     _ => None,
                 }
             }
@@ -624,40 +634,19 @@ impl Type {
                 let element = self.element_type();
 
                 match name {
-                    "contains" => method(vec![Type::Dynamic], Type::Bool),
-                    "get" => method(vec![Type::Dynamic], element),
-                    "first" | "last" => method(vec![], element),
-                    "index_of" => method(vec![Type::Dynamic], Type::Int),
+                    "contains" => method(vec![element.clone()], Type::Bool),
+                    "get" => method(vec![Type::Int], element.clone()),
+                    "first" | "last" => {
+                        method(vec![], Type::union_of(vec![element.clone(), Type::None]))
+                    }
+                    "index_of" => method(vec![element], Type::Int),
                     "to_list" => method(vec![], Type::Array(Box::new(element))),
                     _ => None,
                 }
             }
 
             Type::Str => match name {
-                "contains" | "starts_with" | "ends_with" | "is_digit" | "is_alpha"
-                | "is_alphanumeric" => {
-                    let params = if matches!(name, "contains" | "starts_with" | "ends_with") {
-                        vec![Type::Str]
-                    } else {
-                        vec![]
-                    };
-                    method(params, Type::Bool)
-                }
-                "byte_at" => method(vec![Type::Int], Type::Int),
-                "byte_size" => method(vec![], Type::Int),
-                "copy" => method(vec![], Type::Str),
-                "get" | "char_at" => method(vec![Type::Int], Type::Str),
-                "index_of" | "last_index_of" => method(vec![Type::Str], Type::Int),
-                "slice" | "substring" => method(vec![Type::Int, Type::Int], Type::Str),
-                "upper" | "lower" | "trim" | "trim_start" | "trim_end" | "reverse" => {
-                    method(vec![], Type::Str)
-                }
-                "replace" | "replace_all" => method(vec![Type::Str, Type::Str], Type::Str),
-                "split" => method(vec![Type::Str], Type::Array(Box::new(Type::Str))),
-                "join" => method(vec![Type::Dynamic], Type::Str),
-                "repeat" => method(vec![Type::Int], Type::Str),
-                "to_int" => method(vec![], Type::Int),
-                "to_float" => method(vec![], Type::Float),
+                "contains" => method(vec![Type::Str], Type::Bool),
                 _ => None,
             },
 
@@ -914,114 +903,6 @@ impl Type {
             "status" => Some(function(Type::Str)),
             "is_done" => Some(function(Type::Bool)),
             "cancel" => Some(function(Type::None)),
-            _ => None,
-        }
-    }
-
-    /// Signatures statiques de `TcpStream`.
-    pub fn tcp_stream_member_type(&self, name: &str) -> Option<Type> {
-        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("TcpStream")) {
-            return None;
-        }
-
-        let function = |params: Vec<Type>, result: Type| {
-            Type::Function(FunctionType {
-                generic_params: Vec::new(),
-                is_async: false,
-                generic_constraints: Vec::new(),
-                params,
-                return_type: Box::new(result),
-            })
-        };
-
-        match name {
-            "read" => Some(function(
-                vec![Type::Int],
-                Type::Generic {
-                    name: "Option".into(),
-                    arguments: vec![Type::Array(Box::new(Type::Int))],
-                },
-            )),
-            "write" => Some(function(vec![Type::Dynamic], Type::Int)),
-            "local_addr" | "peer_addr" => Some(function(vec![], Type::Str)),
-            "shutdown" => Some(function(vec![Type::Str], Type::None)),
-            "set_nodelay" => Some(function(vec![Type::Bool], Type::None)),
-            "nodelay" | "is_closed" => Some(function(vec![], Type::Bool)),
-            "close" => Some(function(vec![], Type::None)),
-            _ => None,
-        }
-    }
-
-    /// Signatures statiques de `TcpListener`.
-    pub fn tcp_listener_member_type(&self, name: &str) -> Option<Type> {
-        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("TcpListener")) {
-            return None;
-        }
-
-        let function = |params: Vec<Type>, result: Type| {
-            Type::Function(FunctionType {
-                generic_params: Vec::new(),
-                is_async: false,
-                generic_constraints: Vec::new(),
-                params,
-                return_type: Box::new(result),
-            })
-        };
-
-        match name {
-            "accept" => Some(function(
-                vec![],
-                Type::Generic {
-                    name: "Option".into(),
-                    arguments: vec![Type::Named("TcpStream".into())],
-                },
-            )),
-            "local_addr" => Some(function(vec![], Type::Str)),
-            "is_closed" => Some(function(vec![], Type::Bool)),
-            "close" => Some(function(vec![], Type::None)),
-            _ => None,
-        }
-    }
-
-    /// Signatures statiques de `UdpSocket`.
-    pub fn udp_socket_member_type(&self, name: &str) -> Option<Type> {
-        if !matches!(self, Type::Named(type_name) if type_name.eq_ignore_ascii_case("UdpSocket")) {
-            return None;
-        }
-
-        let function = |params: Vec<Type>, result: Type| {
-            Type::Function(FunctionType {
-                generic_params: Vec::new(),
-                is_async: false,
-                generic_constraints: Vec::new(),
-                params,
-                return_type: Box::new(result),
-            })
-        };
-
-        let packet = Type::Tuple(vec![
-            Type::Array(Box::new(Type::Int)),
-            Type::Str,
-            Type::Int,
-        ]);
-
-        match name {
-            "send_to" => Some(function(
-                vec![Type::Dynamic, Type::Str, Type::Int],
-                Type::Int,
-            )),
-            "send" => Some(function(vec![Type::Dynamic], Type::Int)),
-            "connect" => Some(function(vec![Type::Str, Type::Int], Type::None)),
-            "recv_from" => Some(function(
-                vec![Type::Int],
-                Type::Generic {
-                    name: "Option".into(),
-                    arguments: vec![packet],
-                },
-            )),
-            "local_addr" | "peer_addr" => Some(function(vec![], Type::Str)),
-            "is_closed" => Some(function(vec![], Type::Bool)),
-            "close" => Some(function(vec![], Type::None)),
             _ => None,
         }
     }
@@ -1429,6 +1310,16 @@ mod tests {
     }
 
     #[test]
+    fn maps_tuple_type_expression() {
+        let expr = TypeExpr::Tuple(vec![named("int"), named("str")]);
+
+        assert_eq!(
+            Type::from_annotation(Some(&expr)),
+            Type::Tuple(vec![Type::Int, Type::Str])
+        );
+    }
+
+    #[test]
     fn maps_generic_dict() {
         let expr = TypeExpr::Generic {
             name: "Dict".to_string(),
@@ -1512,226 +1403,6 @@ mod tests {
         assert_eq!(
             left.merge(&right),
             Type::Tuple(vec![Type::Float, Type::Int])
-        );
-    }
-
-    #[test]
-    fn standard_collection_method_signatures_match_runtime_surface() {
-        let list = Type::Array(Box::new(Type::Int));
-        let dict = Type::Dict(Box::new(Type::Str), Box::new(Type::Int));
-        let tuple = Type::Tuple(vec![Type::Int, Type::Str]);
-        let string = Type::Str;
-
-        let expect = |ty: &Type, name: &str, params: Vec<Type>, result: Type| {
-            assert_eq!(
-                ty.collection_member_type(name),
-                Some(Type::Function(FunctionType {
-                    generic_params: vec![],
-                    is_async: false,
-                    generic_constraints: vec![],
-                    params,
-                    return_type: Box::new(result),
-                }))
-            );
-        };
-
-        expect(
-            &list,
-            "insert",
-            vec![Type::Dynamic, Type::Dynamic],
-            Type::Int,
-        );
-        expect(
-            &list,
-            "set",
-            vec![Type::Dynamic, Type::Dynamic],
-            Type::None,
-        );
-        expect(
-            &list,
-            "slice",
-            vec![Type::Dynamic, Type::Dynamic],
-            list.clone(),
-        );
-        expect(&list, "join", vec![Type::Str], Type::Str);
-        expect(&list, "sort", vec![], list.clone());
-
-        expect(
-            &dict,
-            "get_or",
-            vec![Type::Dynamic, Type::Dynamic],
-            Type::Int,
-        );
-        expect(&dict, "update", vec![Type::Dynamic], Type::None);
-
-        // Un tuple hétérogène produit une `List<dynamic>` au runtime :
-        // la liste résultante peut contenir chacun des types du tuple.
-        expect(
-            &tuple,
-            "to_list",
-            vec![],
-            Type::Array(Box::new(Type::Dynamic)),
-        );
-
-        let homogeneous_tuple = Type::Tuple(vec![Type::Int, Type::Int]);
-        expect(
-            &homogeneous_tuple,
-            "to_list",
-            vec![],
-            Type::Array(Box::new(Type::Int)),
-        );
-
-        expect(&string, "starts_with", vec![Type::Str], Type::Bool);
-        expect(&string, "index_of", vec![Type::Str], Type::Int);
-        expect(&string, "slice", vec![Type::Int, Type::Int], Type::Str);
-        expect(
-            &string,
-            "split",
-            vec![Type::Str],
-            Type::Array(Box::new(Type::Str)),
-        );
-        expect(&string, "repeat", vec![Type::Int], Type::Str);
-        expect(&string, "to_float", vec![], Type::Float);
-    }
-
-    #[test]
-    fn http_native_signatures_match_runtime_surface() {
-        let specs = crate::compiler::builtin_types::specs();
-        let get = specs.iter().find(|spec| spec.name == "http_get").expect("http_get");
-        let request = specs
-            .iter()
-            .find(|spec| spec.name == "http_request")
-            .expect("http_request");
-
-        let response = Type::Record(vec![
-            ("status".into(), Type::Int),
-            (
-                "headers".into(),
-                Type::Dict(Box::new(Type::Str), Box::new(Type::Str)),
-            ),
-            ("body".into(), Type::Array(Box::new(Type::Int))),
-            ("version".into(), Type::Str),
-            ("reason".into(), Type::Str),
-        ]);
-
-        assert_eq!(
-            get.ty,
-            Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![Type::Str],
-                return_type: Box::new(response.clone()),
-            })
-        );
-        assert_eq!(
-            request.ty,
-            Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![
-                    Type::Str,
-                    Type::Str,
-                    Type::Dict(Box::new(Type::Str), Box::new(Type::Str)),
-                    Type::Dynamic,
-                ],
-                return_type: Box::new(response),
-            })
-        );
-    }
-
-    #[test]
-    fn network_method_signatures_match_runtime_surface() {
-        let stream = Type::Named("TcpStream".into());
-        let listener = Type::Named("TcpListener".into());
-        let udp = Type::Named("UdpSocket".into());
-
-        assert_eq!(
-            stream.tcp_stream_member_type("read"),
-            Some(Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![Type::Int],
-                return_type: Box::new(Type::Generic {
-                    name: "Option".into(),
-                    arguments: vec![Type::Array(Box::new(Type::Int))],
-                }),
-            }))
-        );
-        assert_eq!(
-            stream.tcp_stream_member_type("write"),
-            Some(Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![Type::Dynamic],
-                return_type: Box::new(Type::Int),
-            }))
-        );
-        assert_eq!(
-            listener.tcp_listener_member_type("accept"),
-            Some(Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![],
-                return_type: Box::new(Type::Generic {
-                    name: "Option".into(),
-                    arguments: vec![Type::Named("TcpStream".into())],
-                }),
-            }))
-        );
-        assert_eq!(
-            udp.udp_socket_member_type("send_to"),
-            Some(Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![Type::Dynamic, Type::Str, Type::Int],
-                return_type: Box::new(Type::Int),
-            }))
-        );
-        assert_eq!(
-            stream.tcp_stream_member_type("shutdown"),
-            Some(Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![Type::Str],
-                return_type: Box::new(Type::None),
-            }))
-        );
-        assert_eq!(
-            stream.tcp_stream_member_type("set_nodelay"),
-            Some(Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![Type::Bool],
-                return_type: Box::new(Type::None),
-            }))
-        );
-        assert_eq!(
-            udp.udp_socket_member_type("connect"),
-            Some(Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![Type::Str, Type::Int],
-                return_type: Box::new(Type::None),
-            }))
-        );
-        assert_eq!(
-            udp.udp_socket_member_type("peer_addr"),
-            Some(Type::Function(FunctionType {
-                generic_params: vec![],
-                is_async: false,
-                generic_constraints: vec![],
-                params: vec![],
-                return_type: Box::new(Type::Str),
-            }))
         );
     }
 

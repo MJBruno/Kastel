@@ -105,7 +105,7 @@ export func min_list<T: Ord>(values: List<T>) -> Option<T> {
         return None;
     }
 
-    let smallest = values.first();
+    let smallest = values[0];
     for value in values {
         if value < smallest {
             smallest = value;
@@ -119,7 +119,7 @@ export func max_list<T: Ord>(values: List<T>) -> Option<T> {
         return None;
     }
 
-    let largest = values.first();
+    let largest = values[0];
     for value in values {
         if value > largest {
             largest = value;
