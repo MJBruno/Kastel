@@ -11,30 +11,28 @@
 // List<T>
 // ------------------------------------------------------------------
 
-export func first_opt<T>(values: List<T>) -> Option<T> {
+export func first_opt < T > (values: List<T>) -> Option<T> {
     if values.is_empty() {
         return None;
     }
-    return Some(values[0]);
+    return Some(values.first());
 }
 
-export func last_opt<T>(values: List<T>) -> Option<T> {
+export func last_opt < T > (values: List<T>) -> Option<T> {
     if values.is_empty() {
         return None;
     }
-    return Some(values[values.size() - 1]);
+    return Some(values.last());
 }
 
 // Retire et renvoie le dernier élément, ou None si la liste est déjà
 // vide (au lieu du `None` brut ambigu de pop() natif).
-export func pop_opt<T>(values: List<T>) -> Option<T> {
+
+export func pop_opt < T > (values: List<T>) -> Option<T> {
     if values.is_empty() {
         return None;
     }
-    let index = values.size() - 1;
-    let value = values[index];
-    values.remove_at(index);
-    return Some(value);
+    return Some(values.pop());
 }
 
 export func get_opt < T > (values: List<T> , index: int) -> Option<T> {
@@ -52,7 +50,7 @@ export func index_of_opt < T > (values: List<T> , target: T) -> Option<int> {
     return Some(index);
 }
 
-export func find < T > (values: List<T> , predicate: dynamic) -> Option<T> {
+export func find < T > (values: List<T> , predicate: func(T) -> bool) -> Option<T> {
     for value in values {
         if predicate(value) {
             return Some(value);
@@ -61,7 +59,7 @@ export func find < T > (values: List<T> , predicate: dynamic) -> Option<T> {
     return None;
 }
 
-export func find_index < T > (values: List<T> , predicate: dynamic) -> Option<int> {
+export func find_index < T > (values: List<T> , predicate: func(T) -> bool) -> Option<int> {
     let index = 0;
     for value in values {
         if predicate(value) {
@@ -76,7 +74,7 @@ export func find_index < T > (values: List<T> , predicate: dynamic) -> Option<in
 // l'ordre, s'arrête à la première Err rencontrée, sinon renvoie
 // Ok(liste complète des résultats).
 
-export func try_map < T, U, E > (values: List<T> , transform: dynamic) -> Result<List<U> , E> {
+export func try_map < T, U, E > (values: List<T> , transform: func(T) -> Result<U, E>) -> Result<List<U> , E> {
     let results = [];
     for value in values {
         match transform(value) {
@@ -95,7 +93,7 @@ export func try_map < T, U, E > (values: List<T> , transform: dynamic) -> Result
 
 export type Partition<T> = {matched: List<T> , rejected: List<T> };
 
-export func partition < T > (values: List<T> , predicate: dynamic) -> Partition<T> {
+export func partition < T > (values: List<T> , predicate: func(T) -> bool) -> Partition<T> {
     let matched = [];
     let rejected = [];
     for value in values {
@@ -156,7 +154,7 @@ export func try_remove < K, V > (entries: Dict<K, V> , key: K) -> Option<V> {
 // Associe les elements de deux listes position par position ; s'arrete
 // a la plus courte. Renvoie une List de Tuple (a, b).
 
-export func zip<A, B>(left: List<A>, right: List<B>) -> List<Tuple<A, B>> {
+export func zip < A, B > (left: List<A> , right: List<B>) -> List<Tuple<A, B>> {
     let pairs: List<Tuple<A, B>> = [];
     let limit = left.size();
     if right.size() < limit {
@@ -172,7 +170,7 @@ export func zip<A, B>(left: List<A>, right: List<B>) -> List<Tuple<A, B>> {
 
 // map puis aplatit d'un niveau : `transform` renvoie une List par element.
 
-export func flat_map < T, U > (values: List<T> , transform: dynamic) -> List<U> {
+export func flat_map < T, U > (values: List<T> , transform: func(T) -> List<U>) -> List<U> {
     let results = [];
     for value in values {
         for item in transform(value) {
@@ -208,7 +206,7 @@ export func chunks < T > (values: List<T> , size: int) -> Result<List<List<T>> ,
 
 export func group_by < T, K > (
     values: List<T> ,
-    key_of: dynamic
+    key_of: func(T) -> K
 ) -> Dict<K, List<T>> {
     let groups: Dict<K, List<T>> = {};
 

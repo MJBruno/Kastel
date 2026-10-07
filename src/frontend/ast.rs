@@ -24,6 +24,12 @@ pub enum TypeExpr {
     /// Type tuple : `(int, str)`, `()`, `(int,)`.
     /// Une parenthèse sans virgule, `(int)`, reste un simple groupement de type.
     Tuple(Vec<TypeExpr>),
+
+    /// Type de fonction : `func(int, str) -> bool`.
+    Function {
+        params: Vec<TypeExpr>,
+        return_type: Box<TypeExpr>,
+    },
 }
 
 #[derive(Debug, Clone)]

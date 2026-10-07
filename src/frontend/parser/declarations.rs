@@ -38,6 +38,41 @@ impl Parser {
         Ok(TypeExpr::Union(members))
     }
 
+    /// `func(int, str) -> bool`
+    fn parse_function_type(&mut self) -> Result<TypeExpr, ParserError> {
+        self.consume(TokenKind::Function, "'func' attendu dans le type de fonction")?;
+        self.consume(TokenKind::LeftParen, "'(' attendu après 'func'")?;
+
+        let mut params = Vec::new();
+        if !self.check(TokenKind::RightParen) {
+            loop {
+                params.push(self.parse_type_expression()?);
+
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+
+                if self.check(TokenKind::RightParen) {
+                    return Err(ParserError {
+                        message: "Type de paramètre attendu après ','".to_string(),
+                        line: self.peek().line,
+                        column: self.peek().column,
+                    });
+                }
+            }
+        }
+
+        self.consume(TokenKind::RightParen, "')' attendu après les paramètres du type de fonction")?;
+        self.consume(TokenKind::Arrow, "'->' attendu après les paramètres du type de fonction")?;
+
+        let return_type = self.parse_type_expression()?;
+
+        Ok(TypeExpr::Function {
+            params,
+            return_type: Box::new(return_type),
+        })
+    }
+
     /// `{ name: str, age: int }`
     fn parse_record_type(&mut self) -> Result<TypeExpr, ParserError> {
         self.consume(TokenKind::LeftBrace, "'{' attendu")?;
@@ -118,6 +153,10 @@ impl Parser {
     }
 
     fn parse_type_primary(&mut self) -> Result<TypeExpr, ParserError> {
+        if self.check(TokenKind::Function) {
+            return self.parse_function_type();
+        }
+
         if self.check(TokenKind::LeftParen) {
             return self.parse_parenthesized_or_tuple_type();
         }
@@ -441,6 +480,36 @@ mod tuple_type_tests {
             &Some(TypeExpr::Tuple(vec![
                 TypeExpr::Named("str".to_string())
             ]))
+        );
+    }
+
+    #[test]
+    fn parses_function_types() {
+        let source = r#"
+            func apply(value: int, transform: func(int) -> str) -> str {
+                return transform(value);
+            }
+        "#;
+
+        let tokens = Lexer::new(source.to_string())
+            .scan_token()
+            .expect("lexer should accept function type syntax");
+
+        let mut parser = Parser::new(tokens);
+        let statements = parser
+            .parse()
+            .expect("parser should accept function types");
+
+        let Statement::Function { param_types, .. } = unwrap_function(&statements[0]) else {
+            panic!("expected function declaration");
+        };
+
+        assert_eq!(
+            param_types[1],
+            Some(TypeExpr::Function {
+                params: vec![TypeExpr::Named("int".to_string())],
+                return_type: Box::new(TypeExpr::Named("str".to_string())),
+            })
         );
     }
 

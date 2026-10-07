@@ -50,7 +50,7 @@ export func mode<T: Eq>(values: List<T>) -> Option<T> {
         return None;
     }
 
-    let best_value = values[0];
+    let best_value = values.first();
     let best_count = 0;
 
     for candidate in values {
@@ -134,8 +134,8 @@ export func range_of(values: List<float>) -> Option<float> {
         return None;
     }
 
-    let smallest = values[0];
-    let largest = values[0];
+    let smallest = values.first();
+    let largest = values.first();
     for value in values {
         if value < smallest {
             smallest = value;

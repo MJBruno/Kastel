@@ -132,6 +132,14 @@ impl Type {
                     .map(Self::from_type_expr)
                     .collect(),
             ),
+
+            TypeExpr::Function { params, return_type } => Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: params.iter().map(Self::from_type_expr).collect(),
+                return_type: Box::new(Self::from_type_expr(return_type)),
+            }),
         }
     }
 
@@ -1304,6 +1312,25 @@ mod tests {
         assert_eq!(
             Type::from_annotation(Some(&expr)),
             Type::Tuple(vec![Type::Int, Type::Str])
+        );
+    }
+
+    #[test]
+    fn maps_function_type_expression() {
+        let expr = TypeExpr::Function {
+            params: vec![named("int"), named("str")],
+            return_type: Box::new(named("bool")),
+        };
+
+        assert_eq!(
+            Type::from_type_expr(&expr),
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: vec![Type::Int, Type::Str],
+                return_type: Box::new(Type::Bool),
+            })
         );
     }
 

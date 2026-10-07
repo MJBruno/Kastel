@@ -1,7 +1,7 @@
 // std/thread.ks
 // API coopérative officielle.
 
-export func spawn_task(task: dynamic) -> Task<dynamic> {
+export func spawn_task<T>(task: func() -> T) -> Task<T> {
     return spawn(task);
 }
 

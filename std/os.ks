@@ -17,7 +17,7 @@ export func terminate(code: int) -> None {
     exit(code);
 }
 
-export func environment(name: str) -> dynamic {
+export func environment(name: str) -> Option<str> {
     return env(name);
 }
 

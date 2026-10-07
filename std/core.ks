@@ -65,7 +65,7 @@ export func identity<T>(value: T) -> T {
     return value;
 }
 
-export func constant<T>(value: T) -> dynamic {
+export func constant<T>(value: T) -> func(dynamic) -> T {
     return func(ignored) {
         return value;
     };
@@ -85,7 +85,7 @@ export func pipe(value: dynamic, steps: List<dynamic>) -> dynamic {
     return result;
 }
 
-export func repeat(times: int, action: dynamic) -> None {
+export func repeat(times: int, action: func() -> None) -> None {
     if times < 0 {
         throw "repeat: times doit etre positif";
     }

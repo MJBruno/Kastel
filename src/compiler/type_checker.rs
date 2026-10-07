@@ -717,6 +717,19 @@ impl TypeChecker {
                     })
                     .collect(),
             ),
+
+            TypeExpr::Function { params, return_type } => Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: params
+                    .iter()
+                    .map(|param| self.resolve_type_in_environment(param, environment, depth + 1))
+                    .collect(),
+                return_type: Box::new(
+                    self.resolve_type_in_environment(return_type, environment, depth + 1),
+                ),
+            }),
         }
     }
 
@@ -1454,6 +1467,22 @@ impl TypeChecker {
                     )?;
                 }
                 Ok(())
+            }
+            TypeExpr::Function { params, return_type } => {
+                for parameter in params {
+                    self.validate_alias_constraints_in_type_expr(
+                        parameter,
+                        environment,
+                        active_constraints,
+                        subject_name,
+                    )?;
+                }
+                self.validate_alias_constraints_in_type_expr(
+                    return_type,
+                    environment,
+                    active_constraints,
+                    subject_name,
+                )
             }
             TypeExpr::Generic { name, arguments } => {
                 for argument in arguments {
@@ -6212,6 +6241,14 @@ impl TypeChecker {
     ) -> bool {
         match expected {
             Type::TypeParam(name) if generic_params.iter().any(|parameter| parameter == name) => {
+                // Une closure contextualisée par `func(T) -> U` peut encore
+                // contenir le même paramètre `T` tant qu'aucune preuve concrète
+                // ne l'a instancié. Ce n'est pas une inférence : ne créons pas
+                // le faux binding `T = T`.
+                if matches!(actual, Type::TypeParam(actual_name) if actual_name == name) {
+                    return true;
+                }
+
                 if let Some(previous) = bindings.get(name) {
                     previous == actual || previous.is_dynamic() || actual.is_dynamic()
                 } else {
@@ -6428,41 +6465,88 @@ impl TypeChecker {
             });
         }
 
-        let actual_types = arguments
-            .iter()
-            .zip(&signature.params)
-            .map(|(argument, expected)| match (argument, expected) {
-                (Expression::Function { params, body }, Type::Function(expected_function)) => {
-                    self.check_function_expression_with_expected(params, body, expected_function)
-                }
-                _ => self.check_expression(argument),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        if !generic_args.is_empty() && generic_args.len() != signature.generic_params.len() {
+            return Err(CompileError::InvalidGenericArity {
+                name: function_name.to_string(),
+                expected: signature.generic_params.len(),
+                found: generic_args.len(),
+            });
+        }
 
+        // Première passe : typer les arguments ordinaires avant les callbacks.
+        // Cela permet d'inférer `T` depuis `apply(42, callback)` avant de
+        // contextualiser le paramètre du callback avec `func(int) -> ...`.
+        let mut actual_types: Vec<Option<Type>> = vec![None; arguments.len()];
         let mut substitutions = HashMap::new();
 
-        if !generic_args.is_empty() {
-            if generic_args.len() != signature.generic_params.len() {
-                return Err(CompileError::InvalidGenericArity {
-                    name: function_name.to_string(),
-                    expected: signature.generic_params.len(),
-                    found: generic_args.len(),
-                });
+        for (index, (argument, expected)) in arguments.iter().zip(&signature.params).enumerate() {
+            if matches!((argument, expected), (Expression::Function { .. }, Type::Function(_))) {
+                continue;
             }
 
-            for (parameter, argument) in signature.generic_params.iter().zip(generic_args.iter()) {
-                substitutions.insert(parameter.clone(), self.resolve_type(argument));
-            }
-        } else if !signature.generic_params.is_empty() {
-            for (expected, actual) in signature.params.iter().zip(&actual_types) {
+            let actual = self.check_expression(argument)?;
+
+            if !signature.generic_params.is_empty() && generic_args.is_empty() {
                 Self::infer_generic_bindings(
                     expected,
-                    actual,
+                    &actual,
                     &mut substitutions,
                     &signature.generic_params,
                 );
             }
 
+            actual_types[index] = Some(actual);
+        }
+
+        // Les arguments génériques explicites ont priorité sur toute inférence.
+        if !generic_args.is_empty() {
+            for (parameter, argument) in
+                signature.generic_params.iter().zip(generic_args.iter())
+            {
+                substitutions.insert(parameter.clone(), self.resolve_type(argument));
+            }
+        }
+
+        // Deuxième passe : les callbacks sont maintenant vérifiés avec la
+        // signature partiellement instanciée. Par exemple, `func(T) -> U`
+        // devient `func(int) -> U` lorsque le premier argument a produit
+        // `T = int`.
+        let partially_instantiated =
+            Self::substitute_function_signature(signature, &substitutions);
+
+        for (index, (argument, expected)) in arguments
+            .iter()
+            .zip(&partially_instantiated.params)
+            .enumerate()
+        {
+            let (Expression::Function { params, body }, Type::Function(expected_function)) =
+                (argument, expected)
+            else {
+                continue;
+            };
+
+            let actual = self.check_function_expression_with_expected(
+                params,
+                body,
+                expected_function,
+            )?;
+
+            if !signature.generic_params.is_empty() && generic_args.is_empty() {
+                // Ré-inférer sur la signature originale afin de récupérer les
+                // paramètres génériques encore inconnus, en particulier le type
+                // de retour `U` d'un callback `func(T) -> U`.
+                Self::infer_generic_bindings(
+                    &signature.params[index],
+                    &actual,
+                    &mut substitutions,
+                    &signature.generic_params,
+                );
+            }
+
+            actual_types[index] = Some(actual);
+        }
+
+        if generic_args.is_empty() && !signature.generic_params.is_empty() {
             for parameter in &signature.generic_params {
                 if !substitutions.contains_key(parameter) {
                     return Err(CompileError::CannotInferGenericType {
@@ -6471,21 +6555,20 @@ impl TypeChecker {
                     });
                 }
             }
-        } else if !generic_args.is_empty() {
-            return Err(CompileError::InvalidGenericArity {
-                name: function_name.to_string(),
-                expected: 0,
-                found: generic_args.len(),
-            });
         }
 
         self.validate_generic_constraints(signature, &substitutions, function_name)?;
 
         let instantiated = Self::substitute_function_signature(signature, &substitutions);
 
-        for (index, (actual, expected)) in actual_types.iter().zip(&instantiated.params).enumerate()
+        for (index, (actual, expected)) in actual_types
+            .into_iter()
+            .zip(&instantiated.params)
+            .enumerate()
         {
-            if !self.are_assignable(actual, expected) {
+            let actual = actual.expect("call argument type must be computed before validation");
+
+            if !self.are_assignable(&actual, expected) {
                 return Err(CompileError::WrongArgumentType {
                     function: function_name.to_string(),
                     index: index + 1,
@@ -8473,6 +8556,39 @@ let x: int = p.x;
         );
         assert!(ok.is_ok(), "{:?}", ok.err());
     }
+    #[test]
+    fn function_types_support_generic_callbacks() {
+        let valid = check(
+            r#"
+func apply<T, U>(value: T, transform: func(T) -> U) -> U {
+    return transform(value);
+}
+
+let value: int = apply(42, func(value) {
+    return value;
+});
+
+let text: str = apply(42, func(value) {
+    return "answer";
+});
+"#,
+        );
+        assert!(valid.is_ok(), "{valid:?}");
+
+        let invalid = check(
+            r#"
+func apply<T, U>(value: T, transform: func(T) -> U) -> U {
+    return transform(value);
+}
+
+let text: str = apply(42, func(value) {
+    return true;
+});
+"#,
+        );
+        assert!(invalid.is_err(), "{invalid:?}");
+    }
+
     #[test]
     fn generic_functions_support_explicit_arguments_and_inference() {
         let ok = check(

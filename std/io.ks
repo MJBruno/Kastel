@@ -1,11 +1,11 @@
 // std/io.ks
 // E/S console officielle : les opérations restent des natives du langage.
 
-export func print_value(value: dynamic) -> dynamic {
+export func print_value(value: dynamic) -> str {
     return print(value);
 }
 
-export func println_value(value: dynamic) -> dynamic {
+export func println_value(value: dynamic) -> str {
     return println(value);
 }
 

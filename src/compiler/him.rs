@@ -37,6 +37,10 @@ pub(crate) enum TypeExpr {
     Union(Vec<TypeExpr>),
     Record(Vec<(String, TypeExpr)>),
     Tuple(Vec<TypeExpr>),
+    Function {
+        params: Vec<TypeExpr>,
+        return_type: Box<TypeExpr>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -593,6 +597,11 @@ fn lower_type_expr(type_expr: &ast::TypeExpr) -> TypeExpr {
                     .collect(),
             )
         }
+
+        ast::TypeExpr::Function { params, return_type } => TypeExpr::Function {
+            params: params.iter().map(lower_type_expr).collect(),
+            return_type: Box::new(lower_type_expr(return_type)),
+        },
     }
 }
 
@@ -901,6 +910,30 @@ mod tests {
 
         assert_eq!(him.statements().len(), statements.len());
         assert_eq!(him.resolved_calls().iter().count(), 0);
+    }
+
+    #[test]
+    fn lowers_function_type_annotations() {
+        let statements = parse(
+            "func apply(value: int, transform: func(int) -> str) -> str { return transform(value); }",
+        );
+        let him = HimBuilder::build(&statements, None).expect("HIM valide attendue");
+
+        match &him.statements()[0] {
+            Statement::Positioned { statement, .. } => match statement.as_ref() {
+                Statement::Function { param_types, .. } => {
+                    assert!(matches!(
+                        param_types[1].as_ref(),
+                        Some(TypeExpr::Function { params, return_type })
+                            if params.len() == 1
+                                && matches!(&params[0], TypeExpr::Named(name) if name == "int")
+                                && matches!(return_type.as_ref(), TypeExpr::Named(name) if name == "str")
+                    ));
+                }
+                other => panic!("déclaration HIM inattendue: {other:?}"),
+            },
+            other => panic!("nœud HIM inattendu: {other:?}"),
+        }
     }
 
     #[test]

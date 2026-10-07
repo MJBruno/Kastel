@@ -55,7 +55,7 @@ export func assert_almost_eq(actual: float, expected: float, tolerance: float, m
 
 // Verifie que `action` (fonction sans argument) leve bien une
 // exception. Echoue si `action` se termine normalement.
-export func assert_throws(action: dynamic, message: str) -> None {
+export func assert_throws(action: func() -> dynamic, message: str) -> None {
     try {
         action();
     } catch (_) {
@@ -65,7 +65,7 @@ export func assert_throws(action: dynamic, message: str) -> None {
 }
 
 // Comme assert_eq, mais pour un Result<T, E> : echoue si c'est Err(...).
-export func assert_ok(result: dynamic, message: str) -> None {
+export func assert_ok<T, E>(result: Result<T, E>, message: str) -> None {
     match result {
         Ok(_) => {
             return;
@@ -77,7 +77,7 @@ export func assert_ok(result: dynamic, message: str) -> None {
 }
 
 // Comme assert_ok, mais attend Err(...) : echoue si c'est Ok(...).
-export func assert_err(result: dynamic, message: str) -> None {
+export func assert_err<T, E>(result: Result<T, E>, message: str) -> None {
     match result {
         Ok(value) => {
             throw format("{} (Ok inattendu: {})", message, value);
@@ -91,7 +91,7 @@ export func assert_err(result: dynamic, message: str) -> None {
 // `cases` est un tableau de paires [nom, fonction_sans_argument].
 // Chaque fonction signale un échec via un `throw` (voir les
 // assert_* ci-dessus). Renvoie `true` si tout est passé.
-export func run_tests(cases: List<Tuple<str, dynamic>>) -> bool {
+export func run_tests(cases: List<Tuple<str, func() -> dynamic>>) -> bool {
     let passed = 0;
     let failed = 0;
 
