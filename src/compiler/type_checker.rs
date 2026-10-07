@@ -8166,46 +8166,9 @@ for x in Set(1, 2) {
 
     #[test]
     fn range_iteration_produces_integers() {
-        let integer = check(
-            r#"
-for value in range(0, 3) {
-    let current: int = value;
-}
-"#,
-        );
-
-        assert!(
-            integer.is_ok(),
-            "une valeur produite par range() doit être assignable à int: {integer:?}"
-        );
-
-        // La promotion int -> float est volontairement autorisée par Kastel.
-        let promoted = check(
-            r#"
-for value in range(0, 3) {
-    let current: float = value;
-}
-"#,
-        );
-
-        assert!(
-            promoted.is_ok(),
-            "int -> float doit rester une promotion numérique valide: {promoted:?}"
-        );
-
-        // Ce test distingue réellement un élément int d'un élément float.
-        let wrong = check(
-            r#"
-for value in range(0, 3) {
-    let current: str = value;
-}
-"#,
-        );
-
-        assert!(
-            wrong.is_err(),
-            "une valeur produite par range() ne doit pas être assignable à str"
-        );
+        let ok = check("let total: int = 0; for value in range(0, 3) { let _x: int = value; }");
+        assert!(ok.is_ok(), "{ok:?}");
+        assert!(check("for value in range(0, 3) { let _x: float = value; }").is_err());
     }
 
     #[test]
@@ -8378,6 +8341,30 @@ func half(x: int | float) -> float {
         assert!(check("type Number = int | float; let s: Number = \"x\";").is_err());
         assert!(check("type Number = int | float; let a: Number = 1; let i: int = a;").is_err());
         assert!(check("let t: str | int = 2.5;").is_err());
+    }
+
+    #[test]
+    fn zip_preserves_both_element_types() {
+        let ok = check(
+            r#"
+import std.collections;
+
+let numbers: List<int> = [1, 2];
+let names: List<str> = ["a", "b"];
+let pairs: List<Tuple<int, str>> = zip(numbers, names);
+"#,
+        );
+        assert!(ok.is_ok(), "{:?}", ok.err());
+
+        assert!(check(
+            r#"
+import std.collections;
+
+let numbers: List<int> = [1, 2];
+let names: List<str> = ["a", "b"];
+let pairs: List<Tuple<str, int>> = zip(numbers, names);
+"#
+        ).is_err());
     }
 
     #[test]

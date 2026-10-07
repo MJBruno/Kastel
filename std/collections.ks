@@ -156,8 +156,8 @@ export func try_remove < K, V > (entries: Dict<K, V> , key: K) -> Option<V> {
 // Associe les elements de deux listes position par position ; s'arrete
 // a la plus courte. Renvoie une List de Tuple (a, b).
 
-export func zip < A, B > (left: List<A> , right: List<B>) -> List<Tuple> {
-    let pairs = [];
+export func zip<A, B>(left: List<A>, right: List<B>) -> List<Tuple<A, B>> {
+    let pairs: List<Tuple<A, B>> = [];
     let limit = left.size();
     if right.size() < limit {
         limit = right.size();
