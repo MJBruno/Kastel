@@ -1,8 +1,13 @@
-from std.collections import zip
+import std.thread
+from std.thread import SelectResult
 
-let item1: List<int> = [2, 6, 7, 8, 9]
-let item2: List<int> = [8, 7, 6, 5, 4]
+let a = channel < int > ();
+let b = channel < int > ();
 
-let items = zip(item1, item2);
+b.send(42);
 
-println(items)
+let result = thread.select_channels([a, b]);
+
+println(result.index);
+println(result.value);
+println(result.closed);

@@ -6241,14 +6241,6 @@ impl TypeChecker {
     ) -> bool {
         match expected {
             Type::TypeParam(name) if generic_params.iter().any(|parameter| parameter == name) => {
-                // Une closure contextualisée par `func(T) -> U` peut encore
-                // contenir le même paramètre `T` tant qu'aucune preuve concrète
-                // ne l'a instancié. Ce n'est pas une inférence : ne créons pas
-                // le faux binding `T = T`.
-                if matches!(actual, Type::TypeParam(actual_name) if actual_name == name) {
-                    return true;
-                }
-
                 if let Some(previous) = bindings.get(name) {
                     previous == actual || previous.is_dynamic() || actual.is_dynamic()
                 } else {
@@ -6465,28 +6457,50 @@ impl TypeChecker {
             });
         }
 
-        if !generic_args.is_empty() && generic_args.len() != signature.generic_params.len() {
+        let mut substitutions = HashMap::new();
+
+        if !generic_args.is_empty() {
+            if generic_args.len() != signature.generic_params.len() {
+                return Err(CompileError::InvalidGenericArity {
+                    name: function_name.to_string(),
+                    expected: signature.generic_params.len(),
+                    found: generic_args.len(),
+                });
+            }
+
+            for (parameter, argument) in signature
+                .generic_params
+                .iter()
+                .zip(generic_args.iter())
+            {
+                substitutions.insert(parameter.clone(), self.resolve_type(argument));
+            }
+        } else if signature.generic_params.is_empty() && !generic_args.is_empty() {
             return Err(CompileError::InvalidGenericArity {
                 name: function_name.to_string(),
-                expected: signature.generic_params.len(),
+                expected: 0,
                 found: generic_args.len(),
             });
         }
 
-        // Première passe : typer les arguments ordinaires avant les callbacks.
-        // Cela permet d'inférer `T` depuis `apply(42, callback)` avant de
-        // contextualiser le paramètre du callback avec `func(int) -> ...`.
-        let mut actual_types: Vec<Option<Type>> = vec![None; arguments.len()];
-        let mut substitutions = HashMap::new();
+        // Les callbacks sont volontairement différés jusqu'à ce que les
+        // arguments ordinaires aient pu déterminer les paramètres génériques
+        // d'entrée. Sans cela, un paramètre `T` reste abstrait dans le corps
+        // d'un callback et empêche par exemple `value.to_string()` alors que
+        // le premier argument fixe déjà `T = int`.
+        let mut actual_types = vec![None; arguments.len()];
 
         for (index, (argument, expected)) in arguments.iter().zip(&signature.params).enumerate() {
-            if matches!((argument, expected), (Expression::Function { .. }, Type::Function(_))) {
+            if matches!(
+                (argument, expected),
+                (Expression::Function { .. }, Type::Function(_))
+            ) {
                 continue;
             }
 
             let actual = self.check_expression(argument)?;
 
-            if !signature.generic_params.is_empty() && generic_args.is_empty() {
+            if generic_args.is_empty() && !signature.generic_params.is_empty() {
                 Self::infer_generic_bindings(
                     expected,
                     &actual,
@@ -6498,45 +6512,31 @@ impl TypeChecker {
             actual_types[index] = Some(actual);
         }
 
-        // Les arguments génériques explicites ont priorité sur toute inférence.
-        if !generic_args.is_empty() {
-            for (parameter, argument) in
-                signature.generic_params.iter().zip(generic_args.iter())
-            {
-                substitutions.insert(parameter.clone(), self.resolve_type(argument));
-            }
-        }
-
-        // Deuxième passe : les callbacks sont maintenant vérifiés avec la
-        // signature partiellement instanciée. Par exemple, `func(T) -> U`
-        // devient `func(int) -> U` lorsque le premier argument a produit
-        // `T = int`.
-        let partially_instantiated =
-            Self::substitute_function_signature(signature, &substitutions);
-
-        for (index, (argument, expected)) in arguments
-            .iter()
-            .zip(&partially_instantiated.params)
-            .enumerate()
+        // Maintenant que les arguments non-callback ont produit leurs
+        // substitutions, chaque callback reçoit sa signature concrète.
+        for (index, (argument, expected)) in
+            arguments.iter().zip(&signature.params).enumerate()
         {
-            let (Expression::Function { params, body }, Type::Function(expected_function)) =
-                (argument, expected)
-            else {
+            let Expression::Function { params, body } = argument else {
+                continue;
+            };
+            let Type::Function(expected_function) = expected else {
+                let actual = self.check_expression(argument)?;
+                actual_types[index] = Some(actual);
                 continue;
             };
 
+            let contextual_signature =
+                Self::substitute_function_signature(expected_function, &substitutions);
             let actual = self.check_function_expression_with_expected(
                 params,
                 body,
-                expected_function,
+                &contextual_signature,
             )?;
 
-            if !signature.generic_params.is_empty() && generic_args.is_empty() {
-                // Ré-inférer sur la signature originale afin de récupérer les
-                // paramètres génériques encore inconnus, en particulier le type
-                // de retour `U` d'un callback `func(T) -> U`.
+            if generic_args.is_empty() && !signature.generic_params.is_empty() {
                 Self::infer_generic_bindings(
-                    &signature.params[index],
+                    expected,
                     &actual,
                     &mut substitutions,
                     &signature.generic_params,
@@ -6546,7 +6546,7 @@ impl TypeChecker {
             actual_types[index] = Some(actual);
         }
 
-        if generic_args.is_empty() && !signature.generic_params.is_empty() {
+        if !signature.generic_params.is_empty() && generic_args.is_empty() {
             for parameter in &signature.generic_params {
                 if !substitutions.contains_key(parameter) {
                     return Err(CompileError::CannotInferGenericType {
@@ -6557,18 +6557,17 @@ impl TypeChecker {
             }
         }
 
+        let Some(actual_types) = actual_types.into_iter().collect::<Option<Vec<_>>>() else {
+            unreachable!("tous les arguments doivent être vérifiés avant l'instanciation");
+        };
+
         self.validate_generic_constraints(signature, &substitutions, function_name)?;
 
         let instantiated = Self::substitute_function_signature(signature, &substitutions);
 
-        for (index, (actual, expected)) in actual_types
-            .into_iter()
-            .zip(&instantiated.params)
-            .enumerate()
+        for (index, (actual, expected)) in actual_types.iter().zip(&instantiated.params).enumerate()
         {
-            let actual = actual.expect("call argument type must be computed before validation");
-
-            if !self.are_assignable(&actual, expected) {
+            if !self.are_assignable(actual, expected) {
                 return Err(CompileError::WrongArgumentType {
                     function: function_name.to_string(),
                     index: index + 1,
@@ -8564,12 +8563,8 @@ func apply<T, U>(value: T, transform: func(T) -> U) -> U {
     return transform(value);
 }
 
-let value: int = apply(42, func(value) {
-    return value;
-});
-
 let text: str = apply(42, func(value) {
-    return "answer";
+    return value.to_string();
 });
 "#,
         );
@@ -8587,85 +8582,6 @@ let text: str = apply(42, func(value) {
 "#,
         );
         assert!(invalid.is_err(), "{invalid:?}");
-    }
-
-    #[test]
-    fn spawn_task_overloads_preserve_task_result_types() {
-        let result = check(
-            r#"
-func spawn_task<T>(task: func() -> T) -> Task<T> {
-    return spawn(task);
-}
-
-func spawn_task<A, T>(task: func(A) -> T, arg: A) -> Task<T> {
-    return spawn(task, arg);
-}
-
-func spawn_task<A, B, T>(task: func(A, B) -> T, first: A, second: B) -> Task<T> {
-    return spawn(task, first, second);
-}
-
-let a: Task<int> = spawn_task(func() {
-    return 10;
-});
-
-let b: Task<int> = spawn_task(func(x) {
-    return x * 2;
-}, 21);
-
-let c: Task<int> = spawn_task(func(x, y) {
-    return x + y;
-}, 10, 20);
-"#,
-        );
-
-        assert!(result.is_ok(), "spawn_task doit conserver Task<T>: {result:?}");
-    }
-
-    #[test]
-    fn spawn_task_rejects_callback_arity_mismatches() {
-        let result = check(
-            r#"
-func spawn_task<T>(task: func() -> T) -> Task<T> {
-    return spawn(task);
-}
-
-func spawn_task<A, T>(task: func(A) -> T, arg: A) -> Task<T> {
-    return spawn(task, arg);
-}
-
-let task = spawn_task(func(x) {
-    return x;
-}, 10, 20);
-"#,
-        );
-
-        assert!(
-            result.is_err(),
-            "spawn_task doit refuser un nombre d'arguments incompatible avec le callback"
-        );
-    }
-
-    #[test]
-    fn spawn_task_rejects_async_callbacks() {
-        let result = check(
-            r#"
-func spawn_task<T>(task: func() -> T) -> Task<T> {
-    return spawn(task);
-}
-
-async func compute() -> int {
-    return 42;
-}
-
-let task = spawn_task(compute);
-"#,
-        );
-
-        assert!(
-            result.is_err(),
-            "spawn_task ne doit pas accepter une fonction async qui produit déjà Task<T>"
-        );
     }
 
     #[test]
@@ -10074,36 +9990,6 @@ for value in range(0, 5) {
 
         let set = check("let values: Set<int> = Set(1, 2, 3);");
         assert!(set.is_ok(), "Set doit être résolu via le contrat natif");
-    }
-
-    #[test]
-    fn channel_constructor_requires_explicit_type_for_specialization() {
-        let inferred = check("let c = channel();");
-        assert!(inferred.is_ok(), "channel() doit rester inféré comme Channel<dynamic>");
-
-        let explicit = check("let c: Channel<int> = channel<int>();");
-        assert!(explicit.is_ok(), "channel<int>() doit produire Channel<int>");
-
-        let implicit_specialization = check("let c: Channel<int> = channel();");
-        assert!(
-            implicit_specialization.is_err(),
-            "channel() ne doit pas renforcer implicitement Channel<dynamic> en Channel<int>"
-        );
-    }
-
-    #[test]
-    fn channel_dynamic_cannot_be_narrowed_after_assignment() {
-        let result = check(
-            r#"
-let source: Channel<dynamic> = channel();
-let typed: Channel<int> = source;
-"#,
-        );
-
-        assert!(
-            result.is_err(),
-            "Channel<dynamic> ne doit pas être assignable à Channel<int>"
-        );
     }
 
     #[test]

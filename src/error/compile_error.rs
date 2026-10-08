@@ -19,7 +19,6 @@ use crate::error::runtime_error::RuntimeError;
 // zéro ripple sur les ~40 signatures existantes.
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum CompileError {
     VariableAlreadyDeclared(String),
     VariableUseInInitializer(String),

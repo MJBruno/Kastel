@@ -488,17 +488,75 @@ fn build_specs() -> Vec<NativeSpec> {
     // méthodes sont résolues par `Type` comme pour `Channel`/`Mutex`. Les
     // sockets de lecture sont non bloquants : `None` signifie qu'aucune donnée
     // n'est disponible immédiatement.
+    specs.push(runtime("ip_parse", unary(Str, Named("IpAddr".into()))));
+    specs.push(runtime("ipv4", function(&[Int, Int, Int, Int], Named("Ipv4Addr".into()))));
+    specs.push(runtime("ipv4_from_bits", unary(Int, Named("Ipv4Addr".into()))));
+    specs.push(runtime("ipv4_localhost", function(&[], Named("Ipv4Addr".into()))));
+    specs.push(runtime("ipv4_unspecified", function(&[], Named("Ipv4Addr".into()))));
+    specs.push(runtime("ipv4_broadcast", function(&[], Named("Ipv4Addr".into()))));
+    specs.push(runtime("ipv6_localhost", function(&[], Named("Ipv6Addr".into()))));
+    specs.push(runtime("ipv6_unspecified", function(&[], Named("Ipv6Addr".into()))));
+    specs.push(runtime(
+        "ipv6",
+        function(&[Int, Int, Int, Int, Int, Int, Int, Int], Named("Ipv6Addr".into())),
+    ));
+    specs.push(runtime(
+        "socket_addr",
+        function(&[Named("IpAddr".into()), Int], Named("SocketAddr".into())),
+    ));
+    specs.push(runtime(
+        "socket_addr_parse",
+        unary(Str, Named("SocketAddr".into())),
+    ));
+    specs.push(runtime(
+        "socket_addr_v4",
+        function(&[Named("Ipv4Addr".into()), Int], Named("SocketAddrV4".into())),
+    ));
+    specs.push(runtime(
+        "socket_addr_v6",
+        function(
+            &[Named("Ipv6Addr".into()), Int, Int, Int],
+            Named("SocketAddrV6".into()),
+        ),
+    ));
+    specs.push(runtime(
+        "resolve",
+        function(
+            &[Str, Int],
+            Array(Box::new(Named("SocketAddr".into()))),
+        ),
+    ));
+    specs.push(runtime(
+        "resolve_addr",
+        unary(Str, Array(Box::new(Named("SocketAddr".into())))),
+    ));
     specs.push(runtime(
         "tcp_connect",
         function(&[Str, Int], Named("TcpStream".into())),
+    ));
+    specs.push(runtime(
+        "tcp_connect_addr",
+        unary(Named("SocketAddr".into()), Named("TcpStream".into())),
+    ));
+    specs.push(runtime(
+        "tcp_connect_timeout",
+        function(&[Named("SocketAddr".into()), Int], Named("TcpStream".into())),
     ));
     specs.push(runtime(
         "tcp_listen",
         function(&[Str, Int], Named("TcpListener".into())),
     ));
     specs.push(runtime(
+        "tcp_listen_addr",
+        unary(Named("SocketAddr".into()), Named("TcpListener".into())),
+    ));
+    specs.push(runtime(
         "udp_bind",
         function(&[Str, Int], Named("UdpSocket".into())),
+    ));
+    specs.push(runtime(
+        "udp_bind_addr",
+        unary(Named("SocketAddr".into()), Named("UdpSocket".into())),
     ));
 
     // Processus externes. Le second argument accepte Array<str> ou Tuple<str>
@@ -667,7 +725,7 @@ mod tests {
             assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
         }
 
-        assert_eq!(names.len(), 88);
+        assert_eq!(names.len(), 107);
         assert!(names.contains("process_run"));
         assert!(names.contains("http_get"));
         assert!(names.contains("http_request"));

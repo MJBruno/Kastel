@@ -3,7 +3,7 @@
 
 export type SelectResult<T> = {
     index: int,
-    value: Option<T> ,
+    value: Option<T>,
     closed: bool
 };
 
@@ -32,7 +32,6 @@ export func spawn_task<A, B, C, T>(
 // - index >= 0 et closed == false : une valeur T a été reçue.
 // - closed == true : le canal sélectionné est fermé et value == None.
 // - index == -1 : timeout, avec value == None.
-
 export func select_channels<T>(channels: List<Channel<T>>) -> SelectResult<T> {
     let raw = select(channels);
     let index = raw[0];
@@ -42,10 +41,10 @@ export func select_channels<T>(channels: List<Channel<T>>) -> SelectResult<T> {
         return { index: index, value: None, closed: closed };
     }
 
-    return { index: index, value: Some(raw[1]), closed: false };
+    return { index: index, value: Some<T>(raw[1]), closed: false };
 }
 
-export func select_channels<T>(channels: List<Channel<T>> , timeout_ms: int) -> SelectResult<T> {
+export func select_channels<T>(channels: List<Channel<T>>, timeout_ms: int) -> SelectResult<T> {
     let raw = select(channels, timeout_ms);
     let index = raw[0];
     let closed = raw[2];
@@ -54,7 +53,7 @@ export func select_channels<T>(channels: List<Channel<T>> , timeout_ms: int) -> 
         return { index: index, value: None, closed: closed };
     }
 
-    return { index: index, value: Some(raw[1]), closed: false };
+    return { index: index, value: Some<T>(raw[1]), closed: false };
 }
 
 export func yield_now() -> None {
@@ -67,7 +66,6 @@ export func sleep_ms(milliseconds: int) -> None {
 
 // Opérations fonctionnelles typées sur Task<T>.
 // Les méthodes natives restent disponibles directement sur la valeur Task<T>.
-
 export func join_task<T>(task: Task<T>) -> T {
     return task.join();
 }
@@ -84,9 +82,9 @@ export func task_done<T>(task: Task<T>) -> bool {
     return task.is_done();
 }
 
+
 // Exécute une action sous protection d'un Mutex et libère toujours le verrou,
 // même lorsque l'action lève une exception.
-
 export func with_lock<T>(mutex: Mutex, action: func() -> T) -> T {
     mutex.lock();
     try {
@@ -97,7 +95,6 @@ export func with_lock<T>(mutex: Mutex, action: func() -> T) -> T {
 }
 
 // Exécute une action sous verrou de lecture RwLock.
-
 export func with_read_lock<T>(lock: RwLock, action: func() -> T) -> T {
     lock.read_lock();
     try {
@@ -108,7 +105,6 @@ export func with_read_lock<T>(lock: RwLock, action: func() -> T) -> T {
 }
 
 // Exécute une action sous verrou d'écriture RwLock.
-
 export func with_write_lock<T>(lock: RwLock, action: func() -> T) -> T {
     lock.write_lock();
     try {
@@ -119,7 +115,6 @@ export func with_write_lock<T>(lock: RwLock, action: func() -> T) -> T {
 }
 
 // Acquiert temporairement un permis de Semaphore et le restitue toujours.
-
 export func with_semaphore<T>(semaphore: Semaphore, action: func() -> T) -> T {
     semaphore.acquire();
     try {

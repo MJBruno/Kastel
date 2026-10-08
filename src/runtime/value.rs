@@ -565,10 +565,15 @@ impl Value {
                     }
                 }
 
+                Object::Network(network) => {
+                    8u8.hash(state);
+                    network.borrow().hash_key(state);
+                }
+
                 // Identité : le hachage ne dépend PAS du contenu (qui peut
                 // changer) et n'emprunte donc pas l'objet.
                 _ => {
-                    8u8.hash(state);
+                    9u8.hash(state);
                     handle.as_id().hash(state);
                 }
             },
@@ -1727,6 +1732,10 @@ impl Value {
                                     .iter()
                                     .zip(b_items.iter())
                                     .all(|(left, right)| Value::key_equals(left, right)))
+                    }
+
+                    (Object::Network(a_network), Object::Network(b_network)) => {
+                        *a_network.borrow() == *b_network.borrow()
                     }
 
                     _ => Gc::<Object>::ptr_eq(&a, &b),

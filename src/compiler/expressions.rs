@@ -96,7 +96,7 @@ impl Compiler {
                     self.current_line = *line;
                     self.current_column = *column;
 
-                    self.compile_binary(operator.clone());
+                    self.compile_binary(*operator);
                 }
             },
 

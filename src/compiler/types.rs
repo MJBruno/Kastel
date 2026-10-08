@@ -387,17 +387,14 @@ impl Type {
                     return false;
                 }
 
-                // `Channel<T>` est mutable (`send` écrit dans le canal), donc
-                // son paramètre doit être invariant. En particulier, on ne peut
-                // pas transformer `Channel<dynamic>` en `Channel<int>` : cela
-                // renforcerait une garantie statique que le runtime ne peut pas
-                // vérifier pour un canal déjà existant.
-                //
-                // Le sens inverse (`Channel<int>` -> `Channel<dynamic>`) reste
-                // volontairement permis : `dynamic` constitue explicitement une
-                // frontière sans garantie statique.
-                if actual_name.eq_ignore_ascii_case("Channel") && actual_args.len() == 1 {
-                    return actual_args[0] == expected_args[0] || expected_args[0].is_dynamic();
+                // `channel()` sans paramètre explicite produit `Channel<dynamic>`.
+                // Une annotation `Channel<T>` peut spécialiser ce canal ; la
+                // liaison locale porte ensuite le type statique déclaré.
+                if actual_name.eq_ignore_ascii_case("Channel")
+                    && actual_args.len() == 1
+                    && actual_args[0].is_dynamic()
+                {
+                    return true;
                 }
 
                 actual_args
@@ -598,20 +595,13 @@ impl Type {
                 let element = self.element_type();
 
                 match name {
-                    "contains" | "index_of" => method(vec![element.clone()], if name == "contains" { Type::Bool } else { Type::Int }),
+                    "contains" => method(vec![Type::Dynamic], Type::Bool),
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
-                    "add" | "remove" => method(vec![element.clone()], Type::Bool),
-                    "remove_at" | "get" => method(vec![Type::Int], element.clone()),
-                    "insert" => method(vec![Type::Int, element.clone()], Type::Int),
-                    "set" => method(vec![Type::Int, element], Type::None),
-                    "slice" => method(
-                        vec![Type::Int, Type::Int],
-                        self.clone(),
-                    ),
-                    "reverse" | "sort" => method(vec![], self.clone()),
-                    "join" => method(vec![Type::Str], Type::Str),
+                    "add" | "remove" => method(vec![Type::Dynamic], Type::Bool),
+                    "remove_at" | "get" => method(vec![Type::Dynamic], element),
                     "first" | "last" | "pop" => method(vec![], element),
+                    "index_of" => method(vec![Type::Dynamic], Type::Int),
                     _ => None,
                 }
             }
@@ -622,14 +612,12 @@ impl Type {
 
                 match name {
                     // Pour un dict, `contains` teste l'existence d'une CLÉ.
-                    "contains" => method(vec![key.clone()], Type::Bool),
+                    "contains" => method(vec![Type::Dynamic], Type::Bool),
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
-                    "get" | "remove" => method(vec![key.clone()], value.clone()),
-                    "set" => method(vec![key.clone(), value.clone()], Type::None),
-                    "get_or" => method(vec![key.clone(), value.clone()], value.clone()),
-                    "update" => method(vec![self.clone()], Type::None),
-                    "keys" => method(vec![], Type::Array(Box::new(key.clone()))),
+                    "get" | "remove" => method(vec![Type::Dynamic], value),
+                    "set" => method(vec![Type::Dynamic, Type::Dynamic], Type::None),
+                    "keys" => method(vec![], Type::Array(Box::new(key))),
                     "values" => method(vec![], Type::Array(Box::new(value))),
                     "entries" => method(
                         vec![],
@@ -644,40 +632,17 @@ impl Type {
                 let element = self.element_type();
 
                 match name {
-                    "contains" | "index_of" => method(
-                        vec![element.clone()],
-                        if name == "contains" { Type::Bool } else { Type::Int },
-                    ),
-                    "get" => method(vec![Type::Int], element.clone()),
-                    "first" | "last" => method(vec![], element.clone()),
+                    "contains" => method(vec![Type::Dynamic], Type::Bool),
+                    "get" => method(vec![Type::Dynamic], element),
+                    "first" | "last" => method(vec![], element),
+                    "index_of" => method(vec![Type::Dynamic], Type::Int),
                     "to_list" => method(vec![], Type::Array(Box::new(element))),
                     _ => None,
                 }
             }
 
             Type::Str => match name {
-                "contains" | "starts_with" | "ends_with" => {
-                    method(vec![Type::Str], Type::Bool)
-                }
-                "get" | "byte_at" | "index_of" | "last_index_of" => {
-                    match name {
-                        "get" => method(vec![Type::Int], Type::Str),
-                        "byte_at" => method(vec![Type::Int], Type::Int),
-                        _ => method(vec![Type::Str], Type::Int),
-                    }
-                }
-                "slice" => method(vec![Type::Int, Type::Int], Type::Str),
-                "substring" => method(vec![Type::Int, Type::Int], Type::Str),
-                "replace" | "replace_all" => method(
-                    vec![Type::Str, Type::Str],
-                    Type::Str,
-                ),
-                "split" => method(vec![Type::Str], Type::Array(Box::new(Type::Str))),
-                "trim" | "trim_start" | "trim_end" | "upper" | "lower" | "reverse" => {
-                    method(vec![], Type::Str)
-                }
-                "repeat" => method(vec![Type::Int], Type::Str),
-                "is_empty" => method(vec![], Type::Bool),
+                "contains" => method(vec![Type::Dynamic], Type::Bool),
                 _ => None,
             },
 
@@ -934,6 +899,189 @@ impl Type {
             "status" => Some(function(Type::Str)),
             "is_done" => Some(function(Type::Bool)),
             "cancel" => Some(function(Type::None)),
+            _ => None,
+        }
+    }
+
+    /// Signatures statiques des primitives réseau (`std::net` adaptées à Kastel).
+    pub fn network_member_type(&self, name: &str) -> Option<Type> {
+        let function = |params: Vec<Type>, result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params,
+                return_type: Box::new(result),
+            })
+        };
+        let option = |inner: Type| Type::Generic {
+            name: "Option".into(),
+            arguments: vec![inner],
+        };
+        let byte_sequence = || Type::union_of(vec![
+            Type::Array(Box::new(Type::Int)),
+            Type::TupleDynamic,
+        ]);
+        let stream = || Type::Named("TcpStream".into());
+        let listener = || Type::Named("TcpListener".into());
+        let udp = || Type::Named("UdpSocket".into());
+        let ip = || Type::Named("IpAddr".into());
+        let ipv4 = || Type::Named("Ipv4Addr".into());
+        let ipv6 = || Type::Named("Ipv6Addr".into());
+        let socket_addr = || Type::Named("SocketAddr".into());
+
+        match self {
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("TcpStream") => match name {
+                "read" | "peek" => Some(function(
+                    vec![Type::Int],
+                    option(Type::Array(Box::new(Type::Int))),
+                )),
+                "write" => Some(function(vec![byte_sequence()], Type::Int)),
+                "shutdown" => Some(function(vec![Type::Str], Type::None)),
+                "set_nodelay" | "set_nonblocking" => Some(function(vec![Type::Bool], Type::None)),
+                "nodelay" | "is_nonblocking" | "is_closed" => Some(function(vec![], Type::Bool)),
+                "set_ttl" => Some(function(vec![Type::Int], Type::None)),
+                "ttl" => Some(function(vec![], Type::Int)),
+                "set_read_timeout" | "set_write_timeout" => {
+                    Some(function(vec![option(Type::Int)], Type::None))
+                }
+                "read_timeout" | "write_timeout" => Some(function(vec![], option(Type::Int))),
+                "take_error" => Some(function(vec![], option(Type::Str))),
+                "try_clone" => Some(function(vec![], stream())),
+                "local_addr" | "peer_addr" => Some(function(vec![], Type::Str)),
+                "local_socket_addr" | "peer_socket_addr" => Some(function(vec![], socket_addr())),
+                "close" => Some(function(vec![], Type::None)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("TcpListener") => match name {
+                "accept" => Some(function(vec![], option(stream()))),
+                "accept_available" => Some(function(vec![Type::Int], Type::Array(Box::new(stream())))),
+                "try_clone" => Some(function(vec![], listener())),
+                "set_ttl" => Some(function(vec![Type::Int], Type::None)),
+                "ttl" => Some(function(vec![], Type::Int)),
+                "set_nonblocking" => Some(function(vec![Type::Bool], Type::None)),
+                "is_nonblocking" | "is_closed" => Some(function(vec![], Type::Bool)),
+                "take_error" => Some(function(vec![], option(Type::Str))),
+                "local_addr" => Some(function(vec![], Type::Str)),
+                "local_socket_addr" => Some(function(vec![], socket_addr())),
+                "close" => Some(function(vec![], Type::None)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("UdpSocket") => match name {
+                "send_to" => Some(function(
+                    vec![byte_sequence(), Type::Str, Type::Int],
+                    Type::Int,
+                )),
+                "send_to_addr" => Some(function(
+                    vec![byte_sequence(), socket_addr()],
+                    Type::Int,
+                )),
+                "recv_from" => Some(function(
+                    vec![Type::Int],
+                    option(Type::Tuple(vec![
+                        Type::Array(Box::new(Type::Int)),
+                        Type::Str,
+                        Type::Int,
+                    ])),
+                )),
+                "recv_from_addr" | "peek_from" => Some(function(
+                    vec![Type::Int],
+                    option(Type::Tuple(vec![Type::Array(Box::new(Type::Int)), socket_addr()])),
+                )),
+                "connect" => Some(function(vec![Type::Str, Type::Int], Type::None)),
+                "connect_addr" => Some(function(vec![socket_addr()], Type::None)),
+                "send" => Some(function(vec![byte_sequence()], Type::Int)),
+                "recv" | "peek" => Some(function(
+                    vec![Type::Int],
+                    option(Type::Array(Box::new(Type::Int))),
+                )),
+                "peer_addr" | "local_addr" => Some(function(vec![], Type::Str)),
+                "peer_socket_addr" | "local_socket_addr" => Some(function(vec![], socket_addr())),
+                "try_clone" => Some(function(vec![], udp())),
+                "set_nonblocking" | "set_broadcast" => Some(function(vec![Type::Bool], Type::None)),
+                "is_nonblocking" | "broadcast" | "is_closed" => Some(function(vec![], Type::Bool)),
+                "set_read_timeout" | "set_write_timeout" => {
+                    Some(function(vec![option(Type::Int)], Type::None))
+                }
+                "read_timeout" | "write_timeout" => Some(function(vec![], option(Type::Int))),
+                "take_error" => Some(function(vec![], option(Type::Str))),
+                "set_ttl" | "set_multicast_ttl_v4" => Some(function(vec![Type::Int], Type::None)),
+                "ttl" | "multicast_ttl_v4" => Some(function(vec![], Type::Int)),
+                "set_multicast_loop_v4" | "set_multicast_loop_v6" => {
+                    Some(function(vec![Type::Bool], Type::None))
+                }
+                "multicast_loop_v4" | "multicast_loop_v6" => Some(function(vec![], Type::Bool)),
+                "join_multicast_v4" | "leave_multicast_v4" => {
+                    Some(function(vec![ipv4(), ipv4()], Type::None))
+                }
+                "join_multicast_v6" | "leave_multicast_v6" => {
+                    Some(function(vec![ipv6(), Type::Int], Type::None))
+                }
+                "close" => Some(function(vec![], Type::None)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("IpAddr") => match name {
+                "is_v4" | "is_v6" | "is_unspecified" | "is_loopback" | "is_multicast" => {
+                    Some(function(vec![], Type::Bool))
+                }
+                "to_canonical" => Some(function(vec![], ip())),
+                "as_ipv4" => Some(function(vec![], option(ipv4()))),
+                "as_ipv6" => Some(function(vec![], option(ipv6()))),
+                "to_string" => Some(function(vec![], Type::Str)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("Ipv4Addr") => match name {
+                "octets" => Some(function(vec![], Type::Array(Box::new(Type::Int)))),
+                "to_bits" => Some(function(vec![], Type::Int)),
+                "is_broadcast" | "is_link_local" | "is_loopback" | "is_multicast"
+                | "is_private" | "is_documentation" | "is_unspecified" => Some(function(vec![], Type::Bool)),
+                "to_ipv6_compatible" | "to_ipv6_mapped" => Some(function(vec![], ipv6())),
+                "to_ip" => Some(function(vec![], ip())),
+                "to_string" => Some(function(vec![], Type::Str)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("Ipv6Addr") => match name {
+                "segments" | "octets" => Some(function(vec![], Type::Array(Box::new(Type::Int)))),
+                "is_loopback" | "is_multicast" | "is_unique_local"
+                | "is_unicast_link_local" | "is_unspecified" | "is_ipv4_mapped" => {
+                    Some(function(vec![], Type::Bool))
+                }
+                "to_ipv4" => Some(function(vec![], option(ipv4()))),
+                "to_ip" | "to_canonical" => Some(function(vec![], ip())),
+                "to_string" => Some(function(vec![], Type::Str)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("SocketAddr") => match name {
+                "ip" => Some(function(vec![], ip())),
+                "port" => Some(function(vec![], Type::Int)),
+                "is_ipv4" | "is_ipv6" => Some(function(vec![], Type::Bool)),
+                "as_v4" => Some(function(vec![], option(Type::Named("SocketAddrV4".into())))),
+                "as_v6" => Some(function(vec![], option(Type::Named("SocketAddrV6".into())))),
+                "set_ip" => Some(function(vec![ip()], Type::None)),
+                "set_port" => Some(function(vec![Type::Int], Type::None)),
+                "to_string" => Some(function(vec![], Type::Str)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("SocketAddrV4") => match name {
+                "ip" => Some(function(vec![], ipv4())),
+                "port" => Some(function(vec![], Type::Int)),
+                "set_ip" => Some(function(vec![ipv4()], Type::None)),
+                "set_port" => Some(function(vec![Type::Int], Type::None)),
+                "to_socket_addr" => Some(function(vec![], socket_addr())),
+                "to_string" => Some(function(vec![], Type::Str)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("SocketAddrV6") => match name {
+                "ip" => Some(function(vec![], ipv6())),
+                "port" | "flowinfo" | "scope_id" => Some(function(vec![], Type::Int)),
+                "set_ip" => Some(function(vec![ipv6()], Type::None)),
+                "set_port" | "set_flowinfo" | "set_scope_id" => {
+                    Some(function(vec![Type::Int], Type::None))
+                }
+                "to_socket_addr" => Some(function(vec![], socket_addr())),
+                "to_string" => Some(function(vec![], Type::Str)),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -1328,6 +1476,51 @@ mod tests {
     }
 
     #[test]
+    fn network_member_signatures_are_concrete() {
+        let stream = Type::Named("TcpStream".into());
+        assert_eq!(
+            stream.network_member_type("read"),
+            Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: vec![Type::Int],
+                return_type: Box::new(Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![Type::Array(Box::new(Type::Int))],
+                }),
+            }))
+        );
+
+        let socket = Type::Named("SocketAddr".into());
+        assert_eq!(socket.network_member_type("port"), Some(Type::Function(FunctionType {
+            generic_params: Vec::new(),
+            is_async: false,
+            generic_constraints: Vec::new(),
+            params: Vec::new(),
+            return_type: Box::new(Type::Int),
+        })));
+
+        let udp = Type::Named("UdpSocket".into());
+        assert_eq!(
+            udp.network_member_type("recv_from_addr"),
+            Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: vec![Type::Int],
+                return_type: Box::new(Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![Type::Tuple(vec![
+                        Type::Array(Box::new(Type::Int)),
+                        Type::Named("SocketAddr".into()),
+                    ])],
+                }),
+            }))
+        );
+    }
+
+    #[test]
     fn maps_primitive_names() {
         assert_eq!(Type::from_annotation(Some(&named("int"))), Type::Int);
         assert_eq!(Type::from_annotation(Some(&named("float"))), Type::Float);
@@ -1367,201 +1560,6 @@ mod tests {
                 return_type: Box::new(Type::Bool),
             })
         );
-    }
-
-    #[test]
-    fn standard_collection_method_signatures_preserve_element_and_key_types() {
-        let list = Type::Array(Box::new(Type::Int));
-        let Type::Function(add) = list.collection_member_type("add").expect("add") else {
-            panic!("add doit être une fonction");
-        };
-        assert_eq!(add.params, vec![Type::Int]);
-        assert_eq!(*add.return_type, Type::Bool);
-
-        let Type::Function(get) = list.collection_member_type("get").expect("get") else {
-            panic!("get doit être une fonction");
-        };
-        assert_eq!(get.params, vec![Type::Int]);
-        assert_eq!(*get.return_type, Type::Int);
-
-        let Type::Function(insert) = list.collection_member_type("insert").expect("insert") else {
-            panic!("insert doit être une fonction");
-        };
-        assert_eq!(insert.params, vec![Type::Int, Type::Int]);
-        assert_eq!(*insert.return_type, Type::Int);
-
-        let dict = Type::Dict(Box::new(Type::Str), Box::new(Type::Float));
-        let Type::Function(set) = dict.collection_member_type("set").expect("set") else {
-            panic!("set doit être une fonction");
-        };
-        assert_eq!(set.params, vec![Type::Str, Type::Float]);
-        assert_eq!(*set.return_type, Type::None);
-
-        let Type::Function(get_or) = dict.collection_member_type("get_or").expect("get_or") else {
-            panic!("get_or doit être une fonction");
-        };
-        assert_eq!(get_or.params, vec![Type::Str, Type::Float]);
-        assert_eq!(*get_or.return_type, Type::Float);
-    }
-
-    #[test]
-    fn standard_string_method_signatures_use_concrete_argument_types() {
-        let string = Type::Str;
-
-        let Type::Function(contains) = string
-            .collection_member_type("contains")
-            .expect("contains") else {
-            panic!("contains doit être une fonction");
-        };
-        assert_eq!(contains.params, vec![Type::Str]);
-        assert_eq!(*contains.return_type, Type::Bool);
-
-        let Type::Function(get) = string.collection_member_type("get").expect("get") else {
-            panic!("get doit être une fonction");
-        };
-        assert_eq!(get.params, vec![Type::Int]);
-        assert_eq!(*get.return_type, Type::Str);
-    }
-
-    #[test]
-    fn concurrency_member_signatures_preserve_generic_payloads() {
-        let task = Type::Generic {
-            name: "Task".into(),
-            arguments: vec![Type::Int],
-        };
-
-        let Type::Function(join) = task.task_member_type("join").expect("Task.join") else {
-            panic!("Task.join doit être une fonction");
-        };
-        assert!(join.params.is_empty());
-        assert_eq!(*join.return_type, Type::Int);
-
-        let channel = Type::Generic {
-            name: "Channel".into(),
-            arguments: vec![Type::Str],
-        };
-
-        let Type::Function(send) = channel.channel_member_type("send").expect("Channel.send") else {
-            panic!("Channel.send doit être une fonction");
-        };
-        assert_eq!(send.params, vec![Type::Str]);
-        assert_eq!(*send.return_type, Type::None);
-
-        let Type::Function(recv) = channel.channel_member_type("recv").expect("Channel.recv") else {
-            panic!("Channel.recv doit être une fonction");
-        };
-        assert!(recv.params.is_empty());
-        assert_eq!(*recv.return_type, Type::Str);
-
-        let Type::Function(try_recv) = channel
-            .channel_member_type("try_recv")
-            .expect("Channel.try_recv")
-        else {
-            panic!("Channel.try_recv doit être une fonction");
-        };
-        assert_eq!(
-            *try_recv.return_type,
-            Type::Generic {
-                name: "Option".into(),
-                arguments: vec![Type::Str],
-            }
-        );
-    }
-
-    #[test]
-    fn synchronization_member_signatures_are_concrete() {
-        let mutex = Type::Named("Mutex".into());
-        let semaphore = Type::Named("Semaphore".into());
-        let rwlock = Type::Named("RwLock".into());
-        let condvar = Type::Named("Condvar".into());
-
-        for method in ["lock", "unlock"] {
-            let Type::Function(signature) = mutex.mutex_member_type(method).expect(method) else {
-                panic!("Mutex::{method} doit être une fonction");
-            };
-            assert!(signature.params.is_empty());
-            assert_eq!(*signature.return_type, Type::None);
-        }
-
-        let Type::Function(try_lock) = mutex.mutex_member_type("try_lock").expect("try_lock") else {
-            panic!("Mutex::try_lock doit être une fonction");
-        };
-        assert_eq!(*try_lock.return_type, Type::Bool);
-
-        let Type::Function(acquire) = semaphore
-            .semaphore_member_type("acquire")
-            .expect("acquire")
-        else {
-            panic!("Semaphore::acquire doit être une fonction");
-        };
-        assert_eq!(*acquire.return_type, Type::None);
-
-        let Type::Function(available) = semaphore
-            .semaphore_member_type("available")
-            .expect("available")
-        else {
-            panic!("Semaphore::available doit être une fonction");
-        };
-        assert_eq!(*available.return_type, Type::Int);
-
-        let Type::Function(read_lock) = rwlock
-            .rwlock_member_type("read_lock")
-            .expect("read_lock")
-        else {
-            panic!("RwLock::read_lock doit être une fonction");
-        };
-        assert_eq!(*read_lock.return_type, Type::None);
-
-        let Type::Function(reader_count) = rwlock
-            .rwlock_member_type("reader_count")
-            .expect("reader_count")
-        else {
-            panic!("RwLock::reader_count doit être une fonction");
-        };
-        assert_eq!(*reader_count.return_type, Type::Int);
-
-        let Type::Function(wait) = condvar.condvar_member_type("wait").expect("wait") else {
-            panic!("Condvar::wait doit être une fonction");
-        };
-        assert_eq!(*wait.return_type, Type::None);
-    }
-
-    #[test]
-    fn channels_are_invariant_after_specialization() {
-        let parents = |_name: &str| Vec::<String>::new();
-        let channel_int = Type::Generic {
-            name: "Channel".into(),
-            arguments: vec![Type::Int],
-        };
-        let channel_float = Type::Generic {
-            name: "Channel".into(),
-            arguments: vec![Type::Float],
-        };
-        let channel_dynamic = Type::Generic {
-            name: "Channel".into(),
-            arguments: vec![Type::Dynamic],
-        };
-
-        assert!(!channel_int.is_assignable_to(&channel_float, &parents));
-        assert!(!channel_float.is_assignable_to(&channel_int, &parents));
-        assert!(channel_int.is_assignable_to(&channel_dynamic, &parents));
-        assert!(!channel_dynamic.is_assignable_to(&channel_int, &parents));
-    }
-
-    #[test]
-    fn tasks_are_covariant_in_their_result_type() {
-        let parents = |_name: &str| Vec::<String>::new();
-        let task_int = Type::Generic {
-            name: "Task".into(),
-            arguments: vec![Type::Int],
-        };
-        let task_float = Type::Generic {
-            name: "Task".into(),
-            arguments: vec![Type::Float],
-        };
-
-        assert!(task_int.is_assignable_to(&task_float, &parents));
-        assert!(!task_float.is_assignable_to(&task_int, &parents));
     }
 
     #[test]

@@ -592,7 +592,6 @@ pub fn register(globals: &mut HashMap<String, Value>) {
     let _ = globals;
 }
 
-
 #[cfg(test)]
 mod sort_tests {
     use super::native_sort;
@@ -616,7 +615,7 @@ mod sort_tests {
     #[test]
     fn sorts_integers() {
         let array = ints(&[3, 1, 2]);
-        native_sort(&[array.clone()]).unwrap();
+        native_sort(std::slice::from_ref(&array)).unwrap();
         let sorted: Vec<i64> = contents(&array)
             .into_iter()
             .map(|v| match v {

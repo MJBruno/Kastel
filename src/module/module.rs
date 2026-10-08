@@ -40,7 +40,7 @@ impl PartialEq for ModuleInstance {
         self.path == other.path
     }
 }
-#[allow(dead_code)]
+
 impl ModuleInstance {
     pub fn new(name: String, path: PathBuf) -> Self {
         Self {
@@ -77,7 +77,7 @@ struct ModuleLoaderState {
     cache: HashMap<PathBuf, Rc<ModuleInstance>>,
     loading: Vec<PathBuf>,
 }
-#[allow(dead_code)]
+
 impl ModuleLoader {
     /// `project_root` est la racine de résolution des imports du
     /// programme. Elle sert de repli pour les imports relatifs au

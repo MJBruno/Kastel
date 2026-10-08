@@ -66,7 +66,7 @@ export func mode<T: Eq>(values: List<T>) -> Option<T> {
         }
     }
 
-    return Some(best_value);
+    return Some<T>(best_value);
 }
 
 export func variance_population(values: List<float>) -> Option<float> {

@@ -954,7 +954,7 @@ See [`LICENSE`](LICENSE) for the full license terms.
 
 # 👤 Author
 
-**MAHASOLO Jean Bruno**
+***MAHASOLO Jean Bruno***
 
 Personal project focused on designing a dynamic programming language and its virtual machine in Rust.
 

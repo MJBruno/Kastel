@@ -9,7 +9,6 @@ pub struct Upvalue {
     pub is_local: bool,
 }
 
-#[allow(dead_code)]
 impl Upvalue {
     pub fn new(index: u8, is_local: bool) -> Self {
         Self { index, is_local }

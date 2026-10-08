@@ -331,7 +331,11 @@ impl std::fmt::Display for RuntimeError {
                 write!(f, "Module error: {message}")
             }
 
-            RuntimeError::NetworkError { operation, kind, message } => {
+            RuntimeError::NetworkError {
+                operation,
+                kind,
+                message,
+            } => {
                 write!(f, "Network error during {operation} ({kind}): {message}")
             }
 

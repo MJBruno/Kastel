@@ -63,12 +63,8 @@ impl ResolvedCallTable {
 
 #[derive(Debug, Clone)]
 pub(crate) enum ResolvedMember {
-    Property {
-        name: String,
-    },
-    Dynamic {
-        name: String,
-    },
+    Property { name: String },
+    Dynamic { name: String },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -153,9 +149,10 @@ impl ResolvedCall {
 
     pub(crate) fn constructor_details(&self) -> Option<(&str, Option<&CallableTarget>)> {
         match &self.target {
-            CallTarget::Constructor { class_name, callable } => {
-                Some((class_name.as_str(), callable.as_ref()))
-            }
+            CallTarget::Constructor {
+                class_name,
+                callable,
+            } => Some((class_name.as_str(), callable.as_ref())),
             _ => None,
         }
     }
@@ -235,4 +232,3 @@ pub(crate) enum CallTarget {
     },
     Dynamic,
 }
-
