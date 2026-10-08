@@ -8590,6 +8590,85 @@ let text: str = apply(42, func(value) {
     }
 
     #[test]
+    fn spawn_task_overloads_preserve_task_result_types() {
+        let result = check(
+            r#"
+func spawn_task<T>(task: func() -> T) -> Task<T> {
+    return spawn(task);
+}
+
+func spawn_task<A, T>(task: func(A) -> T, arg: A) -> Task<T> {
+    return spawn(task, arg);
+}
+
+func spawn_task<A, B, T>(task: func(A, B) -> T, first: A, second: B) -> Task<T> {
+    return spawn(task, first, second);
+}
+
+let a: Task<int> = spawn_task(func() {
+    return 10;
+});
+
+let b: Task<int> = spawn_task(func(x) {
+    return x * 2;
+}, 21);
+
+let c: Task<int> = spawn_task(func(x, y) {
+    return x + y;
+}, 10, 20);
+"#,
+        );
+
+        assert!(result.is_ok(), "spawn_task doit conserver Task<T>: {result:?}");
+    }
+
+    #[test]
+    fn spawn_task_rejects_callback_arity_mismatches() {
+        let result = check(
+            r#"
+func spawn_task<T>(task: func() -> T) -> Task<T> {
+    return spawn(task);
+}
+
+func spawn_task<A, T>(task: func(A) -> T, arg: A) -> Task<T> {
+    return spawn(task, arg);
+}
+
+let task = spawn_task(func(x) {
+    return x;
+}, 10, 20);
+"#,
+        );
+
+        assert!(
+            result.is_err(),
+            "spawn_task doit refuser un nombre d'arguments incompatible avec le callback"
+        );
+    }
+
+    #[test]
+    fn spawn_task_rejects_async_callbacks() {
+        let result = check(
+            r#"
+func spawn_task<T>(task: func() -> T) -> Task<T> {
+    return spawn(task);
+}
+
+async func compute() -> int {
+    return 42;
+}
+
+let task = spawn_task(compute);
+"#,
+        );
+
+        assert!(
+            result.is_err(),
+            "spawn_task ne doit pas accepter une fonction async qui produit déjà Task<T>"
+        );
+    }
+
+    #[test]
     fn generic_functions_support_explicit_arguments_and_inference() {
         let ok = check(
             r#"
