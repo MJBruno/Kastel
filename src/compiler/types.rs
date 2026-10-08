@@ -390,11 +390,18 @@ impl Type {
                 // `channel()` sans paramètre explicite produit `Channel<dynamic>`.
                 // Une annotation `Channel<T>` peut spécialiser ce canal ; la
                 // liaison locale porte ensuite le type statique déclaré.
-                if actual_name.eq_ignore_ascii_case("Channel")
-                    && actual_args.len() == 1
-                    && actual_args[0].is_dynamic()
-                {
-                    return true;
+                //
+                // En revanche, un canal déjà spécialisé doit rester INVARIANT :
+                // `Channel<int>` ne peut pas devenir `Channel<float>` par simple
+                // promotion numérique, car `send()` est une opération d'écriture.
+                if actual_name.eq_ignore_ascii_case("Channel") && actual_args.len() == 1 {
+                    if actual_args[0].is_dynamic() {
+                        return true;
+                    }
+                    if expected_args[0].is_dynamic() {
+                        return true;
+                    }
+                    return actual_args[0] == expected_args[0];
                 }
 
                 actual_args
@@ -595,13 +602,20 @@ impl Type {
                 let element = self.element_type();
 
                 match name {
-                    "contains" => method(vec![Type::Dynamic], Type::Bool),
+                    "contains" | "index_of" => method(vec![element.clone()], if name == "contains" { Type::Bool } else { Type::Int }),
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
-                    "add" | "remove" => method(vec![Type::Dynamic], Type::Bool),
-                    "remove_at" | "get" => method(vec![Type::Dynamic], element),
+                    "add" | "remove" => method(vec![element.clone()], Type::Bool),
+                    "remove_at" | "get" => method(vec![Type::Int], element.clone()),
+                    "insert" => method(vec![Type::Int, element.clone()], Type::Int),
+                    "set" => method(vec![Type::Int, element], Type::None),
+                    "slice" => method(
+                        vec![Type::Int, Type::Int],
+                        self.clone(),
+                    ),
+                    "reverse" | "sort" => method(vec![], self.clone()),
+                    "join" => method(vec![Type::Str], Type::Str),
                     "first" | "last" | "pop" => method(vec![], element),
-                    "index_of" => method(vec![Type::Dynamic], Type::Int),
                     _ => None,
                 }
             }
@@ -612,12 +626,14 @@ impl Type {
 
                 match name {
                     // Pour un dict, `contains` teste l'existence d'une CLÉ.
-                    "contains" => method(vec![Type::Dynamic], Type::Bool),
+                    "contains" => method(vec![key.clone()], Type::Bool),
                     "copy" => method(vec![], self.clone()),
                     "clear" => method(vec![], Type::None),
-                    "get" | "remove" => method(vec![Type::Dynamic], value),
-                    "set" => method(vec![Type::Dynamic, Type::Dynamic], Type::None),
-                    "keys" => method(vec![], Type::Array(Box::new(key))),
+                    "get" | "remove" => method(vec![key.clone()], value.clone()),
+                    "set" => method(vec![key.clone(), value.clone()], Type::None),
+                    "get_or" => method(vec![key.clone(), value.clone()], value.clone()),
+                    "update" => method(vec![self.clone()], Type::None),
+                    "keys" => method(vec![], Type::Array(Box::new(key.clone()))),
                     "values" => method(vec![], Type::Array(Box::new(value))),
                     "entries" => method(
                         vec![],
@@ -632,17 +648,40 @@ impl Type {
                 let element = self.element_type();
 
                 match name {
-                    "contains" => method(vec![Type::Dynamic], Type::Bool),
-                    "get" => method(vec![Type::Dynamic], element),
-                    "first" | "last" => method(vec![], element),
-                    "index_of" => method(vec![Type::Dynamic], Type::Int),
+                    "contains" | "index_of" => method(
+                        vec![element.clone()],
+                        if name == "contains" { Type::Bool } else { Type::Int },
+                    ),
+                    "get" => method(vec![Type::Int], element.clone()),
+                    "first" | "last" => method(vec![], element.clone()),
                     "to_list" => method(vec![], Type::Array(Box::new(element))),
                     _ => None,
                 }
             }
 
             Type::Str => match name {
-                "contains" => method(vec![Type::Dynamic], Type::Bool),
+                "contains" | "starts_with" | "ends_with" => {
+                    method(vec![Type::Str], Type::Bool)
+                }
+                "get" | "byte_at" | "index_of" | "last_index_of" => {
+                    match name {
+                        "get" => method(vec![Type::Int], Type::Str),
+                        "byte_at" => method(vec![Type::Int], Type::Int),
+                        _ => method(vec![Type::Str], Type::Int),
+                    }
+                }
+                "slice" => method(vec![Type::Int, Type::Int], Type::Str),
+                "substring" => method(vec![Type::Int, Type::Int], Type::Str),
+                "replace" | "replace_all" => method(
+                    vec![Type::Str, Type::Str],
+                    Type::Str,
+                ),
+                "split" => method(vec![Type::Str], Type::Array(Box::new(Type::Str))),
+                "trim" | "trim_start" | "trim_end" | "upper" | "lower" | "reverse" => {
+                    method(vec![], Type::Str)
+                }
+                "repeat" => method(vec![Type::Int], Type::Str),
+                "is_empty" => method(vec![], Type::Bool),
                 _ => None,
             },
 
@@ -1332,6 +1371,185 @@ mod tests {
                 return_type: Box::new(Type::Bool),
             })
         );
+    }
+
+    #[test]
+    fn standard_collection_method_signatures_preserve_element_and_key_types() {
+        let list = Type::Array(Box::new(Type::Int));
+        let Type::Function(add) = list.collection_member_type("add").expect("add") else {
+            panic!("add doit être une fonction");
+        };
+        assert_eq!(add.params, vec![Type::Int]);
+        assert_eq!(*add.return_type, Type::Bool);
+
+        let Type::Function(get) = list.collection_member_type("get").expect("get") else {
+            panic!("get doit être une fonction");
+        };
+        assert_eq!(get.params, vec![Type::Int]);
+        assert_eq!(*get.return_type, Type::Int);
+
+        let Type::Function(insert) = list.collection_member_type("insert").expect("insert") else {
+            panic!("insert doit être une fonction");
+        };
+        assert_eq!(insert.params, vec![Type::Int, Type::Int]);
+        assert_eq!(*insert.return_type, Type::Int);
+
+        let dict = Type::Dict(Box::new(Type::Str), Box::new(Type::Float));
+        let Type::Function(set) = dict.collection_member_type("set").expect("set") else {
+            panic!("set doit être une fonction");
+        };
+        assert_eq!(set.params, vec![Type::Str, Type::Float]);
+        assert_eq!(*set.return_type, Type::None);
+
+        let Type::Function(get_or) = dict.collection_member_type("get_or").expect("get_or") else {
+            panic!("get_or doit être une fonction");
+        };
+        assert_eq!(get_or.params, vec![Type::Str, Type::Float]);
+        assert_eq!(*get_or.return_type, Type::Float);
+    }
+
+    #[test]
+    fn standard_string_method_signatures_use_concrete_argument_types() {
+        let string = Type::Str;
+
+        let Type::Function(contains) = string
+            .collection_member_type("contains")
+            .expect("contains") else {
+            panic!("contains doit être une fonction");
+        };
+        assert_eq!(contains.params, vec![Type::Str]);
+        assert_eq!(*contains.return_type, Type::Bool);
+
+        let Type::Function(get) = string.collection_member_type("get").expect("get") else {
+            panic!("get doit être une fonction");
+        };
+        assert_eq!(get.params, vec![Type::Int]);
+        assert_eq!(*get.return_type, Type::Str);
+    }
+
+    #[test]
+    fn concurrency_member_signatures_preserve_generic_payloads() {
+        let task = Type::Generic {
+            name: "Task".into(),
+            arguments: vec![Type::Int],
+        };
+
+        let Type::Function(join) = task.task_member_type("join").expect("Task.join") else {
+            panic!("Task.join doit être une fonction");
+        };
+        assert!(join.params.is_empty());
+        assert_eq!(*join.return_type, Type::Int);
+
+        let channel = Type::Generic {
+            name: "Channel".into(),
+            arguments: vec![Type::Str],
+        };
+
+        let Type::Function(send) = channel.channel_member_type("send").expect("Channel.send") else {
+            panic!("Channel.send doit être une fonction");
+        };
+        assert_eq!(send.params, vec![Type::Str]);
+        assert_eq!(*send.return_type, Type::None);
+
+        let Type::Function(recv) = channel.channel_member_type("recv").expect("Channel.recv") else {
+            panic!("Channel.recv doit être une fonction");
+        };
+        assert!(recv.params.is_empty());
+        assert_eq!(*recv.return_type, Type::Str);
+
+        let Type::Function(try_recv) = channel
+            .channel_member_type("try_recv")
+            .expect("Channel.try_recv")
+        else {
+            panic!("Channel.try_recv doit être une fonction");
+        };
+        assert_eq!(
+            *try_recv.return_type,
+            Type::Generic {
+                name: "Option".into(),
+                arguments: vec![Type::Str],
+            }
+        );
+    }
+
+    #[test]
+    fn synchronization_member_signatures_are_concrete() {
+        let mutex = Type::Named("Mutex".into());
+        let semaphore = Type::Named("Semaphore".into());
+        let rwlock = Type::Named("RwLock".into());
+        let condvar = Type::Named("Condvar".into());
+
+        for method in ["lock", "unlock"] {
+            let Type::Function(signature) = mutex.mutex_member_type(method).expect(method) else {
+                panic!("Mutex::{method} doit être une fonction");
+            };
+            assert!(signature.params.is_empty());
+            assert_eq!(*signature.return_type, Type::None);
+        }
+
+        let Type::Function(try_lock) = mutex.mutex_member_type("try_lock").expect("try_lock") else {
+            panic!("Mutex::try_lock doit être une fonction");
+        };
+        assert_eq!(*try_lock.return_type, Type::Bool);
+
+        let Type::Function(acquire) = semaphore
+            .semaphore_member_type("acquire")
+            .expect("acquire")
+        else {
+            panic!("Semaphore::acquire doit être une fonction");
+        };
+        assert_eq!(*acquire.return_type, Type::None);
+
+        let Type::Function(available) = semaphore
+            .semaphore_member_type("available")
+            .expect("available")
+        else {
+            panic!("Semaphore::available doit être une fonction");
+        };
+        assert_eq!(*available.return_type, Type::Int);
+
+        let Type::Function(read_lock) = rwlock
+            .rwlock_member_type("read_lock")
+            .expect("read_lock")
+        else {
+            panic!("RwLock::read_lock doit être une fonction");
+        };
+        assert_eq!(*read_lock.return_type, Type::None);
+
+        let Type::Function(reader_count) = rwlock
+            .rwlock_member_type("reader_count")
+            .expect("reader_count")
+        else {
+            panic!("RwLock::reader_count doit être une fonction");
+        };
+        assert_eq!(*reader_count.return_type, Type::Int);
+
+        let Type::Function(wait) = condvar.condvar_member_type("wait").expect("wait") else {
+            panic!("Condvar::wait doit être une fonction");
+        };
+        assert_eq!(*wait.return_type, Type::None);
+    }
+
+    #[test]
+    fn channels_are_invariant_after_specialization() {
+        let parents = |_name: &str| Vec::<String>::new();
+        let channel_int = Type::Generic {
+            name: "Channel".into(),
+            arguments: vec![Type::Int],
+        };
+        let channel_float = Type::Generic {
+            name: "Channel".into(),
+            arguments: vec![Type::Float],
+        };
+        let channel_dynamic = Type::Generic {
+            name: "Channel".into(),
+            arguments: vec![Type::Dynamic],
+        };
+
+        assert!(!channel_int.is_assignable_to(&channel_float, &parents));
+        assert!(!channel_float.is_assignable_to(&channel_int, &parents));
+        assert!(channel_int.is_assignable_to(&channel_dynamic, &parents));
+        assert!(channel_dynamic.is_assignable_to(&channel_int, &parents));
     }
 
     #[test]

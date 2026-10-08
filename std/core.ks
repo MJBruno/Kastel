@@ -65,13 +65,16 @@ export func identity<T>(value: T) -> T {
     return value;
 }
 
-export func constant<T>(value: T) -> func(dynamic) -> T {
-    return func(ignored) {
+export func constant<T>(value: T) -> func() -> T {
+    return func() {
         return value;
     };
 }
 
-export func compose(f: dynamic, g: dynamic) -> dynamic {
+export func compose<A, B, C>(
+    f: func(B) -> C,
+    g: func(A) -> B
+) -> func(A) -> C {
     return func(value) {
         return f(g(value));
     };
