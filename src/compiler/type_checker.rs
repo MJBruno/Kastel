@@ -9998,6 +9998,36 @@ for value in range(0, 5) {
     }
 
     #[test]
+    fn channel_constructor_requires_explicit_type_for_specialization() {
+        let inferred = check("let c = channel();");
+        assert!(inferred.is_ok(), "channel() doit rester inféré comme Channel<dynamic>");
+
+        let explicit = check("let c: Channel<int> = channel<int>();");
+        assert!(explicit.is_ok(), "channel<int>() doit produire Channel<int>");
+
+        let implicit_specialization = check("let c: Channel<int> = channel();");
+        assert!(
+            implicit_specialization.is_err(),
+            "channel() ne doit pas renforcer implicitement Channel<dynamic> en Channel<int>"
+        );
+    }
+
+    #[test]
+    fn channel_dynamic_cannot_be_narrowed_after_assignment() {
+        let result = check(
+            r#"
+let source: Channel<dynamic> = channel();
+let typed: Channel<int> = source;
+"#,
+        );
+
+        assert!(
+            result.is_err(),
+            "Channel<dynamic> ne doit pas être assignable à Channel<int>"
+        );
+    }
+
+    #[test]
     fn variable_arity_natives_are_checked_statically() {
         let invalid_range = check("let value = range();");
         assert!(

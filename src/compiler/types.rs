@@ -387,21 +387,17 @@ impl Type {
                     return false;
                 }
 
-                // `channel()` sans paramètre explicite produit `Channel<dynamic>`.
-                // Une annotation `Channel<T>` peut spécialiser ce canal ; la
-                // liaison locale porte ensuite le type statique déclaré.
+                // `Channel<T>` est mutable (`send` écrit dans le canal), donc
+                // son paramètre doit être invariant. En particulier, on ne peut
+                // pas transformer `Channel<dynamic>` en `Channel<int>` : cela
+                // renforcerait une garantie statique que le runtime ne peut pas
+                // vérifier pour un canal déjà existant.
                 //
-                // En revanche, un canal déjà spécialisé doit rester INVARIANT :
-                // `Channel<int>` ne peut pas devenir `Channel<float>` par simple
-                // promotion numérique, car `send()` est une opération d'écriture.
+                // Le sens inverse (`Channel<int>` -> `Channel<dynamic>`) reste
+                // volontairement permis : `dynamic` constitue explicitement une
+                // frontière sans garantie statique.
                 if actual_name.eq_ignore_ascii_case("Channel") && actual_args.len() == 1 {
-                    if actual_args[0].is_dynamic() {
-                        return true;
-                    }
-                    if expected_args[0].is_dynamic() {
-                        return true;
-                    }
-                    return actual_args[0] == expected_args[0];
+                    return actual_args[0] == expected_args[0] || expected_args[0].is_dynamic();
                 }
 
                 actual_args
@@ -1549,7 +1545,23 @@ mod tests {
         assert!(!channel_int.is_assignable_to(&channel_float, &parents));
         assert!(!channel_float.is_assignable_to(&channel_int, &parents));
         assert!(channel_int.is_assignable_to(&channel_dynamic, &parents));
-        assert!(channel_dynamic.is_assignable_to(&channel_int, &parents));
+        assert!(!channel_dynamic.is_assignable_to(&channel_int, &parents));
+    }
+
+    #[test]
+    fn tasks_are_covariant_in_their_result_type() {
+        let parents = |_name: &str| Vec::<String>::new();
+        let task_int = Type::Generic {
+            name: "Task".into(),
+            arguments: vec![Type::Int],
+        };
+        let task_float = Type::Generic {
+            name: "Task".into(),
+            arguments: vec![Type::Float],
+        };
+
+        assert!(task_int.is_assignable_to(&task_float, &parents));
+        assert!(!task_float.is_assignable_to(&task_int, &parents));
     }
 
     #[test]
