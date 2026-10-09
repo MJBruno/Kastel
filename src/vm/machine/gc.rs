@@ -41,7 +41,26 @@ impl VirtualMachine {
     /// Comme `pin_roots`, en épinglant en plus `extra` : valeurs tenues
     /// uniquement par une variable Rust (récepteur dépilé, par exemple)
     /// pendant qu'une AUTRE VM (tâche) s'exécute et peut collecter.
+    /// Cette variante ne copie pas les piles des tâches sœurs : le collecteur
+    /// les parcourt déjà directement quand il dispose du scheduler.
     pub(crate) fn pin_roots_with(&self, extra: &[Value]) -> gc::PinnedRoots {
+        self.pin_roots_internal(extra, false)
+    }
+
+    /// Épingle aussi les racines des autres tâches. Réservé au chargement d'un
+    /// module, dont la VM imbriquée ne partage pas nécessairement le scheduler
+    /// de la VM appelante. Ne pas utiliser pour chaque `join` ou callback :
+    /// recopier toutes les piles à chaque attente rendrait les charges de tâches
+    /// répétées quadratiques.
+    pub(crate) fn pin_roots_with_scheduler(&self) -> gc::PinnedRoots {
+        self.pin_roots_internal(&[], true)
+    }
+
+    fn pin_roots_internal(
+        &self,
+        extra: &[Value],
+        include_scheduler_tasks: bool,
+    ) -> gc::PinnedRoots {
         let mut values = Vec::with_capacity(self.stack.len() + self.temp_roots.len() + extra.len());
 
         values.extend(extra.iter().cloned());
@@ -60,22 +79,22 @@ impl VirtualMachine {
             super::scheduler::Scheduler::root_runtime_error(error, &mut values);
         }
 
-        // Une VM imbriquée (notamment celle d'un module importé) possède son
-        // propre point de collecte, mais le registre GC est partagé sur le
-        // thread. Épingler uniquement la VM courante laisserait les valeurs
-        // locales des tâches sœurs exposées à cette collecte. Le scheduler
-        // retire la tâche active de `tasks` pendant son quantum ; sa pile est
-        // déjà enracinée ci-dessus, tandis que `append_gc_roots` capture les
-        // autres tâches encore prêtes ou en attente.
-        let mut scheduler_upvalues = Vec::new();
-        if let Some(scheduler) = self.scheduler.upgrade()
-            && let Ok(scheduler) = scheduler.try_borrow()
-        {
-            scheduler.append_gc_roots(&mut values, &mut scheduler_upvalues);
-        }
-
         let mut upvalues = self.open_upvalues.clone();
-        upvalues.extend(scheduler_upvalues);
+        if include_scheduler_tasks {
+            // La tâche active a été retirée de `scheduler.tasks` pendant son
+            // quantum : sa pile est épinglée ci-dessus. Les tâches sœurs restent
+            // dans le scheduler et doivent survivre aux collectes de la VM
+            // imbriquée qui charge le module.
+            let mut scheduler_values = Vec::new();
+            let mut scheduler_upvalues = Vec::new();
+            if let Some(scheduler) = self.scheduler.upgrade()
+                && let Ok(scheduler) = scheduler.try_borrow()
+            {
+                scheduler.append_gc_roots(&mut scheduler_values, &mut scheduler_upvalues);
+            }
+            values.extend(scheduler_values);
+            upvalues.extend(scheduler_upvalues);
+        }
 
         gc::pin_roots(gc::ExternalRoots { values, upvalues })
     }

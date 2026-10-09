@@ -57,7 +57,7 @@ impl VirtualMachine {
     ) -> Result<Value, RuntimeError> {
         // Le module s'exécute dans une VM imbriquée : ses collectes doivent
         // voir aussi les valeurs de CETTE VM (sinon elles seraient vidées).
-        let _pinned = self.pin_roots();
+        let _pinned = self.pin_roots_with_scheduler();
 
         match self
             .module_loader
@@ -111,7 +111,7 @@ impl VirtualMachine {
         let module = {
             // Voir `resolve_import_value` : racines épinglées pendant que la
             // VM du module s'exécute.
-            let _pinned = self.pin_roots();
+            let _pinned = self.pin_roots_with_scheduler();
 
             self.module_loader
                 .load_from(&current_file, &parts)

@@ -247,6 +247,7 @@ export const total = junk.size();
         "l'import de b ne doit pas corrompre/collecter l'état de a : {result:?}"
     );
 }
+
 /// Régression GC : un import exécuté par une tâche ne doit pas vider les
 /// valeurs locales d'une tâche sœur en attente dans le même scheduler.
 #[test]
@@ -503,7 +504,7 @@ for (number, name) in pairs {
             let bytes = s.byte_size();
             let last_accent_byte = s.byte_at(4);
             let cloned = s.copy();
-            "#,
+            "#
         );
         assert!(result.is_ok());
         assert_eq!(global(&vm, "first").to_string(), "c");
