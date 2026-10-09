@@ -60,10 +60,24 @@ impl VirtualMachine {
             super::scheduler::Scheduler::root_runtime_error(error, &mut values);
         }
 
-        gc::pin_roots(gc::ExternalRoots {
-            values,
-            upvalues: self.open_upvalues.clone(),
-        })
+        // Une VM imbriquée (notamment celle d'un module importé) possède son
+        // propre point de collecte, mais le registre GC est partagé sur le
+        // thread. Épingler uniquement la VM courante laisserait les valeurs
+        // locales des tâches sœurs exposées à cette collecte. Le scheduler
+        // retire la tâche active de `tasks` pendant son quantum ; sa pile est
+        // déjà enracinée ci-dessus, tandis que `append_gc_roots` capture les
+        // autres tâches encore prêtes ou en attente.
+        let mut scheduler_upvalues = Vec::new();
+        if let Some(scheduler) = self.scheduler.upgrade()
+            && let Ok(scheduler) = scheduler.try_borrow()
+        {
+            scheduler.append_gc_roots(&mut values, &mut scheduler_upvalues);
+        }
+
+        let mut upvalues = self.open_upvalues.clone();
+        upvalues.extend(scheduler_upvalues);
+
+        gc::pin_roots(gc::ExternalRoots { values, upvalues })
     }
 
     // ============================================================

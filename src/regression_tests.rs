@@ -247,6 +247,62 @@ export const total = junk.size();
         "l'import de b ne doit pas corrompre/collecter l'état de a : {result:?}"
     );
 }
+/// Régression GC : un import exécuté par une tâche ne doit pas vider les
+/// valeurs locales d'une tâche sœur en attente dans le même scheduler.
+#[test]
+fn nested_import_gc_keeps_sibling_task_locals_alive() {
+    use std::io::Write;
+
+    let dir = std::env::temp_dir().join(format!("kastel_gc_siblings_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mod_b = dir.join("b.ks");
+    std::fs::File::create(&mod_b)
+        .unwrap()
+        .write_all(
+            br#"
+let junk = [];
+for i in range(0, 6000) { junk.add([i, i, i]); }
+export const total = junk.size();
+"#,
+        )
+        .unwrap();
+
+    let main_source = r#"
+func waiting_worker(ch) -> int {
+    let payload = [777];
+    ch.recv();
+    return payload[0];
+}
+
+func coordinator() -> int {
+    let ch = channel();
+    let worker = spawn(waiting_worker, ch);
+
+    // Laisser le worker initialiser `payload`, puis le bloquer dans recv().
+    yield();
+
+    // L'import déclenche plusieurs collectes dans une VM imbriquée.
+    import b;
+
+    ch.send(1);
+    return worker.join();
+}
+
+let coordinator_task = spawn(coordinator);
+let result = coordinator_task.join();
+"#;
+
+    let main_path = dir.join("main.ks");
+    std::fs::write(&main_path, main_source).unwrap();
+    let main_path = std::fs::canonicalize(&main_path).unwrap();
+
+    let (vm, result) = run_script_from_path(main_source, main_path);
+    result.expect("l'import ne doit pas collecter les locales des tâches sœurs");
+    assert_eq!(integer(global(&vm, "result")), 777);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
 
 // ============================================================
 // 2. COUVERTURE GÉNÉRALE — une section par fonctionnalité
@@ -447,7 +503,7 @@ for (number, name) in pairs {
             let bytes = s.byte_size();
             let last_accent_byte = s.byte_at(4);
             let cloned = s.copy();
-            "#
+            "#,
         );
         assert!(result.is_ok());
         assert_eq!(global(&vm, "first").to_string(), "c");
