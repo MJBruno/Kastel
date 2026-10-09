@@ -457,22 +457,58 @@ fn build_specs() -> Vec<NativeSpec> {
     // Fichiers.
     specs.push(runtime("file_read", unary(Str, Str)));
     specs.push(runtime("file_read_lines", unary(Str, Array(Box::new(Str)))));
+    specs.push(runtime("file_read_bytes", unary(Str, Array(Box::new(Int)))));
     specs.push(runtime("file_write", function(&[Str, Str], None)));
+    specs.push(runtime("file_write_bytes", function(&[Str, Array(Box::new(Int))], None)));
     specs.push(runtime("file_append", function(&[Str, Str], None)));
     specs.push(runtime("file_exists", unary(Str, Bool)));
     specs.push(runtime("file_delete", unary(Str, None)));
     specs.push(runtime("file_size", unary(Str, Int)));
+    specs.push(runtime("file_copy", function(&[Str, Str], None)));
+    specs.push(runtime("file_rename", function(&[Str, Str], None)));
+    specs.push(runtime("file_canonicalize", unary(Str, Str)));
+    specs.push(runtime(
+        "file_metadata",
+        unary(
+            Str,
+            Record(vec![
+                ("size".into(), Int),
+                ("is_file".into(), Bool),
+                ("is_dir".into(), Bool),
+                ("is_symlink".into(), Bool),
+                ("readonly".into(), Bool),
+            ]),
+        ),
+    ));
+    specs.push(runtime("file_create_dir", unary(Str, None)));
+    specs.push(runtime("file_create_dir_all", unary(Str, None)));
+    specs.push(runtime("file_remove_dir", unary(Str, None)));
+    specs.push(runtime("file_remove_dir_all", unary(Str, None)));
+    specs.push(runtime("file_read_dir", unary(Str, Array(Box::new(Str)))));
+
+    // Handles persistants pour std.io (File + OpenOptions).
+    specs.push(runtime("io_file_open", unary(Str, Named("File".into()))));
+    specs.push(runtime("io_file_create", unary(Str, Named("File".into()))));
+    specs.push(runtime("io_open_options", function(&[], Named("OpenOptions".into()))));
 
     // Path.
     specs.push(runtime("path_join", unary(Dynamic, Str)));
     specs.push(runtime("path_exists", unary(Str, Bool)));
     specs.push(runtime("path_is_dir", unary(Str, Bool)));
     specs.push(runtime("path_is_file", unary(Str, Bool)));
+    specs.push(runtime("path_is_absolute", unary(Str, Bool)));
+    specs.push(runtime("path_is_relative", unary(Str, Bool)));
+    specs.push(runtime("path_has_root", unary(Str, Bool)));
+    specs.push(runtime("path_starts_with", function(&[Str, Str], Bool)));
+    specs.push(runtime("path_ends_with", function(&[Str, Str], Bool)));
     specs.push(runtime("path_absolute", unary(Str, Str)));
     specs.push(runtime("path_basename", unary(Str, Str)));
     specs.push(runtime("path_dirname", unary(Str, Str)));
     specs.push(runtime("path_extension", unary(Str, Str)));
     specs.push(runtime("path_stem", unary(Str, Str)));
+    specs.push(runtime("path_strip_prefix", function(&[Str, Str], Str)));
+    specs.push(runtime("path_with_extension", function(&[Str, Str], Str)));
+    specs.push(runtime("path_with_file_name", function(&[Str, Str], Str)));
 
     // OS.
     specs.push(runtime("os_name", function(&[], Str)));
@@ -725,7 +761,7 @@ mod tests {
             assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
         }
 
-        assert_eq!(names.len(), 107);
+        assert_eq!(names.len(), 129);
         assert!(names.contains("process_run"));
         assert!(names.contains("http_get"));
         assert!(names.contains("http_request"));
@@ -752,6 +788,28 @@ mod tests {
         assert_eq!(all().remove("println"), Some(Type::Dynamic));
         assert_eq!(all().remove("input"), Some(Type::Dynamic));
 
+        assert_eq!(all().remove("io_file_open"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Named("File".into())),
+        })));
+        assert_eq!(all().remove("io_file_create"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Named("File".into())),
+        })));
+        assert_eq!(all().remove("io_open_options"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![],
+            return_type: Box::new(Named("OpenOptions".into())),
+        })));
+
         assert_eq!(all().remove("file_read"), Some(Function(FunctionType {
             generic_params: vec![],
             is_async: false,
@@ -766,11 +824,25 @@ mod tests {
             params: vec![Str],
             return_type: Box::new(Array(Box::new(Str))),
         })));
+        assert_eq!(all().remove("file_read_bytes"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Array(Box::new(Int))),
+        })));
         assert_eq!(all().remove("file_write"), Some(Function(FunctionType {
             generic_params: vec![],
             is_async: false,
             generic_constraints: vec![],
             params: vec![Str, Str],
+            return_type: Box::new(None),
+        })));
+        assert_eq!(all().remove("file_write_bytes"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str, Array(Box::new(Int))],
             return_type: Box::new(None),
         })));
         assert_eq!(all().remove("file_append"), Some(Function(FunctionType {
@@ -813,6 +885,9 @@ mod tests {
             "path_exists",
             "path_is_dir",
             "path_is_file",
+            "path_is_absolute",
+            "path_is_relative",
+            "path_has_root",
         ] {
             assert_eq!(
                 all().remove(name),
@@ -839,6 +914,39 @@ mod tests {
                     is_async: false,
                     generic_constraints: vec![],
                     params: vec![Str],
+                    return_type: Box::new(Str),
+                }))
+            );
+        }
+
+        for name in [
+            "path_starts_with",
+            "path_ends_with",
+        ] {
+            assert_eq!(
+                all().remove(name),
+                Some(Function(FunctionType {
+                    generic_params: vec![],
+                    is_async: false,
+                    generic_constraints: vec![],
+                    params: vec![Str, Str],
+                    return_type: Box::new(Bool),
+                }))
+            );
+        }
+
+        for name in [
+            "path_strip_prefix",
+            "path_with_extension",
+            "path_with_file_name",
+        ] {
+            assert_eq!(
+                all().remove(name),
+                Some(Function(FunctionType {
+                    generic_params: vec![],
+                    is_async: false,
+                    generic_constraints: vec![],
+                    params: vec![Str, Str],
                     return_type: Box::new(Str),
                 }))
             );

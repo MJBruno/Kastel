@@ -903,6 +903,60 @@ impl Type {
         }
     }
 
+    /// Signatures statiques des handles persistants `File` et `OpenOptions`.
+    pub fn io_file_member_type(&self, name: &str) -> Option<Type> {
+        let function = |params: Vec<Type>, result: Type| {
+            Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params,
+                return_type: Box::new(result),
+            })
+        };
+        let file = || Type::Named("File".into());
+        let options = || Type::Named("OpenOptions".into());
+        let bytes = || Type::union_of(vec![
+            Type::Str,
+            Type::Array(Box::new(Type::Int)),
+            Type::TupleDynamic,
+        ]);
+
+        match self {
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("File") => match name {
+                "read" => Some(function(vec![Type::Int], Type::Array(Box::new(Type::Int)))),
+                "read_to_end" => Some(function(vec![], Type::Array(Box::new(Type::Int)))),
+                "read_to_string" => Some(function(vec![], Type::Str)),
+                "write" => Some(function(vec![bytes()], Type::Int)),
+                "write_all" => Some(function(vec![bytes()], Type::None)),
+                "flush" | "sync_all" | "sync_data" | "close" => {
+                    Some(function(vec![], Type::None))
+                }
+                "seek" => Some(function(vec![Type::Int, Type::Named("SeekFrom".into())], Type::Int)),
+                "stream_position" => Some(function(vec![], Type::Int)),
+                "set_len" => Some(function(vec![Type::Int], Type::None)),
+                "metadata" => Some(function(vec![], Type::Record(vec![
+                    ("size".into(), Type::Int),
+                    ("is_file".into(), Type::Bool),
+                    ("is_dir".into(), Type::Bool),
+                    ("readonly".into(), Type::Bool),
+                ]))),
+                "try_clone" => Some(function(vec![], file())),
+                "is_closed" => Some(function(vec![], Type::Bool)),
+                "path" => Some(function(vec![], Type::Str)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("OpenOptions") => match name {
+                "read" | "write" | "append" | "truncate" | "create" | "create_new" => {
+                    Some(function(vec![Type::Bool], options()))
+                }
+                "open" => Some(function(vec![Type::Str], file())),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Signatures statiques des primitives réseau (`std::net` adaptées à Kastel).
     pub fn network_member_type(&self, name: &str) -> Option<Type> {
         let function = |params: Vec<Type>, result: Type| {
@@ -1646,6 +1700,43 @@ mod tests {
         assert_eq!(
             left.merge(&right),
             Type::Tuple(vec![Type::Float, Type::Int])
+        );
+    }
+
+    #[test]
+    fn file_and_open_options_member_signatures_are_concrete() {
+        let file = Type::Named("File".into());
+        let options = Type::Named("OpenOptions".into());
+
+        assert_eq!(
+            file.io_file_member_type("read_to_string"),
+            Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: Vec::new(),
+                return_type: Box::new(Type::Str),
+            }))
+        );
+        assert_eq!(
+            file.io_file_member_type("seek"),
+            Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: vec![Type::Int, Type::Named("SeekFrom".into())],
+                return_type: Box::new(Type::Int),
+            }))
+        );
+        assert_eq!(
+            options.io_file_member_type("open"),
+            Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: vec![Type::Str],
+                return_type: Box::new(Type::Named("File".into())),
+            }))
         );
     }
 

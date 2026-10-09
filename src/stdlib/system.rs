@@ -135,6 +135,8 @@ pub fn native_type(args: &[Value]) -> Result<Value, RuntimeError> {
             Object::Event(_) => "Event".to_string(),
             Object::Condvar(_) => "Condvar".to_string(),
             Object::Network(network) => network.borrow().type_name().to_string(),
+            Object::File(_) => "File".to_string(),
+            Object::OpenOptions(_) => "OpenOptions".to_string(),
             Object::Module(_) => "module".to_string(),
 
             Object::BoundMethod { .. } => "function".to_string(),

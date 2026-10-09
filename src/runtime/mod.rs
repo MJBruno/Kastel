@@ -3,6 +3,7 @@ pub mod channel;
 pub mod closure;
 pub mod condvar;
 pub mod event;
+pub mod file;
 pub mod function;
 pub mod gc;
 pub mod gc_handle;

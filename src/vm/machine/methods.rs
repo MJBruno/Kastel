@@ -1023,6 +1023,8 @@ impl VirtualMachine {
                         Object::Event(_) => 22,
                         Object::Condvar(_) => 23,
                         Object::Network(_) => 24,
+                        Object::File(_) => 25,
+                        Object::OpenOptions(_) => 26,
                         _ => 5,
                     }
                 };
@@ -2372,6 +2374,30 @@ impl VirtualMachine {
 
                 if object_kind == 24 {
                     let result = crate::stdlib::net::dispatch_method(&method_name, &args)?;
+                    let Some(result) = result else {
+                        return Err(RuntimeError::ObjectFieldNotFound {
+                            name: method_name,
+                            suggestion: None,
+                        });
+                    };
+                    self.push(result);
+                    return Ok(());
+                }
+
+                if object_kind == 25 {
+                    let result = crate::stdlib::file::dispatch_file_method(&method_name, &args)?;
+                    let Some(result) = result else {
+                        return Err(RuntimeError::ObjectFieldNotFound {
+                            name: method_name,
+                            suggestion: None,
+                        });
+                    };
+                    self.push(result);
+                    return Ok(());
+                }
+
+                if object_kind == 26 {
+                    let result = crate::stdlib::file::dispatch_open_options_method(&method_name, &args)?;
                     let Some(result) = result else {
                         return Err(RuntimeError::ObjectFieldNotFound {
                             name: method_name,

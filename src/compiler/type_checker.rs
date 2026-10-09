@@ -4917,6 +4917,10 @@ impl TypeChecker {
     }
 
     fn member_type(&self, object_type: &Type, name: &str) -> Result<Type, CompileError> {
+        if let Some(signature) = object_type.io_file_member_type(name) {
+            return Ok(signature);
+        }
+
         if let Some(signature) = object_type.channel_member_type(name) {
             return Ok(signature);
         }
@@ -5726,6 +5730,15 @@ impl TypeChecker {
 
         // Membres des types runtime spécialisés. Tous utilisent maintenant
         // le même résolveur que les fonctions appelables ordinaires.
+        if let Some(member_type) = object_type.io_file_member_type(member_name) {
+            return Ok(Some(self.resolve_member_type_callable(
+                &member_type,
+                generic_args,
+                arguments,
+                member_name,
+            )?));
+        }
+
         if let Some(member_type) = object_type.channel_member_type(member_name) {
             return Ok(Some(self.resolve_member_type_callable(
                 &member_type,

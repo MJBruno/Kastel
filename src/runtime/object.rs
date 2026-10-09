@@ -75,6 +75,12 @@ pub enum Object {
     /// à parcourir pour ces objets.
     Network(Rc<RefCell<crate::runtime::net::NetworkState>>),
 
+    /// Handle de fichier ouvert par `std.io` (`File`).
+    File(Rc<RefCell<crate::runtime::file::FileState>>),
+
+    /// Configuration d’ouverture de fichier (`OpenOptions`).
+    OpenOptions(Rc<RefCell<crate::runtime::file::OpenOptionsState>>),
+
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
     /// le GC), mais aucune méthode de mutation ne l'expose : voir
@@ -354,6 +360,12 @@ impl Object {
             Object::Network(network) => {
                 network.borrow_mut().close();
             }
+
+            Object::File(file) => {
+                file.borrow_mut().close();
+            }
+
+            Object::OpenOptions(_) => {}
 
             Object::Tuple(elements) => {
                 elements.clear();

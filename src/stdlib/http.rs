@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use crate::{
@@ -26,6 +26,9 @@ use crate::{
 const MAX_HEADERS: usize = 64 * 1024;
 const MAX_BODY: usize = 16 * 1024 * 1024;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_REQUEST_HEADERS: usize = 64 * 1024;
+const MAX_REQUEST_TARGET: usize = 16 * 1024;
+const MAX_INFORMATIONAL_RESPONSES: usize = 16;
 
 #[derive(Debug)]
 struct ParsedUrl {
@@ -91,19 +94,26 @@ fn parse_url(value: &Value) -> Result<ParsedUrl, RuntimeError> {
         (host.to_string(), port)
     } else if let Some((host, port_text)) = authority.rsplit_once(':') {
         if host.is_empty() || port_text.is_empty() || host.contains(':') {
-            return Err(http_module_error("invalid host or port; IPv6 hosts must use brackets"));
+            return Err(http_module_error(
+                "invalid host or port; IPv6 hosts must use brackets",
+            ));
         }
         (host.to_string(), parse_port(port_text)?)
     } else {
         (authority.to_string(), 80)
     };
 
-    if host.chars().any(|character| character.is_ascii_whitespace()) {
+    if host
+        .chars()
+        .any(|character| character.is_ascii_whitespace())
+    {
         return Err(http_module_error("host cannot contain whitespace"));
     }
 
     if suffix.contains('#') {
-        return Err(http_module_error("URL fragments are not sent in HTTP requests"));
+        return Err(http_module_error(
+            "URL fragments are not sent in HTTP requests",
+        ));
     }
 
     let path = if suffix.is_empty() {
@@ -166,8 +176,12 @@ fn validate_header_name(name: &str) -> Result<(), RuntimeError> {
 }
 
 fn validate_header_value(value: &str) -> Result<(), RuntimeError> {
-    if value.contains('\r') || value.contains('\n') {
-        return Err(http_module_error("header value cannot contain CR or LF"));
+    if value.bytes().any(|byte| {
+        byte == b'\r' || byte == b'\n' || (byte < 0x20 && byte != b'\t') || byte == 0x7f
+    }) {
+        return Err(http_module_error(
+            "header value contains an invalid control character",
+        ));
     }
     Ok(())
 }
@@ -237,6 +251,112 @@ fn header_value<'a>(headers: &'a [(String, String)], target: &str) -> Option<&'a
         .map(|(_, value)| value.as_str())
 }
 
+fn validate_request_target(path: &str) -> Result<(), RuntimeError> {
+    if path.is_empty() || path.len() > MAX_REQUEST_TARGET || !path.starts_with('/') {
+        return Err(http_module_error("invalid HTTP request target"));
+    }
+    if path.bytes().any(|byte| {
+        byte == b' '
+            || byte == b'\t'
+            || byte == b'\r'
+            || byte == b'\n'
+            || byte < 0x20
+            || byte == 0x7f
+    }) {
+        return Err(http_module_error(
+            "HTTP request target contains an invalid control character",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_request_header_block(
+    method: &str,
+    url: &ParsedUrl,
+    user_headers: &[(String, String)],
+    body_len: usize,
+) -> Result<(), RuntimeError> {
+    if method.is_empty() || !method.bytes().all(is_http_token_byte) {
+        return Err(http_module_error("invalid HTTP method"));
+    }
+    validate_request_target(&url.path)?;
+
+    let reserved = [
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "transfer-encoding",
+        "te",
+        "trailer",
+        "upgrade",
+        "expect",
+    ];
+    let mut size = method
+        .len()
+        .checked_add(url.path.len())
+        .and_then(|value| value.checked_add(16))
+        .ok_or_else(|| http_module_error("request headers are too large"))?;
+
+    if !header_contains(user_headers, "host") {
+        size = size
+            .checked_add(6)
+            .and_then(|value| value.checked_add(url.host_header.len()))
+            .and_then(|value| value.checked_add(2))
+            .ok_or_else(|| http_module_error("request headers are too large"))?;
+    }
+    if !header_contains(user_headers, "user-agent") {
+        size = size
+            .checked_add(b"User-Agent: Kastel/0.1.0\r\n".len())
+            .ok_or_else(|| http_module_error("request headers are too large"))?;
+    }
+    if !header_contains(user_headers, "accept") {
+        size = size
+            .checked_add(b"Accept: */*\r\n".len())
+            .ok_or_else(|| http_module_error("request headers are too large"))?;
+    }
+    if !header_contains(user_headers, "content-length") {
+        size = size
+            .checked_add(19 + body_len.to_string().len())
+            .ok_or_else(|| http_module_error("request headers are too large"))?;
+    }
+    size = size
+        .checked_add(b"Connection: close\r\n\r\n".len())
+        .ok_or_else(|| http_module_error("request headers are too large"))?;
+
+    for (name, value) in user_headers {
+        validate_header_name(name)?;
+        validate_header_value(value)?;
+        if reserved
+            .iter()
+            .any(|header| name.eq_ignore_ascii_case(header))
+        {
+            return Err(http_module_error(format!(
+                "the {name} header is reserved by std.http"
+            )));
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            let parsed = value
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| http_module_error("invalid Content-Length"))?;
+            if parsed != body_len {
+                return Err(http_module_error(
+                    "Content-Length does not match request body size",
+                ));
+            }
+        }
+        size = size
+            .checked_add(name.len())
+            .and_then(|size| size.checked_add(value.len()))
+            .and_then(|value| value.checked_add(4))
+            .ok_or_else(|| http_module_error("request headers are too large"))?;
+        if size > MAX_REQUEST_HEADERS {
+            return Err(http_module_error("request headers exceed 64 KiB"));
+        }
+    }
+    Ok(())
+}
+
 fn write_request(
     stream: &mut TcpStream,
     method: &str,
@@ -244,34 +364,14 @@ fn write_request(
     user_headers: &[(String, String)],
     body: &[u8],
 ) -> Result<(), RuntimeError> {
-    if method.is_empty() || !method.bytes().all(is_http_token_byte) {
-        return Err(http_module_error("invalid HTTP method"));
-    }
-
-    if header_contains(user_headers, "connection") {
-        return Err(http_module_error(
-            "the Connection header is reserved; std.http uses Connection: close",
-        ));
-    }
-
-    if let Some(content_length) = header_value(user_headers, "content-length") {
-        let parsed = content_length
-            .parse::<usize>()
-            .map_err(|_| http_module_error("invalid Content-Length"))?;
-        if parsed != body.len() {
-            return Err(http_module_error(
-                "Content-Length does not match request body size",
-            ));
-        }
-    }
+    validate_request_header_block(method, url, user_headers, body.len())?;
 
     write!(stream, "{method} {} HTTP/1.1\r\n", url.path)
         .map_err(|error| RuntimeError::ModuleError(format!("http: write request: {error}")))?;
 
     if !header_contains(user_headers, "host") {
-        write!(stream, "Host: {}\r\n", url.host_header).map_err(|error| {
-            RuntimeError::ModuleError(format!("http: write request: {error}"))
-        })?;
+        write!(stream, "Host: {}\r\n", url.host_header)
+            .map_err(|error| RuntimeError::ModuleError(format!("http: write request: {error}")))?;
     }
 
     if !header_contains(user_headers, "user-agent") {
@@ -287,15 +387,13 @@ fn write_request(
     }
 
     for (name, value) in user_headers {
-        write!(stream, "{name}: {value}\r\n").map_err(|error| {
-            RuntimeError::ModuleError(format!("http: write request: {error}"))
-        })?;
+        write!(stream, "{name}: {value}\r\n")
+            .map_err(|error| RuntimeError::ModuleError(format!("http: write request: {error}")))?;
     }
 
     if !header_contains(user_headers, "content-length") {
-        write!(stream, "Content-Length: {}\r\n", body.len()).map_err(|error| {
-            RuntimeError::ModuleError(format!("http: write request: {error}"))
-        })?;
+        write!(stream, "Content-Length: {}\r\n", body.len())
+            .map_err(|error| RuntimeError::ModuleError(format!("http: write request: {error}")))?;
     }
 
     stream
@@ -311,7 +409,10 @@ fn write_request(
     Ok(())
 }
 
-fn read_header_line(reader: &mut BufReader<TcpStream>, header_size: &mut usize) -> Result<Vec<u8>, RuntimeError> {
+fn read_header_line(
+    reader: &mut BufReader<TcpStream>,
+    header_size: &mut usize,
+) -> Result<Vec<u8>, RuntimeError> {
     let mut line = Vec::new();
     let read = reader
         .read_until(b'\n', &mut line)
@@ -319,6 +420,9 @@ fn read_header_line(reader: &mut BufReader<TcpStream>, header_size: &mut usize) 
 
     if read == 0 {
         return Err(http_module_error("unexpected end of response headers"));
+    }
+    if line.len() < 2 || !line.ends_with(b"\r\n") {
+        return Err(http_module_error("HTTP response lines must end with CRLF"));
     }
 
     *header_size = header_size.saturating_add(read);
@@ -339,6 +443,8 @@ fn trim_http_line(mut line: Vec<u8>) -> Vec<u8> {
 fn read_response_headers(
     reader: &mut BufReader<TcpStream>,
 ) -> Result<(String, i64, String, Vec<(String, String)>), RuntimeError> {
+    let mut informational_responses = 0usize;
+
     loop {
         let mut header_size = 0usize;
         let status_line = trim_http_line(read_header_line(reader, &mut header_size)?);
@@ -374,7 +480,9 @@ fn read_response_headers(
             let name = String::from_utf8(line[..colon].to_vec())
                 .map_err(|_| http_module_error("response header name is not UTF-8"))?;
             validate_header_name(&name)?;
-            let value = String::from_utf8_lossy(&line[colon + 1..]).trim().to_string();
+            let value = String::from_utf8_lossy(&line[colon + 1..])
+                .trim()
+                .to_string();
             validate_header_value(&value)?;
 
             if let Some((_, existing)) = headers
@@ -391,14 +499,44 @@ fn read_response_headers(
         // Les réponses 1xx (hors mise à niveau de protocole) précèdent parfois
         // la vraie réponse finale. Elles n'ont pas de corps à retourner ici.
         if (100..200).contains(&code) && code != 101 {
+            informational_responses = informational_responses.saturating_add(1);
+            if informational_responses > MAX_INFORMATIONAL_RESPONSES {
+                return Err(http_module_error("too many informational HTTP responses"));
+            }
             continue;
+        }
+        if code == 101 {
+            return Err(http_module_error(
+                "HTTP 101 Switching Protocols is not supported by std.http",
+            ));
         }
 
         return Ok((version.to_string(), code, reason, headers));
     }
 }
 
-fn read_exact_body(reader: &mut BufReader<TcpStream>, length: usize) -> Result<Vec<u8>, RuntimeError> {
+fn response_transfer_encoding(headers: &[(String, String)]) -> Result<bool, RuntimeError> {
+    let Some(value) = header_value(headers, "transfer-encoding") else {
+        return Ok(false);
+    };
+
+    let codings: Vec<&str> = value
+        .split(',')
+        .map(str::trim)
+        .filter(|coding| !coding.is_empty())
+        .collect();
+    if codings.len() == 1 && codings[0].eq_ignore_ascii_case("chunked") {
+        return Ok(true);
+    }
+    Err(http_module_error(
+        "unsupported Transfer-Encoding; std.http supports only chunked",
+    ))
+}
+
+fn read_exact_body(
+    reader: &mut BufReader<TcpStream>,
+    length: usize,
+) -> Result<Vec<u8>, RuntimeError> {
     if length > MAX_BODY {
         return Err(http_module_error("response body exceeds 16 MiB"));
     }
@@ -407,6 +545,19 @@ fn read_exact_body(reader: &mut BufReader<TcpStream>, length: usize) -> Result<V
         .read_exact(&mut body)
         .map_err(|error| RuntimeError::ModuleError(format!("http: read body: {error}")))?;
     Ok(body)
+}
+
+fn validate_trailer_line(line: &[u8]) -> Result<(), RuntimeError> {
+    let Some(colon) = line.iter().position(|byte| *byte == b':') else {
+        return Err(http_module_error("invalid chunked response trailer"));
+    };
+    let name = std::str::from_utf8(&line[..colon])
+        .map_err(|_| http_module_error("invalid chunked response trailer name"))?;
+    validate_header_name(name)?;
+    let value = std::str::from_utf8(&line[colon + 1..])
+        .map_err(|_| http_module_error("invalid chunked response trailer value"))?;
+    validate_header_value(value.trim())?;
+    Ok(())
 }
 
 fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Result<Vec<u8>, RuntimeError> {
@@ -426,6 +577,7 @@ fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Result<Vec<u8>, Runti
                 if line.is_empty() {
                     break;
                 }
+                validate_trailer_line(&line)?;
             }
             break;
         }
@@ -503,13 +655,43 @@ fn request_impl(
     let headers = expect_headers(headers_value)?;
     let body = expect_body(body_value)?;
 
-    let mut stream = TcpStream::connect((&*url.host, url.port)).map_err(|error| {
+    if body.len() > MAX_BODY {
+        return Err(http_module_error("request body exceeds 16 MiB"));
+    }
+
+    let addresses = (url.host.as_str(), url.port)
+        .to_socket_addrs()
+        .map_err(|error| RuntimeError::NetworkError {
+            operation: "http_resolve",
+            kind: match error.kind() {
+                std::io::ErrorKind::InvalidInput => "InvalidInput",
+                _ => "Other",
+            },
+            message: error.to_string(),
+        })?;
+
+    let mut last_error = None;
+    let mut stream = None;
+    for address in addresses {
+        match TcpStream::connect_timeout(&address, HTTP_TIMEOUT) {
+            Ok(candidate) => {
+                stream = Some(candidate);
+                break;
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    let mut stream = stream.ok_or_else(|| {
+        let error = last_error.unwrap_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, "no address resolved")
+        });
         RuntimeError::NetworkError {
             operation: "http_connect",
             kind: match error.kind() {
                 std::io::ErrorKind::ConnectionRefused => "ConnectionRefused",
                 std::io::ErrorKind::TimedOut => "TimedOut",
                 std::io::ErrorKind::AddrNotAvailable => "AddrNotAvailable",
+                std::io::ErrorKind::ConnectionReset => "ConnectionReset",
                 _ => "Other",
             },
             message: error.to_string(),
@@ -530,19 +712,29 @@ fn request_impl(
     let mut reader = BufReader::new(stream);
     let (version, status, reason, headers) = read_response_headers(&mut reader)?;
 
-    let chunked = header_value(&headers, "transfer-encoding")
-        .map(|value| value.split(',').any(|part| part.trim().eq_ignore_ascii_case("chunked")))
-        .unwrap_or(false);
+    let chunked = response_transfer_encoding(&headers)?;
+    let has_content_length = header_value(&headers, "content-length").is_some();
 
-    let body = if chunked {
+    if chunked && has_content_length {
+        return Err(http_module_error(
+            "response contains both Transfer-Encoding and Content-Length",
+        ));
+    }
+
+    let body = if method.eq_ignore_ascii_case("HEAD")
+        || status == 204
+        || status == 304
+        || (100..200).contains(&status)
+    {
+        Vec::new()
+    } else if chunked {
         read_chunked_body(&mut reader)?
     } else if let Some(content_length) = header_value(&headers, "content-length") {
         let length = content_length
+            .trim()
             .parse::<usize>()
             .map_err(|_| http_module_error("invalid response Content-Length"))?;
         read_exact_body(&mut reader, length)?
-    } else if status == 204 || status == 304 || (100..200).contains(&status) {
-        Vec::new()
     } else {
         read_until_eof(&mut reader)?
     };
@@ -577,7 +769,10 @@ pub fn native_http_request(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub fn register(globals: &mut HashMap<String, Value>) {
     globals.insert("http_get".into(), Value::NativeFunction(native_http_get));
-    globals.insert("http_request".into(), Value::NativeFunction(native_http_request));
+    globals.insert(
+        "http_request".into(),
+        Value::NativeFunction(native_http_request),
+    );
 }
 
 #[cfg(test)]
@@ -604,7 +799,9 @@ mod tests {
     }
 
     fn response_fields(value: &Value) -> Vec<(String, Value)> {
-        value.record_fields().expect("HTTP response doit être un record")
+        value
+            .record_fields()
+            .expect("HTTP response doit être un record")
     }
 
     fn field(value: &Value, name: &str) -> Value {
@@ -617,11 +814,26 @@ mod tests {
 
     #[test]
     fn http_get_rejects_invalid_arguments_and_urls() {
-        assert!(matches!(native_http_get(&[]), Err(RuntimeError::WrongArgumentCount { .. })));
-        assert!(matches!(native_http_get(&[string("https://example.com")]), Err(RuntimeError::ModuleError(_))));
-        assert!(matches!(native_http_get(&[string("example.com")]), Err(RuntimeError::ModuleError(_))));
-        assert!(matches!(native_http_get(&[string("http://::1/")]), Err(RuntimeError::ModuleError(_))));
-        assert!(matches!(native_http_request(&[string("GET"), string("http://127.0.0.1")]), Err(RuntimeError::WrongArgumentCount { .. })));
+        assert!(matches!(
+            native_http_get(&[]),
+            Err(RuntimeError::WrongArgumentCount { .. })
+        ));
+        assert!(matches!(
+            native_http_get(&[string("https://example.com")]),
+            Err(RuntimeError::ModuleError(_))
+        ));
+        assert!(matches!(
+            native_http_get(&[string("example.com")]),
+            Err(RuntimeError::ModuleError(_))
+        ));
+        assert!(matches!(
+            native_http_get(&[string("http://::1/")]),
+            Err(RuntimeError::ModuleError(_))
+        ));
+        assert!(matches!(
+            native_http_request(&[string("GET"), string("http://127.0.0.1")]),
+            Err(RuntimeError::WrongArgumentCount { .. })
+        ));
     }
 
     #[test]
@@ -677,10 +889,14 @@ mod tests {
         assert_eq!(field(&response, "status"), Value::Integer(200));
         assert_eq!(field(&response, "version"), string("HTTP/1.1"));
         assert_eq!(field(&response, "reason"), string("OK"));
-        assert!(matches!(field(&response, "body"), Value::Object(handle) if matches!(&*handle.borrow(), Object::Array(items) if items.len() == 5)));
+        assert!(
+            matches!(field(&response, "body"), Value::Object(handle) if matches!(&*handle.borrow(), Object::Array(items) if items.len() == 5))
+        );
 
         let header_value = field(&response, "headers");
-        assert!(matches!(header_value, Value::Object(handle) if matches!(&*handle.borrow(), Object::Dict(entries) if entries.iter().any(|(key, value)| key == &string("content-type") && value == &string("text/plain")))));
+        assert!(
+            matches!(header_value, Value::Object(handle) if matches!(&*handle.borrow(), Object::Dict(entries) if entries.iter().any(|(key, value)| key == &string("content-type") && value == &string("text/plain"))))
+        );
 
         server.join().expect("server thread");
     }
@@ -702,14 +918,27 @@ mod tests {
                 }
             }
             let body = b"abc";
-            while request.len() < request.windows(4).position(|window| window == b"\r\n\r\n").unwrap() + 4 + body.len() {
+            while request.len()
+                < request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .unwrap()
+                    + 4
+                    + body.len()
+            {
                 let read = stream.read(&mut buffer).expect("request body read");
-                if read == 0 { break; }
+                if read == 0 {
+                    break;
+                }
                 request.extend_from_slice(&buffer[..read]);
             }
             let request_text = String::from_utf8_lossy(&request);
             assert!(request_text.starts_with("POST /submit HTTP/1.1\r\n"));
-            assert!(request_text.to_ascii_lowercase().contains("content-length: 3"));
+            assert!(
+                request_text
+                    .to_ascii_lowercase()
+                    .contains("content-length: 3")
+            );
             assert!(request.ends_with(body));
 
             stream
@@ -746,5 +975,78 @@ mod tests {
         };
 
         server.join().expect("server thread");
+    }
+
+    #[test]
+    fn http_head_does_not_read_a_declared_body() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0u8; 512];
+            let _ = stream.read(&mut request).expect("request read");
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\njunk")
+                .expect("response write");
+        });
+
+        let url = string(&format!("http://{address}/resource"));
+        let response = native_http_request(&[string("HEAD"), url, headers(&[]), Value::None])
+            .expect("HEAD request");
+
+        assert!(matches!(field(&response, "body"), Value::Object(handle)
+            if matches!(&*handle.borrow(), Object::Array(items) if items.is_empty())));
+
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn http_rejects_non_crlf_response_lines() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let address = listener.local_addr().expect("address");
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0u8; 256];
+            let _ = stream.read(&mut request).expect("request read");
+            stream
+                .write_all(b"HTTP/1.1 200 OK\n\n")
+                .expect("response write");
+        });
+
+        let url = string(&format!("http://{address}/"));
+        assert!(matches!(
+            native_http_get(&[url]),
+            Err(RuntimeError::ModuleError(_))
+        ));
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn http_rejects_unsupported_or_ambiguous_response_framing() {
+        for response_bytes in [
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 4\r\n\r\n"
+                .as_slice(),
+        ] {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+            let address = listener.local_addr().expect("address");
+            let response = response_bytes.to_vec();
+
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut request = [0u8; 256];
+                let _ = stream.read(&mut request).expect("request read");
+                stream.write_all(&response).expect("response write");
+            });
+
+            let url = string(&format!("http://{address}/"));
+            assert!(matches!(
+                native_http_get(&[url]),
+                Err(RuntimeError::ModuleError(_))
+            ));
+            server.join().expect("server thread");
+        }
     }
 }

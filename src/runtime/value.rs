@@ -225,6 +225,14 @@ impl Value {
         Self::new_heap_object(Object::Network(Rc::new(RefCell::new(network))))
     }
 
+    pub fn new_file(file: crate::runtime::file::FileState) -> Self {
+        Self::new_heap_object(Object::File(Rc::new(RefCell::new(file))))
+    }
+
+    pub fn new_open_options(options: crate::runtime::file::OpenOptionsState) -> Self {
+        Self::new_heap_object(Object::OpenOptions(Rc::new(RefCell::new(options))))
+    }
+
     pub fn new_barrier(parties: usize) -> Self {
         Self::new_heap_object(Object::Barrier(Rc::new(RefCell::new(
             crate::runtime::barrier::BarrierState::new(parties),
@@ -1287,6 +1295,27 @@ impl std::fmt::Display for Value {
                         write!(f, "Condvar(waiters={})", condvar.borrow().waiter_count())
                     }
                     Object::Network(network) => write!(f, "{}", network.borrow().display_name()),
+                    Object::File(file) => {
+                        let file = file.borrow();
+                        if file.is_closed() {
+                            write!(f, "File({}, closed)", file.path.display())
+                        } else {
+                            write!(f, "File({})", file.path.display())
+                        }
+                    }
+                    Object::OpenOptions(options) => {
+                        let options = options.borrow();
+                        write!(
+                            f,
+                            "OpenOptions(read={}, write={}, append={}, truncate={}, create={}, create_new={})",
+                            options.read,
+                            options.write,
+                            options.append,
+                            options.truncate,
+                            options.create,
+                            options.create_new,
+                        )
+                    }
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1454,6 +1483,8 @@ impl Value {
                 Object::Event(_) => "Event",
                 Object::Condvar(_) => "Condvar",
                 Object::Network(network) => network.borrow().type_name(),
+                Object::File(_) => "File",
+                Object::OpenOptions(_) => "OpenOptions",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",
