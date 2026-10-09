@@ -1,4 +1,5 @@
 pub mod barrier;
+pub mod buffered_io;
 pub mod channel;
 pub mod closure;
 pub mod condvar;

@@ -1025,6 +1025,8 @@ impl VirtualMachine {
                         Object::Network(_) => 24,
                         Object::File(_) => 25,
                         Object::OpenOptions(_) => 26,
+                        Object::BufReader(_) => 27,
+                        Object::BufWriter(_) => 28,
                         _ => 5,
                     }
                 };
@@ -2398,6 +2400,30 @@ impl VirtualMachine {
 
                 if object_kind == 26 {
                     let result = crate::stdlib::file::dispatch_open_options_method(&method_name, &args)?;
+                    let Some(result) = result else {
+                        return Err(RuntimeError::ObjectFieldNotFound {
+                            name: method_name,
+                            suggestion: None,
+                        });
+                    };
+                    self.push(result);
+                    return Ok(());
+                }
+
+                if object_kind == 27 {
+                    let result = crate::stdlib::buffered_io::dispatch_buf_reader_method(&method_name, &args)?;
+                    let Some(result) = result else {
+                        return Err(RuntimeError::ObjectFieldNotFound {
+                            name: method_name,
+                            suggestion: None,
+                        });
+                    };
+                    self.push(result);
+                    return Ok(());
+                }
+
+                if object_kind == 28 {
+                    let result = crate::stdlib::buffered_io::dispatch_buf_writer_method(&method_name, &args)?;
                     let Some(result) = result else {
                         return Err(RuntimeError::ObjectFieldNotFound {
                             name: method_name,

@@ -984,8 +984,20 @@ mod tests {
 
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = [0u8; 512];
-            let _ = stream.read(&mut request).expect("request read");
+
+            // TCP is a byte stream: one read is not guaranteed to contain the
+            // complete request headers. Responding after a partial read can
+            // close the socket while the client is still writing the headers,
+            // producing a spurious WSAECONNABORTED (10053) on Windows.
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 128];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = stream.read(&mut chunk).expect("request read");
+                assert_ne!(read, 0, "client closed before completing request headers");
+                request.extend_from_slice(&chunk[..read]);
+                assert!(request.len() <= MAX_REQUEST_HEADERS);
+            }
+
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\njunk")
                 .expect("response write");

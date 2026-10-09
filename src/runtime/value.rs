@@ -233,6 +233,14 @@ impl Value {
         Self::new_heap_object(Object::OpenOptions(Rc::new(RefCell::new(options))))
     }
 
+    pub fn new_buf_reader(reader: crate::runtime::buffered_io::BufReaderState) -> Self {
+        Self::new_heap_object(Object::BufReader(Rc::new(RefCell::new(reader))))
+    }
+
+    pub fn new_buf_writer(writer: crate::runtime::buffered_io::BufWriterState) -> Self {
+        Self::new_heap_object(Object::BufWriter(Rc::new(RefCell::new(writer))))
+    }
+
     pub fn new_barrier(parties: usize) -> Self {
         Self::new_heap_object(Object::Barrier(Rc::new(RefCell::new(
             crate::runtime::barrier::BarrierState::new(parties),
@@ -1316,6 +1324,22 @@ impl std::fmt::Display for Value {
                             options.create_new,
                         )
                     }
+                    Object::BufReader(reader) => {
+                        let reader = reader.borrow();
+                        if reader.is_closed() {
+                            write!(f, "BufReader({}, closed)", reader.path.display())
+                        } else {
+                            write!(f, "BufReader({})", reader.path.display())
+                        }
+                    }
+                    Object::BufWriter(writer) => {
+                        let writer = writer.borrow();
+                        if writer.is_closed() {
+                            write!(f, "BufWriter({}, closed)", writer.path.display())
+                        } else {
+                            write!(f, "BufWriter({})", writer.path.display())
+                        }
+                    }
 
                     // Tuple à un seul élément : virgule finale (`(1,)`) pour
                     // le distinguer visuellement d'un simple groupement
@@ -1485,6 +1509,8 @@ impl Value {
                 Object::Network(network) => network.borrow().type_name(),
                 Object::File(_) => "File",
                 Object::OpenOptions(_) => "OpenOptions",
+                Object::BufReader(_) => "BufReader",
+                Object::BufWriter(_) => "BufWriter",
                 Object::Tuple(_) => "tuple",
                 Object::Set(_) => "set",
                 Object::Dict(_) => "dict",

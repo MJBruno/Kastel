@@ -486,10 +486,25 @@ fn build_specs() -> Vec<NativeSpec> {
     specs.push(runtime("file_remove_dir_all", unary(Str, None)));
     specs.push(runtime("file_read_dir", unary(Str, Array(Box::new(Str)))));
 
-    // Handles persistants pour std.io (File + OpenOptions).
+    // Handles persistants et flux tamponnés pour std.io.
     specs.push(runtime("io_file_open", unary(Str, Named("File".into()))));
     specs.push(runtime("io_file_create", unary(Str, Named("File".into()))));
     specs.push(runtime("io_open_options", function(&[], Named("OpenOptions".into()))));
+    specs.push(runtime("io_buf_reader", unary(Str, Named("BufReader".into()))));
+    specs.push(runtime(
+        "io_buf_reader_with_capacity",
+        function(&[Str, Int], Named("BufReader".into())),
+    ));
+    specs.push(runtime("io_buf_writer", unary(Str, Named("BufWriter".into()))));
+    specs.push(runtime(
+        "io_buf_writer_with_capacity",
+        function(&[Str, Int], Named("BufWriter".into())),
+    ));
+    specs.push(runtime("io_buf_writer_append", unary(Str, Named("BufWriter".into()))));
+    specs.push(runtime(
+        "io_buf_writer_append_with_capacity",
+        function(&[Str, Int], Named("BufWriter".into())),
+    ));
 
     // Path.
     specs.push(runtime("path_join", unary(Dynamic, Str)));
@@ -761,7 +776,7 @@ mod tests {
             assert!(names.insert(spec.name), "native dupliquée: {}", spec.name);
         }
 
-        assert_eq!(names.len(), 129);
+        assert_eq!(names.len(), 135);
         assert!(names.contains("process_run"));
         assert!(names.contains("http_get"));
         assert!(names.contains("http_request"));
@@ -808,6 +823,48 @@ mod tests {
             generic_constraints: vec![],
             params: vec![],
             return_type: Box::new(Named("OpenOptions".into())),
+        })));
+        assert_eq!(all().remove("io_buf_reader"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Named("BufReader".into())),
+        })));
+        assert_eq!(all().remove("io_buf_reader_with_capacity"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str, Int],
+            return_type: Box::new(Named("BufReader".into())),
+        })));
+        assert_eq!(all().remove("io_buf_writer"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Named("BufWriter".into())),
+        })));
+        assert_eq!(all().remove("io_buf_writer_with_capacity"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str, Int],
+            return_type: Box::new(Named("BufWriter".into())),
+        })));
+        assert_eq!(all().remove("io_buf_writer_append"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str],
+            return_type: Box::new(Named("BufWriter".into())),
+        })));
+        assert_eq!(all().remove("io_buf_writer_append_with_capacity"), Some(Function(FunctionType {
+            generic_params: vec![],
+            is_async: false,
+            generic_constraints: vec![],
+            params: vec![Str, Int],
+            return_type: Box::new(Named("BufWriter".into())),
         })));
 
         assert_eq!(all().remove("file_read"), Some(Function(FunctionType {

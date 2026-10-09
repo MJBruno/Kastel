@@ -46,6 +46,7 @@ pub(crate) fn to_string_method(args: &[Value]) -> Result<Value, RuntimeError> {
 
 pub mod array;
 pub mod barrier;
+pub mod buffered_io;
 pub mod channel;
 pub mod condvar;
 pub mod debug;
@@ -91,6 +92,7 @@ pub fn register_natives(globals: &mut HashMap<String, Value>) {
     debug::register(globals);
     json::register(globals);
     file::register(globals);
+    buffered_io::register(globals);
     channel::register(globals);
     condvar::register(globals);
     mutex::register(globals);

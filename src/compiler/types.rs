@@ -903,7 +903,7 @@ impl Type {
         }
     }
 
-    /// Signatures statiques des handles persistants `File` et `OpenOptions`.
+    /// Signatures statiques des handles persistants de `std.io`.
     pub fn io_file_member_type(&self, name: &str) -> Option<Type> {
         let function = |params: Vec<Type>, result: Type| {
             Type::Function(FunctionType {
@@ -916,6 +916,7 @@ impl Type {
         };
         let file = || Type::Named("File".into());
         let options = || Type::Named("OpenOptions".into());
+        let option = |inner: Type| Type::Generic { name: "Option".into(), arguments: vec![inner] };
         let bytes = || Type::union_of(vec![
             Type::Str,
             Type::Array(Box::new(Type::Int)),
@@ -951,6 +952,30 @@ impl Type {
                     Some(function(vec![Type::Bool], options()))
                 }
                 "open" => Some(function(vec![Type::Str], file())),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("BufReader") => match name {
+                "read" => Some(function(vec![Type::Int], Type::Array(Box::new(Type::Int)))),
+                "read_line" => Some(function(vec![], option(Type::Str))),
+                "read_to_string" => Some(function(vec![], Type::Str)),
+                "read_to_end" => Some(function(vec![], Type::Array(Box::new(Type::Int)))),
+                "buffer" => Some(function(vec![], Type::Array(Box::new(Type::Int)))),
+                "seek" => Some(function(vec![Type::Int, Type::Named("SeekFrom".into())], Type::Int)),
+                "stream_position" | "buffer_capacity" => Some(function(vec![], Type::Int)),
+                "close" => Some(function(vec![], Type::None)),
+                "is_closed" => Some(function(vec![], Type::Bool)),
+                "path" => Some(function(vec![], Type::Str)),
+                _ => None,
+            },
+            Type::Named(type_name) if type_name.eq_ignore_ascii_case("BufWriter") => match name {
+                "write" => Some(function(vec![bytes()], Type::Int)),
+                "write_all" | "flush" | "sync_all" | "close" => Some(function(
+                    if name == "write_all" { vec![bytes()] } else { vec![] },
+                    Type::None,
+                )),
+                "buffer_capacity" => Some(function(vec![], Type::Int)),
+                "is_closed" => Some(function(vec![], Type::Bool)),
+                "path" => Some(function(vec![], Type::Str)),
                 _ => None,
             },
             _ => None,
@@ -1736,6 +1761,55 @@ mod tests {
                 generic_constraints: Vec::new(),
                 params: vec![Type::Str],
                 return_type: Box::new(Type::Named("File".into())),
+            }))
+        );
+        let reader = Type::Named("BufReader".into());
+        assert_eq!(
+            reader.io_file_member_type("read_line"),
+            Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: vec![],
+                return_type: Box::new(Type::Generic {
+                    name: "Option".into(),
+                    arguments: vec![Type::Str],
+                }),
+            }))
+        );
+        assert_eq!(
+            reader.io_file_member_type("read_to_string"),
+            Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: vec![],
+                return_type: Box::new(Type::Str),
+            }))
+        );
+        assert_eq!(
+            reader.io_file_member_type("read_to_end"),
+            Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: vec![],
+                return_type: Box::new(Type::Array(Box::new(Type::Int))),
+            }))
+        );
+        let writer = Type::Named("BufWriter".into());
+        assert_eq!(
+            writer.io_file_member_type("write_all"),
+            Some(Type::Function(FunctionType {
+                generic_params: Vec::new(),
+                is_async: false,
+                generic_constraints: Vec::new(),
+                params: vec![Type::union_of(vec![
+                    Type::Str,
+                    Type::Array(Box::new(Type::Int)),
+                    Type::TupleDynamic,
+                ])],
+                return_type: Box::new(Type::None),
             }))
         );
     }

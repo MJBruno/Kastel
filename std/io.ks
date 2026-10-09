@@ -34,3 +34,35 @@ export func create_file(path: str) -> File {
 export func open_options() -> OpenOptions {
     return io_open_options();
 }
+
+
+// Lecteur tamponné : lit le fichier par blocs. read_line() retourne
+// Option<str> ; None signifie que la fin du fichier est atteinte. buffer()
+// renvoie les octets actuellement préchargés, sans les consommer.
+export func buf_reader(path: str) -> BufReader {
+    return io_buf_reader(path);
+}
+
+// Variante avec une capacité de buffer explicite (1 à 16 Mio).
+export func buf_reader_with_capacity(path: str, capacity: int) -> BufReader {
+    return io_buf_reader_with_capacity(path, capacity);
+}
+
+// Écrivain tamponné : crée le fichier ou tronque son contenu existant.
+// Utiliser flush(), sync_all() ou close() pour traiter les erreurs d'écriture.
+export func buf_writer(path: str) -> BufWriter {
+    return io_buf_writer(path);
+}
+
+export func buf_writer_with_capacity(path: str, capacity: int) -> BufWriter {
+    return io_buf_writer_with_capacity(path, capacity);
+}
+
+// Écrivain tamponné en ajout : conserve le contenu préexistant du fichier.
+export func buf_writer_append(path: str) -> BufWriter {
+    return io_buf_writer_append(path);
+}
+
+export func buf_writer_append_with_capacity(path: str, capacity: int) -> BufWriter {
+    return io_buf_writer_append_with_capacity(path, capacity);
+}

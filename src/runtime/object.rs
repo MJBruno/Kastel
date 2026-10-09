@@ -81,6 +81,12 @@ pub enum Object {
     /// Configuration d’ouverture de fichier (`OpenOptions`).
     OpenOptions(Rc<RefCell<crate::runtime::file::OpenOptionsState>>),
 
+    /// Lecteur tamponné de fichier (`std.io.BufReader`).
+    BufReader(Rc<RefCell<crate::runtime::buffered_io::BufReaderState>>),
+
+    /// Écrivain tamponné de fichier (`std.io.BufWriter`).
+    BufWriter(Rc<RefCell<crate::runtime::buffered_io::BufWriterState>>),
+
     /// Séquence ordonnée IMMUABLE, produite par un littéral `(a, b, c)`.
     /// Même représentation mémoire qu'Array (un `Vec<Value>` suivi par
     /// le GC), mais aucune méthode de mutation ne l'expose : voir
@@ -366,6 +372,16 @@ impl Object {
             }
 
             Object::OpenOptions(_) => {}
+
+            Object::BufReader(reader) => {
+                reader.borrow_mut().close();
+            }
+
+            Object::BufWriter(writer) => {
+                // La fermeture déclenchée par le GC ne peut pas transmettre
+                // une erreur. La méthode close() explicite, elle, la propage.
+                let _ = writer.borrow_mut().close();
+            }
 
             Object::Tuple(elements) => {
                 elements.clear();

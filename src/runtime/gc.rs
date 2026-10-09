@@ -354,6 +354,8 @@ fn trace_object(handle: &Gc<Object>, state: &mut MarkState) {
         Object::Network(_) => {}
         Object::File(_) => {}
         Object::OpenOptions(_) => {}
+        Object::BufReader(_) => {}
+        Object::BufWriter(_) => {}
 
         Object::Tuple(elements) => {
             for value in elements {
