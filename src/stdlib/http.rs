@@ -24,6 +24,7 @@ use crate::{
 };
 
 const MAX_HEADERS: usize = 64 * 1024;
+const MAX_CHUNK_FRAMING: usize = 1024 * 1024;
 const MAX_BODY: usize = 16 * 1024 * 1024;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_REQUEST_HEADERS: usize = 64 * 1024;
@@ -186,6 +187,22 @@ fn validate_header_value(value: &str) -> Result<(), RuntimeError> {
     Ok(())
 }
 
+fn with_string_value<R>(
+    value: &Value,
+    f: impl FnOnce(&str) -> Result<R, RuntimeError>,
+) -> Result<R, RuntimeError> {
+    let Value::Object(handle) = value else {
+        return Err(RuntimeError::TypeError);
+    };
+
+    let object = handle.borrow();
+    let Object::String(text) = &*object else {
+        return Err(RuntimeError::TypeError);
+    };
+
+    f(text)
+}
+
 fn expect_headers(value: &Value) -> Result<Vec<(String, String)>, RuntimeError> {
     let Value::Object(handle) = value else {
         return Err(RuntimeError::TypeError);
@@ -196,16 +213,39 @@ fn expect_headers(value: &Value) -> Result<Vec<(String, String)>, RuntimeError> 
         return Err(RuntimeError::TypeError);
     };
 
-    entries
-        .iter()
-        .map(|(name, value)| {
-            let name = expect_string(name)?;
-            let value = expect_string(value)?;
-            validate_header_name(&name)?;
-            validate_header_value(&value)?;
-            Ok((name, value))
-        })
-        .collect()
+    // Contrôler le volume AVANT de cloner les noms et valeurs. La limite doit
+    // protéger aussi la conversion depuis les valeurs Kastel, pas seulement
+    // l'écriture finale sur le socket.
+    let mut header_bytes = 0usize;
+    let mut headers = Vec::new();
+
+    for (name_value, value_value) in entries {
+        let name_len = with_string_value(name_value, |name| Ok(name.len()))?;
+        let value_len = with_string_value(value_value, |value| Ok(value.len()))?;
+
+        let entry_bytes = name_len
+            .checked_add(value_len)
+            .and_then(|size| size.checked_add(4))
+            .ok_or_else(|| http_module_error("request headers are too large"))?;
+        header_bytes = header_bytes
+            .checked_add(entry_bytes)
+            .ok_or_else(|| http_module_error("request headers are too large"))?;
+        if header_bytes > MAX_REQUEST_HEADERS {
+            return Err(http_module_error("request headers exceed 64 KiB"));
+        }
+
+        // Ne parcourir le contenu qu'après le contrôle de taille, afin qu'un
+        // champ gigantesque soit rejeté sans balayage ni copie supplémentaires.
+        with_string_value(name_value, validate_header_name)?;
+        with_string_value(value_value, validate_header_value)?;
+
+        headers.try_reserve(1).map_err(|error| {
+            http_module_error(format!("cannot allocate request headers: {error}"))
+        })?;
+        headers.push((expect_string(name_value)?, expect_string(value_value)?));
+    }
+
+    Ok(headers)
 }
 
 fn expect_body(value: &Value) -> Result<Vec<u8>, RuntimeError> {
@@ -214,14 +254,37 @@ fn expect_body(value: &Value) -> Result<Vec<u8>, RuntimeError> {
         Value::Object(handle) => {
             let object = handle.borrow();
             match &*object {
-                Object::String(text) => Ok(text.as_bytes().to_vec()),
-                Object::Array(elements) | Object::Tuple(elements) => elements
-                    .iter()
-                    .map(|value| match value {
-                        Value::Integer(byte) if (0..=255).contains(byte) => Ok(*byte as u8),
-                        _ => Err(RuntimeError::TypeError),
-                    })
-                    .collect(),
+                Object::String(text) => {
+                    if text.len() > MAX_BODY {
+                        return Err(http_module_error("request body exceeds 16 MiB"));
+                    }
+
+                    let mut body = Vec::new();
+                    body.try_reserve_exact(text.len()).map_err(|error| {
+                        http_module_error(format!("cannot allocate request body: {error}"))
+                    })?;
+                    body.extend_from_slice(text.as_bytes());
+                    Ok(body)
+                }
+                Object::Array(elements) | Object::Tuple(elements) => {
+                    if elements.len() > MAX_BODY {
+                        return Err(http_module_error("request body exceeds 16 MiB"));
+                    }
+
+                    let mut body = Vec::new();
+                    body.try_reserve_exact(elements.len()).map_err(|error| {
+                        http_module_error(format!("cannot allocate request body: {error}"))
+                    })?;
+                    for value in elements {
+                        match value {
+                            Value::Integer(byte) if (0..=255).contains(byte) => {
+                                body.push(*byte as u8);
+                            }
+                            _ => return Err(RuntimeError::TypeError),
+                        }
+                    }
+                    Ok(body)
+                }
                 _ => Err(RuntimeError::TypeError),
             }
         }
@@ -409,28 +472,70 @@ fn write_request(
     Ok(())
 }
 
-fn read_header_line(
-    reader: &mut BufReader<TcpStream>,
-    header_size: &mut usize,
+fn read_bounded_line<R: BufRead>(
+    reader: &mut R,
+    block_size: &mut usize,
+    block_limit: usize,
+    block_name: &str,
 ) -> Result<Vec<u8>, RuntimeError> {
+    // Ne pas utiliser `read_until` ici : il accumule toute la ligne en mémoire
+    // avant de laisser le code vérifier la limite. Une réponse distante pourrait
+    // ainsi forcer une allocation arbitrairement grande sans envoyer de CRLF.
     let mut line = Vec::new();
-    let read = reader
-        .read_until(b'\n', &mut line)
-        .map_err(|error| RuntimeError::ModuleError(format!("http: read response: {error}")))?;
 
-    if read == 0 {
-        return Err(http_module_error("unexpected end of response headers"));
+    loop {
+        let (read, reached_newline) = {
+            let available = reader.fill_buf().map_err(|error| {
+                RuntimeError::ModuleError(format!("http: read response: {error}"))
+            })?;
+
+            if available.is_empty() {
+                return Err(http_module_error("unexpected end of response headers"));
+            }
+
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let read = newline.map_or(available.len(), |index| index + 1);
+            let line_size = line
+                .len()
+                .checked_add(read)
+                .ok_or_else(|| http_module_error("HTTP response line is too large"))?;
+            if line_size > MAX_HEADERS {
+                return Err(http_module_error("HTTP response line exceeds 64 KiB"));
+            }
+
+            let next_block_size = (*block_size)
+                .checked_add(line_size)
+                .ok_or_else(|| http_module_error("HTTP metadata size overflow"))?;
+            if next_block_size > block_limit {
+                return Err(http_module_error(format!(
+                    "limit for {block_name} ({} bytes) exceeded",
+                    block_limit
+                )));
+            }
+
+            line.extend_from_slice(&available[..read]);
+            (read, newline.is_some())
+        };
+
+        reader.consume(read);
+        if reached_newline {
+            break;
+        }
     }
+
     if line.len() < 2 || !line.ends_with(b"\r\n") {
         return Err(http_module_error("HTTP response lines must end with CRLF"));
     }
 
-    *header_size = header_size.saturating_add(read);
-    if *header_size > MAX_HEADERS {
-        return Err(http_module_error("response headers exceed 64 KiB"));
-    }
-
+    *block_size += line.len();
     Ok(line)
+}
+
+fn read_header_line<R: BufRead>(
+    reader: &mut R,
+    header_size: &mut usize,
+) -> Result<Vec<u8>, RuntimeError> {
+    read_bounded_line(reader, header_size, MAX_HEADERS, "response headers")
 }
 
 fn trim_http_line(mut line: Vec<u8>) -> Vec<u8> {
@@ -562,10 +667,17 @@ fn validate_trailer_line(line: &[u8]) -> Result<(), RuntimeError> {
 
 fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Result<Vec<u8>, RuntimeError> {
     let mut body = Vec::new();
+    // Limite aussi les métadonnées cumulées (tailles de chunks + trailers), et
+    // pas uniquement chaque ligne prise isolément.
+    let mut framing_size = 0usize;
 
     loop {
-        let mut line_size = 0usize;
-        let line = trim_http_line(read_header_line(reader, &mut line_size)?);
+        let line = trim_http_line(read_bounded_line(
+            reader,
+            &mut framing_size,
+            MAX_CHUNK_FRAMING,
+            "chunk framing metadata",
+        )?);
         let line = String::from_utf8(line).map_err(|_| http_module_error("invalid chunk size"))?;
         let size_text = line.split(';').next().unwrap_or_default().trim();
         let size = usize::from_str_radix(size_text, 16)
@@ -573,7 +685,12 @@ fn read_chunked_body(reader: &mut BufReader<TcpStream>) -> Result<Vec<u8>, Runti
 
         if size == 0 {
             loop {
-                let line = trim_http_line(read_header_line(reader, &mut line_size)?);
+                let line = trim_http_line(read_bounded_line(
+                    reader,
+                    &mut framing_size,
+                    MAX_CHUNK_FRAMING,
+                    "chunk framing metadata",
+                )?);
                 if line.is_empty() {
                     break;
                 }
@@ -723,6 +840,7 @@ fn request_impl(
 
     let body = if method.eq_ignore_ascii_case("HEAD")
         || status == 204
+        || status == 205
         || status == 304
         || (100..200).contains(&status)
     {
@@ -778,6 +896,7 @@ pub fn register(globals: &mut HashMap<String, Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
     use std::net::TcpListener;
     use std::thread;
 
@@ -813,6 +932,21 @@ mod tests {
     }
 
     #[test]
+    fn http_header_line_is_bounded_before_accumulating_untrusted_input() {
+        // La réponse ne contient jamais de LF : le lecteur doit s'arrêter à la
+        // limite sans accumuler tout le flux dans un Vec.
+        let bytes = vec![b'a'; MAX_HEADERS + 32];
+        let mut reader = BufReader::new(Cursor::new(bytes));
+        let mut header_size = 0;
+
+        assert!(matches!(
+            read_header_line(&mut reader, &mut header_size),
+            Err(RuntimeError::ModuleError(_))
+        ));
+        assert_eq!(header_size, 0, "le bloc ne doit pas être validé après une ligne excessive");
+    }
+
+    #[test]
     fn http_get_rejects_invalid_arguments_and_urls() {
         assert!(matches!(
             native_http_get(&[]),
@@ -833,6 +967,30 @@ mod tests {
         assert!(matches!(
             native_http_request(&[string("GET"), string("http://127.0.0.1")]),
             Err(RuntimeError::WrongArgumentCount { .. })
+        ));
+    }
+
+    #[test]
+    fn http_rejects_oversized_request_body_before_copying() {
+        // La chaîne source existe déjà côté Kastel. La conversion HTTP doit
+        // rejeter sa taille avant d'en créer une seconde copie d'octets.
+        let oversized = "x".repeat(MAX_BODY + 1);
+        let body = Value::new_string(oversized);
+
+        assert!(matches!(
+            expect_body(&body),
+            Err(RuntimeError::ModuleError(_))
+        ));
+    }
+
+    #[test]
+    fn http_rejects_oversized_request_headers_before_copying() {
+        let oversized = "x".repeat(MAX_REQUEST_HEADERS + 1);
+        let value = Value::new_dict(vec![(string("X-Large"), string(&oversized))]);
+
+        assert!(matches!(
+            expect_headers(&value),
+            Err(RuntimeError::ModuleError(_))
         ));
     }
 
